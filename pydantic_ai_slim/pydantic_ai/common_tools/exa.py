@@ -12,9 +12,9 @@ These tools are deprecated and will be removed in v3. Use the `ExaSearch` capabi
 
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, overload
 
-from typing_extensions import Any, TypedDict, deprecated
+from typing_extensions import TypedDict, deprecated
 
 from pydantic_ai import FunctionToolset
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -211,17 +211,17 @@ class ExaGetContentsTool:
         Returns:
             The content of each URL.
         """
-        response = await self.client.get_contents(urls, text=True)  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        response = await self.client.get_contents(urls, text=True)
 
         return [
             ExaContentResult(
-                url=result.url,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                title=result.title or '',  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                text=result.text or '',  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                author=result.author,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                published_date=result.published_date,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+                url=result.url,
+                title=result.title or '',
+                text=result.text or '',
+                author=result.author,
+                published_date=result.published_date,
             )
-            for result in response.results  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+            for result in response.results
         ]
 
 

@@ -33,6 +33,26 @@ class MCPSamplingModel(Model):
     allows an MCP server to make requests to a model by calling back to the MCP client that connected to it.
     """
 
+    # MCP sampling messages carry text and images; see `_mcp.map_from_pai_messages`.
+    _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+
+    unsupported_settings = frozenset(
+        {
+            'extra_body',
+            'extra_headers',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'parallel_tool_calls',
+            'presence_penalty',
+            'seed',
+            'service_tier',
+            'timeout',
+            'top_k',
+            'top_p',
+        }
+    )
+
     session: ServerSession
     """The MCP server session to use for sampling."""
 
@@ -56,7 +76,8 @@ class MCPSamplingModel(Model):
         model_settings, _ = self.prepare_request(model_settings, model_request_parameters)
         model_settings = cast(MCPSamplingModelSettings, model_settings or {})
 
-        result = await self.session.create_message(
+        # MCP deprecated sampling (SEP-2577); this model exists to use it.
+        result = await self.session.create_message(  # pyright: ignore[reportDeprecated]
             sampling_messages,
             max_tokens=model_settings.get('max_tokens', self.default_max_tokens),
             system_prompt=system_prompt,

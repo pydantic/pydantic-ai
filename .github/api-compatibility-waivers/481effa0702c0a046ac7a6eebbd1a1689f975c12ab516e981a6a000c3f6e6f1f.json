@@ -1,0 +1,5 @@
+{
+  "against": "v2.59.0",
+  "reason": "Harness 0.x: the same `GitHub.description` default text change, reported on `GitHub.__init__`; calls that pass or omit `description` keep working.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10815"
+}

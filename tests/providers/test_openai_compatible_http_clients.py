@@ -30,14 +30,17 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
+    from pydantic_ai.providers.meta import MetaProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.nebius import NebiusProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -118,6 +121,11 @@ CASES = [
         lambda http_client: LiteLLMProvider(api_key='test', http_client=http_client),
     ),
     Case(
+        'meta',
+        lambda: MetaProvider(api_key='test'),
+        lambda http_client: MetaProvider(api_key='test', http_client=http_client),
+    ),
+    Case(
         'moonshotai',
         lambda: MoonshotAIProvider(api_key='test'),
         lambda http_client: MoonshotAIProvider(api_key='test', http_client=http_client),
@@ -145,6 +153,11 @@ CASES = [
         lambda http_client: OpenRouterProvider(api_key='test', http_client=http_client),
     ),
     Case(
+        'otari',
+        lambda: OtariProvider(api_key='test'),
+        lambda http_client: OtariProvider(api_key='test', http_client=http_client),
+    ),
+    Case(
         'ovhcloud',
         lambda: OVHcloudProvider(api_key='test'),
         lambda http_client: OVHcloudProvider(api_key='test', http_client=http_client),
@@ -158,6 +171,11 @@ CASES = [
         'snowflake',
         lambda: SnowflakeProvider(account='test', token='test'),
         lambda http_client: SnowflakeProvider(account='test', token='test', http_client=http_client),
+    ),
+    Case(
+        'stav',
+        lambda: StavProvider(api_key='test'),
+        lambda http_client: StavProvider(api_key='test', http_client=http_client),
     ),
     Case(
         'together',
@@ -192,14 +210,17 @@ IMPORT_GUARD_CASES = [
     ('github_copilot', 'use the GitHub Copilot provider'),
     ('heroku', 'use the Heroku provider'),
     ('litellm', 'use the LiteLLM provider'),
+    ('meta', 'use the Meta provider'),
     ('moonshotai', 'use the MoonshotAI provider'),
     ('nebius', 'use the Nebius provider'),
     ('ollama', 'use the Ollama provider'),
     ('openai', 'use the OpenAI provider'),
     ('openrouter', 'use the OpenRouter provider'),
+    ('otari', 'use the Otari provider'),
     ('ovhcloud', 'use OVHcloud AI Endpoints provider'),
     ('sambanova', 'use the SambaNova provider'),
     ('snowflake', 'use the Snowflake provider'),
+    ('stav', 'use the Stav provider'),
     ('together', 'use the Together AI provider'),
     ('vercel', 'use the Vercel provider'),
     ('vllm', 'use the vLLM provider'),
@@ -253,7 +274,6 @@ def test_openai_compatible_provider_import_guard(
     assert error_hint in error
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_http_client_lifecycle(case: Case) -> None:
     provider = case.create()
@@ -272,7 +292,6 @@ async def test_openai_compatible_provider_http_client_lifecycle(case: Case) -> N
     assert second_client.is_closed
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_preserves_caller_owned_httpx2_client(case: Case) -> None:
     async with httpx2.AsyncClient() as http_client:
@@ -284,7 +303,6 @@ async def test_openai_compatible_provider_preserves_caller_owned_httpx2_client(c
         assert not http_client.is_closed
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_deprecates_caller_owned_httpx_client(case: Case) -> None:
     async with httpx.AsyncClient() as http_client:
@@ -300,7 +318,6 @@ async def test_openai_compatible_provider_deprecates_caller_owned_httpx_client(c
         assert not http_client.is_closed
 
 
-@pytest.mark.anyio
 async def test_openai_compatible_provider_preserves_caller_owned_sdk_client() -> None:
     async with httpx2.AsyncClient() as http_client:
         openai_client = AsyncOpenAI(api_key='test', http_client=http_client)

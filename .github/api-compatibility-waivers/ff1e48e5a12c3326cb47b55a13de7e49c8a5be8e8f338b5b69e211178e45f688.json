@@ -1,0 +1,5 @@
+{
+  "against": "v2.62.0",
+  "reason": "False positive: `BUILTIN_SPINNERS` holds the same spinners; Griffe compares the expression text, which only renamed `make_spinner` to `build_spinner`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11353"
+}

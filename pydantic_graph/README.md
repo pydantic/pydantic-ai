@@ -1,7 +1,7 @@
 # Pydantic Graph
 
 [![CI](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain)
-[![Coverage](https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg)](https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai)
+![Coverage](https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg)
 [![PyPI](https://img.shields.io/pypi/v/pydantic-graph.svg)](https://pypi.python.org/pypi/pydantic-graph)
 [![python versions](https://img.shields.io/pypi/pyversions/pydantic-graph.svg)](https://github.com/pydantic/pydantic-ai)
 [![license](https://img.shields.io/github/license/pydantic/pydantic-ai.svg)](https://github.com/pydantic/pydantic-ai/blob/main/LICENSE)
@@ -28,12 +28,12 @@ from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepCon
 
 
 @dataclass
-class DivisibleBy5(BaseNode[None, None, int]):
+class DivisibleBy5(BaseNode[None, object, int]):
     foo: int
 
     async def run(
         self,
-        ctx: GraphRunContext,
+        ctx: GraphRunContext[None],
     ) -> Increment | End[int]:
         if self.foo % 5 == 0:
             return End(self.foo)
@@ -42,10 +42,10 @@ class DivisibleBy5(BaseNode[None, None, int]):
 
 
 @dataclass
-class Increment(BaseNode):
+class Increment(BaseNode[None]):
     foo: int
 
-    async def run(self, ctx: GraphRunContext) -> DivisibleBy5:
+    async def run(self, ctx: GraphRunContext[None]) -> DivisibleBy5:
         return DivisibleBy5(self.foo + 1)
 
 

@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any, TypeAlias
+from typing import Any, Self, TypeAlias
 
-from typing_extensions import Self
-
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, without_tool_name_path
 from ..messages import InstructionPart
+from ..tools import ToolDefinition
 from .abstract import AbstractToolset, ToolsetTool
 
 ToolsetFunc: TypeAlias = Callable[
@@ -53,7 +52,7 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
 
     async def _evaluate_factory(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Evaluate the toolset factory function."""
-        toolset = self.toolset_func(ctx)
+        toolset = self.toolset_func(without_tool_name_path(ctx))
         if inspect.isawaitable(toolset):
             toolset = await toolset
         return toolset
@@ -129,6 +128,13 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         if self._toolset is None:
             return None
         return await self._toolset.get_instructions(ctx)
+
+    async def get_tool_for_tool_def(
+        self, tool_def: ToolDefinition, ctx: RunContext[AgentDepsT]
+    ) -> ToolsetTool[AgentDepsT]:
+        if self._toolset is None:
+            raise KeyError(tool_def.name)
+        return await self._toolset.get_tool_for_tool_def(tool_def, ctx)
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

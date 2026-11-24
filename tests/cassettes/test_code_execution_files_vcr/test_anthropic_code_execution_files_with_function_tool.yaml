@@ -1,326 +1,389 @@
+version: 1
 interactions:
 - request:
-    body: "--30a57f120d5d4e3c0959c5227371b65f\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
-      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--30a57f120d5d4e3c0959c5227371b65f--\r\n"
+    method: DELETE
+    uri: https://api.anthropic.com/v1/files/file_01V1rMCEZKNRKdML1jPKrL41?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
-      content-length:
-      - '198'
       content-type:
-      - multipart/form-data; boundary=30a57f120d5d4e3c0959c5227371b65f
+      - application/json
       host:
       - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=196
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: file_01V1rMCEZKNRKdML1jPKrL41
+        type: file_deleted
+  recorded_at: 2026-10-25T17:01:54.226906+00:00
+- request:
     method: POST
     uri: https://api.anthropic.com/v1/files?beta=true
-  response:
     headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '190'
+      - "198"
+      content-type:
+      - multipart/form-data; boundary=2529c81df51f50e1bf5d4f341a7164b7
+      host:
+      - api.anthropic.com
+    body:
+      type: text
+      content: "--2529c81df51f50e1bf5d4f341a7164b7\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type: text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--2529c81df51f50e1bf5d4f341a7164b7--\r\n"
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=261
+      - x-originResponse;dur=228
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      created_at: '2026-08-28T19:36:52.620449Z'
-      downloadable: false
-      filename: data.csv
-      id: file_01LDsCVEEAeum7YDCND3Ya7d
-      mime_type: text/csv
-      size_bytes: 30
-      type: file
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '638'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: First call `get_units`. Then use the code execution tool to read the uploaded CSV and report the sum of the
-            `value` column with that unit.
-          type: text
-        - file_id: file_01LDsCVEEAeum7YDCND3Ya7d
-          type: container_upload
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Return the unit the `value` column is measured in.
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_units
-      - name: code_execution
-        type: code_execution_20260120
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '953'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-3c613ed11b0bc2d312357278623440ed-0d502aca65034c01-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      container:
-        expires_at: '2026-08-28T20:36:56.230313Z'
-        id: container_01131d1b1XFvFC2WqaaTTR5n
+    body:
+      type: json
       content:
-      - text: I'll start by calling both `get_units` and reading the uploaded CSV file at the same time!
-        type: text
-      - caller:
-          type: direct
-        id: toolu_011Dx71eMVghXizFVWi3zfxT
-        input: {}
-        name: get_units
-        type: tool_use
-      - id: srvtoolu_019Va8V28NV6feMknFtfLQix
-        input:
-          command: cat $INPUT_DIR/data.csv
-        name: bash_code_execution
-        type: server_tool_use
-      id: msg_011CeVi8E33mpps9A3nmWx3Z
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 2334
-        output_tokens: 105
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        type: file
+        id: file_01V1rMCEZKNRKdML1jPKrL41
+        size_bytes: 30
+        created_at: 2026-10-25T17:01:47.956442Z
+        filename: data.csv
+        mime_type: text/csv
+        downloadable: false
+  recorded_at: 2026-10-25T17:01:48.132850+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1262'
+      - "603"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      container: container_01131d1b1XFvFC2WqaaTTR5n
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: First call `get_units`. Then use the code execution tool to read the uploaded CSV and report the sum of the
-            `value` column with that unit.
-          type: text
-        - file_id: file_01LDsCVEEAeum7YDCND3Ya7d
-          type: container_upload
-        role: user
-      - content:
-        - text: I'll start by calling both `get_units` and reading the uploaded CSV file at the same time!
-          type: text
-        - id: toolu_011Dx71eMVghXizFVWi3zfxT
-          input: {}
-          name: get_units
-          type: tool_use
-        - id: srvtoolu_019Va8V28NV6feMknFtfLQix
-          input:
-            command: cat $INPUT_DIR/data.csv
-          name: bash_code_execution
-          type: server_tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: kg
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              First call `get_units`. Then use the code execution tool to read the uploaded
+              CSV and report the sum of the `value` column with that unit.
             type: text
-          is_error: false
-          tool_use_id: toolu_011Dx71eMVghXizFVWi3zfxT
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-6
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Return the unit the `value` column is measured in.
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_units
-      - name: code_execution
-        type: code_execution_20260120
-    uri: https://api.anthropic.com/v1/messages?beta=true
+          - type: container_upload
+            file_id: file_01V1rMCEZKNRKdML1jPKrL41
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_units
+          description: Return the unit the `value` column is measured in.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: code_execution
+          type: code_execution_20260120
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1559'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=151
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5f6a4ff25a9145e17c20e24e7c74a7a0-6ed8638094bc5c74-01
+      - 00-13aedfbb6b5149b854e6ee1027732f84-d1b0ca3b3124c02d-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      container:
-        expires_at: '2026-08-28T20:37:03.371002Z'
-        id: container_01131d1b1XFvFC2WqaaTTR5n
-      content:
-      - content:
-          content: []
-          return_code: 0
-          stderr: ''
-          stdout: |
-            item,value
-            apple,30
-            banana,70
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_019Va8V28NV6feMknFtfLQix
-        type: bash_code_execution_tool_result
-      - text: 'Great, I have the units (**kg**) and the CSV data! Now let me sum up the `value` column:'
-        type: text
-      - id: srvtoolu_01JWuu7Q5rVcr98cV6Umb8q7
-        input:
-          command: awk -F',' 'NR>1 {sum += $2} END {print sum}' $INPUT_DIR/data.csv
-        name: bash_code_execution
-        type: server_tool_use
-      - content:
-          content: []
-          return_code: 0
-          stderr: ''
-          stdout: |
-            100
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_01JWuu7Q5rVcr98cV6Umb8q7
-        type: bash_code_execution_tool_result
-      - text: |-
-          Here's the summary:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPKDQ4Bb2gHgPN9AGkM5","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2985,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}        }
 
-          - **apple**: 30 kg
-          - **banana**: 70 kg
-          - **Total**: **100 kg**
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01JWmm1AVSoX9nrUBEcHUrkK","name":"get_units","input":{},"caller":{"type":"direct"}}       }
 
-          The sum of the `value` column is **100 kg**.
-        type: text
-      id: msg_011CeVi8Y6znsszDXSYcumhH
-      model: claude-sonnet-4-6
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 5175
-        output_tokens: 166
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2985,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}}     }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-10-25T17:01:49.392943+00:00
 - request:
-    body: ''
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
+      content-length:
+      - "879"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: DELETE
-    uri: https://api.anthropic.com/v1/files/file_01LDsCVEEAeum7YDCND3Ya7d?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              First call `get_units`. Then use the code execution tool to read the uploaded
+              CSV and report the sum of the `value` column with that unit.
+            type: text
+          - type: container_upload
+            file_id: file_01V1rMCEZKNRKdML1jPKrL41
+        - role: assistant
+          content:
+          - id: toolu_01JWmm1AVSoX9nrUBEcHUrkK
+            type: tool_use
+            name: get_units
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01JWmm1AVSoX9nrUBEcHUrkK
+            type: tool_result
+            content:
+            - text: kg
+              type: text
+            is_error: false
+        model: claude-sonnet-5-5
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: get_units
+          description: Return the unit the `value` column is measured in.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: code_execution
+          type: code_execution_20260120
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '63'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=253
+      - x-originResponse;dur=157
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-eed861ed4fe0e4c5bcb9c080f2108085-248c368f1b468652-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      id: file_01LDsCVEEAeum7YDCND3Ya7d
-      type: file_deleted
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPKDVTddSjzfxxy7zuP8","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":3018,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01NTSXJv342oHYDWDhXCH4dL","name":"bash_code_execution","input":{}}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"nd\": \"c"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"d $INPU"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"T_DIR; "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"head -5"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" data.c"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"sv; pyt"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"hon3 -c"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" \\\"\\nim"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"port pa"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ndas as"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" pd\\nd="}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"pd.read"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_csv('d"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ata.csv"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"');prin"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"t(d.dty"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"pes);pr"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"int(d['"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"value']"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":".sum(),"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" d['val"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ue'].is"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"na().su"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"m(), le"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"n(d))\\\""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"}"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01NTSXJv342oHYDWDhXCH4dL","content":{"type":"bash_code_execution_result","stdout":"item,value\napple,30\nbanana,70\nitem     object\nvalue     int64\ndtype: object\n100 0 2\n","stderr":"","return_code":0,"content":[]}}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"The sum of the `value`"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" column is **100 kg**"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":". The file has two rows,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" apple (30)"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" and banana (70), and no"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" missing values."}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2  }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_01UVw3788ndieo1AuAbKnFtG","expires_at":"2026-10-25T18:01:52.752446Z"}},"usage":{"input_tokens":6224,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":181,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}          }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-10-25T17:01:53.916823+00:00

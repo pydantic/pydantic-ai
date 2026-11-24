@@ -71,9 +71,12 @@ async def conversation(session: RealtimeSession) -> None:
         # machine that stutters glitches instead of ending the call. Pulling the next
         # chunk only after the device consumed the previous one also lets the session
         # track the playback position itself, which is what `handle_barge_in=True` uses
-        # to handle interruptions without any code here.
+        # to handle interruptions without any code here. The view is created here rather
+        # than inside the task so that audio arriving before the task first runs is kept.
+        model_audio = session.stream_audio()
+
         async def play_audio() -> None:
-            async for chunk in session.stream_audio():
+            async for chunk in model_audio:
                 await speaker.write(chunk)
 
         tg.start_soon(play_audio)

@@ -1,4 +1,8 @@
-# Troubleshooting
+---
+description: "Fix common Pydantic AI realtime voice problems: no audio, a model that never replies or answers twice, echo cutoffs, stalled tools, lost reconnects."
+---
+
+# Realtime troubleshooting
 
 Below are suggestions on how to fix some common problems with realtime sessions, each linking to
 the page that covers the underlying behavior. For issues not listed here or addressed in the
@@ -30,7 +34,9 @@ layer and stop local playback on real [barge-in](turns.md#barge-in).
 ## The greeting never plays, or the model replies twice when the visitor speaks
 
 Speaker echo or microphone transients probably cancelled the greeting while the audio path opened.
-Keep the microphone closed until the greeting has played; see [Speaking first](turns.md#speaking-first).
+Mute microphone capture until the greeting has played, while continuing to send digital silence so
+server VAD can close any open speech segment; see [Muting the microphone](turns.md#muting-the-microphone)
+and [Speaking first](turns.md#speaking-first).
 To confirm the cause, iterate the event stream and look for a
 [`RealtimeResponseInterruptedEvent`][pydantic_ai.realtime.RealtimeResponseInterruptedEvent] on the
 first response and any
@@ -44,9 +50,19 @@ tool lifecycle events and review [concurrent tool execution](tools.md#concurrent
 
 ## A reconnect lost context
 
-Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, begin a fresh conversation; if
-true but a current utterance vanished, that in-flight media was outside the restored completed-turn
-history. See [state restoration](lifecycle.md#state-restoration).
+Inspect `RealtimeSessionReconnectEvent.state_restored`. If false, the drop cut off a turn in flight:
+the session closed any cut reply as interrupted and kept the earlier turns, so ask again or resend
+the cut turn rather than starting over. On Gemini, a drop before the first resumption handle starts
+a fresh session, which gets the earlier turns replayed from the session's history and is asked again
+for the reply to a typed turn the drop caught before its reply started. If true but a current
+utterance vanished, that in-flight media was outside the restored completed-turn history. See
+[state restoration](lifecycle.md#state-restoration).
+
+## GPT-Live ignores the agent's persona, language, or speaking style
+
+GPT-Live sends the agent's instructions and system prompt only to the backend model that does
+delegated work, never to the voice model the caller hears. Put the persona, language, and speaking
+style in `openai_live_instructions`. See [How delegation works](openai.md#how-delegation-works).
 
 ## Gemini reaches its session limit
 
@@ -54,3 +70,17 @@ Set the `reconnect` setting to a [`ReconnectPolicy`][pydantic_ai.realtime.Reconn
 session resumption is enabled automatically alongside it. Recovery uses the latest in-memory server
 handle after the drop. See [Gemini session resumption](gemini.md#session-resumption) and
 [provider session limits](lifecycle.md#provider-session-limits).
+
+## Azure Voice Live fails with "Only Azure voice is supported"
+
+Cascade models such as `gpt-5` and `gpt-4.1` speak only through Azure text-to-speech voices, so
+they reject `openai_voice`. Choose their voice with `azure_voice_live_voice` instead. See
+[Voice Live voices](azure.md#voices).
+
+## ElevenLabs Agents fails to connect
+
+The connect-time preflight raises a [`UserError`][pydantic_ai.exceptions.UserError] naming what to change: an
+override toggle the agent doesn't permit (see
+[Configuration ownership](elevenlabs.md#configuration-ownership)), or a difference between the session's tools and
+the agent's client tools (see [Tool synchronization](elevenlabs.md#tool-synchronization)). A bad API key or an
+unknown agent id raises a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] instead.

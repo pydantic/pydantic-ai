@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 import inspect
+import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal, cast
+from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import TypeAdapter
-from typing_extensions import assert_never
+from pydantic_core import to_json
 
 from pydantic_ai import (
     Agent,
     AgentRunResult,
     AgentStreamEvent,
+    FinalResultEvent,
     FunctionToolset,
     ModelResponse,
     RunContext,
@@ -21,6 +24,7 @@ from pydantic_ai import (
     Tool,
     ToolsetTool,
 )
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     JournalCallableOperationBackend,
@@ -39,7 +43,9 @@ from pydantic_ai.durable_exec._operation import (
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesId,
     ModelCompactMessagesParams,
+    ModelCountTokensId,
     ModelRequestId,
+    ModelRequestParams,
     NoCacheIdentity,
     OperationConfigRole,
     ToolsetCallToolId,
@@ -53,6 +59,7 @@ from pydantic_ai.durable_exec._operation_backend import (
     CallableOperationBackend,
     DurableOperationBackend,
     RegisteredOperationBackend,
+    in_durable_unit,
 )
 from pydantic_ai.durable_exec._operation_names import DurableOperationNamer, JournalOperationNamer
 from pydantic_ai.durable_exec._toolset import (
@@ -62,10 +69,13 @@ from pydantic_ai.durable_exec._toolset import (
     DurableMCPToolset,
     DynamicToolInfo,
     DynamicToolsResult,
+    Lifecycle,
+    RunHeldToolset,
     ToolConfig,
     _ApprovalRequired,  # pyright: ignore[reportPrivateUsage]
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
+    _ToolContentResult,  # pyright: ignore[reportPrivateUsage]
     _ToolFailed,  # pyright: ignore[reportPrivateUsage]
     _ToolReturn,  # pyright: ignore[reportPrivateUsage]
     call_dynamic_tool,
@@ -74,17 +84,43 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.durable_exec._utils import DurableModel, StreamedActivityResult
-from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.durable_exec._utils import (
+    CountTokensResult,
+    DurableModel,
+    StreamedActivityResult,
+    StreamedModelRequestResult,
+)
+from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.messages import (
+    DocumentUrl,
+    FileUrl,
+    ImageUrl,
+    ModelMessage,
+    ModelRequest,
+    ModelResponseStreamEvent,
+    PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
+    TextPartDelta,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UploadedFile,
+    UserPromptPart,
+    _file_digest,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
-from pydantic_ai.usage import RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai.workspaces import Workspace
+
+from ..workspace_fakes import FakeWorkspace
 
 JOURNAL_OPERATION_NAMES = {
     'compat__model.request',
@@ -95,6 +131,8 @@ JOURNAL_OPERATION_NAMES = {
     'compat__model.cancel_suspended_response.registered',
     'compat__model.compact_messages',
     'compat__model.compact_messages.registered',
+    'compat__model.count_tokens',
+    'compat__model.count_tokens.registered',
     'compat__event_stream_handler',
     'compat__function_toolset__functions.call_tool:function_tool',
     'compat__function_toolset__functions.validate_args',
@@ -110,6 +148,7 @@ PREFECT_OPERATION_NAMES = {
     'Model Request (Streaming): test',
     'Cancel Suspended Response: test',
     'Compact Messages: test',
+    'Count Tokens: test',
     'Handle Stream Event',
     'Call Tool: function_tool',
     'Validate Tool Args: function_tool',
@@ -122,6 +161,7 @@ DBOS_OPERATION_NAMES = {
     'compat__model.request_stream',
     'compat__model.cancel_suspended_response',
     'compat__model.compact_messages',
+    'compat__model.count_tokens',
     'compat__event_stream_handler',
     'compat__mcp_server__mcp.get_tools',
     'compat__mcp_server__mcp.get_instructions',
@@ -135,6 +175,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__model_request_stream',
     'agent__compat__model_cancel_suspended_response',
     'agent__compat__model_compact_messages',
+    'agent__compat__model_count_tokens',
     'agent__compat__event_stream_handler',
     'agent__compat__toolset__<agent>__call_tool',
     'agent__compat__toolset__<agent>__validate_args',
@@ -223,6 +264,51 @@ def test_prepare_run_context_without_agent() -> None:
     assert ctx._durable_operations == {}  # pyright: ignore[reportPrivateUsage]
 
 
+@dataclass
+class _RecordInDurableContext(AbstractCapability[Any]):
+    seen: list[bool]
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        self.seen.append(ctx.in_durable_context)
+
+
+@pytest.mark.parametrize('in_durable_context', [True, False])
+async def test_run_context_in_durable_context_follows_durability(in_durable_context: bool) -> None:
+    class ToggledJournalDurability(JournalDurability):
+        @property
+        def in_durable_context(self) -> bool:
+            return in_durable_context
+
+    seen: list[bool] = []
+    agent = Agent(
+        TestModel(), name='in_durable', capabilities=[_RecordInDurableContext(seen), ToggledJournalDurability()]
+    )
+
+    await agent.run('Hello')
+
+    assert seen == [in_durable_context]
+
+
+async def test_run_context_in_durable_context_without_durability() -> None:
+    seen: list[bool] = []
+    agent = Agent(TestModel(), capabilities=[_RecordInDurableContext(seen)])
+
+    await agent.run('Hello')
+
+    assert seen == [False]
+
+
+def test_run_context_in_durable_context_without_agent_or_durable_exec(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = Agent(TestModel(), name='in_durable', capabilities=[JournalDurability()])
+    assert RunContext[None](deps=None, model=TestModel(), usage=RunUsage()).in_durable_context is False
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    assert ctx.in_durable_context is True
+
+    monkeypatch.delitem(sys.modules, 'pydantic_ai.durable_exec._base')
+
+    assert ctx.in_durable_context is False
+
+
 def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
     durability = JournalDurability()
     tool = ToolsetTool(
@@ -237,6 +323,228 @@ def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
     assert resolve(tool, 'configured') == {'base': 1}
 
 
+def test_durable_flows_from_each_tool_setter_into_the_tool_definition() -> None:
+    """A unit test: `ToolDefinition.durable` never reaches the provider, so a recorded request can't observe it."""
+
+    def plain() -> str:
+        return 'never called'  # pragma: no cover
+
+    def with_ctx(ctx: RunContext[None]) -> str:
+        return 'never called'  # pragma: no cover
+
+    toolset = FunctionToolset[None](durable=False)
+    toolset.tool_plain(plain)
+    toolset.tool(durable=True)(with_ctx)
+    toolset.add_tool(Tool(plain, name='as_tool'))
+    toolset.add_tool(Tool(plain, name='kept', durable=True))
+    toolset.add_function(plain, name='as_function', durable=True)
+    toolset.add_function(plain, name='function_default')
+    assert {name: tool.tool_def.durable for name, tool in toolset.tools.items()} == {
+        'plain': False,
+        'with_ctx': True,
+        'as_tool': False,
+        'kept': True,
+        'as_function': True,
+        'function_default': False,
+    }
+    assert FunctionToolset[None]([plain]).tools['plain'].tool_def.durable is None
+
+    agent = Agent[None, str](TestModel(), deps_type=type(None))
+    agent.tool_plain(durable=False)(plain)
+    agent.tool(durable=False)(with_ctx)
+    capability = Capability[None]()
+    capability.tool_plain(durable=False)(plain)
+    capability.tool(durable=False)(with_ctx)
+    for tools in (agent._function_toolset.tools, capability._function_toolset.tools):  # pyright: ignore[reportPrivateUsage]
+        assert {name: tool.tool_def.durable for name, tool in tools.items()} == {'plain': False, 'with_ctx': False}
+
+
+async def test_durable_false_runs_a_function_tool_outside_the_durable_unit() -> None:
+    class KeyedJournalDurability(JournalDurability):
+        engine_spec = replace(JournalDurability.engine_spec, tool_config_key='journal')
+
+    ran: list[str] = []
+
+    def validate(ctx: RunContext[None], value: int) -> None:
+        pass
+
+    def validate_inline(ctx: RunContext[None], value: int) -> None:
+        ran.append('validate_inline')
+
+    async def inline(value: int) -> str:
+        ran.append('inline')
+        return 'inline'
+
+    async def journaled(value: int) -> str:
+        ran.append('journaled')
+        return 'journaled'
+
+    async def engine_key_wins(value: int) -> str:
+        ran.append('engine_key_wins')
+        return 'engine'
+
+    async def prepared(value: int) -> str:
+        ran.append('prepared')
+        return 'prepared'
+
+    async def reset(value: int) -> str:
+        ran.append('reset')
+        return 'reset'
+
+    async def set_durable(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        placements = {'prepared': False, 'reset': True}
+        return [replace(td, durable=placements[td.name]) if td.name in placements else td for td in tool_defs]
+
+    toolset = FunctionToolset(
+        tools=[
+            Tool(inline, args_validator=validate_inline, durable=False),
+            Tool(journaled, args_validator=validate),
+            Tool(engine_key_wins, durable=False, metadata={'journal': {}}),
+            Tool(prepared),
+            Tool(reset, durable=False),
+        ],
+        id='functions',
+    )
+    durability = KeyedJournalDurability()
+    agent = Agent[None, str](
+        TestModel(),
+        name='agent',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[PrepareTools(set_durable), durability],
+    )
+
+    await agent.run('Go.')
+
+    assert sorted(name for name, _, _ in durability.calls if name.startswith('agent__function_toolset')) == [
+        'agent__function_toolset__functions.call_tool:engine_key_wins',
+        'agent__function_toolset__functions.call_tool:journaled',
+        'agent__function_toolset__functions.call_tool:reset',
+        'agent__function_toolset__functions.validate_args',
+    ]
+    # The opted-out tools and the opted-out validator ran too, outside the journal.
+    assert sorted(set(ran)) == ['engine_key_wins', 'inline', 'journaled', 'prepared', 'reset', 'validate_inline']
+
+
+async def _async_tool() -> str:
+    return 'never called'  # pragma: no cover
+
+
+def _sync_tool() -> str:
+    return 'never called'  # pragma: no cover
+
+
+def _no_validation(ctx: RunContext[None]) -> None:
+    pass  # pragma: no cover
+
+
+def _dynamic(tool: Tool[None]) -> DynamicToolset[None]:
+    return DynamicToolset(lambda _: FunctionToolset(tools=[tool]), id='dynamic')
+
+
+@pytest.mark.parametrize(
+    ('toolset', 'match'),
+    [
+        pytest.param(
+            FunctionToolset(tools=[Tool(_sync_tool, durable=False)], id='functions'),
+            'only async tools can run outside a durable unit',
+            id='sync',
+        ),
+        pytest.param(
+            _dynamic(Tool(_async_tool, durable=False)),
+            'only function tools can run outside a durable unit',
+            id='dynamic',
+        ),
+        pytest.param(
+            _dynamic(Tool(_async_tool, args_validator=_no_validation, durable=False)),
+            'only function tools can run outside a durable unit',
+            id='dynamic-validated',
+        ),
+    ],
+)
+async def test_durable_false_refuses_tools_that_cannot_leave_the_durable_unit(
+    toolset: FunctionToolset[None] | DynamicToolset[None], match: str
+) -> None:
+    agent = Agent[None, str](
+        TestModel(), name='agent', deps_type=type(None), toolsets=[toolset], capabilities=[JournalDurability()]
+    )
+
+    with pytest.raises(UserError, match=match):
+        await agent.run('Go.')
+
+
+async def test_durable_false_refuses_an_mcp_tool_unless_the_engine_key_is_set() -> None:
+    pytest.importorskip('mcp')
+    pytest.importorskip('fastmcp.server')
+    from fastmcp import FastMCP
+
+    from pydantic_ai.mcp import MCPToolset
+
+    class KeyedJournalDurability(JournalDurability):
+        engine_spec = replace(JournalDurability.engine_spec, tool_config_key='journal')
+
+    mcp_toolset = MCPToolset(FastMCP(name='in_process'), id='mcp')
+    durable = KeyedJournalDurability(name='agent')._build_mcp_toolset_after_discovery(  # pyright: ignore[reportPrivateUsage]
+        mcp_toolset,
+        base_config={},
+        get_tools_operation=AsyncMock(return_value={}),
+        get_instructions_operation=AsyncMock(return_value=None),
+        discovery_registrations=[],
+    )
+
+    def tool(metadata: dict[str, Any] | None = None) -> ToolsetTool[None]:
+        return ToolsetTool(
+            toolset=mcp_toolset,
+            tool_def=ToolDefinition(name='search', durable=False, metadata=metadata),
+            max_retries=0,
+            args_validator=TOOL_SCHEMA_VALIDATOR,
+        )
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    with pytest.raises(UserError, match="Tool 'search' has `durable=False`, but only function tools"):
+        await durable.call_tool('search', {}, ctx, tool())
+    # The engine's own key wins, so the call stays in its durable unit.
+    resolve = durable._resolve_tool_config  # pyright: ignore[reportPrivateUsage]
+    assert resolve(tool({'journal': {}}), 'search') == {}
+
+
+async def test_runtime_function_toolset_opted_out_with_durable_false_is_allowed() -> None:
+    class KeyedJournalDurability(JournalDurability):
+        engine_spec = replace(
+            JournalDurability.engine_spec,
+            tool_config_key='journal',
+            unsupported_runtime_toolset_kinds=frozenset({'function'}),
+        )
+
+    async def async_tool() -> str:
+        return 'ran'
+
+    def sync_tool() -> str:
+        return 'ran'
+
+    agent = Agent[None, str](TestModel(), name='agent', deps_type=type(None), capabilities=[KeyedJournalDurability()])
+
+    async def run(
+        durable: bool | None,
+        metadata: dict[str, Any] | None = None,
+        function: Callable[[], str | Awaitable[str]] = async_tool,
+    ) -> None:
+        tool = Tool(function, durable=durable, metadata=metadata)
+        await agent.run('Go.', toolsets=[FunctionToolset(tools=[tool])])
+
+    await run(False)
+    await run(True, {'journal': False})
+    await run(None, {'journal': False}, sync_tool)
+    rejected = r'cannot be added at runtime with Journal.*opt out with durable=False'
+    with pytest.raises(UserError, match=rejected):
+        await run(False, {'journal': {}})
+    with pytest.raises(UserError, match=rejected):
+        await run(True)
+    with pytest.raises(UserError, match=rejected):
+        await run(False, None, sync_tool)
+
+
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_mcp_tool_config_dispatches_durable_and_inline_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip('mcp')
     from fastmcp.client.transports import StdioTransport
@@ -364,6 +672,8 @@ def _ids() -> list[DurableOperationId]:
         ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
         ModelCompactMessagesId(None, model_name='test'),
         ModelCompactMessagesId('registered', model_name='test'),
+        ModelCountTokensId(None, model_name='test'),
+        ModelCountTokensId('registered', model_name='test'),
     ]
 
 
@@ -395,6 +705,7 @@ def test_prefect_operation_names() -> None:
         _ids()[13],
         _ids()[14],
         _ids()[15],
+        _ids()[17],
     ]
     namer = PrefectOperationNamer()
     actual = [namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids]
@@ -429,6 +740,7 @@ def test_dbos_name_parity_with_live_old_implementation_and_table() -> None:
         _ids()[13],
         _ids()[14],
         _ids()[15],
+        _ids()[17],
     ]
     namer = DBOSOperationNamer('compat')
     actual = [namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids]
@@ -461,6 +773,7 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
         ModelRequestId(None, streaming=True, model_name='test'),
         ModelCancelSuspendedResponseId(None, model_name='test'),
         ModelCompactMessagesId(None, model_name='test'),
+        ModelCountTokensId(None, model_name='test'),
         EventStreamHandlerId(),
         ToolsetCallToolId('function', toolset_id='<agent>'),
         ToolsetValidateToolArgumentsId('function', toolset_id='<agent>'),
@@ -488,7 +801,6 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         _CancelParams,  # pyright: ignore[reportPrivateUsage]
         _EventStreamHandlerParams,  # pyright: ignore[reportPrivateUsage]
         _RequestParams,  # pyright: ignore[reportPrivateUsage]
-        _StreamedActivityPayload,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.temporal._toolset import toolset_temporal_activities
     from pydantic_ai.durable_exec.temporal._transports import (
@@ -506,19 +818,22 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
     backend = durability._operation_backend  # pyright: ignore[reportPrivateUsage]
     assert backend is not None
 
-    # Rebuild the pre-backend registration list through the old ownership path: the four
+    # Rebuild the pre-backend registration list through the old ownership path: the
     # capability activities followed by each wrapped toolset's activities.
     legacy_registrations = [
         durability.request_activity,
         durability.request_stream_activity,
         durability.compact_messages_activity,
+        durability.count_tokens_activity,
         durability.event_stream_handler_activity,
         durability.cancel_suspended_response_activity,
     ]
     for wrapped in durability._toolsets_by_id.values():  # pyright: ignore[reportPrivateUsage]
         legacy_registrations.extend(toolset_temporal_activities(wrapped))
 
-    registrations = list(backend.registrations())
+    # Child workflow definitions now share the backend registration stream, while this
+    # compatibility assertion remains specifically about SDK-visible activities.
+    registrations = durability.temporal_activities
     assert registrations == legacy_registrations
 
     def sdk_definition(item: Callable[..., object]) -> tuple[str | None, inspect.Signature]:
@@ -530,8 +845,9 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
 
     expected_signatures = {
         durability.request_activity: (_RequestParams, ModelResponse),
-        durability.request_stream_activity: (_RequestParams, _StreamedActivityPayload),
+        durability.request_stream_activity: (_RequestParams, StreamedModelRequestResult),
         durability.compact_messages_activity: (_CompactMessagesParams, ModelResponse),
+        durability.count_tokens_activity: (_RequestParams, CountTokensResult),
         durability.event_stream_handler_activity: (_EventStreamHandlerParams, type(None)),
         durability.cancel_suspended_response_activity: (_CancelParams, type(None)),
     }
@@ -629,6 +945,47 @@ async def test_temporal_backend_dispatches_compact_messages(monkeypatch: pytest.
     assert summary == 'compact messages: test:test'
 
 
+async def test_temporal_backend_dispatches_count_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The count's activity carries the request's wire parameters and is summarized for the Temporal UI."""
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._durability import _RequestParams  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(TestModel(), name='count-dispatch', capabilities=[TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    expected = CountTokensResult(usage=RequestUsage(input_tokens=3))
+    dispatched: list[tuple[Callable[..., object], Sequence[object], object]] = []
+
+    async def execute_activity(
+        activity: Callable[..., object], *, args: Sequence[object], **config: object
+    ) -> CountTokensResult:
+        dispatched.append((activity, args, config['summary']))
+        return expected
+
+    monkeypatch.setattr('pydantic_ai.durable_exec.temporal._operation_backend.execute_activity', execute_activity)
+    operations = durability._bound_model_operations  # pyright: ignore[reportPrivateUsage]
+    assert operations is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('hi')])]
+    result = await operations.count_tokens(
+        ModelRequestParams(
+            None,
+            messages=messages,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+            run_context=ctx,
+        )
+    )
+
+    assert result == expected
+    activity, args, summary = dispatched[0]
+    assert activity is durability.count_tokens_activity
+    assert isinstance(args[0], _RequestParams)
+    assert args[0].messages == messages
+    assert summary == 'count tokens: test:test'
+
+
 async def test_temporal_compaction_payload_round_trips_live_durable_model() -> None:
     pytest.importorskip('temporalio')
     from temporalio.contrib.pydantic import pydantic_data_converter
@@ -643,7 +1000,7 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     # Converter round-tripping inspects these callables but cannot dispatch them.
     async def request_segment(request: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
 
-    async def stream_segment(request: ModelRequestContext) -> StreamedActivityResult: ...
+    async def stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult: ...
 
     async def compact_segment(  # pragma: no cover
         request: ModelRequestContext, instructions: str | None
@@ -652,12 +1009,15 @@ async def test_temporal_compaction_payload_round_trips_live_durable_model() -> N
     async def cancel_segment(response: ModelResponse) -> None:
         pass
 
+    async def count_segment(request: ModelRequestContext) -> RequestUsage: ...  # pragma: no branch
+
     model = DurableModel(
         TestModel(),
         request_segment=request_segment,
         request_stream_segment=stream_segment,
         compact_messages_segment=compact_segment,
         cancel_suspended_response_segment=cancel_segment,
+        count_tokens_segment=count_segment,
     )
     agent = Agent(TestModel(), name='compact-converter', capabilities=[TemporalDurability()])
     durability = TemporalDurability.from_agent(agent)
@@ -721,6 +1081,8 @@ def _exhaustive_identity(operation_id: DurableOperationId) -> str:
             return 'cancel'
         case ModelCompactMessagesId():
             return 'compact'
+        case ModelCountTokensId():
+            return 'count'
         case CapabilityOperationId():
             return 'capability'
         case EventStreamHandlerId():
@@ -741,6 +1103,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         ModelRequestId(None, streaming=False, model_name='model'),
         ModelCancelSuspendedResponseId(None, model_name='model'),
         ModelCompactMessagesId(None, model_name='model'),
+        ModelCountTokensId(None, model_name='model'),
         CapabilityOperationId('capability', operation='operation'),
         EventStreamHandlerId(),
         ToolsetGetToolsId('function', toolset_id='tools'),
@@ -752,6 +1115,7 @@ def test_operation_identity_union_is_exhaustively_constructible() -> None:
         'model',
         'cancel',
         'compact',
+        'count',
         'capability',
         'event',
         'tools',
@@ -841,9 +1205,13 @@ async def test_durable_model_compact_messages_dispatches_operation(
     # Compact-message dispatch must not enter the other model segment callables.
     async def unused_request(request_context: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
 
-    async def unused_stream(request_context: ModelRequestContext) -> StreamedActivityResult: ...  # pragma: no branch
+    async def unused_stream(
+        request_context: ModelRequestContext,
+    ) -> StreamedModelRequestResult: ...  # pragma: no branch
 
     async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
+
+    async def unused_count(request_context: ModelRequestContext) -> RequestUsage: ...  # pragma: no branch
 
     model = DurableModel(
         TestModel(),
@@ -851,6 +1219,7 @@ async def test_durable_model_compact_messages_dispatches_operation(
         request_stream_segment=unused_stream,
         compact_messages_segment=compact_messages_segment,
         cancel_suspended_response_segment=unused_cancel,
+        count_tokens_segment=unused_count,
     )
     request_context = ModelRequestContext(
         model=model,
@@ -861,6 +1230,61 @@ async def test_durable_model_compact_messages_dispatches_operation(
 
     assert await model.compact_messages(request_context, instructions='Keep decisions') == response
     assert backend.calls[0][0] == expected_name
+
+
+async def test_durable_model_replays_streamed_segment_results() -> None:
+    """A bare response replays one event per part; a recorded `StreamedActivityResult` replays its events as recorded."""
+    response = ModelResponse(parts=[TextPart('Hello world')])
+    recorded = StreamedActivityResult(
+        response=response,
+        events=[
+            PartStartEvent(index=0, part=TextPart('Hello')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' world')),
+            PartEndEvent(index=0, part=TextPart('Hello world')),
+        ],
+    )
+    results: list[StreamedModelRequestResult] = [response, recorded]
+
+    async def stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
+        return results.pop(0)
+
+    async def unused_request(request: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
+
+    async def unused_compact(  # pragma: no branch
+        request: ModelRequestContext, instructions: str | None
+    ) -> ModelResponse: ...
+
+    async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
+
+    async def unused_count(request: ModelRequestContext) -> RequestUsage: ...  # pragma: no branch
+
+    model = DurableModel(
+        TestModel(),
+        request_segment=unused_request,
+        request_stream_segment=stream_segment,
+        compact_messages_segment=unused_compact,
+        cancel_suspended_response_segment=unused_cancel,
+        count_tokens_segment=unused_count,
+    )
+
+    replays: list[tuple[list[ModelResponseStreamEvent], ModelResponse]] = []
+    for _ in range(2):
+        async with model.request_stream([], None, ModelRequestParameters()) as stream:
+            replays.append(([event async for event in stream], stream.get()))
+
+    assert replays == snapshot(
+        [
+            (
+                [
+                    PartStartEvent(index=0, part=TextPart(content='Hello world')),
+                    FinalResultEvent(tool_name=None, tool_call_id=None),
+                    PartEndEvent(index=0, part=TextPart(content='Hello world')),
+                ],
+                response,
+            ),
+            (recorded.events, response),
+        ]
+    )
 
 
 async def test_base_durable_model_compact_messages_dispatches_bound_operation() -> None:
@@ -891,6 +1315,38 @@ async def test_base_durable_model_compact_messages_dispatches_bound_operation() 
 
     assert await durability.wrap_model_request(ctx, request_context=request_context, handler=handler) == response
     assert durability.calls[0][0] == 'compact__model.compact_messages'
+
+
+async def test_count_tokens_before_request_runs_in_its_own_durable_unit() -> None:
+    """The count a usage limit asks for runs in its own durable unit, ahead of the request, and enforces the limit.
+
+    Through the shared base every engine builds on; the engine suites check their own units.
+    """
+    counted_in_unit: list[bool] = []
+
+    class CountingModel(TestModel):
+        async def count_tokens(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> RequestUsage:
+            counted_in_unit.append(in_durable_unit())
+            return RequestUsage(input_tokens=5)
+
+    agent = Agent(CountingModel(), name='count', capabilities=[JournalDurability()])
+    durability = JournalDurability.from_agent(agent)
+    assert durability is not None
+
+    result = await agent.run('hi', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True))
+    assert result.output == 'success (no tool calls)'
+    assert [name for name, _, _ in durability.calls] == ['count__model.count_tokens', 'count__model.request']
+    assert counted_in_unit == [True]
+
+    durability.calls.clear()
+    with pytest.raises(UsageLimitExceeded, match='input_tokens_limit of 4'):
+        await agent.run('hi', usage_limits=UsageLimits(input_tokens_limit=4, count_tokens_before_request=True))
+    assert [name for name, _, _ in durability.calls] == ['count__model.count_tokens']
 
 
 async def test_dbos_compact_messages_operation_dispatches_step() -> None:
@@ -963,6 +1419,23 @@ def test_typed_result_codec_matches_json_codec(value: CallToolResult) -> None:
     payload = codec.dump(value)
     assert payload == JSON_CODEC.dump(CallToolResult, value)
     assert codec.load(payload) == JSON_CODEC.load(CallToolResult, payload)
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        CountTokensResult(
+            usage=RequestUsage(input_tokens=5, cache_read_tokens=2, details={'reasoning': 1}),
+            framework_metadata={'thinking': {'stale': True}},
+        ),
+        CountTokensResult(error=('NotImplementedError', 'Token counting is not supported')),
+        CountTokensResult(error=('UserError', 'The request cannot be counted.')),
+    ],
+)
+def test_count_tokens_result_round_trips_through_the_json_codec(value: CountTokensResult) -> None:
+    """A count's recorded result loads back unchanged, the error tuple included, after JSON encoding turns it into a list."""
+    codec = TypedResultCodec[CountTokensResult](CountTokensResult)
+    assert codec.load(codec.dump(value)) == value
 
 
 def test_typed_result_codec_json_model_and_identity_parity() -> None:
@@ -1148,13 +1621,17 @@ async def test_registered_backend_binds_model_operations_during_agent_assembly()
     model_operation_ids = [
         operation.operation_id
         for operation in backend.operations
-        if isinstance(operation.operation_id, (ModelRequestId, ModelCompactMessagesId, ModelCancelSuspendedResponseId))
+        if isinstance(
+            operation.operation_id,
+            (ModelRequestId, ModelCompactMessagesId, ModelCountTokensId, ModelCancelSuspendedResponseId),
+        )
     ]
     assert model_operation_ids == [
         ModelRequestId(None, streaming=False, model_name='default'),
         ModelRequestId(None, streaming=True, model_name='default'),
         ModelCompactMessagesId(None, model_name='default'),
         ModelCancelSuspendedResponseId(None, model_name='default'),
+        ModelCountTokensId(None, model_name='default'),
     ]
 
     async def handler(params: int) -> int:
@@ -1212,7 +1689,7 @@ def test_dbos_registered_backend_exposes_bound_operation_and_rejects_unsupported
     assert backend.bind(unsupported).operation is unsupported
 
     with pytest.raises(TypeError, match='not a model or event operation'):
-        backend._bind_model_or_event(unsupported, 'unsupported', {})  # pyright: ignore[reportPrivateUsage]
+        backend._bind_model_or_event(unsupported)  # pyright: ignore[reportPrivateUsage]
 
     unsupported_call = replace(unsupported, operation_id=ToolsetCallToolId('function', toolset_id='tools'))
     with pytest.raises(TypeError, match='not registered'):
@@ -1258,7 +1735,7 @@ async def test_dynamic_args_validator_runs_in_declarative_unit_and_preserves_sch
         str(part.content)
         for message in rejected.all_messages()
         for part in message.parts
-        if isinstance(part, RetryPromptPart)
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ] == ['forbidden path']
     recorded_names = [name for name, _, _ in durability.calls]
     assert 'validation__dynamic_toolset__files.validate_args' in recorded_names
@@ -1311,11 +1788,14 @@ async def test_tool_body_validation_error_preserves_detailed_retry() -> None:
 
     assert result.output == 'done'
     assert len(model_messages) == 2
-    retry = next(part for message in model_messages[1] for part in message.parts if isinstance(part, RetryPromptPart))
+    returns: list[ToolReturnPart[Any]] = [
+        part for message in model_messages[1] for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    retry = next(part for part in returns if part.outcome == 'retried')
     assert retry.content == [
         {
             'type': 'int_parsing',
-            'loc': (),
+            'loc': [],
             'msg': 'Input should be a valid integer, unable to parse string as an integer',
             'input': invalid_input,
         }
@@ -1379,9 +1859,17 @@ async def test_legacy_dynamic_execution_unit_preserves_argument_validation_retry
 
     def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
         nonlocal retries
-        if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome != 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             return ModelResponse(parts=[TextPart('done')])
-        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             retries += 1
             return ModelResponse(parts=[ToolCallPart('double', {'x': 5})])
         return ModelResponse(parts=[ToolCallPart('double', {'x': 'not-a-number'})])
@@ -1425,6 +1913,39 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     with pytest.raises(UserError, match=r"Tool 'guarded'.*has an `args_validator`"):
         await durable.get_tools(ctx)
+
+
+@pytest.mark.parametrize('lifecycle', ['enter-outside-durable', 'enter-always'])
+async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself(lifecycle: Lifecycle) -> None:
+    class ReplacingToolset(FunctionToolset[None]):
+        async def for_run(self, ctx: RunContext[None]) -> FunctionToolset[None]:
+            return FunctionToolset(id=self.id)
+
+        async def for_run_step(self, ctx: RunContext[None]) -> FunctionToolset[None]:
+            return FunctionToolset(id=self.id)
+
+    async def unused_operation(
+        name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any], config: Mapping[str, Any]
+    ) -> Any: ...  # pragma: no branch
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    ctx.workspace = Workspace(FakeWorkspace('attached'))
+    leaf = ReplacingToolset(id='replacing')
+    durable = DurableFunctionToolset(
+        leaf,
+        in_durable_context=lambda: False,
+        call_tool_operation=unused_operation,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle=lifecycle,
+    )
+    # Temporal activities resolve tools on the registered toolset, so even with a workspace attached
+    # the run must list that toolset's tools, not a per-run replacement's.
+    replaced = lifecycle != 'enter-outside-durable'
+    for method in ('for_run', 'for_run_step'):
+        replacement = await getattr(durable, method)(ctx)
+        assert (replacement is not durable) is replaced
+        assert replacement.durable_registrations is durable.durable_registrations
+        assert (replacement.wrapped is not leaf) is replaced
 
 
 async def test_legacy_validation_fallbacks_remain_inline() -> None:
@@ -1487,3 +2008,445 @@ async def test_args_validator_disappearing_after_discovery_is_rejected() -> None
 
     with pytest.raises(UserError, match="Tool 'changed' has no `args_validator`"):
         await run_args_validator(tool, {}, ctx)
+
+
+def _counting_mcp_server() -> tuple[Any, dict[str, int]]:
+    pytest.importorskip('mcp')
+    from .counting_mcp import counting_mcp_server
+
+    return counting_mcp_server(instructions='Be a helpful assistant.')
+
+
+def _two_tool_calls_model() -> FunctionModel:
+    pytest.importorskip('mcp')
+    from .counting_mcp import two_echo_calls_model
+
+    return two_echo_calls_model()
+
+
+async def _run_dynamic_mcp_agent(*, per_run_step: bool) -> tuple[dict[str, int], int]:
+    from pydantic_ai.mcp import MCPToolset
+
+    server, counts = _counting_mcp_server()
+    resolutions = 0
+
+    def factory(ctx: RunContext[None]) -> MCPToolset[None]:
+        nonlocal resolutions
+        resolutions += 1
+        return MCPToolset(server, id='inner-mcp')
+
+    durability = JournalDurability(name='agent')
+    durable = durability._build_dynamic_toolset(  # pyright: ignore[reportPrivateUsage]
+        DynamicToolset(factory, id='dynamic', per_run_step=per_run_step)
+    )
+    result = await Agent(_two_tool_calls_model(), toolsets=[durable]).run('go')
+    assert result.output == 'done'
+    return counts, resolutions
+
+
+async def test_run_resolved_dynamic_toolset_is_entered_once_per_run() -> None:
+    """A `per_run_step=False` dynamic toolset costs one MCP session for the whole durable run.
+
+    The run resolves the toolset once — resolving does no I/O — and the first durable unit that
+    needs it enters it and leaves it entered, so the toolset's own `cache_tools` serves every later
+    unit. Before, every unit built, entered and tore down its own toolset, so three model requests
+    and two tool calls cost five `initialize`/`tools/list` round trips instead of one: see
+    https://github.com/pydantic/pydantic-ai/issues/8054. This is what a non-durable run has always
+    done, and what an `MCPToolset` attached directly to the agent does.
+    """
+    counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=False)
+
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
+    assert resolutions == snapshot(1)
+
+
+async def test_per_run_step_dynamic_toolset_still_resolves_per_unit() -> None:
+    """A `per_run_step=True` factory keeps resolving inside each durable unit.
+
+    Its `for_run_step` swaps the inner toolset in place, so a run-resolved instance shared by
+    parallel tool-call units would race. The factory asked to be re-evaluated per step, so the
+    per-unit resolution that has always happened is also what it asked for.
+    """
+    counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=True)
+
+    assert counts == snapshot({'handshake': 5, 'tools/list': 5, 'tools/call': 2})
+    assert resolutions == snapshot(5)
+
+
+async def test_dynamic_unit_resolves_its_own_toolset_when_the_run_context_cannot_carry_one() -> None:
+    """A unit that can't reach the run's resolved toolset resolves its own, as it always did.
+
+    A resolved toolset is a live object, so an engine that serializes the run context into the unit
+    (Temporal) or dispatches it to another process never receives one. `get_dynamic_tools` and
+    `call_dynamic_tool` are what those engines call, so they must stand alone given a bare context.
+    """
+    from pydantic_ai.mcp import MCPToolset
+
+    server, counts = _counting_mcp_server()
+    resolutions = 0
+
+    def factory(ctx: RunContext[None]) -> MCPToolset[None]:
+        nonlocal resolutions
+        resolutions += 1
+        return MCPToolset(server, id='inner-mcp')
+
+    dynamic = DynamicToolset(factory, id='dynamic', per_run_step=False)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    assert ctx._run_held_toolsets is None  # pyright: ignore[reportPrivateUsage]
+
+    discovered = await get_dynamic_tools(dynamic, ctx)
+    tool_def = discovered.tools['echo'].tool_def
+    assert await call_dynamic_tool(dynamic, 'echo', {'text': 'hi'}, ctx, tool_def=tool_def) == snapshot('echo: hi')
+
+    # Each call stands on its own: it built, entered and tore down its own toolset.
+    assert resolutions == snapshot(2)
+    assert counts == snapshot({'handshake': 2, 'tools/list': 2, 'tools/call': 1})
+
+
+async def test_run_held_toolset_closes_only_what_a_unit_entered() -> None:
+    """The run closes the toolset it holds, and only if some durable unit actually entered it.
+
+    A run can end without any unit needing the toolset — cancelled, short-circuited, or failed
+    before discovery — and resolving it never connected, so there is nothing to exit.
+    """
+    exits = 0
+
+    class RecordingToolset(FunctionToolset[None]):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            nonlocal exits
+            exits += 1
+            return await super().__aexit__(*args)
+
+    never_entered = RunHeldToolset('dynamic', RecordingToolset())
+    await never_entered.aclose(None, None, None)
+    assert exits == 0
+
+    entered = RunHeldToolset('dynamic', RecordingToolset())
+    toolset = await entered.entered()
+    # Entering again is the second unit reusing what the first one opened, not a second session.
+    assert await entered.entered() is toolset
+    await entered.aclose(None, None, None)
+    assert exits == 1
+
+    # Closing twice is not an error: the run holds the only reference and closes once.
+    await entered.aclose(None, None, None)
+    assert exits == 1
+
+
+async def test_parallel_tool_call_units_share_one_session() -> None:
+    """Tool-call units running in parallel enter the run's toolset once between them.
+
+    Each unit asks the run for the toolset it resolved, so without a gate they would race to open a
+    session and the loser's would never be closed.
+    """
+    from pydantic_ai.mcp import MCPToolset
+
+    server, counts = _counting_mcp_server()
+    resolutions = 0
+
+    def factory(ctx: RunContext[None]) -> MCPToolset[None]:
+        nonlocal resolutions
+        resolutions += 1
+        return MCPToolset(server, id='inner-mcp')
+
+    step = 0
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal step
+        step += 1
+        if step == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('echo', {'text': 'a'}), ToolCallPart('echo', {'text': 'b'})],
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    durability = JournalDurability(name='agent')
+    durable = durability._build_dynamic_toolset(  # pyright: ignore[reportPrivateUsage]
+        DynamicToolset(factory, id='dynamic', per_run_step=False)
+    )
+    result = await Agent(FunctionModel(model), toolsets=[durable]).run('go')
+
+    assert result.output == 'done'
+    assert resolutions == snapshot(1)
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
+
+
+async def test_closing_the_wrapper_passes_on_how_it_was_exited() -> None:
+    """Closing the run's toolset forwards the wrapper's own `__aexit__` arguments.
+
+    The units that used the toolset each returned long ago, so how the wrapper was exited is the
+    only thing left that can tell a toolset whether to roll back or commit what it did. (An agent
+    run exits its toolsets cleanly even when the run raises — a directly attached `MCPToolset` sees
+    the same `None` — so this is the context-manager contract, not the run's error path.)
+    """
+    exits: list[type[BaseException] | None] = []
+
+    class RecordingToolset(FunctionToolset[None]):
+        async def __aexit__(self, *args: Any) -> bool | None:
+            exits.append(args[0] if args else None)
+            return await super().__aexit__(*args)
+
+    async def echo(text: str) -> str: ...  # pragma: no cover
+
+    durability = JournalDurability(name='agent')
+    durable = durability._build_dynamic_toolset(  # pyright: ignore[reportPrivateUsage]
+        DynamicToolset(lambda _: RecordingToolset([echo]), id='dynamic', per_run_step=False)
+    )
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    run_toolset = await durable.for_run(ctx)
+    async with run_toolset:
+        # Discovery is what enters the resolved toolset, so there is something left to close.
+        await run_toolset.get_tools(ctx)
+        assert exits == []
+        error = RuntimeError('run blew up')
+        assert await run_toolset.__aexit__(type(error), error, error.__traceback__) is None
+
+    assert exits == snapshot([RuntimeError])
+
+
+async def _run_static_mcp_agent(
+    *,
+    lifecycle: Lifecycle,
+    runs: int = 1,
+    in_durable_context: bool = True,
+    include_instructions: bool = False,
+) -> tuple[dict[str, int], list[str | None]]:
+    """Run agents with one statically attached MCP toolset, counting what reaches the server."""
+    from pydantic_ai.mcp import MCPToolset
+
+    server, counts = _counting_mcp_server()
+
+    class _Durability(JournalDurability):
+        engine_spec = replace(
+            JournalDurability.engine_spec,
+            toolset_lifecycles={**JournalDurability.engine_spec.toolset_lifecycles, 'mcp': lifecycle},
+        )
+
+        @property
+        def in_durable_context(self) -> bool:
+            return in_durable_context
+
+    # The toolset and its wrapper are shared by every run in the process, as they are on an agent.
+    toolset = MCPToolset(server, id='mcp', include_instructions=include_instructions)
+    durable = _Durability(name='agent')._build_mcp_toolset(toolset)  # pyright: ignore[reportPrivateUsage]
+    instructions: list[str | None] = []
+    for _ in range(runs):
+        agent = Agent(_two_tool_calls_model(), toolsets=[durable])
+        result = await agent.run('go')
+        assert result.output == 'done'
+        instructions += [m.instructions for m in result.all_messages() if isinstance(m, ModelRequest)]
+        # Whatever opened the server closed it again: no session outlives the run that needed it.
+        assert not toolset.is_running
+    return counts, instructions
+
+
+async def test_static_mcp_toolset_holds_one_session_for_the_durable_run() -> None:
+    """A statically attached `MCPToolset` costs one MCP session for the whole durable run.
+
+    The first durable unit that needs the server connects it — inside a unit, where the engine's own
+    retry policy covers a failed connection — and the run holds the session for the units that
+    follow, so the toolset's own `cache_tools` serves them and the `tools/list` the MCP SDK issues
+    before a call finds a warm session. Entering and tearing down a session in every unit cost three
+    `initialize`/`tools/list` round trips for three model requests and two tool calls: see
+    https://github.com/pydantic/pydantic-ai/issues/8458. One session is what a non-durable run has
+    always given the toolset.
+    """
+    counts, _ = await _run_static_mcp_agent(lifecycle='enter-in-durable-unit')
+
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
+
+
+async def test_static_mcp_toolset_is_entered_per_unit_when_the_run_cannot_hold_a_session() -> None:
+    """An engine whose units may run in another process keeps connecting per unit, as it always did.
+
+    Temporal's `enter-outside-durable` is that engine: an activity may run in a different worker
+    process, so the only session it can use is one it opens itself. Discovery lists the tools, and
+    each tool-call unit then pays for its own `initialize` plus the `tools/list` the MCP SDK issues
+    before a call on a cold session.
+    """
+    counts, _ = await _run_static_mcp_agent(lifecycle='enter-outside-durable')
+
+    assert counts == snapshot({'handshake': 3, 'tools/list': 3, 'tools/call': 2})
+
+
+async def test_each_durable_run_holds_its_own_session() -> None:
+    """The run that opened the session closes it, so the next run opens its own.
+
+    The toolset is shared by every run in the process, so a held session must not outlive the run
+    that needed it. Entry is refcounted by the toolset, so concurrent runs share one session and the
+    last of them closes it.
+    """
+    counts, _ = await _run_static_mcp_agent(lifecycle='enter-in-durable-unit', runs=2)
+
+    assert counts == snapshot({'handshake': 2, 'tools/list': 2, 'tools/call': 4})
+
+
+async def test_static_mcp_toolset_is_entered_by_the_wrapper_outside_the_durable_context() -> None:
+    """Outside the durable container the wrapper enters the toolset itself.
+
+    `enter-in-durable-unit` hands entry to the run's durable units, which only exist inside the
+    container — and the same wrapper has to stay transparent when the agent runs outside one, where
+    it dispatches nothing. A server's instructions are captured when its session opens, so they are
+    what shows that something entered it around the run.
+    """
+    counts, instructions = await _run_static_mcp_agent(
+        lifecycle='enter-in-durable-unit', in_durable_context=False, include_instructions=True
+    )
+
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
+    assert instructions == snapshot(['Be a helpful assistant.'] * 3)
+
+
+@pytest.mark.parametrize(
+    ('lifecycle', 'in_durable_context'),
+    [
+        pytest.param('enter-outside-durable', False, id='outside-durable-outside-context'),
+        pytest.param('enter-outside-durable', True, id='outside-durable-in-context'),
+        pytest.param('enter-in-durable-unit', False, id='in-durable-unit-outside-context'),
+    ],
+)
+async def test_mcp_toolset_with_auth_function_connects_each_run_as_its_own_user(
+    lifecycle: Lifecycle, in_durable_context: bool
+) -> None:
+    """A per-run `MCPToolset` (function `auth`) reaches the server as each run's own user, whatever the lifecycle.
+
+    Outside the durable context the wrapper calls the wrapped toolset's per-run copy directly — before
+    that, `enter-outside-durable` returned the wrapper as it was, so the run called the template, which
+    can't connect. Inside it, Temporal's activities each build a copy from the unit's run context.
+    """
+    pytest.importorskip('mcp')
+    pytest.importorskip('fastmcp.server')
+    import httpx
+    import httpx2
+    from fastmcp import FastMCP
+    from fastmcp.server.dependencies import get_http_request
+
+    from pydantic_ai._mcp_compat import MCP_SDK_V2
+    from pydantic_ai.mcp import MCPToolset
+
+    server: FastMCP[None] = FastMCP('auth_echo')
+
+    @server.tool
+    async def whoami() -> str:
+        return get_http_request().headers['authorization']
+
+    class _Durability(JournalDurability):
+        engine_spec = replace(
+            JournalDurability.engine_spec,
+            toolset_lifecycles={**JournalDurability.engine_spec.toolset_lifecycles, 'mcp': lifecycle},
+        )
+
+        @property
+        def in_durable_context(self) -> bool:
+            return in_durable_context
+
+    app = server.http_app(stateless_http=True, json_response=True)
+    # Each run of the CI matrix installs one FastMCP generation, so it covers only one of the branches.
+    client: httpx.AsyncClient | httpx2.AsyncClient
+    if MCP_SDK_V2:
+        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))  # pragma: lax no cover
+    else:
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))  # pragma: lax no cover
+    # A `localhost` URL keeps VCR cassettes from intercepting the in-process requests.
+    toolset = MCPToolset[str]('http://localhost/mcp', id='mcp', http_client=client, auth=lambda ctx: ctx.deps)
+    durable = _Durability(name='agent')._build_mcp_toolset(toolset)  # pyright: ignore[reportPrivateUsage]
+    agent = Agent(TestModel(call_tools=['whoami']), deps_type=str, toolsets=[durable])
+    try:
+        async with app.router.lifespan_context(app):
+            outputs = [(await agent.run('who', deps=user)).output for user in ['alice', 'bob']]
+    finally:
+        await client.aclose()
+
+    assert outputs == ['{"whoami":"Bearer alice"}', '{"whoami":"Bearer bob"}']
+    # The toolset attached to the agent never connected: every run went through its own copy.
+    assert not toolset.is_running
+
+
+async def test_instruction_units_ride_the_session_the_run_holds() -> None:
+    """Instructions are looked up in a durable unit before every model request, for free.
+
+    A server's instructions are captured when its session opens, so the lookup has to happen inside
+    a unit that has the server connected — and routing it through a unit every time is deliberate,
+    so that whether a unit runs never depends on process warmth (#5884). Riding the session the run
+    holds, those extra units cost no round trips at all; opening a session per unit would cost one
+    `initialize` each.
+    """
+    counts, instructions = await _run_static_mcp_agent(lifecycle='enter-in-durable-unit', include_instructions=True)
+
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
+    assert instructions == snapshot(['Be a helpful assistant.'] * 3)
+
+
+_CALL_TOOL_RESULT_ADAPTER = TypeAdapter[Any](CallToolResult)
+
+
+def _dumped_file(item: FileUrl | UploadedFile) -> dict[str, Any]:
+    """The mapping a tool result serializes `item` to, which a tool could also return as data."""
+    return _CALL_TOOL_RESULT_ADAPTER.dump_python(_ToolReturn(result=item), mode='json')['result']
+
+
+def test_tool_call_results_record_their_files():
+    """A durable tool-call result keeps a tool's files files and its file-shaped data data across the journal.
+
+    Durable execution carries a tool's result between steps in these, outside any `ToolReturnPart`, so a
+    lookalike there would otherwise be rebuilt within a single run.
+    """
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalike = _dumped_file(UploadedFile('file-2', 'openai'))
+    for result in (
+        _ToolReturn(result=[uploaded, lookalike]),
+        _ToolReturn(result=ToolReturn(return_value=[uploaded, lookalike])),
+        _ToolContentResult(result={'kind': 'tool-return', 'items': [uploaded, lookalike]}),
+    ):
+        for payload in (_CALL_TOOL_RESULT_ADAPTER.dump_json(result), to_json(result)):
+            assert _CALL_TOOL_RESULT_ADAPTER.validate_json(payload) == result
+
+
+def test_tool_call_result_nested_return_keeps_its_own_record():
+    """A file in a nested `ToolReturn`'s `metadata` doesn't count toward a mapping in its `return_value`."""
+    uploaded = UploadedFile('file-1', 'openai')
+    lookalike = _dumped_file(uploaded)
+    result = _ToolReturn(result=ToolReturn(return_value=[lookalike], metadata=uploaded))
+
+    reloaded = _CALL_TOOL_RESULT_ADAPTER.validate_json(_CALL_TOOL_RESULT_ADAPTER.dump_json(result))
+
+    assert reloaded.result.return_value == [lookalike]
+    assert type(reloaded.result.return_value[0]) is dict
+
+
+@pytest.mark.parametrize('nested_record', ['missing', 'own digest'])
+def test_tool_call_result_nested_return_cannot_widen_the_record(nested_record: str):
+    """A nested result's own record, which the data around it could have written, can only narrow the outer one.
+
+    Decoded as a journal entry, too: the outer result's record still governs what the nested one rebuilds.
+    """
+    lookalike = _dumped_file(DocumentUrl('https://example.com/report.txt', force_download='allow-local'))
+    journaled = _CALL_TOOL_RESULT_ADAPTER.dump_python(
+        _ToolReturn(result=ToolReturn(return_value=[lookalike])), mode='json'
+    )
+    assert journaled['content_file_digests'] == []
+    if nested_record == 'missing':
+        del journaled['result']['content_file_digests']
+    else:
+        journaled['result']['content_file_digests'] = [_file_digest(lookalike)]
+
+    for loaded in (_CALL_TOOL_RESULT_ADAPTER.validate_python(journaled), JSON_CODEC.load(CallToolResult, journaled)):
+        assert loaded.result.return_value == [lookalike]
+        assert type(loaded.result.return_value[0]) is dict
+
+
+def test_journal_written_before_records_loads_completely():
+    """A journal entry an earlier worker wrote has no record, and still decodes with every file it held.
+
+    The application's own worker wrote it, so a run in flight across an upgrade keeps its tool results.
+    """
+    files: list[FileUrl | UploadedFile] = [
+        UploadedFile('file-1', 'openai'),
+        DocumentUrl('s3://bucket/report.pdf'),
+        ImageUrl('https://example.com/chart.png', force_download=True),
+    ]
+    result = _ToolReturn(result=files)
+    journaled = _CALL_TOOL_RESULT_ADAPTER.dump_python(result, mode='json')
+    del journaled['content_file_digests']
+
+    assert JSON_CODEC.load(CallToolResult, journaled) == result

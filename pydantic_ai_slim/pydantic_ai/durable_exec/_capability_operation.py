@@ -30,7 +30,7 @@ ResultT = TypeVar('ResultT')
 P = ParamSpec('P')
 A = TypeVar('A', bound=Awaitable[Any])
 
-_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset'})
+_SYNC_NEVER_DURABLE_HOOKS = frozenset({'get_toolset', 'get_wrapper_toolset', 'get_wrapper_model'})
 """Sync hooks marked so collection can report why they cannot be durable.
 
 The decorator still attaches a marker to these sync hooks so binding raises the specific
@@ -53,11 +53,15 @@ _NEVER_DURABLE_HOOKS = {
     'wrap_run_event_stream': '`wrap_run_event_stream` receives a live stream and cannot be a durable operation.',
     'get_toolset': '`get_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
+    'get_wrapper_model': '`get_wrapper_model` returns a live model and cannot be a durable operation.',
+    'get_workspace': '`get_workspace` returns a live workspace backend and cannot be a durable operation.',
 }
 
 
 @dataclass(frozen=True)
 class CapabilityOperationParams:
+    """Parameters of a decorated capability operation: its bound arguments and the run context."""
+
     run_context: RunContext[Any]
     _: KW_ONLY
     arguments: dict[str, Any]
@@ -95,6 +99,9 @@ class ModelRequestContextProjection:
     model_request_parameters: ModelRequestParameters
     model_id: str | None
     streaming: bool
+    attempt: int = 1
+    """Which attempt at the request step this is, which a durable `prepare_model_request`, `after_model_request` or
+    `on_model_request_error` hook reads as it would in-process."""
 
     @classmethod
     def from_context(cls, context: ModelRequestContext) -> ModelRequestContextProjection:
@@ -104,6 +111,7 @@ class ModelRequestContextProjection:
             model_request_parameters=context.model_request_parameters,
             model_id=context.model_id,
             streaming=context.streaming,
+            attempt=context.attempt,
         )
 
     def build_context(self, model: Model) -> ModelRequestContext:
@@ -116,6 +124,7 @@ class ModelRequestContextProjection:
         )
         context.model_id = self.model_id
         context.streaming = self.streaming
+        context.attempt = self.attempt
         return context
 
     def apply(self, context: ModelRequestContext, model: Model | None = None) -> None:
@@ -126,6 +135,7 @@ class ModelRequestContextProjection:
         context.model_request_parameters = self.model_request_parameters
         context.model_id = self.model_id
         context.streaming = self.streaming
+        context.attempt = self.attempt
 
 
 @dataclass(frozen=True)
@@ -137,6 +147,8 @@ class _ResolvedModelRequestContext:
 
 @dataclass(frozen=True)
 class CapabilityMethodDeclaration:
+    """A capability method marked with `@durable_operation`, as collected for binding."""
+
     name: str
     _: KW_ONLY
     function: Callable[..., Awaitable[Any]]
@@ -160,6 +172,7 @@ class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
     """
 
     def project(self, params: CapabilityOperationParams) -> tuple[object, ...]:
+        # Prefect reads the trailing RunContext to scope replay counters to their owning run.
         return (params.model_id, params.arguments, params.run_context)
 
 
@@ -193,6 +206,20 @@ def _validate_operation_name(name: object) -> str:
     return name
 
 
+def durable_operation_dispatch(
+    ctx: RunContext[Any], capability_id: str | None, name: str
+) -> Callable[[RunContext[Any], tuple[Any, ...], dict[str, Any]], Awaitable[Any]] | None:
+    """The dispatcher the run installed for a capability's `@durable_operation(name)`, or `None` when it runs inline.
+
+    The one place that reads the run's dispatchers, so a caller that needs to know in advance whether
+    an operation leaves the workflow asks the same question `durable_operation` does.
+    """
+    operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
+    if operations is None or capability_id is None:
+        return None
+    return operations.get((capability_id, name))
+
+
 def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     """Declare an async capability method as a durable operation.
 
@@ -207,11 +234,11 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
     from pydantic_ai.tools import RunContext
 
 
-    class Audit(AbstractCapability[None]):
+    class Audit(AbstractCapability):
         id = 'audit'
 
         @durable_operation(name='record')
-        async def record(self, ctx: RunContext[None], message: str) -> bool:
+        async def record(self, ctx: RunContext, message: str) -> bool:
             return bool(message)
     ```
 
@@ -269,10 +296,7 @@ def durable_operation(name: str) -> Callable[[Callable[P, A]], Callable[P, A]]:
             # The run installs one dispatcher per bound operation on every context it builds. A
             # context without them was never prepared by a run (or was rebuilt worker-side, past
             # the boundary already), so the call belongs inline.
-            operations = ctx._durable_operations  # pyright: ignore[reportPrivateUsage]
-            dispatcher = (
-                operations.get((self.id, marker.name)) if operations is not None and self.id is not None else None
-            )
+            dispatcher = durable_operation_dispatch(ctx, self.id, marker.name)
             if dispatcher is None:
                 result = await target.__get__(self, type(self))(*args, **kwargs)
             else:
@@ -403,8 +427,12 @@ def _capability_operation_schema(
     *,
     annotation_replacements: dict[str, Any],
 ) -> FunctionSchema:
+    # Only the validator is used, so field descriptions would go unread. Reading attribute docstrings is also slow on
+    # Python < 3.13, where Pydantic re-parses a dataclass's whole module for each one
+    # (https://github.com/pydantic/pydantic/issues/14309), and the `ModelRequestContextProjection` schema reaches every
+    # message type.
     if ctx_parameter is None and not annotation_replacements:
-        return function_schema(function, GenerateToolJsonSchema)
+        return function_schema(function, GenerateToolJsonSchema, attribute_docstrings=False)
 
     schema_target = _schema_target(function)
     schema_target.__annotations__ = {
@@ -416,7 +444,39 @@ def _capability_operation_schema(
         parameters=[p for p in signature.parameters.values() if p.name != ctx_parameter]
     )
     cast(Any, schema_target).__signature__ = schema_signature
-    return function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False)
+
+    annotations = schema_target.__annotations__
+    parameters = schema_signature.parameters.values()
+    cache_key = (
+        (
+            function.__module__,
+            function.__qualname__,
+            function.__doc__,
+            tuple(annotations.items()),
+            tuple((p.name, p.kind) for p in parameters),
+        )
+        if annotation_replacements
+        and annotations.keys() <= annotation_replacements.keys()
+        and all(p.name in annotation_replacements and p.default is p.empty for p in parameters)
+        else None
+    )
+    if cache_key is not None and (cached := _FRAMEWORK_TYPED_SCHEMAS.get(cache_key)) is not None:
+        return replace(cached, function=schema_target)
+    schema = function_schema(schema_target, GenerateToolJsonSchema, takes_ctx=False, attribute_docstrings=False)
+    if cache_key is not None:
+        _FRAMEWORK_TYPED_SCHEMAS[cache_key] = schema
+    return schema
+
+
+_FRAMEWORK_TYPED_SCHEMAS: dict[tuple[Any, ...], FunctionSchema] = {}
+"""Schemas of operations whose arguments are all framework-typed, such as a durable `before_model_request`.
+
+Generating the `ModelRequestContextProjection` schema, which covers every message type, is most of
+the cost of building an agent with such an operation, and Temporal's workflow sandbox re-imports the
+workflow module on every run, so a module-level agent would rebuild it each time. The key holds only
+the method's names, docstring and parameter shapes plus framework types that the sandbox passes
+through, so a re-imported module hits the same entry, and no user-defined type is ever part of a key.
+"""
 
 
 def _schema_target(function: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
@@ -524,7 +584,7 @@ async def recover_capability(ctx: RunContext[Any], *, capability_id: str) -> Abs
     capability = matches[0]
     if type(capability).for_run is AbstractCapability.for_run:
         return capability
-    return await capability.for_run(ctx)
+    return await capability._for_run_keeping_authority(ctx)  # pyright: ignore[reportPrivateUsage]
 
 
 CapabilityBoundOperation = BoundDurableOperation[CapabilityOperationParams, Any, Any]

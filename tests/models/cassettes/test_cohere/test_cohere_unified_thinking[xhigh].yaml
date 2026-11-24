@@ -1,0 +1,81 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.cohere.com/v2/chat
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "187"
+      content-type:
+      - application/json
+      host:
+      - api.cohere.com
+    body:
+      type: json
+      content:
+        model: command-a-reasoning-08-2025
+        messages:
+        - role: user
+          content: What is 2+2? Reply with just the number.
+        thinking:
+          type: enabled
+          token_budget: 31000
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Debug-Trace-ID
+      alt-svc:
+      - h3=":443"; ma=2592000
+      cache-control:
+      - no-cache, no-store, no-transform, must-revalidate, private, max-age=0
+      content-type:
+      - application/json
+      expires:
+      - Thu, 01 Jan 1970 00:00:00 GMT
+      num_chars:
+      - "6627"
+      num_tokens:
+      - "313"
+      pragma:
+      - no-cache
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin,Accept-Encoding
+    body:
+      type: json
+      content:
+        id: ebc08b84-9871-4891-aa40-2de31a165b14
+        message:
+          role: assistant
+          content:
+          - type: thinking
+            thinking: |-
+              Okay, the user is asking "What is 2+2?" and wants just the number in the reply. Let me start by understanding the question. It's a simple arithmetic problem.
+
+              First, I need to confirm that 2 plus 2 is 4. There's no trick here, right? Sometimes people might try to trick you with wordplay, but in this case, it's straightforward. The numbers are both positive integers, so adding them together should be simple.
+
+              Wait, but maybe I should double-check. Let me visualize it. If I have two apples and someone gives me two more apples, how many do I have? That's four apples. Yep, that checks out. Another way to think about it: 2 + 2 is the same as 2 times 2, but no, wait, multiplication is different. No, addition is combining the quantities. So 2 plus 2 is definitely 4.
+
+              I don't see any hidden meanings or alternative interpretations here. The user just wants the correct answer. Since they specified to reply with just the number, I shouldn't add any extra words or explanations. Just the numeral 4. Alright, that's all there is to it. No need to complicate things further. Let me make sure there's no typo in the question. The user wrote "2+2" correctly. Yep. So the answer is 4. I'll prepare the response accordingly.
+          - type: text
+            text: "4"
+        finish_reason: COMPLETE
+        usage:
+          billed_units:
+            input_tokens: 13
+            output_tokens: 300
+          tokens:
+            input_tokens: 1399
+            output_tokens: 305
+            reasoning_tokens: 299
+          cached_tokens: 1360
+  recorded_at: 2026-10-22T16:52:00.699153+00:00

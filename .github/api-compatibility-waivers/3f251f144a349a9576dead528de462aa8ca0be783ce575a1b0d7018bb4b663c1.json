@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "Harness 0.x: `Reminder.tag` defaults to `None`, since a reminder is already a system prompt and needs no `<system-reminder>` wrapper. Leaving it unset warns through `warn_default_changed`, and `tag='system-reminder'` restores the old wrapping.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/9712"
+}

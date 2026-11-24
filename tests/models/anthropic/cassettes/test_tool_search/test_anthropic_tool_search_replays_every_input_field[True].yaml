@@ -1,0 +1,663 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1036"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Search for an inventory tool first. Then think carefully about which of the
+              results fits best before calling anything, and then search again for an email tool
+              and email the stock count of SKU A1 to ops.
+            type: text
+        model: claude-fable-5-2
+        stream: true
+        system:
+        - type: text
+          text: >-
+            Every tool search call MUST include the limit parameter set to 2. Never omit
+            limit.
+        thinking:
+          type: adaptive
+        tool_choice:
+          type: auto
+        tools:
+        - name: check_inventory
+          description: Check the stock count for a SKU.
+          input_schema:
+            additionalProperties: false
+            properties:
+              sku:
+                type: string
+            required:
+            - sku
+            type: object
+          defer_loading: true
+        - name: send_email
+          description: Send an email.
+          input_schema:
+            additionalProperties: false
+            properties:
+              to:
+                type: string
+              body:
+                type: string
+            required:
+            - to
+            - body
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=64
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d637e4b8cc95eb6630c96555534df065-631e20638b222eb7-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-fable-5-2","id":"msg_011Ch92p7E567c9kgAJyiWrX","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":737,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01XrrtEtwFZzcqbCqac19b4t","name":"tool_search_tool_bm25","input":{}}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"query"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\": \"inv"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"entory "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"stock c"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ount by"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":" SKU\""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"limi"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"t\": 2}"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_01XrrtEtwFZzcqbCqac19b4t","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"check_inventory"}]}}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"thinking","thinking":"","signature":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"thinking_delta","thinking":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"signature_delta","signature":"CAQSzggKEAgTGAI4AUIIdGhpbmtpbmcSDJYAcKNV7xyLP8xzBxoMDuFQlNmzAPPV7b4vIjD6QbB+LPpcoB7CWtMY10qeEObPxWcgYFfrskq8kJ0s2mgLOp4aLBYwiLVZzaMUi/8q6wf5I8SSNcF1K1D16Gck+BjQQ8L6ab3d5bQA9QBIlEczx8rTM6MIGTe2poWE1WTlIfjGXblQbgVKnNqRKxW2tbkzmk04HaZwSzsfaOUXeeosdKORoQdOD+zCdntt/UGCUaEWigSFsh8XbqmaUwON+QSIFCN9GCnbLGxI0PDqU04xxvjVEbuB0K0iQBgDGa00Jc0zaxlm4kvjU4qweeFvR2WntBlNuyXdjxWYwynGWmixk374HWvYO0mzN3Dk2lIDyPxMbrSjhjZc79oI+InKmnfmz9kNfrUnnMujkWnoK5OM9r/3klMNN2oPekOhWQTc8il/H59t0NDStcWGe1NsFEh85Y6eK8KBz4QcgLnJ/C5o7NPQVDfZxgg/Zk/7RT5DxPEWdNwFI/xYwdJnEINcCA4CgjzYUsglMYagDCyFvJI/M9mygmIy733QFszxd6vQmNmYk4ooErRDBL8SScLdzPKP/zAC4B5iAfkQ3R5uSHJHWoPBdjl4gzqLfzUNiq42WRtkZ7AxXOg9lE+LDrFH51B5gN0eP1lasXXBUinVYlIrATe/4H4xL+RCbgqCq/6DIbe0O43N+p++ELfI9s6o+e1VcZHemXbb/VO5OJAPlj8fXU/CDfpTzhgh5lIJZeUQYxybEmM3R/lD2gIhNhE4fa8AEAjUzNpX2p/1SNtYxnIzUozIcQhAXTg7Sx2SwMYfdQyUsDTPOtd+K4h5j2TYTDP/bJP0sTqY29Gnp3tHX1ngYNrRs8c6NBFDfPOKBx581R9c1A4DKP9s5UXLRJP6WuRXe++h9z/5hNLsLbxuBPyh9PXqFZxlXNjyeXsCvpf6j+ciXBglp9L7TxZ/kGWYJuW3Q3pdnmpuK9hxE3et/Gp/5uVQAEZeivHzOhWsUxXiWDDChxTpnJetQykLJxOJoG8yEe+TaB6105xSsXgfIAVyxSkdKnzUxSwlcXdb/gK5GeV6eJGqTFnhMOVq+1yIwtjF2yJhAgRatLZ2rKylPEfs5COZQJb9ZCcWCrray4wDw6pQpp6+OTVR1+nO38Qfyo//a/9fOcsafBAq+RuYqjCm+8B9N7dczVmb6ce9JYcF10UphFpFRStl5iWJ1idgux2fr76UAF9xZ2q/0vqcsmHnVHJPMjmdTyrZ+IzwdPrw5l9zlMsqzOZGTDDZLpxU2vJxXwT5DO+7GGBGR6oNwlSRi965+GXiKrEoEq2xU9Q8fj0PUaNcKywoLbg4tfaqV+9XUXxtad1/dVA76SNhqUzVcjsnSJjXt3CStwlJMNtxTKnq+Du1l9UW+Vy0ap3rQEiRwCQ7HMN58TwVL4/RpIIvwIV0rOMzxb/oBmJHGAE="}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"The search retur"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"ned a"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" single match"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":", `check_inventory`"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":", which takes a SKU"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" and returns its"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" stock count, so"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" it fits the job"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":". I'll check S"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"KU A1 with"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" it and search"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" for an email tool at the same"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" time."}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":4,"content_block":{"type":"tool_use","id":"toolu_01UMoDouZCtfVcEF92g8U7TG","name":"check_inventory","input":{},"caller":{"type":"direct"}}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":"{\"sku\":"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":4,"delta":{"type":"input_json_delta","partial_json":" \"A1\"}"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":4     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":5,"content_block":{"type":"server_tool_use","id":"srvtoolu_0149GoWhBG57jUtpQfcyxWfV","name":"tool_search_tool_bm25","input":{}}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"{\"query"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"\": \"sen"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"d email"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"\""}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":", \"limi"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":5,"delta":{"type":"input_json_delta","partial_json":"t\": 2}"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":5}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1663,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":408,"output_tokens_details":{"thinking_tokens":133},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}               }
+
+        event: message_stop
+        data: {"type":"message_stop" }
+
+  recorded_at: 2026-11-17T19:12:55.698820+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "3588"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Search for an inventory tool first. Then think carefully about which of the
+              results fits best before calling anything, and then search again for an email tool
+              and email the stock count of SKU A1 to ops.
+            type: text
+        - role: assistant
+          content:
+          - id: srvtoolu_01XrrtEtwFZzcqbCqac19b4t
+            type: server_tool_use
+            name: tool_search_tool_bm25
+            input:
+              query: inventory stock count by SKU
+              limit: 2
+          - tool_use_id: srvtoolu_01XrrtEtwFZzcqbCqac19b4t
+            type: tool_search_tool_result
+            content:
+              type: tool_search_tool_search_result
+              tool_references:
+              - tool_name: check_inventory
+                type: tool_reference
+          - thinking: ""
+            signature: >-
+              CAQSzggKEAgTGAI4AUIIdGhpbmtpbmcSDJYAcKNV7xyLP8xzBxoMDuFQlNmzAPPV7b4vIjD6QbB+LPpcoB7CWtMY10qeEObPxWcgYFfrskq8kJ0s2mgLOp4aLBYwiLVZzaMUi/8q6wf5I8SSNcF1K1D16Gck+BjQQ8L6ab3d5bQA9QBIlEczx8rTM6MIGTe2poWE1WTlIfjGXblQbgVKnNqRKxW2tbkzmk04HaZwSzsfaOUXeeosdKORoQdOD+zCdntt/UGCUaEWigSFsh8XbqmaUwON+QSIFCN9GCnbLGxI0PDqU04xxvjVEbuB0K0iQBgDGa00Jc0zaxlm4kvjU4qweeFvR2WntBlNuyXdjxWYwynGWmixk374HWvYO0mzN3Dk2lIDyPxMbrSjhjZc79oI+InKmnfmz9kNfrUnnMujkWnoK5OM9r/3klMNN2oPekOhWQTc8il/H59t0NDStcWGe1NsFEh85Y6eK8KBz4QcgLnJ/C5o7NPQVDfZxgg/Zk/7RT5DxPEWdNwFI/xYwdJnEINcCA4CgjzYUsglMYagDCyFvJI/M9mygmIy733QFszxd6vQmNmYk4ooErRDBL8SScLdzPKP/zAC4B5iAfkQ3R5uSHJHWoPBdjl4gzqLfzUNiq42WRtkZ7AxXOg9lE+LDrFH51B5gN0eP1lasXXBUinVYlIrATe/4H4xL+RCbgqCq/6DIbe0O43N+p++ELfI9s6o+e1VcZHemXbb/VO5OJAPlj8fXU/CDfpTzhgh5lIJZeUQYxybEmM3R/lD2gIhNhE4fa8AEAjUzNpX2p/1SNtYxnIzUozIcQhAXTg7Sx2SwMYfdQyUsDTPOtd+K4h5j2TYTDP/bJP0sTqY29Gnp3tHX1ngYNrRs8c6NBFDfPOKBx581R9c1A4DKP9s5UXLRJP6WuRXe++h9z/5hNLsLbxuBPyh9PXqFZxlXNjyeXsCvpf6j+ciXBglp9L7TxZ/kGWYJuW3Q3pdnmpuK9hxE3et/Gp/5uVQAEZeivHzOhWsUxXiWDDChxTpnJetQykLJxOJoG8yEe+TaB6105xSsXgfIAVyxSkdKnzUxSwlcXdb/gK5GeV6eJGqTFnhMOVq+1yIwtjF2yJhAgRatLZ2rKylPEfs5COZQJb9ZCcWCrray4wDw6pQpp6+OTVR1+nO38Qfyo//a/9fOcsafBAq+RuYqjCm+8B9N7dczVmb6ce9JYcF10UphFpFRStl5iWJ1idgux2fr76UAF9xZ2q/0vqcsmHnVHJPMjmdTyrZ+IzwdPrw5l9zlMsqzOZGTDDZLpxU2vJxXwT5DO+7GGBGR6oNwlSRi965+GXiKrEoEq2xU9Q8fj0PUaNcKywoLbg4tfaqV+9XUXxtad1/dVA76SNhqUzVcjsnSJjXt3CStwlJMNtxTKnq+Du1l9UW+Vy0ap3rQEiRwCQ7HMN58TwVL4/RpIIvwIV0rOMzxb/oBmJHGAE=
+            type: thinking
+          - text: >-
+              The search returned a single match, `check_inventory`, which takes a SKU and
+              returns its stock count, so it fits the job. I'll check SKU A1 with it and search
+              for an email tool at the same time.
+            type: text
+          - id: toolu_01UMoDouZCtfVcEF92g8U7TG
+            type: tool_use
+            name: check_inventory
+            input:
+              sku: A1
+          - id: srvtoolu_0149GoWhBG57jUtpQfcyxWfV
+            type: server_tool_use
+            name: tool_search_tool_bm25
+            input:
+              query: send email
+              limit: 2
+        - role: user
+          content:
+          - tool_use_id: toolu_01UMoDouZCtfVcEF92g8U7TG
+            type: tool_result
+            content:
+            - text: "14"
+              type: text
+            is_error: false
+        model: claude-fable-5-2
+        stream: true
+        system:
+        - type: text
+          text: >-
+            Every tool search call MUST include the limit parameter set to 2. Never omit
+            limit.
+        thinking:
+          type: adaptive
+        tool_choice:
+          type: auto
+        tools:
+        - name: check_inventory
+          description: Check the stock count for a SKU.
+          input_schema:
+            additionalProperties: false
+            properties:
+              sku:
+                type: string
+            required:
+            - sku
+            type: object
+          defer_loading: true
+        - name: send_email
+          description: Send an email.
+          input_schema:
+            additionalProperties: false
+            properties:
+              to:
+                type: string
+              body:
+                type: string
+            required:
+            - to
+            - body
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=83
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-a611edba0c6f4feb4262bb169e8d9703-bef0ec0c2d59d93a-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-fable-5-2","id":"msg_011Ch92pQUQofxSQMqkcDTnt","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1409,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_search_tool_result","tool_use_id":"srvtoolu_0149GoWhBG57jUtpQfcyxWfV","content":{"type":"tool_search_tool_search_result","tool_references":[{"type":"tool_reference","tool_name":"send_email"}]}}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01GrGvJBY5CZ8EAkm5pwab19","name":"send_email","input":{},"caller":{"type":"direct"}}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"to\": "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"ops\""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"body"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"Sto"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ck coun"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"t updat"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"e: SKU "}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"A1 curr"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ently h"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"as 14 u"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nits in"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" stock."}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"} }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1  }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1409,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":91,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}             }
+
+        event: message_stop
+        data: {"type":"message_stop" }
+
+  recorded_at: 2026-11-17T19:12:56.730154+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "4154"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Search for an inventory tool first. Then think carefully about which of the
+              results fits best before calling anything, and then search again for an email tool
+              and email the stock count of SKU A1 to ops.
+            type: text
+        - role: assistant
+          content:
+          - id: srvtoolu_01XrrtEtwFZzcqbCqac19b4t
+            type: server_tool_use
+            name: tool_search_tool_bm25
+            input:
+              query: inventory stock count by SKU
+              limit: 2
+          - tool_use_id: srvtoolu_01XrrtEtwFZzcqbCqac19b4t
+            type: tool_search_tool_result
+            content:
+              type: tool_search_tool_search_result
+              tool_references:
+              - tool_name: check_inventory
+                type: tool_reference
+          - thinking: ""
+            signature: >-
+              CAQSzggKEAgTGAI4AUIIdGhpbmtpbmcSDJYAcKNV7xyLP8xzBxoMDuFQlNmzAPPV7b4vIjD6QbB+LPpcoB7CWtMY10qeEObPxWcgYFfrskq8kJ0s2mgLOp4aLBYwiLVZzaMUi/8q6wf5I8SSNcF1K1D16Gck+BjQQ8L6ab3d5bQA9QBIlEczx8rTM6MIGTe2poWE1WTlIfjGXblQbgVKnNqRKxW2tbkzmk04HaZwSzsfaOUXeeosdKORoQdOD+zCdntt/UGCUaEWigSFsh8XbqmaUwON+QSIFCN9GCnbLGxI0PDqU04xxvjVEbuB0K0iQBgDGa00Jc0zaxlm4kvjU4qweeFvR2WntBlNuyXdjxWYwynGWmixk374HWvYO0mzN3Dk2lIDyPxMbrSjhjZc79oI+InKmnfmz9kNfrUnnMujkWnoK5OM9r/3klMNN2oPekOhWQTc8il/H59t0NDStcWGe1NsFEh85Y6eK8KBz4QcgLnJ/C5o7NPQVDfZxgg/Zk/7RT5DxPEWdNwFI/xYwdJnEINcCA4CgjzYUsglMYagDCyFvJI/M9mygmIy733QFszxd6vQmNmYk4ooErRDBL8SScLdzPKP/zAC4B5iAfkQ3R5uSHJHWoPBdjl4gzqLfzUNiq42WRtkZ7AxXOg9lE+LDrFH51B5gN0eP1lasXXBUinVYlIrATe/4H4xL+RCbgqCq/6DIbe0O43N+p++ELfI9s6o+e1VcZHemXbb/VO5OJAPlj8fXU/CDfpTzhgh5lIJZeUQYxybEmM3R/lD2gIhNhE4fa8AEAjUzNpX2p/1SNtYxnIzUozIcQhAXTg7Sx2SwMYfdQyUsDTPOtd+K4h5j2TYTDP/bJP0sTqY29Gnp3tHX1ngYNrRs8c6NBFDfPOKBx581R9c1A4DKP9s5UXLRJP6WuRXe++h9z/5hNLsLbxuBPyh9PXqFZxlXNjyeXsCvpf6j+ciXBglp9L7TxZ/kGWYJuW3Q3pdnmpuK9hxE3et/Gp/5uVQAEZeivHzOhWsUxXiWDDChxTpnJetQykLJxOJoG8yEe+TaB6105xSsXgfIAVyxSkdKnzUxSwlcXdb/gK5GeV6eJGqTFnhMOVq+1yIwtjF2yJhAgRatLZ2rKylPEfs5COZQJb9ZCcWCrray4wDw6pQpp6+OTVR1+nO38Qfyo//a/9fOcsafBAq+RuYqjCm+8B9N7dczVmb6ce9JYcF10UphFpFRStl5iWJ1idgux2fr76UAF9xZ2q/0vqcsmHnVHJPMjmdTyrZ+IzwdPrw5l9zlMsqzOZGTDDZLpxU2vJxXwT5DO+7GGBGR6oNwlSRi965+GXiKrEoEq2xU9Q8fj0PUaNcKywoLbg4tfaqV+9XUXxtad1/dVA76SNhqUzVcjsnSJjXt3CStwlJMNtxTKnq+Du1l9UW+Vy0ap3rQEiRwCQ7HMN58TwVL4/RpIIvwIV0rOMzxb/oBmJHGAE=
+            type: thinking
+          - text: >-
+              The search returned a single match, `check_inventory`, which takes a SKU and
+              returns its stock count, so it fits the job. I'll check SKU A1 with it and search
+              for an email tool at the same time.
+            type: text
+          - id: toolu_01UMoDouZCtfVcEF92g8U7TG
+            type: tool_use
+            name: check_inventory
+            input:
+              sku: A1
+          - id: srvtoolu_0149GoWhBG57jUtpQfcyxWfV
+            type: server_tool_use
+            name: tool_search_tool_bm25
+            input:
+              query: send email
+              limit: 2
+        - role: user
+          content:
+          - tool_use_id: toolu_01UMoDouZCtfVcEF92g8U7TG
+            type: tool_result
+            content:
+            - text: "14"
+              type: text
+            is_error: false
+        - role: assistant
+          content:
+          - tool_use_id: srvtoolu_0149GoWhBG57jUtpQfcyxWfV
+            type: tool_search_tool_result
+            content:
+              type: tool_search_tool_search_result
+              tool_references:
+              - tool_name: send_email
+                type: tool_reference
+          - id: toolu_01GrGvJBY5CZ8EAkm5pwab19
+            type: tool_use
+            name: send_email
+            input:
+              to: ops
+              body: "Stock count update: SKU A1 currently has 14 units in stock."
+        - role: user
+          content:
+          - tool_use_id: toolu_01GrGvJBY5CZ8EAkm5pwab19
+            type: tool_result
+            content:
+            - text: sent
+              type: text
+            is_error: false
+        model: claude-fable-5-2
+        stream: true
+        system:
+        - type: text
+          text: >-
+            Every tool search call MUST include the limit parameter set to 2. Never omit
+            limit.
+        thinking:
+          type: adaptive
+        tool_choice:
+          type: auto
+        tools:
+        - name: check_inventory
+          description: Check the stock count for a SKU.
+          input_schema:
+            additionalProperties: false
+            properties:
+              sku:
+                type: string
+            required:
+            - sku
+            type: object
+          defer_loading: true
+        - name: send_email
+          description: Send an email.
+          input_schema:
+            additionalProperties: false
+            properties:
+              to:
+                type: string
+              body:
+                type: string
+            required:
+            - to
+            - body
+            type: object
+          defer_loading: true
+        - type: tool_search_tool_bm25_20251119
+          name: tool_search_tool_bm25
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=71
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-cdb2bb04cf54676f57de4bb089c5b124-6d97f329fb5f481b-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-fable-5-2","id":"msg_011Ch92pUra2f3pwoHrPnzXy","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1507,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":70,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I emailed ops that"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" SKU A1 currently"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" has 14 units in stock"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", and the email"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" t"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ool confirmed it was s"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ent.\n\nThe message"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" went"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to the"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rec"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ipient \""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ops\""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" exactly as you w"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"rote it, since no"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" full address was given."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1507,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":70,"output_tokens_details":{"thinking_tokens":0}}   }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-11-17T19:12:57.774978+00:00

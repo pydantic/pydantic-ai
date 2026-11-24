@@ -8,12 +8,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
-from typing import Any, Literal
+from typing import Any, Literal, assert_never
 
 import httpx
 import httpx2
 import pytest
-from typing_extensions import assert_never
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
@@ -319,9 +318,10 @@ async def test_anthropic_peek_non_http_error(
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 async def test_anthropic_midstream_sse_error_status_200(allow_model_requests: None):
-    """Anthropic SSE error event arrives as APIStatusError with status_code=200 and is wrapped as ModelAPIError.
+    """Anthropic SSE error event arrives as APIStatusError with status_code=200 and is wrapped as ModelHTTPError.
 
-    This is the specific bug from #4729: mid-stream overloaded_error comes as HTTP 200 + SSE error event.
+    This is the specific bug from #4729: mid-stream overloaded_error comes as HTTP 200 + SSE error event. Its
+    `type` identifies the 529 the same error has on a non-streaming request.
     """
     error = AnthropicStatusError(
         message='Overloaded',
@@ -333,13 +333,13 @@ async def test_anthropic_midstream_sse_error_status_200(allow_model_requests: No
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ModelAPIError) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         async with agent.run_stream('hello') as result:
             async for _ in result.stream_text():
                 pass
 
     assert exc_info.value.model_name == 'claude-haiku-4-5'
-    assert 'Overloaded' in exc_info.value.message
+    assert exc_info.value.status_code == 529
 
 
 # ---------------------------------------------------------------------------
@@ -741,36 +741,36 @@ GatewayStreamProvider = Literal['openai-chat', 'openai-responses', 'anthropic', 
     [
         pytest.param(
             'openai-chat',
-            'gpt-5.2-proo',
-            'gateway/openai:gpt-5.2-pro',
+            'gpt-5.6-sool',
+            'gateway/openai:gpt-5.6-sol',
             id='openai-chat',
             marks=pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
         ),
         pytest.param(
             'openai-responses',
-            'gpt-5.2-proo',
-            'gateway/openai:gpt-5.2-pro',
+            'gpt-5.6-sool',
+            'gateway/openai:gpt-5.6-sol',
             id='openai-responses',
             marks=pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
         ),
         pytest.param(
             'anthropic',
-            'claude-sonet-4-5',
-            'gateway/anthropic:claude-sonnet-4-5',
+            'claude-sonet-5-5',
+            'gateway/anthropic:claude-sonnet-5-5',
             id='anthropic',
             marks=pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),
         ),
         pytest.param(
             'google',
-            'gemini-3.6-flahs',
-            'gateway/google-cloud:gemini-3.6-flash',
+            'gemini-3.8-flahs',
+            'gateway/google-cloud:gemini-3.8-flash',
             id='google',
             marks=pytest.mark.skipif(not google_imports(), reason='google not installed'),
         ),
         pytest.param(
             'groq',
-            'llama-3.3-70b-versatlie',
-            'gateway/groq:llama-3.3-70b-versatile',
+            'openai/gpt-oss-120bb',
+            'gateway/groq:openai/gpt-oss-120b',
             id='groq',
             marks=pytest.mark.skipif(not groq_imports(), reason='groq not installed'),
         ),
@@ -998,7 +998,7 @@ def _mistral_client_raising(error: Any) -> Any:
 
 
 def _mistral_sdk_error(status_code: int, message: str) -> SDKError:
-    return SDKError(message, httpx.Response(status_code, request=httpx.Request('POST', 'https://api.mistral.ai')))
+    return SDKError(message, httpx2.Response(status_code, request=httpx2.Request('POST', 'https://api.mistral.ai')))
 
 
 @pytest.mark.skipif(not mistral_imports(), reason='mistral not installed')

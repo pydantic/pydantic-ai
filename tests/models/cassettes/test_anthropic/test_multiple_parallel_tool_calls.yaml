@@ -1,222 +1,356 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '778'
+      - "772"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Alice, Bob, Charlie and Daisy are a family. Who is the youngest?
-          type: text
-        role: user
-      model: claude-haiku-4-5
-      stream: false
-      system: "\n    Use the `retrieve_entity_info` tool to get information about a specific person.\n    If you need to use
-        `retrieve_entity_info` to get information about multiple people, try\n    to call them in parallel as much as possible.\n
-        \   Think step by step and then provide a single most probable concise answer.\n    "
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the knowledge about the given entity.
-        input_schema:
-          additionalProperties: false
-          properties:
-            name:
-              type: string
-          required:
-          - name
-          type: object
-        name: retrieve_entity_info
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '1015'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
+    body:
+      type: json
       content:
-      - text: I'll help you find out who is the youngest by retrieving information about each family member. I'll retrieve
-          their entity information to compare their ages.
-        type: text
-      - id: toolu_0167cfEnoQaPviGdVXA95zcu
-        input:
-          name: Alice
-        name: retrieve_entity_info
-        type: tool_use
-      - id: toolu_01EEe2V5HD1Ac4rKiUR4HD2T
-        input:
-          name: Bob
-        name: retrieve_entity_info
-        type: tool_use
-      - id: toolu_01XFyAjstT3966qvRynZyVPo
-        input:
-          name: Charlie
-        name: retrieve_entity_info
-        type: tool_use
-      - id: toolu_013mnQZbgtK2oe3Mo3XKJsx3
-        input:
-          name: Daisy
-        name: retrieve_entity_info
-        type: tool_use
-      id: msg_011S3wxtqL5CVescWqS3zeg2
-      model: claude-haiku-4-5-20251001
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 423
-        output_tokens: 202
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '1988'
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Alice, Bob, Charlie and Daisy are a family. Who is the youngest?
-          type: text
-        role: user
-      - content:
-        - text: I'll help you find out who is the youngest by retrieving information about each family member. I'll retrieve
-            their entity information to compare their ages.
-          type: text
-        - id: toolu_0167cfEnoQaPviGdVXA95zcu
-          input:
-            name: Alice
-          name: retrieve_entity_info
-          type: tool_use
-        - id: toolu_01EEe2V5HD1Ac4rKiUR4HD2T
-          input:
-            name: Bob
-          name: retrieve_entity_info
-          type: tool_use
-        - id: toolu_01XFyAjstT3966qvRynZyVPo
-          input:
-            name: Charlie
-          name: retrieve_entity_info
-          type: tool_use
-        - id: toolu_013mnQZbgtK2oe3Mo3XKJsx3
-          input:
-            name: Daisy
-          name: retrieve_entity_info
-          type: tool_use
-        role: assistant
-      - content:
-        - content: alice is bob's wife
-          is_error: false
-          tool_use_id: toolu_0167cfEnoQaPviGdVXA95zcu
-          type: tool_result
-        - content: bob is alice's husband
-          is_error: false
-          tool_use_id: toolu_01EEe2V5HD1Ac4rKiUR4HD2T
-          type: tool_result
-        - content: charlie is alice's son
-          is_error: false
-          tool_use_id: toolu_01XFyAjstT3966qvRynZyVPo
-          type: tool_result
-        - content: daisy is bob's daughter and charlie's younger sister
-          is_error: false
-          tool_use_id: toolu_013mnQZbgtK2oe3Mo3XKJsx3
-          type: tool_result
-        role: user
-      model: claude-haiku-4-5
-      stream: false
-      system: "\n    Use the `retrieve_entity_info` tool to get information about a specific person.\n    If you need to use
-        `retrieve_entity_info` to get information about multiple people, try\n    to call them in parallel as much as possible.\n
-        \   Think step by step and then provide a single most probable concise answer.\n    "
-      tool_choice:
-        type: auto
-      tools:
-      - description: Get the knowledge about the given entity.
-        input_schema:
-          additionalProperties: false
-          properties:
-            name:
-              type: string
-          required:
-          - name
-          type: object
-        name: retrieve_entity_info
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '751'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-    parsed_body:
-      content:
-      - text: |-
-          Based on the retrieved information, we can see the family relationships:
-          - Alice and Bob are married
-          - Charlie is their son
-          - Daisy is their daughter and Charlie's younger sister
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Alice, Bob, Charlie and Daisy are a family. Who is the youngest?
+            type: text
+        model: claude-haiku-5-5
+        stream: true
+        system: |2-
 
-          Therefore, Daisy is the youngest in the family. She is described as Charlie's younger sister, which indicates she is the youngest among the four family members.
-        type: text
-      id: msg_01JVqZPgDwmnyb2kKC3MwCVf
-      model: claude-haiku-4-5-20251001
-      role: assistant
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 771
-        output_tokens: 77
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+              Use the `retrieve_entity_info` tool to get information about a specific person.
+              If you need to use `retrieve_entity_info` to get information about multiple people, try
+              to call them in parallel as much as possible.
+              Think step by step and then provide a single most probable concise answer.
+
+        tool_choice:
+          type: auto
+        tools:
+        - name: retrieve_entity_info
+          description: Get the knowledge about the given entity.
+          input_schema:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=91
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-604c6fa0e21493349b5b8d89a2d21b63-053ed633d4c4e5ec-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgNPXV1Jh9snCBmeqZrXm","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":506,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01UcHow86i6dYpgz3AZZvtWT","name":"retrieve_entity_info","input":{},"caller":{"type":"direct"}} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"name\""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Alic"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"e\"}"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01PKQiNejLUoFLmBDVBFpmVt","name":"retrieve_entity_info","input":{},"caller":{"type":"direct"}}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"name\""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":": \"Bob\"}"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_01ArP7HEVuisMf5BUYbvY3g7","name":"retrieve_entity_info","input":{},"caller":{"type":"direct"}} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"name\""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":": \"Char"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"lie\"}"}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"toolu_01JhrSFZD8xrVApp1AGf9GYY","name":"retrieve_entity_info","input":{},"caller":{"type":"direct"}}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"name\""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":": \"Dais"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"y\"}"}            }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":506,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":213,"output_tokens_details":{"thinking_tokens":0}}   }
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+  recorded_at: 2026-10-25T05:17:46.259385+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1900"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Alice, Bob, Charlie and Daisy are a family. Who is the youngest?
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_01UcHow86i6dYpgz3AZZvtWT
+            type: tool_use
+            name: retrieve_entity_info
+            input:
+              name: Alice
+          - id: toolu_01PKQiNejLUoFLmBDVBFpmVt
+            type: tool_use
+            name: retrieve_entity_info
+            input:
+              name: Bob
+          - id: toolu_01ArP7HEVuisMf5BUYbvY3g7
+            type: tool_use
+            name: retrieve_entity_info
+            input:
+              name: Charlie
+          - id: toolu_01JhrSFZD8xrVApp1AGf9GYY
+            type: tool_use
+            name: retrieve_entity_info
+            input:
+              name: Daisy
+        - role: user
+          content:
+          - tool_use_id: toolu_01UcHow86i6dYpgz3AZZvtWT
+            type: tool_result
+            content:
+            - text: alice is bob's wife
+              type: text
+            is_error: false
+          - tool_use_id: toolu_01PKQiNejLUoFLmBDVBFpmVt
+            type: tool_result
+            content:
+            - text: bob is alice's husband
+              type: text
+            is_error: false
+          - tool_use_id: toolu_01ArP7HEVuisMf5BUYbvY3g7
+            type: tool_result
+            content:
+            - text: charlie is alice's son
+              type: text
+            is_error: false
+          - tool_use_id: toolu_01JhrSFZD8xrVApp1AGf9GYY
+            type: tool_result
+            content:
+            - text: daisy is bob's daughter and charlie's younger sister
+              type: text
+            is_error: false
+        model: claude-haiku-5-5
+        stream: true
+        system: |2-
+
+              Use the `retrieve_entity_info` tool to get information about a specific person.
+              If you need to use `retrieve_entity_info` to get information about multiple people, try
+              to call them in parallel as much as possible.
+              Think step by step and then provide a single most probable concise answer.
+
+        tool_choice:
+          type: auto
+        tools:
+        - name: retrieve_entity_info
+          description: Get the knowledge about the given entity.
+          input_schema:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=91
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-8f5a3b74f8e3bf73d1dcd2fe6bd52ff2-156521a1955dde68-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CgNPXZzwgTQqcA8jX74Ek","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":892,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSzAkKEAgTGAI4AUIIdGhpbmtpbmcSDOOl8UfFhg8wC9ugvxoMZwNLcfyNvPf5INbNIjA71qVw0chrE7D3YVPs/vgBkDt6EybG+GEkUaf/Hl6PI3ZxEzRg8IErYmrin4sSAD0q6QiGWNKgZH7qwSapmXLQPdgYw3/rUgTx1bl6BDtRV7g1TiYlb0zhRSRvkCWVGJjvu6pAxtoCxTrZlmN2pm88kN9CLPtbikhE34NtLkwEFITOadXlJ16xRQ+/X5fUm3NCuJf9ACCp0l5Amon5PkMMNou7j9MjX6bBOh/7irk7pMx/220k3fOqoKIbcLFRUYfZvTVVrbNMpwpwnPXETrtT4XmZWe3nEUy4JdgeHAEVlgq+BiR/6HaJ/KYFoG4qFe+5df639hAaBxziFv6q1Ll0JZXMQT2hc11RF+5XD3F76L1D7zJz1CbTNlOYtl0dyR3g/6aM5eRTwb4JsKPBAF100/KIhgEpmLgdY2MKQWYwACPW4x8U5s3jIHssWj6AGSYI9K9Eg75wjxINMJJGh63WSAoDOiLIWuaRs1Sz3wWwU3TL8yBRxaRrxGsDA8pxFlLOuJWcsBdJAfHN14ctwaUK+KiQwfBjl2iupf3Tfgk7P9q/lH37OnGYi/VqVMFGrdh1CDboZ7uw02DTVe7E/oXAft28ZVqh2b43UXrZ/Se/s8b/RCU0NZX5d/E3jN7b73DPPLxH9dQcZtwk773FH88a0gzIBIaFftgQMIoyWNEwAkra4jM9/STIjuRxt55zMDoRONNI3cY3cmcLoTFBq0MMGO+MSuGF40p53rzeZJzag4JvIx7Dhrb5m3VwA9ZH7JH5Ld/kpHvqTtX3jW2th/VbSRF/GhcQ+snRvlHJB31Xztw/qvtZtIa7UTCiB4aIeP8ltmEfktQxxR/x44jlQz7lGsjwpLPDU/Av0eulPPPbmImwWKTxVWGBioA1Htl9UmKZe9oHp+JcPXmTKoVehWrVIQ0J4/+H7Z921WyrZnLppxN4r/zJw3pxELxopQJYb5wwhjEmptDJFvHNnEKFdd9RZUSmYXsLdmKoIII4S1127t/4jP0DIk4kKpgWxfPEXOde9Sv6WG5Ln4EpAW6bqOMaPWZufnc/CkvMkmJDJfCszjnuDNAza/+NH2QyRwOHJtzx7LImWuE19az2JrvQGg5JB9Vf5qCT2dNoTuVxwNcl5QGQlSd5Z0ZW73Xs6eCOif+tR6sEGOMTplk67wedGAylEGgmG3Xvr7xz6v2oSjDb39oQvqucsPCtIAZOpqRl5UZRWa2pWspd0/baq1IYgenGmK7LxcpqCDWKa+0xlICZ9NqYwksyKTttF/NA0qWnZ9r37L9LQtCJ2rQdg/E044erSHISA9MwKbc/U00WSKtp8zyZ2X9bag8a0zindLNQ2qSGEAz/aEKM3Pm4YCs6JulCeswhXBux6ue9k3MtKeHyaEr4qnCScc8KFovmBOere6gOjd+sruJoX6Rtj57XkYEY2hkdL9HH5Q/rHWBJSmqu1lghNWXR3ySOhhwt1Qjjp8o9yv68dVbjE2aq+a+93lBlNFTclIaYfZ9Qt4C//nR/IcYow0/BitMTaeuvYZGw/bo9LJ2ABA6xkJFFCC2SJdei9IGYtL1rrzfDVnxNGAE="}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0           }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**Da"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"isy** is the youngest"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":".\n\nThe l"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ookup shows that"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Daisy is Char"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"lie's younger sister,"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" so"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Charlie is older than her"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". Alice and Bob"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Charlie's parents, so"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" they are"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" older than any"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" of"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" their children. That"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" leaves Daisy as"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" the youngest."}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1    }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":892,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":334,"output_tokens_details":{"thinking_tokens":247}} }
+
+        event: message_stop
+        data: {"type":"message_stop"    }
+
+  recorded_at: 2026-10-25T05:17:48.054168+00:00

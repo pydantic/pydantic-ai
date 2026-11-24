@@ -16,8 +16,8 @@ _LEGACY_ASPECT_RATIO_TO_SIZE = {
     '3:2': '1536x1024',
 }
 
-# Canonical approximately-one-megapixel outputs for GPT Image 2. Each value has
-# an exact requested aspect ratio and satisfies the model's documented limits.
+# Canonical approximately-one-megapixel outputs for GPT Image 2 and 2.6. Each value has
+# an exact requested aspect ratio and satisfies the models' documented limits.
 _GPT_IMAGE_2_ASPECT_RATIO_TO_SIZE = {
     '1:1': '1024x1024',
     '1:2': '704x1408',
@@ -53,8 +53,18 @@ def is_gpt_image_1(model_name: str | None) -> bool:
     )
 
 
+_GPT_IMAGE_2_MODELS = ('gpt-image-2', 'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst')
+"""GPT Image 2 and 2.6 models, whose geometry is free-form within the same documented limits.
+
+The live Images API rejects the same out-of-bounds sizes with the same messages for GPT Image 2.6 as for
+GPT Image 2. Dated snapshots are matched through the dash suffix.
+"""
+
+
 def is_gpt_image_2(model_name: str | None) -> bool:
-    return model_name == 'gpt-image-2' or (model_name is not None and model_name.startswith('gpt-image-2-'))
+    return model_name is not None and any(
+        model_name == name or model_name.startswith(f'{name}-') for name in _GPT_IMAGE_2_MODELS
+    )
 
 
 @dataclass
@@ -102,17 +112,7 @@ def resolve_openai_dimensions(model_name: str | None, dimensions: ImageDimension
     size = f'{width}x{height}'
 
     if is_gpt_image_2(model_name):
-        problems: list[str] = []
-        if width % 16 or height % 16:
-            problems.append('width and height must be multiples of 16')
-        if max(width, height) > 3840:
-            problems.append('the longest edge must be at most 3840 pixels')
-        if max(width, height) > 3 * min(width, height):
-            problems.append('the aspect ratio must not exceed 3:1')
-        pixels = width * height
-        if pixels < 655_360 or pixels > 8_294_400:
-            problems.append('the total pixel count must be between 655360 and 8294400')
-        if problems:
+        if problems := _gpt_image_2_dimension_problems(width, height):
             raise UserError(
                 f'OpenAI model {model_name!r} does not support `dimensions={dimensions!r}`: {"; ".join(problems)}'
             )
@@ -125,6 +125,20 @@ def resolve_openai_dimensions(model_name: str | None, dimensions: ImageDimension
             f'Supported exact dimensions are: {supported}.'
         )
     return size
+
+
+def _gpt_image_2_dimension_problems(width: int, height: int) -> list[str]:
+    problems: list[str] = []
+    if width % 16 or height % 16:
+        problems.append('width and height must be multiples of 16')
+    if max(width, height) > 3840:
+        problems.append('the longest edge must be at most 3840 pixels')
+    if max(width, height) > 3 * min(width, height):
+        problems.append('the aspect ratio must not exceed 3:1')
+    pixels = width * height
+    if pixels < 655_360 or pixels > 8_294_400:
+        problems.append('the total pixel count must be between 655360 and 8294400')
+    return problems
 
 
 def resolve_openai_aspect_ratio(model_name: str | None, aspect_ratio: ImageGenerationAspectRatio) -> str:

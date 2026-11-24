@@ -179,3 +179,10 @@ ENV/**
 
 # Compiled gh-aw workflows (generated from their `.md` sources).
 .github/workflows/*.lock.yml
+
+# The `pax` web plugin's built browser UI: minified bundles that `npm run build`
+# writes from src/pydantic_ai_pax/web-ui, marked linguist-generated in .gitattributes.
+src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static/**
+
+# Written by `scripts/durable_exec_contract.py --write`, marked linguist-generated in .gitattributes.
+scripts/durable_exec_contract.json

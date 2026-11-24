@@ -1,0 +1,2156 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.start
+    session:
+      model: gpt-live-1
+      instructions: You are a voice assistant. Keep replies short and conversational.
+        When the user asks for something you cannot answer from this conversation
+        alone, delegate the task and tell them you are looking it up.
+      audio:
+        format:
+          type: audio/pcm
+          rate: 24000
+      delegation:
+        type: responses
+        responses:
+          model: gpt-5.6-sol
+          instructions: Always use the `get_weather` tool for weather questions. Answer
+            in one sentence.
+          tools:
+          - type: function
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            description: Look up the current weather for a city.
+- kind: message
+  direction: received
+  at: 0.59
+  data:
+    event_id: event_EbauGAbjD3b8qFRGxMcOY
+    type: session.started
+    session:
+      id: live_u0_EbauGp3oN9r1QwMfrBXt0KzROy9sWGqP
+      expires_at: 1792635912
+      model: gpt-live-1
+      instructions: You are a voice assistant. Keep replies short and conversational.
+        When the user asks for something you cannot answer from this conversation
+        alone, delegate the task and tell them you are looking it up.
+      audio:
+        output:
+          voice: marin
+        format:
+          type: audio/pcm
+          rate: 24000
+      delegation:
+        type: responses
+        responses:
+          model: gpt-5.6-sol
+          instructions: Always use the `get_weather` tool for weather questions. Answer
+            in one sentence.
+          tools:
+          - type: function
+            name: get_weather
+            description: Look up the current weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+          tool_choice: auto
+      status: active
+      input: []
+- kind: message
+  direction: sent
+  at: 0.591
+  data:
+    type: session.thinking.append
+    delegation_id: null
+    content: 'The user typed: What is the weather in London?'
+- kind: message
+  direction: sent
+  at: 0.591
+  data:
+    type: response.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: What is the weather in London?
+- kind: message
+  direction: sent
+  at: 0.591
+  data:
+    type: response.create
+    event_id: pydantic_ai.text.0
+- kind: message
+  direction: sent
+  at: 0.891
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 0.99
+  data:
+    type: session.delegation.created
+    offset_ms: 0
+    delegation:
+      id: item_EbauHhRxHolxW0mGcpb8y
+      type: delegation
+      response_id: resp_0adf4efbab6b3a6e006ad957e940c887d190eab761ef566a47
+      target: responses
+    client_event_id: pydantic_ai.text.0
+    event_id: event_EbauH5CscGSMEgJVx8698
+- kind: message
+  direction: sent
+  at: 0.992
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 0.992
+  data:
+    event_id: event_EbauHuECiMy2tWTctnE9f
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.created
+      response:
+        id: resp_0adf4efbab6b3a6e006ad957e940c887d190eab761ef566a47
+        object: response
+        created_at: 1792628713
+        status: in_progress
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        completed_at: null
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output: []
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0adf4efbab6b3a6e016ad957e8d05087d19e77579e9ba2ba2e
+        prompt_cache_key: live:c0497c7121810318c41f7c662598163d59046a60b29f7c17dc8b76dfb6a
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: auto
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage: null
+        user: user-tTHJXD6ricaFwo7MQjg7jzi4
+        metadata: {}
+      sequence_number: 0
+- kind: message
+  direction: received
+  at: 1.023
+  data:
+    event_id: event_EbauH0I2oq46mZ9Hntpp5
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.in_progress
+      response:
+        id: resp_0adf4efbab6b3a6e006ad957e940c887d190eab761ef566a47
+        object: response
+        created_at: 1792628713
+        status: in_progress
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        completed_at: null
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output: []
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0adf4efbab6b3a6e016ad957e8d05087d19e77579e9ba2ba2e
+        prompt_cache_key: live:c0497c7121810318c41f7c662598163d59046a60b29f7c17dc8b76dfb6a
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: auto
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage: null
+        user: user-tTHJXD6ricaFwo7MQjg7jzi4
+        metadata: {}
+      sequence_number: 1
+- kind: message
+  direction: sent
+  at: 1.093
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 1.193
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 1.294
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 1.394
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 1.495
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 1.543
+  data:
+    type: session.output_transcript.delta
+    start_ms: 0
+    end_ms: 200
+    delta: ' Let me'
+    event_id: event_EbauHudoJM7s60zQn8Kq0
+- kind: message
+  direction: sent
+  at: 1.597
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 1.619
+  data:
+    type: session.output_audio.delta
+    delta: CAAKAAkABwAMAAsACwAKAAsADQAKAA4ADQALAAwADAAO
+- kind: message
+  direction: received
+  at: 1.679
+  data:
+    type: session.output_transcript.delta
+    start_ms: 200
+    end_ms: 400
+    delta: ' check'
+    event_id: event_EbauIDGe6vQg8x4UK3vjN
+- kind: message
+  direction: sent
+  at: 1.698
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 1.72
+  data:
+    type: session.output_audio.delta
+    delta: BQAIAAYAAAAEAAoABAABAAgABwAIAAUABgAHAAUACAAE
+- kind: message
+  direction: sent
+  at: 1.799
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 1.82
+  data:
+    type: session.output_audio.delta
+    delta: rALFAOcA3f/C/j//cP4g/Wj9OPyg+wD8GPkw+ZD30PXQ
+- kind: message
+  direction: received
+  at: 1.87
+  data:
+    type: session.output_transcript.delta
+    start_ms: 400
+    end_ms: 600
+    delta: ' the'
+    event_id: event_EbauIVuyvDThfEyFxman9
+- kind: message
+  direction: sent
+  at: 1.9
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 1.92
+  data:
+    type: session.output_audio.delta
+    delta: AAeoB+gHoAjQCaAJ8AmACbAIgAjwByAIMAgACFAIkAfg
+- kind: message
+  direction: received
+  at: 1.934
+  data:
+    event_id: event_EbauIdfNhsXDTvd4sr14q
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_item.added
+      item:
+        id: fc_0adf4efbab6b3a6e006ad957ea4e0887d1bd5ddbe6184947d4
+        type: function_call
+        status: in_progress
+        arguments: ''
+        call_id: call_2W2jxnxySi0sBub37wtZ9Oyj
+        name: get_weather
+      output_index: 0
+      sequence_number: 2
+- kind: message
+  direction: received
+  at: 1.936
+  data:
+    event_id: event_EbauId7uHWlmkQnMQHeZO
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.function_call_arguments.delta
+      delta: '{"'
+      item_id: fc_0adf4efbab6b3a6e006ad957ea4e0887d1bd5ddbe6184947d4
+      obfuscation: guia5sqhkHBtnv
+      output_index: 0
+      sequence_number: 3
+- kind: message
+  direction: received
+  at: 1.939
+  data:
+    event_id: event_EbauI09Q9r2vdCe7Tf34Z
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.function_call_arguments.delta
+      delta: city
+      item_id: fc_0adf4efbab6b3a6e006ad957ea4e0887d1bd5ddbe6184947d4
+      obfuscation: 4ncQLe5yUtWg
+      output_index: 0
+      sequence_number: 4
+- kind: message
+  direction: received
+  at: 1.943
+  data:
+    event_id: event_EbauI8hsowpZ0tL2TDVwT
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.function_call_arguments.delta
+      delta: '":"'
+      item_id: fc_0adf4efbab6b3a6e006ad957ea4e0887d1bd5ddbe6184947d4
+      obfuscation: bgkjuEB4L3g22
+      output_index: 0
+      sequence_number: 5
+- kind: message
+  direction: received
+  at: 1.945
+  data:
+    event_id: event_EbauIGzSRdn1ddE1MGt4M
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.function_call_arguments.delta
+      delta: London
+      item_id: fc_0adf4efbab6b3a6e006ad957ea4e0887d1bd5ddbe6184947d4
+      obfuscation: Q30hkc4mkQ
+      output_index: 0
+      sequence_number: 6
+- kind: message
+  direction: received
+  at: 1.949
+  data:
+    event_id: event_EbauIjLR50hioIpFKqY5s
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.function_call_arguments.delta
+      delta: '"}'
+      item_id: fc_0adf4efbab6b3a6e006ad957ea4e0887d1bd5ddbe6184947d4
+      obfuscation: RdqH7eM6Pe1POz
+      output_index: 0
+      sequence_number: 7
+- kind: message
+  direction: sent
+  at: 2.0
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.016
+  data:
+    event_id: event_EbauIZoM7dkJ2GBXn7kUr
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.function_call_arguments.done
+      arguments: '{"city":"London"}'
+      item_id: fc_0adf4efbab6b3a6e006ad957ea4e0887d1bd5ddbe6184947d4
+      output_index: 0
+      sequence_number: 8
+- kind: message
+  direction: received
+  at: 2.017
+  data:
+    event_id: event_EbauIRizEIP6W1LmGJ1Ei
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_item.done
+      item:
+        id: fc_0adf4efbab6b3a6e006ad957ea4e0887d1bd5ddbe6184947d4
+        type: function_call
+        status: completed
+        arguments: '{"city":"London"}'
+        call_id: call_2W2jxnxySi0sBub37wtZ9Oyj
+        name: get_weather
+      output_index: 0
+      sequence_number: 9
+- kind: message
+  direction: sent
+  at: 2.018
+  data:
+    type: response.item.create
+    item:
+      type: function_call_output
+      call_id: call_2W2jxnxySi0sBub37wtZ9Oyj
+      output: It is foggy and 12 degrees Celsius in London.
+- kind: message
+  direction: received
+  at: 2.02
+  data:
+    type: session.output_audio.delta
+    delta: LAB0AIwASgBZANwAkAApAGMAiAA4AGAA9wCUAMD/0v9U
+- kind: message
+  direction: sent
+  at: 2.1
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.103
+  data:
+    type: session.output_transcript.delta
+    start_ms: 600
+    end_ms: 800
+    delta: ' current'
+    event_id: event_EbauIAyvjGxxHJz2OAiKk
+- kind: message
+  direction: received
+  at: 2.104
+  data:
+    type: session.thinking.appended
+    start_ms: 600
+    end_ms: 800
+    event_id: event_EbauIWXWwVnHVEZH6qaMw
+- kind: message
+  direction: received
+  at: 2.122
+  data:
+    type: session.output_audio.delta
+    delta: oPu0ApANcA8gDUANYAyQCWALYAzQDEAOQBPgETAPkAvo
+- kind: message
+  direction: sent
+  at: 2.201
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.221
+  data:
+    type: session.output_audio.delta
+    delta: 3AJ8AVACqAC0/iH/0P4d/3T+gv9EAXgDeAXgAnwDBAIv
+- kind: message
+  direction: received
+  at: 2.257
+  data:
+    event_id: event_EbauILQbhdv8AcX3xXJHz
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.completed
+      response:
+        id: resp_0adf4efbab6b3a6e006ad957e940c887d190eab761ef566a47
+        object: response
+        created_at: 1792628713
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        completed_at: 1792628714
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output: []
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0adf4efbab6b3a6e016ad957e8d05087d19e77579e9ba2ba2e
+        prompt_cache_key: live:c0497c7121810318c41f7c662598163d59046a60b29f7c17dc8b76dfb6a
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 816
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 18
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 834
+        user: user-tTHJXD6ricaFwo7MQjg7jzi4
+        metadata: {}
+      sequence_number: 10
+- kind: message
+  direction: sent
+  at: 2.26
+  data:
+    type: response.create
+- kind: message
+  direction: sent
+  at: 2.302
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.32
+  data:
+    type: session.output_audio.delta
+    delta: ov/J/1D/mv8FAOP///+k/4EAQgCU/0EAOwDE/7v/3f+r
+- kind: message
+  direction: sent
+  at: 2.403
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.417
+  data:
+    event_id: event_EbauIytwtOmuA2LYAtlIg
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.created
+      response:
+        id: resp_0adf4efbab6b3a6e006ad957eab5cc87d19f5395c17c5c1d42
+        object: response
+        created_at: 1792628714
+        status: in_progress
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        completed_at: null
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output: []
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0adf4efbab6b3a6e006ad957e940c887d190eab761ef566a47
+        prompt_cache_key: live:c0497c7121810318c41f7c662598163d59046a60b29f7c17dc8b76dfb6a
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: auto
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage: null
+        user: user-tTHJXD6ricaFwo7MQjg7jzi4
+        metadata: {}
+      sequence_number: 0
+- kind: message
+  direction: received
+  at: 2.419
+  data:
+    type: session.output_audio.delta
+    delta: 6//9//n///8LABIAEwAYABgAHgAnAC0AMgAtACMAKQAl
+- kind: message
+  direction: received
+  at: 2.44
+  data:
+    event_id: event_EbauIEohO9eWDc7RFUxfM
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.in_progress
+      response:
+        id: resp_0adf4efbab6b3a6e006ad957eab5cc87d19f5395c17c5c1d42
+        object: response
+        created_at: 1792628714
+        status: in_progress
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        completed_at: null
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output: []
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0adf4efbab6b3a6e006ad957e940c887d190eab761ef566a47
+        prompt_cache_key: live:c0497c7121810318c41f7c662598163d59046a60b29f7c17dc8b76dfb6a
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: auto
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage: null
+        user: user-tTHJXD6ricaFwo7MQjg7jzi4
+        metadata: {}
+      sequence_number: 1
+- kind: message
+  direction: sent
+  at: 2.504
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.519
+  data:
+    type: session.output_audio.delta
+    delta: +//7//n/+f/3//n/+f/1//n/+v/5//v//v/7//7/AAD8
+- kind: message
+  direction: sent
+  at: 2.605
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.62
+  data:
+    type: session.output_audio.delta
+    delta: tf/wAMIBogBQAd0AxgGgAmUAa/8i/6v/NABy/pj+DP5i
+- kind: message
+  direction: received
+  at: 2.67
+  data:
+    type: session.output_transcript.delta
+    start_ms: 1200
+    end_ms: 1400
+    delta: ' weather'
+    event_id: event_EbauJDR2AVfb6Jv1mnTMp
+- kind: message
+  direction: sent
+  at: 2.705
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.72
+  data:
+    type: session.output_audio.delta
+    delta: oPVA9uD1UPXw9LDz0PJQ8eDvoO7A7CDswOqg6YDpAOjg
+- kind: message
+  direction: sent
+  at: 2.806
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.819
+  data:
+    type: session.output_audio.delta
+    delta: 4OwA7CDrQOqA6WDoQOjg54Do4Ong6iDu0PDg9MD6xP0M
+- kind: message
+  direction: sent
+  at: 2.906
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 2.906
+  data:
+    event_id: event_EbauJVZsGdKFD2yy1PJYl
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_item.added
+      item:
+        id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+        type: message
+        status: in_progress
+        content: []
+        phase: final_answer
+        role: assistant
+      output_index: 0
+      sequence_number: 2
+- kind: message
+  direction: received
+  at: 2.908
+  data:
+    event_id: event_EbauJJS76zbuqwgauSrJ6
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.content_part.added
+      content_index: 0
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      output_index: 0
+      part:
+        type: output_text
+        annotations: []
+        logprobs: []
+        text: ''
+      sequence_number: 3
+- kind: message
+  direction: received
+  at: 2.915
+  data:
+    event_id: event_EbauJnBZrNbpWf0n0OSAT
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: It
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: Rct2MRAOKsySAr
+      output_index: 0
+      sequence_number: 4
+- kind: message
+  direction: received
+  at: 2.918
+  data:
+    event_id: event_EbauJdPKQUEl1pZ6IoOvC
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: ’s
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: LKx5q3RB99m0LQ
+      output_index: 0
+      sequence_number: 5
+- kind: message
+  direction: received
+  at: 2.919
+  data:
+    type: session.output_audio.delta
+    delta: kAYgBGQDEANEA4gDyARgBYgFKAYoBbgD2gGw/tz8APx8
+- kind: message
+  direction: received
+  at: 2.919
+  data:
+    event_id: event_EbauJTkYlxzylQwQuNv9K
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: ' fog'
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: Boc9u8r9VTvp
+      output_index: 0
+      sequence_number: 6
+- kind: message
+  direction: received
+  at: 2.922
+  data:
+    event_id: event_EbauJ52Qpz9K2B9oa6Fvw
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: gy
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: L3kC6xkP9kligK
+      output_index: 0
+      sequence_number: 7
+- kind: message
+  direction: received
+  at: 2.925
+  data:
+    event_id: event_EbauJKhtZ4xQbj81NcMyt
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: ' and'
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: XSNXgshXiKrh
+      output_index: 0
+      sequence_number: 8
+- kind: message
+  direction: received
+  at: 2.926
+  data:
+    event_id: event_EbauJ28bbVpdFkaVyxhem
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: ' '
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: Z4T0kPXH6L6t0pT
+      output_index: 0
+      sequence_number: 9
+- kind: message
+  direction: received
+  at: 2.954
+  data:
+    event_id: event_EbauJBnrhsJDkQCoD9Ybk
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: '12'
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: VDQnPMHMsCs994
+      output_index: 0
+      sequence_number: 10
+- kind: message
+  direction: received
+  at: 2.959
+  data:
+    event_id: event_EbauJ8clSqcmTWJxCHU6W
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: ' degrees'
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: POk8KYRg
+      output_index: 0
+      sequence_number: 11
+- kind: message
+  direction: sent
+  at: 3.007
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.012
+  data:
+    event_id: event_EbauJQkU4MtlhDrz7KxAv
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: ' Celsius'
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: A4QIfldE
+      output_index: 0
+      sequence_number: 12
+- kind: message
+  direction: received
+  at: 3.018
+  data:
+    event_id: event_EbauJlW4RZKRnH6D6Wd7g
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: ' in'
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: lyhNZcTcSxGGB
+      output_index: 0
+      sequence_number: 13
+- kind: message
+  direction: received
+  at: 3.02
+  data:
+    type: session.output_audio.delta
+    delta: v//t/+f/8/8AAC0AOgBTAFwAawCTAJcAeQCXAGEAdQBU
+- kind: message
+  direction: received
+  at: 3.026
+  data:
+    event_id: event_EbauJk6VNGLgBzMqDyF0g
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: ' London'
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: o6RiYK1Ne
+      output_index: 0
+      sequence_number: 14
+- kind: message
+  direction: received
+  at: 3.03
+  data:
+    event_id: event_EbauJftQshM5aceW6Vbbu
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.delta
+      content_index: 0
+      delta: .
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      obfuscation: 94CcBhsUCGml90j
+      output_index: 0
+      sequence_number: 15
+- kind: message
+  direction: received
+  at: 3.078
+  data:
+    event_id: event_EbauJow2wslEk85hMkcqC
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_text.done
+      content_index: 0
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      logprobs: []
+      output_index: 0
+      sequence_number: 16
+      text: It’s foggy and 12 degrees Celsius in London.
+- kind: message
+  direction: received
+  at: 3.079
+  data:
+    event_id: event_EbauJWFCVLgOfeemWXd0Z
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.content_part.done
+      content_index: 0
+      item_id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+      output_index: 0
+      part:
+        type: output_text
+        annotations: []
+        logprobs: []
+        text: It’s foggy and 12 degrees Celsius in London.
+      sequence_number: 17
+- kind: message
+  direction: received
+  at: 3.08
+  data:
+    event_id: event_EbauJIsfW4kPeszB9pRkH
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.output_item.done
+      item:
+        id: msg_0adf4efbab6b3a6e006ad957eb471487d19faf19436aac34ae
+        type: message
+        status: completed
+        content:
+        - type: output_text
+          annotations: []
+          logprobs: []
+          text: It’s foggy and 12 degrees Celsius in London.
+        phase: final_answer
+        role: assistant
+      output_index: 0
+      sequence_number: 18
+- kind: message
+  direction: sent
+  at: 3.107
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.119
+  data:
+    type: session.output_audio.delta
+    delta: tAJ8AiACuAGWAUoBCAHfALwAiwB8AH8AZABpAIUAggCz
+- kind: message
+  direction: sent
+  at: 3.208
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.22
+  data:
+    type: session.output_audio.delta
+    delta: sAjQB+gFiASkA/YBZAHaAFIBcgEkAnQCFAJsAVwAIP+o
+- kind: message
+  direction: received
+  at: 3.281
+  data:
+    type: session.output_transcript.delta
+    start_ms: 1800
+    end_ms: 2000
+    delta: ' in'
+    event_id: event_EbauJasQTwCeK2kF2wc6B
+- kind: message
+  direction: received
+  at: 3.305
+  data:
+    event_id: event_EbauJSgD8qxuNR79FeMtw
+    type: response.event
+    delegation_id: item_EbauHhRxHolxW0mGcpb8y
+    event:
+      type: response.completed
+      response:
+        id: resp_0adf4efbab6b3a6e006ad957eab5cc87d19f5395c17c5c1d42
+        object: response
+        created_at: 1792628714
+        status: completed
+        access_programs:
+          cyber: daybreak_blue
+        background: false
+        completed_at: 1792628715
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.6-sol
+        moderation: null
+        output: []
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_0adf4efbab6b3a6e006ad957e940c887d190eab761ef566a47
+        prompt_cache_key: live:c0497c7121810318c41f7c662598163d59046a60b29f7c17dc8b76dfb6a
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 857
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 16
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 873
+        user: user-tTHJXD6ricaFwo7MQjg7jzi4
+        metadata: {}
+      sequence_number: 19
+- kind: message
+  direction: sent
+  at: 3.309
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.321
+  data:
+    type: session.output_audio.delta
+    delta: wAuQDSAQwBJgFEAUQBIwD+ALcAnwB5AHqAeIB8gGIAVI
+- kind: message
+  direction: sent
+  at: 3.41
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.42
+  data:
+    type: session.output_audio.delta
+    delta: XQALAJwBrgDb/6YBZgHoAaAB5wDOAawB9wDtAAIBNgFS
+- kind: message
+  direction: received
+  at: 3.468
+  data:
+    type: session.output_transcript.delta
+    start_ms: 2000
+    end_ms: 2200
+    delta: ' London.'
+    event_id: event_EbauJnaKW6DYDaydnUrns
+- kind: message
+  direction: sent
+  at: 3.51
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.52
+  data:
+    type: session.output_audio.delta
+    delta: oAgACAAHgAUgBGgCBgHF/5z+kP3Q/GT8MPx0/OT8LP3I
+- kind: message
+  direction: sent
+  at: 3.611
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.62
+  data:
+    type: session.output_audio.delta
+    delta: LP2E/bz97P0+/mz+pP78/mb/vf8qAI0AygDtAP8ABgEC
+- kind: message
+  direction: sent
+  at: 3.712
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.72
+  data:
+    type: session.output_audio.delta
+    delta: uPqE/FD9RgCkAwwDfANkA1QBDAJkAngE+AV4BkAISAWY
+- kind: message
+  direction: sent
+  at: 3.812
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.82
+  data:
+    type: session.output_audio.delta
+    delta: VP+q/wwAtwD5AE4BLALcAmgDIASwBHgFCAaoBlAHsAcQ
+- kind: message
+  direction: sent
+  at: 3.913
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 3.92
+  data:
+    type: session.output_audio.delta
+    delta: 1ABlAL3/Tv8a/xz/Zv/C/w0AlwAWAZoBDALAAiQDLANQ
+- kind: message
+  direction: sent
+  at: 4.013
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.02
+  data:
+    type: session.output_audio.delta
+    delta: sASwBIAEUAQ4BPAD0AN8AzwD6AKoAlwCCAK2AU4B8ACd
+- kind: message
+  direction: sent
+  at: 4.114
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.12
+  data:
+    type: session.output_audio.delta
+    delta: LP08/Vj9RP1o/Vj9OP1E/Xz9oP0K/l7+0v5b//7/eAD7
+- kind: message
+  direction: sent
+  at: 4.214
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.22
+  data:
+    type: session.output_audio.delta
+    delta: /P00/nr+jP7G/tz+Jf+C/+P/IAB/ALYACAFSAXwBnAHK
+- kind: message
+  direction: sent
+  at: 4.315
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.319
+  data:
+    type: session.output_audio.delta
+    delta: JQAiACEAHgAfADAAKQAmAC8AKwAkACkAHgAbABkAHAAe
+- kind: message
+  direction: sent
+  at: 4.416
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.421
+  data:
+    type: session.output_audio.delta
+    delta: HQAaABwAGwAaAB4AHgAbAB8AGwAaAB0AGwAcABsAHAAc
+- kind: message
+  direction: sent
+  at: 4.516
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.52
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAD//wAAAAAAAAAA//8AAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.618
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.62
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAABAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.718
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.72
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.757
+  data:
+    type: session.output_transcript.delta
+    start_ms: 3200
+    end_ms: 3400
+    delta: ' It’s'
+    event_id: event_EbauLe6ATOg18y6xQZwTB
+- kind: message
+  direction: sent
+  at: 4.819
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.836
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 4.919
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 4.932
+  data:
+    type: session.output_transcript.delta
+    start_ms: 3400
+    end_ms: 3600
+    delta: ' foggy'
+    event_id: event_EbauLvQAGu8gRjDFnE3n1
+- kind: message
+  direction: received
+  at: 4.935
+  data:
+    type: session.output_audio.delta
+    delta: nP8QAFoAIgBVAMf/of9c/9P/QQBzAKkAUAFIAYYBzQBF
+- kind: message
+  direction: sent
+  at: 5.02
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.035
+  data:
+    type: session.output_audio.delta
+    delta: oAGw/CAELQCI+3gHJP5c/CAFUP8tADz/sgHsAjz8cwDo
+- kind: message
+  direction: sent
+  at: 5.121
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.124
+  data:
+    type: session.output_transcript.delta
+    start_ms: 3600
+    end_ms: 3800
+    delta: ' and'
+    event_id: event_EbauLSmO4Ull1MUngFZ64
+- kind: message
+  direction: received
+  at: 5.135
+  data:
+    type: session.output_audio.delta
+    delta: wP9G/woAfP8NAI0A7v8u/80Aw/96/5D/5ADT/63/z//C
+- kind: message
+  direction: sent
+  at: 5.222
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.235
+  data:
+    type: session.output_audio.delta
+    delta: UgDw/Wj8OPvY+iD7wPsM/bb+UgAgApwDgATQBHAEfAP2
+- kind: message
+  direction: received
+  at: 5.304
+  data:
+    type: session.output_transcript.delta
+    start_ms: 3800
+    end_ms: 4000
+    delta: ' 12'
+    event_id: event_EbauLegYpDGeVD8cE4Zi0
+- kind: message
+  direction: sent
+  at: 5.323
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.335
+  data:
+    type: session.output_audio.delta
+    delta: PANwA9AD0AQgBSgFkAYQB0AHQAjwCIAI8AgwCfAIsAmA
+- kind: message
+  direction: sent
+  at: 5.424
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.436
+  data:
+    type: session.output_audio.delta
+    delta: YPNw8rDwwO9A7KDtoO7A7kDyIO9A7QDrIOvg7UDwMPMg
+- kind: message
+  direction: sent
+  at: 5.524
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.535
+  data:
+    type: session.output_audio.delta
+    delta: AO7g7YDsYOyg7ZDxYPJw9BD1oPXw9ND18Pfg+ZT9e/+c
+- kind: message
+  direction: sent
+  at: 5.625
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.635
+  data:
+    type: session.output_audio.delta
+    delta: SgCS/jz8iPyo/Dz+kf91AJf/uADr/ykAnv/1/9H/xwAg
+- kind: message
+  direction: received
+  at: 5.713
+  data:
+    type: session.output_transcript.delta
+    start_ms: 4200
+    end_ms: 4400
+    delta: ' degrees'
+    event_id: event_EbauMoio3Gn5gtGUQxtef
+- kind: message
+  direction: sent
+  at: 5.725
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.735
+  data:
+    type: session.output_audio.delta
+    delta: VPyU/Lz8EP1g/bT9/P0+/nr+wv4K/2T/wv8aAG0AzwAY
+- kind: message
+  direction: sent
+  at: 5.826
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.835
+  data:
+    type: session.output_audio.delta
+    delta: yPvK/rIBGAXYB7AKMA2wD2ARABMgFGAUoBSAFEAUABNA
+- kind: message
+  direction: received
+  at: 5.908
+  data:
+    type: session.output_transcript.delta
+    start_ms: 4400
+    end_ms: 4600
+    delta: ' Celsius.'
+    event_id: event_EbauMkqd75l2qZtIIQOTI
+- kind: message
+  direction: sent
+  at: 5.927
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 5.935
+  data:
+    type: session.output_audio.delta
+    delta: Xv5Z/6YA2AKAA6gBFgAc/zj9LPwg+7j4cPbg9DDzIPJg
+- kind: message
+  direction: sent
+  at: 6.029
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.035
+  data:
+    type: session.output_audio.delta
+    delta: 5wB8AfgCtf9w+oj9EwAwBBADI/+4/sD/TAAEArQCWAFL
+- kind: message
+  direction: sent
+  at: 6.129
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.135
+  data:
+    type: session.output_audio.delta
+    delta: sf+s/5P/hf+a/9f/3/8oAHcArQChAIkAhwBPAP//tf+D
+- kind: message
+  direction: sent
+  at: 6.23
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.236
+  data:
+    type: session.output_audio.delta
+    delta: 8Pag9rD1APUw9HDzoPPg83D0kPTQ8/Dz0POw9KD3APjY
+- kind: message
+  direction: sent
+  at: 6.33
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.335
+  data:
+    type: session.output_audio.delta
+    delta: VAG8/aACYv8A/vAENP22/nAD1v6pALYA6f8jAB4Bnv4E
+- kind: message
+  direction: sent
+  at: 6.431
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.435
+  data:
+    type: session.output_audio.delta
+    delta: cPb4+Qj+wAGYBSAJIAvACyALYAkQCOgFsAR0A5ABBQAc
+- kind: message
+  direction: sent
+  at: 6.532
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.535
+  data:
+    type: session.output_audio.delta
+    delta: /PxM/UD9iP2Q/Xj91P3U/Ub+jv7C/g7/Cv8y/zL/7v5c
+- kind: message
+  direction: sent
+  at: 6.632
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.635
+  data:
+    type: session.output_audio.delta
+    delta: Xf+e/kAAcQDfAEr+cf/IAlAA7PwkAGIBT//rAMz/Rf9O
+- kind: message
+  direction: sent
+  at: 6.733
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.735
+  data:
+    type: session.output_audio.delta
+    delta: LP0E/kD+gP5U/5gA3gFUA7gE8AWYBlAGoAUABeAEaAVQ
+- kind: message
+  direction: sent
+  at: 6.833
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.835
+  data:
+    type: session.output_audio.delta
+    delta: LAIw/UQBKgEA/CgEOv7Y/AgEGgCs/vL+YALcAAT9QgA8
+- kind: message
+  direction: sent
+  at: 6.934
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 6.935
+  data:
+    type: session.output_audio.delta
+    delta: WAWw+0kAHgGw/QAGTP3Q+QAJCP4U/O3/YAXc/vj67gEY
+- kind: message
+  direction: sent
+  at: 7.035
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.112
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.136
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.211
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.236
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.337
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.357
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.438
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.457
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.538
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.564
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.639
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.663
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.74
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.776
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.841
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.876
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 7.941
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 7.976
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.042
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.076
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.142
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.176
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.243
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.276
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.345
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.376
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.445
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.476
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.545
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.576
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.646
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.676
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.747
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.776
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.849
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.876
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 8.949
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 8.976
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.05
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 9.076
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.15
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 9.185
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.251
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 9.285
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.352
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 9.413
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.452
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 9.513
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.552
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 9.613
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.652
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 9.713
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.753
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 9.813
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.854
+  data:
+    type: session.input_audio.append
+    audio: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 9.913
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: sent
+  at: 9.936
+  data:
+    type: session.close
+- kind: message
+  direction: received
+  at: 10.272
+  data:
+    type: session.output_audio.delta
+    delta: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+- kind: message
+  direction: received
+  at: 10.607
+  data:
+    event_id: event_EbauQZMDb1zgqLPye9b77
+    type: session.closed
+    reason: close_requested
+    session:
+      id: live_u0_EbauGp3oN9r1QwMfrBXt0KzROy9sWGqP
+      expires_at: 1792635912
+      model: gpt-live-1
+      instructions: You are a voice assistant. Keep replies short and conversational.
+        When the user asks for something you cannot answer from this conversation
+        alone, delegate the task and tell them you are looking it up.
+      audio:
+        output:
+          voice: marin
+        format:
+          type: audio/pcm
+          rate: 24000
+      delegation:
+        type: responses
+        responses:
+          model: gpt-5.6-sol
+          instructions: Always use the `get_weather` tool for weather questions. Answer
+            in one sentence.
+          tools:
+          - type: function
+            name: get_weather
+            description: Look up the current weather for a city.
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+          tool_choice: auto
+      status: active
+      input: []
+    usage:
+      seconds: 8.0

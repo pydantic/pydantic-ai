@@ -1,0 +1,72 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/decisions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "273"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        input: Charged twice.
+        questions:
+        - type: score
+          name: q
+          instructions: ""
+          levels:
+          - label: "0"
+          - label: "1"
+          - label: "2"
+          - label: "3"
+          - label: "4"
+          - label: "5"
+          - label: "6"
+          - label: "7"
+          - label: "8"
+          - label: "9"
+          - label: "10"
+  response:
+    status: 400
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - x-request-id,retry-after,server-timing-total
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - "254"
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1"
+      server-timing-total:
+      - "1.424"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    body:
+      type: json
+      content:
+        error:
+          message: "Invalid 'questions[0].levels': array too long. Expected an array with maximum length 10, but got an array with length 11 instead."
+          type: invalid_request_error
+          param: questions[0].levels
+          code: array_above_max_length
+  recorded_at: 2026-10-07T08:32:42.255313+00:00

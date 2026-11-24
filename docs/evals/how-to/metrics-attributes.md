@@ -1,3 +1,7 @@
+---
+description: "Track tokens, cost, API calls and custom metrics per case in Pydantic Evals, check them in evaluators, and tag experiments with model and prompt metadata."
+---
+
 # Metrics & Attributes
 
 Track custom metrics and attributes during task execution for richer evaluation insights.
@@ -62,7 +66,7 @@ def process(inputs: str) -> str:
 
 def my_task(inputs: str) -> str:
     # Record which model was used
-    set_eval_attribute('model', 'gpt-5.2')
+    set_eval_attribute('model', '{{ openai:medium.name }}')
 
     # Record feature flags
     set_eval_attribute('used_cache', True)
@@ -168,7 +172,7 @@ from pydantic_ai import Agent
 
 logfire.configure(send_to_logfire='if-token-present')
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 async def ai_task(inputs: str) -> str:
@@ -279,7 +283,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_evals import increment_eval_metric, set_eval_attribute
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 
-agent = Agent('openai:gpt-5.2')
+agent = Agent('{{ openai:medium }}')
 
 
 def search(query: str) -> str:
@@ -307,7 +311,7 @@ def call_api(ctx: RunContext, endpoint: str) -> str:
 # Evaluate tool usage
 @dataclass
 class ToolUsageEvaluator(Evaluator):
-    def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool | int]:
+    def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool | float]:
         db_searches = ctx.metrics.get('db_searches', 0)
         api_calls = ctx.metrics.get('api_calls', 0)
 
@@ -445,7 +449,7 @@ async def main():
     report = await dataset.evaluate(
         task,
         metadata={
-            'model': 'gpt-5.2',
+            'model': '{{ openai:medium.name }}',
             'prompt_version': 'v2.1',
             'temperature': 0.7,
         },
@@ -453,7 +457,7 @@ async def main():
 
     # Access experiment metadata in the report
     print(report.experiment_metadata)
-    #> {'model': 'gpt-5.2', 'prompt_version': 'v2.1', 'temperature': 0.7}
+    #> {'model': '{{ openai:medium.name }}', 'prompt_version': 'v2.1', 'temperature': 0.7}
 ```
 
 ### When to Use Experiment Metadata
@@ -487,13 +491,13 @@ async def task(text: str) -> str:
 async def main():
     report = await dataset.evaluate(
         task,
-        metadata={'model': 'gpt-5.2', 'version': 'v1.0'},
+        metadata={'model': '{{ openai:medium.name }}', 'version': 'v1.0'},
     )
 
     print(report.render())
     """
     ╭─ Evaluation Summary: task ─╮
-    │ model: gpt-5.2             │
+    │ model: {{ openai:medium.name }}         │
     │ version: v1.0              │
     ╰────────────────────────────╯
     ┏━━━━━━━━━━┳━━━━━━━━━━┓
@@ -524,7 +528,7 @@ from pydantic_ai import Agent
 from pydantic_evals import Case, Dataset
 
 # Module constants as single source of truth
-MODEL_NAME = 'openai:gpt-5-mini'
+MODEL_NAME = '{{ openai:small }}'
 TEMPERATURE = 0.7
 INSTRUCTIONS = 'You are a helpful assistant.'
 
@@ -576,7 +580,7 @@ class TaskConfig:
 
 # Define configuration once
 config = TaskConfig(
-    model='openai:gpt-5-mini',
+    model='{{ openai:small }}',
     temperature=0.7,
     max_tokens=500,
     prompt_version='v2.1',
@@ -607,7 +611,7 @@ async def main():
     print(report.experiment_metadata)
     """
     {
-        'model': 'openai:gpt-5-mini',
+        'model': '{{ openai:small }}',
         'temperature': 0.7,
         'max_tokens': 500,
         'prompt_version': 'v2.1',
@@ -628,7 +632,7 @@ from pydantic_ai import Agent
 from pydantic_evals import Case, Dataset
 
 # ❌ BAD: Configuration defined in multiple places
-agent = Agent('openai:gpt-5-mini', model_settings={'temperature': 0.7})
+agent = Agent('{{ openai:small }}', model_settings={'temperature': 0.7})
 
 
 async def task(inputs: str) -> str:
@@ -643,7 +647,7 @@ async def main():
     await dataset.evaluate(
         task,
         metadata={
-            'model': 'openai:gpt-5-mini',  # Duplicated! Could diverge from agent definition
+            'model': '{{ openai:small }}',  # Duplicated! Could diverge from agent definition
             'temperature': 0.8,  # ⚠️ WRONG! Task actually uses 0.7
         },
     )
@@ -685,7 +689,7 @@ dataset = Dataset(name='metrics_demo', cases=[case])
 async def task(inputs):
     # These are recorded during execution for each case
     increment_eval_metric('tokens', 100)
-    set_eval_attribute('model', 'gpt-5.2')
+    set_eval_attribute('model', '{{ openai:medium.name }}')
     return f'Result: {inputs}'
 
 

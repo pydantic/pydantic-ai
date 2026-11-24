@@ -1,0 +1,596 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: conversation_initiation_client_data
+    source_info:
+      source: unknown
+      version: pydantic-ai/<version>
+    conversation_config_override:
+      agent:
+        prompt:
+          prompt: Answer in two sentences.
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    conversation_initiation_metadata_event:
+      conversation_id: conv_2201m6290syhfadapgby60efj9vs
+      agent_output_audio_format: pcm_16000
+      user_input_audio_format: pcm_16000
+      persistent_session_token: null
+    type: conversation_initiation_metadata
+- kind: message
+  direction: sent
+  at: 0.001
+  data:
+    type: user_message
+    text: Tell me a fun fact about otters.
+    id: pydantic_ai_input_0
+- kind: message
+  direction: received
+  at: 1.316
+  data:
+    audio_event:
+      audio_base_64: DQARAA0ADgAIAAUAAAD///7//v/9//3//v////z/+v/8
+      event_id: 1
+      alignment:
+        chars:
+        - O
+        - t
+        - t
+        - e
+        - r
+        - s
+        - ' '
+        - h
+        - o
+        - l
+        - d
+        - ' '
+        - h
+        - a
+        - n
+        - d
+        - s
+        - ' '
+        - w
+        - h
+        - i
+        char_start_times_ms:
+        - 0
+        - 93
+        - 151
+        - 186
+        - 232
+        - 267
+        - 313
+        - 337
+        - 360
+        - 406
+        - 464
+        - 499
+        - 546
+        - 592
+        - 662
+        - 685
+        - 731
+        - 766
+        - 789
+        - 813
+        - 836
+        char_durations_ms:
+        - 93
+        - 58
+        - 35
+        - 46
+        - 35
+        - 46
+        - 24
+        - 23
+        - 46
+        - 58
+        - 35
+        - 47
+        - 46
+        - 70
+        - 23
+        - 46
+        - 35
+        - 23
+        - 24
+        - 23
+        - 46
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.392
+  data:
+    audio_event:
+      audio_base_64: 1wbLBz0J8Ah3ByAFUQKtAEwBvwOmBRsGnwWKBW0FKgVY
+      event_id: 1
+      alignment:
+        chars:
+        - l
+        - e
+        - ' '
+        - t
+        - h
+        - e
+        - y
+        - ' '
+        - s
+        - l
+        - e
+        - e
+        - p
+        - ' '
+        - s
+        - o
+        - ' '
+        - t
+        - h
+        - e
+        - y
+        - ' '
+        - d
+        - o
+        - n
+        - ''''
+        - t
+        - ' '
+        - f
+        - l
+        - o
+        - a
+        - t
+        - ' '
+        - a
+        - w
+        - a
+        - y
+        - ' '
+        - f
+        - r
+        - o
+        - m
+        - ' '
+        - e
+        - a
+        - c
+        - h
+        - ' '
+        - o
+        - t
+        - h
+        - e
+        - r
+        - .
+        - ' '
+        char_start_times_ms:
+        - 0
+        - 35
+        - 58
+        - 81
+        - 104
+        - 128
+        - 151
+        - 186
+        - 221
+        - 279
+        - 337
+        - 383
+        - 430
+        - 476
+        - 534
+        - 569
+        - 627
+        - 685
+        - 708
+        - 731
+        - 755
+        - 789
+        - 836
+        - 871
+        - 906
+        - 940
+        - 975
+        - 1010
+        - 1033
+        - 1080
+        - 1126
+        - 1173
+        - 1219
+        - 1242
+        - 1265
+        - 1312
+        - 1347
+        - 1393
+        - 1428
+        - 1463
+        - 1498
+        - 1533
+        - 1567
+        - 1602
+        - 1637
+        - 1672
+        - 1695
+        - 1730
+        - 1765
+        - 1811
+        - 1846
+        - 1881
+        - 1904
+        - 1939
+        - 1985
+        - 2043
+        char_durations_ms:
+        - 35
+        - 23
+        - 23
+        - 23
+        - 24
+        - 23
+        - 35
+        - 35
+        - 58
+        - 58
+        - 46
+        - 47
+        - 46
+        - 58
+        - 35
+        - 58
+        - 58
+        - 23
+        - 23
+        - 24
+        - 34
+        - 47
+        - 35
+        - 35
+        - 34
+        - 35
+        - 35
+        - 23
+        - 47
+        - 46
+        - 47
+        - 46
+        - 23
+        - 23
+        - 47
+        - 35
+        - 46
+        - 35
+        - 35
+        - 35
+        - 35
+        - 34
+        - 35
+        - 35
+        - 35
+        - 23
+        - 35
+        - 35
+        - 46
+        - 35
+        - 35
+        - 23
+        - 35
+        - 46
+        - 58
+        - 140
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.645
+  data:
+    audio_event:
+      audio_base_64: AQACAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQAB
+      event_id: 1
+      alignment:
+        chars:
+        - T
+        - h
+        - i
+        - s
+        - ' '
+        - a
+        - d
+        - o
+        - r
+        - a
+        - b
+        - l
+        - e
+        - ' '
+        - b
+        - e
+        - h
+        - a
+        - v
+        - i
+        - o
+        - r
+        - ' '
+        - h
+        - e
+        - l
+        - p
+        - s
+        - ' '
+        - t
+        - h
+        - e
+        - m
+        - ' '
+        - s
+        - t
+        - a
+        - y
+        - ' '
+        - t
+        - o
+        - g
+        - e
+        - t
+        - h
+        - e
+        - r
+        - ' '
+        - i
+        - n
+        - ' '
+        - g
+        - r
+        - o
+        - u
+        - p
+        - s
+        - ','
+        - ' '
+        - e
+        - s
+        - p
+        - e
+        - c
+        - i
+        - a
+        - l
+        - l
+        - y
+        - ' '
+        - i
+        - n
+        - ' '
+        - s
+        - t
+        - r
+        - o
+        - n
+        - g
+        - ' '
+        - c
+        - u
+        - r
+        - r
+        - e
+        - n
+        - t
+        - s
+        - .
+        - ' '
+        char_start_times_ms:
+        - 0
+        - 58
+        - 151
+        - 197
+        - 221
+        - 267
+        - 325
+        - 395
+        - 453
+        - 511
+        - 557
+        - 604
+        - 650
+        - 697
+        - 743
+        - 778
+        - 859
+        - 940
+        - 1022
+        - 1080
+        - 1126
+        - 1196
+        - 1231
+        - 1312
+        - 1347
+        - 1382
+        - 1428
+        - 1474
+        - 1521
+        - 1556
+        - 1579
+        - 1602
+        - 1637
+        - 1683
+        - 1730
+        - 1765
+        - 1811
+        - 1869
+        - 1904
+        - 1950
+        - 1974
+        - 2020
+        - 2078
+        - 2125
+        - 2171
+        - 2194
+        - 2229
+        - 2264
+        - 2322
+        - 2345
+        - 2380
+        - 2461
+        - 2519
+        - 2589
+        - 2635
+        - 2694
+        - 2752
+        - 2868
+        - 2891
+        - 2926
+        - 3019
+        - 3100
+        - 3170
+        - 3228
+        - 3274
+        - 3309
+        - 3355
+        - 3390
+        - 3448
+        - 3483
+        - 3518
+        - 3541
+        - 3576
+        - 3622
+        - 3657
+        - 3704
+        - 3762
+        - 3808
+        - 3866
+        - 3889
+        - 3959
+        - 4005
+        - 4052
+        - 4110
+        - 4156
+        - 4203
+        - 4238
+        - 4284
+        - 4400
+        - 4516
+        char_durations_ms:
+        - 58
+        - 93
+        - 46
+        - 24
+        - 46
+        - 58
+        - 70
+        - 58
+        - 58
+        - 46
+        - 47
+        - 46
+        - 47
+        - 46
+        - 35
+        - 81
+        - 81
+        - 82
+        - 58
+        - 46
+        - 70
+        - 35
+        - 81
+        - 35
+        - 35
+        - 46
+        - 46
+        - 47
+        - 35
+        - 23
+        - 23
+        - 35
+        - 46
+        - 47
+        - 35
+        - 46
+        - 58
+        - 35
+        - 46
+        - 24
+        - 46
+        - 58
+        - 47
+        - 46
+        - 23
+        - 35
+        - 35
+        - 58
+        - 23
+        - 35
+        - 81
+        - 58
+        - 70
+        - 46
+        - 59
+        - 58
+        - 116
+        - 23
+        - 35
+        - 93
+        - 81
+        - 70
+        - 58
+        - 46
+        - 35
+        - 46
+        - 35
+        - 58
+        - 35
+        - 35
+        - 23
+        - 35
+        - 46
+        - 35
+        - 47
+        - 58
+        - 46
+        - 58
+        - 23
+        - 70
+        - 46
+        - 47
+        - 58
+        - 46
+        - 47
+        - 35
+        - 46
+        - 116
+        - 116
+        - 174
+      is_final: false
+    type: audio
+- kind: message
+  direction: received
+  at: 1.645
+  data:
+    agent_response_event:
+      agent_response: Otters hold hands while they sleep so they don't float away
+        from each other. This adorable behavior helps them stay together in groups,
+        especially in strong currents.
+      event_id: 1
+      response_id: d30e5db9-0d51-4782-acbc-6bc8726b7ba4
+      in_response_to_ids:
+      - pydantic_ai_input_0
+      response_type: text
+      attachments: []
+    type: agent_response
+- kind: message
+  direction: received
+  at: 1.645
+  data:
+    context_usage_event:
+      event_id: 1
+      model: gemini-2.5-flash
+      context_tokens: 387
+      context_limit_tokens: 1048576
+    type: context_usage

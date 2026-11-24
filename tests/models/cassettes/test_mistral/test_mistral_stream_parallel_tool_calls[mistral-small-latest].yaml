@@ -1,0 +1,221 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: "https://api.mistral.ai/v1/chat/completions#stream"
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "676"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: mistral-small-latest
+        messages:
+        - content: >-
+            Call get_weather for Paris, get_weather for London, and get_time for UTC. Call
+            all three tools at once.
+          role: user
+        top_p: 1.0
+        stream: true
+        stop: null
+        tools:
+        - function:
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            description: ""
+          type: function
+        - function:
+            name: get_time
+            parameters:
+              additionalProperties: false
+              properties:
+                tz:
+                  type: string
+              required:
+              - tz
+              type: object
+            description: ""
+          type: function
+        tool_choice: auto
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      mistral-correlation-id:
+      - 01a1a38b-5aab-7dfa-809e-7282bcba1fa9
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"8ba30f07ee22440ea3b52df81fad3686","object":"chat.completion.chunk","created":1793745181,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+        data: {"id":"8ba30f07ee22440ea3b52df81fad3686","object":"chat.completion.chunk","created":1793745181,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"tool_calls":[{"id":"Fi65w8Plu","type":"function","function":{"name":"get_weather","arguments":"{\"city\": \"Paris\"}"},"index":0},{"id":"NpJQUR1bV","type":"function","function":{"name":"get_weather","arguments":"{\"city\": \"London\"}"},"index":1},{"id":"lPaisIfGU","type":"function","function":{"name":"get_time","arguments":"{\"tz\": \"UTC\"}"},"index":2}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":155,"total_tokens":188,"completion_tokens":33,"prompt_tokens_details":{"cached_tokens":0},"completion_tokens_details":{"reasoning_tokens":0},"service_tier":"standard"},"p":"abcdefghijkl"}
+
+        data: [DONE]
+
+  recorded_at: 2026-11-03T22:33:02.163925+00:00
+- request:
+    method: POST
+    uri: "https://api.mistral.ai/v1/chat/completions#stream"
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1294"
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    body:
+      type: json
+      content:
+        model: mistral-small-latest
+        messages:
+        - content: >-
+            Call get_weather for Paris, get_weather for London, and get_time for UTC. Call
+            all three tools at once.
+          role: user
+        - role: assistant
+          content: []
+          tool_calls:
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"Paris\"}"
+            id: Fi65w8Plu
+            type: function
+            index: 0
+          - function:
+              name: get_weather
+              arguments: "{\"city\":\"London\"}"
+            id: NpJQUR1bV
+            type: function
+            index: 0
+          - function:
+              name: get_time
+              arguments: "{\"tz\":\"UTC\"}"
+            id: lPaisIfGU
+            type: function
+            index: 0
+          prefix: false
+        - content: Sunny in Paris.
+          role: tool
+          tool_call_id: Fi65w8Plu
+        - content: Sunny in London.
+          role: tool
+          tool_call_id: NpJQUR1bV
+        - content: 12:00 in UTC.
+          role: tool
+          tool_call_id: lPaisIfGU
+        top_p: 1.0
+        stream: true
+        stop: null
+        tools:
+        - function:
+            name: get_weather
+            parameters:
+              additionalProperties: false
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+              type: object
+            description: ""
+          type: function
+        - function:
+            name: get_time
+            parameters:
+              additionalProperties: false
+              properties:
+                tz:
+                  type: string
+              required:
+              - tz
+              type: object
+            description: ""
+          type: function
+        tool_choice: auto
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      mistral-correlation-id:
+      - 01a1a38b-5ee4-774b-b0f6-5657fb11cea1
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":"Here"},"finish_reason":null}],"p":"abcdef"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":" are the results:\n\n"},"finish_reason":null}],"p":"abcdefghijklmnopqrstuvwxyz0123456789"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":"- **"},"finish_reason":null}],"p":"abcdefghijklmnopqrstuvwx"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":"Paris**: Sunny"},"finish_reason":null}],"p":"abcdefghijklmno"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":" in Paris.\n-"},"finish_reason":null}],"p":"abc"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":" **London**: Sunny"},"finish_reason":null}],"p":"abcdefghijklmn"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":" in London.\n-"},"finish_reason":null}],"p":"abcd"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":" **UTC Time"},"finish_reason":null}],"p":"abcdefghijklmnopqrstuvwxyz01234567"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":"**: 12"},"finish_reason":null}],"p":"abcdefg"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":":00 in"},"finish_reason":null}],"p":"abcdefghijklmnopqrstuvwxyz0"}
+
+        data: {"id":"67d775f7035a438b8f3aa0a5b37adf49","object":"chat.completion.chunk","created":1793745182,"model":"mistral-small-latest","choices":[{"index":0,"delta":{"content":" UTC."},"finish_reason":"stop"}],"usage":{"prompt_tokens":212,"total_tokens":248,"completion_tokens":36,"prompt_tokens_details":{"cached_tokens":128},"completion_tokens_details":{"reasoning_tokens":0},"service_tier":"standard"},"p":"abcdefghijklmnopqr"}
+
+        data: [DONE]
+
+  recorded_at: 2026-11-03T22:33:02.932811+00:00

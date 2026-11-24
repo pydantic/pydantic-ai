@@ -1,193 +1,289 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '1057'
+      - "979"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      mcp_servers:
-      - name: deepwiki
-        type: url
-        url: https://mcp.deepwiki.com/mcp
-      messages:
-      - content:
-        - text: Look up the 10-year Treasury duration, then add 2 and 2.
-          type: text
-        role: user
-      - content:
-        - id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
-          input:
-            question: What is pydantic-ai?
-            repoName: pydantic/pydantic-ai
-          name: ask_question
-          server_name: deepwiki
-          type: mcp_tool_use
-        - id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
-          input:
-            a: 2
-            b: 2
-          name: add
-          type: tool_use
-        role: assistant
-      - content:
-        - content:
-          - text: '4'
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Look up the 10-year Treasury duration, then add 2 and 2.
             type: text
-          is_error: false
-          tool_use_id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: auto
-      tools:
-      - description: Add two numbers.
-        input_schema:
-          additionalProperties: false
-          properties:
-            a:
-              type: integer
-            b:
-              type: integer
-          required:
-          - a
-          - b
-          type: object
-        name: add
-    uri: https://api.anthropic.com/v1/messages?beta=true
+        - role: assistant
+          content:
+          - id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
+            type: mcp_tool_use
+            server_name: deepwiki
+            name: ask_wiki_question
+            input:
+              question: What is pydantic-ai?
+              repoName: pydantic/pydantic-ai
+          - id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+            type: tool_use
+            name: add
+            input:
+              a: 2
+              b: 2
+        - role: user
+          content:
+          - tool_use_id: toolu_01WjXqPrN8vKsRt2YbLmZdQe
+            type: tool_result
+            content:
+            - text: "4"
+              type: text
+            is_error: false
+        model: claude-sonnet-5-5
+        mcp_servers:
+        - type: url
+          name: deepwiki
+          url: https://mcp.deepwiki.com/mcp
+        stream: true
+        tool_choice:
+          type: auto
+        tools:
+        - name: add
+          description: Add two numbers.
+          input_schema:
+            additionalProperties: false
+            properties:
+              a:
+                type: integer
+              b:
+                type: integer
+            required:
+            - a
+            - b
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '9504'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=29676
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-58e4b7f40312c265860d60b18e67b44f-b6ed32f2deb68a48-01
+      - 00-0ff1c353e4d90e966e7d38a830d6dbe7-1d8e994063305c1d-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - content:
-        - text: "Pydantic AI is a Python agent framework and LLM library designed for building production-grade Generative
-            AI applications.   It aims to bring the ergonomic design of FastAPI to GenAI development, leveraging Pydantic
-            V2 for robust validation and full type safety.  The framework is model-agnostic, supporting various LLM providers
-            like OpenAI, Anthropic, and Google, and emphasizes type safety, observability, and extensibility.  \n\n## Core
-            Purpose and Features\n\nPydantic AI simplifies the development of reliable AI applications by providing a structured,
-            type-safe, and extensible framework.  It abstracts away the complexities of interacting with different LLM providers
-            and managing agent workflows. \n\nKey features include:\n*   **Type-Safe Agents**: Agents are designed with generic
-            types for compile-time validation, leveraging Pydantic for output validation and dependency injection. \n*   **Model-Agnostic
-            Design**: It supports over 15 LLM providers through a unified `Model` interface, allowing for easy switching between
-            different models and providers. \n*   **Structured Outputs**: The framework provides powerful streaming of structured
-            data with immediate Pydantic validation. \n*   **Seamless Observability**: It integrates with Pydantic Logfire
-            and OpenTelemetry for real-time debugging, tracing, and cost tracking. \n*   **Durable Execution**: Pydantic AI
-            supports preserving agent progress across restarts and handling long-running workflows via systems like Temporal
-            or DBOS. \n*   **Composable Capabilities**: You can build agents from reusable units that bundle tools, hooks,
-            instructions, and model settings. \n*   **Graph Support**: It provides a way to define graphs using type hints
-            for complex applications, managed by `pydantic-graph`.  \n\n## Monorepo Package Structure\n\nPydantic AI is organized
-            as a `uv` workspace monorepo containing several distinct Python packages. \n\n```mermaid\ngraph TD\n    subgraph
-            \"Main Packages\"\n        PYDANTIC_AI[\"pydantic-ai<br/>(Metapackage)\"]\n        SLIM[\"pydantic-ai-slim<br/>Core
-            Framework\"]\n        GRAPH[\"pydantic-graph<br/>State Machine\"]\n        EVALS[\"pydantic-evals<br/>Evaluation
-            Framework\"]\n        CLAI[\"clai<br/>CLI Tool\"]\n        EXAMPLES[\"pydantic-ai-examples<br/>Usage Examples\"]\n
-            \   end\n    \n    subgraph \"Package Relationships\"\n        PYDANTIC_AI -->|\"bundles\"| SLIM\n        PYDANTIC_AI
-            -->|\"bundles\"| GRAPH\n        PYDANTIC_AI -->|\"bundles\"| EVALS\n        PYDANTIC_AI -->|\"bundles\"| CLAI\n
-            \       PYDANTIC_AI -->|\"bundles\"| EXAMPLES\n        \n        SLIM -->|\"depends on\"| GRAPH\n        EVALS
-            -->|\"depends on\"| SLIM\n        CLAI -->|\"depends on\"| SLIM\n        EXAMPLES -->|\"depends on\"| SLIM\n        EXAMPLES
-            -->|\"depends on\"| EVALS\n    end\n    \n    subgraph \"Core Dependencies (pydantic-ai-slim)\"\n        ANYIO[\"anyio>=4.7.0\"]\n
-            \       GRIFFELIB[\"griffelib>=2.0\"]\n        HTTPX[\"httpx>=0.27\"]\n        PYDANTIC[\"pydantic>=2.12\"]\n
-            \       OPENTELEMETRY_API[\"opentelemetry-api>=1.28.0\"]\n        TYPING_INSPECTION[\"typing-inspection>=0.4.0\"]\n
-            \       GENAI_PRICES[\"genai-prices>=0.1.0\"]\n    end\n    \n    SLIM -->|\"requires\"| ANYIO\n    SLIM -->|\"requires\"|
-            GRIFFELIB\n    SLIM -->|\"requires\"| HTTPX\n    SLIM -->|\"requires\"| PYDANTIC\n    SLIM -->|\"requires\"| OPENTELEMETRY_API\n
-            \   SLIM -->|\"requires\"| TYPING_INSPECTION\n    SLIM -->|\"requires\"| GENAI_PRICES\n``` \n\n*   `pydantic-ai-slim`:
-            The core agent framework with minimal base dependencies. \n*   `pydantic-graph`: A typed graph and state machine
-            library used for agent loops and workflows. \n*   `pydantic-evals`: A framework for systematic testing and evaluation
-            of LLM performance. \n*   `clai`: A command-line interface for interacting with agents and models. \n*   `pydantic-ai-examples`:
-            A collection of examples demonstrating Pydantic AI capabilities. \n*   `pydantic-ai`: A metapackage that bundles
-            all features and common providers. \n\n## Core Architecture Components\n\nThe architecture bridges the gap between
-            high-level natural language intent and structured code execution. \n\n```mermaid\ngraph TD\n    subgraph \"Natural
-            Language Space\"\n        USER_PROMPT[(\"User Prompt\")]\n        INSTRUCTIONS[(\"Instructions\")]\n        THINKING[(\"Thinking
-            Process\")]\n        MESSAGE_HISTORY[(\"Conversation History\")]\n    end\n\n    subgraph \"Code Entity Space
-            (pydantic_ai)\"\n        AGENT_CLASS[\"Agent Class\"]\n        MODEL_ABSTRACT[\"Model (Abstract Base Class)\"]\n
-            \       TOOL_DEFINITION[\"ToolDefinition\"]\n        RUN_CONTEXT[\"RunContext\"]\n        MODEL_REQUEST_PARAMS[\"ModelRequestParameters\"]\n
-            \       MODEL_MESSAGE_TYPES[\"ModelMessage Types\"]\n        PYDANTIC_VALIDATION[\"Pydantic Validation\"]\n    end\n\n
-            \   subgraph \"Execution Flow\"\n        AGENT_EXEC_LOOP[\"Agent Execution Loop\"]\n    end\n\n    USER_PROMPT
-            -->|becomes| MODEL_MESSAGE_TYPES\n    INSTRUCTIONS -->|configures| AGENT_CLASS\n    THINKING -->|influences| MODEL_REQUEST_PARAMS\n
-            \   MESSAGE_HISTORY -->|managed by| AGENT_CLASS\n\n    AGENT_CLASS -->|orchestrates| AGENT_EXEC_LOOP\n    AGENT_EXEC_LOOP
-            -->|uses| MODEL_ABSTRACT\n    AGENT_EXEC_LOOP -->|executes| TOOL_DEFINITION\n    AGENT_EXEC_LOOP -->|provides
-            context via| RUN_CONTEXT\n    AGENT_EXEC_LOOP -->|builds| MODEL_REQUEST_PARAMS\n    MODEL_ABSTRACT -->|processes|
-            MODEL_REQUEST_PARAMS\n    MODEL_ABSTRACT -->|returns| MODEL_MESSAGE_TYPES\n    MODEL_MESSAGE_TYPES -->|validated
-            by| PYDANTIC_VALIDATION\n    TOOL_DEFINITION -->|uses| PYDANTIC_VALIDATION\n``` \n\nKey code entities include:\n*
-            \  `Agent` (`pydantic_ai.Agent`): The central orchestrator managing tools, instructions, and model interaction.
-            \n*   `Model` (`pydantic_ai.models.Model`): An abstract base class defining how to communicate with LLM providers.
-            \n*   `ModelMessage` (`pydantic_ai.messages.ModelMessage`): The core abstraction for conversation history. \n*
-            \  `RunContext` (`pydantic_ai.RunContext`): Provides access to dependencies and state within tools and dynamic
-            instructions. \n\n## Installation\n\nPydantic AI offers flexible installation options:\n*   **Standard**: `pip
-            install pydantic-ai` includes core packages and libraries for major providers like OpenAI, Anthropic, and Google.
-            \n*   **Slim**: `pip install pydantic-ai-slim` provides a minimal footprint, allowing you to add specific providers
-            or features via extras (e.g., `[openai]`). \n*   **Examples**: `pip install pydantic-ai[examples]` includes the
-            `pydantic-ai-examples` package for easy exploration. \n\n## Example Usage\n\nHere's a minimal example of using
-            Pydantic AI to create an agent:\n```python\nfrom pydantic_ai import Agent\n\nagent = Agent(\n    'anthropic:claude-sonnet-4-6',\n
-            \   instructions='Be concise, reply with one sentence.',\n)\n\nresult = agent.run_sync('Where does \"hello world\"
-            come from?')\nprint(result.output)\n``` \n\nYou can also add capabilities like `Thinking` and `WebSearch` to an
-            agent:\n```python\nfrom pydantic_ai import Agent\nfrom pydantic_ai.capabilities import Thinking, WebSearch\n\nagent
-            = Agent(\n    'anthropic:claude-sonnet-4-6',\n    instructions='Be concise, reply with one sentence.',\n    capabilities=[Thinking(),
-            WebSearch()],\n)\n\nresult = agent.run_sync('What was the mass of the largest meteorite found this year?')\nprint(result.output)\n```
-            \n\n## Notes\n\nThe `AGENTS.md` file provides insights into the project's philosophy, emphasizing modern Python,
-            type safety, and thoughtful API design.  The `SKILL.md` file in `pydantic_ai_slim/pydantic_ai/.agents/skills/building-pydantic-ai-agents/SKILL.md`
-            further details when to use Pydantic AI for building agents, adding tools, and handling structured output. \n\nWiki
-            pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n- [Additional
-            Model Providers (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#4.6)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-pydanticai_008f6e73-bd1a-4a1f-9e5f-0fbee7cae4e3\n"
-          type: text
-        is_error: false
-        tool_use_id: mcptoolu_01SAss3KEwASziHZoMR6HcZU
-        type: mcp_tool_result
-      - text: |-
-          I apologize, but I don't have the ability to look up the 10-year Treasury duration. The tools available to me are limited to asking questions about GitHub repositories and performing basic mathematical operations.
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPEtuevVXSDCCsxKFBvj","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2487,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}}
 
-          However, I can tell you that **2 + 2 = 4**.
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptoolu_01SAss3KEwASziHZoMR6HcZU","is_error":false,"content":[{"type":"text","text":"Pydantic AI is a Python SDK and agent framework for building production-grade Generative AI applications and workflows.  It is designed to be provider-agnostic, supporting various LLM providers like OpenAI, Anthropic, and Google through a unified interface.  The framework emphasizes type safety, observability, and extensibility, leveraging Pydantic V2 for robust validation. \n\n## Core Features and Design Principles\n\nPydantic AI is built with several key design principles:\n*   **Model-Agnostic**: It supports a wide range of models and providers through a unified interface, allowing for easy swapping of models. \n*   **Type Safety**: The framework is designed for maximum IDE context and static type checking, aiming to catch errors at write-time rather than runtime. \n*   **Seamless Observability**: It integrates with Pydantic Logfire and OpenTelemetry for real-time debugging, tracing, and cost tracking of agent runs. \n*   **Structured Output**: Pydantic AI provides powerful streaming of structured data with immediate Pydantic validation. \n*   **Durable Execution**: It supports preserving agent progress across restarts and handling long-running workflows using technologies like Temporal. \n*   **Composable Capabilities**: Agents can be built from reusable units that bundle tools, hooks, instructions, and model settings. \n\n## Package Structure\n\nPydantic AI is organized as a `uv` workspace monorepo with several distinct Python packages:\n*   `pydantic-ai`: This is a meta-package that bundles common provider extras and dependencies. \n*   `pydantic-ai-slim`: This package contains the minimal core framework, including the agent logic and models. \n*   `pydantic-graph`: A typed graph and state machine library used for workflows. \n*   `pydantic-evals`: An evaluation framework for running tests and benchmarks. \n*   `pydantic-ai-harness`: A capability and harness library offering composable tools and sandboxes for advanced agent behaviors. \n*   `clai`: A Command Line Artificial Intelligence terminal utility. \n*   `pydantic-ai-examples`: A suite of demonstration examples. \n\n## Installation\n\nYou can install Pydantic AI using `pip` or `uv`. \n*   **Standard Installation**: `pip install pydantic-ai` includes core packages and libraries for major providers like OpenAI, Anthropic, and Google, along with integrations for Logfire and the CLI. \n*   **Slim Installation**: `pip install pydantic-ai-slim` provides a minimal footprint, allowing you to add specific providers or features via extras (e.g., `[openai]`, `[temporal]`). \n\n## Example Usage\n\nA basic Pydantic AI agent can be created and run with a few lines of code. For instance, to create an agent that uses Anthropic's Claude model and responds concisely:\n```python\nfrom pydantic_ai import Agent\n\nagent = Agent(\n    'anthropic:claude-sonnet-4-0',\n    instructions='Be concise, reply with one sentence.',\n)\nresult = agent.run_sync('Where does \"hello world\" come from?')\nprint(result.output)\n```\nThis example configures an `Agent` with a specific model and instructions, then runs it synchronously with a prompt.  The `result.output` will contain the LLM's response. \n\n## Notes\n\nThe `pydantic-ai` project aims to provide a robust and type-safe framework for AI agent development, similar to how FastAPI provides an ergonomic design for web development.  The `AGENTS.md` file provides guidelines for contributors, emphasizing the importance of high-quality, type-safe, and well-documented code. \n\nWiki pages you might want to explore:\n- [Overview (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1)\n- [Package Structure and Organization (pydantic/pydantic-ai)](/wiki/pydantic/pydantic-ai#1.1)\n\nView this search on DeepWiki: https://deepwiki.com/search/what-is-pydanticai_c53c7a8b-7b20-4641-90a6-8c7752b7d064\n"}]}  }
 
-          Regarding the 10-year Treasury duration, typically the duration of a 10-year U.S. Treasury bond is approximately 8-9 years (it's less than the maturity because duration accounts for the present value of all cash flows including coupon payments). However, the exact duration varies based on the current yield and coupon rate. You would need to check current financial data sources like Bloomberg, the U.S. Treasury website, or financial news outlets for the most accurate current duration figure.
-        type: text
-      id: msg_011Ce8tUPDquRYCpsqXRJWFM
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: not_available
-        input_tokens: 3443
-        output_tokens: 169
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":"","signature":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"signature_delta","signature":"CAQS/QUKEAgTGAI4AUIIdGhpbmtpbmcSDGYwt1PIcdZGyV+x8RoMAJrISIQnlGHgrpp1IjAQfqdctAuo303k1Uodg683rxdEK+YtVkB/OIEPzJMUQ0MkTCJO73x39auUV+J2F+8qmgVmYFnnRraO4pgkkbwWhg/HU9ROZN/yhJK+qTGLRqAzgOOK2vOsbTPIEXJQlYi0dtPV0ae5MR0MGzHoZemaKCAy2zqZ7hXuEex7MBlIt/eMqA1GmlckMS3ANyd3B/ag2HY/0VSShU8xhOFltZPAqXCbGxTUJE7BgmbTI6fY+2cNGm9whpuEo4cc8sv3AtCM7hL3h20M4a8mPFNsR/SaL4We1KcvCsIzDLEeXORPNslaIqAf7I8wq59bwKab/wAHtKWJvRwt9J7PMLRZ28FRfXUlDzgSrr5QtdGFTaWMK/TQPUQdKGbr+kPO3rW9MDqGXNzAXnxVhq8ZYnRRB77I+9VpGZ2eZr98Sv0PlNwqGPl+th970dNe1xVndwPU8SN8h7oHbqZbxcPYsOlOip+pDEZN0d9zC0NucdZ0EywYV3oRIJ6HgamN5wVZX6bn0e9do3VxyoYFKqiE1ExfyARPlQtbfag3rtuZYP2n39l0Vpo2ra0tN84fiWRvlNwoZvmNf7tzjZsrdds+SchSzfeKSuQfNj/3cWyo7FL7qV7wYPceFjc3iy+pykB4wo3kv7ygpS9LmQ3LQNNSCnpcZ0th9y3bD/iFUohZJromDoHFVtazaxk7rbBMlqTWXcyqbs3nFXk+FwF4EZrcVzOqx36biyklS+WO8Zp3az9xsbKvJZ6OhDfA1juyfshpItde09dGGYcRmsexOPxGB/KJ5CxgUb4ivCnwCmZJTPZIm2hiL3BX6SEs4QXUA9XgYIwCPK+fLgCEN03ga5g/T0GSENj99qazIenRsP9KcOCY0c/bglux00QzS04Umdd85j2jI580Hw3rB8NDOqVhKsEDUuYvXug8VaeTxKVSh7W6+akTLVB4iodtLNLzP+5TO1IYAQ=="}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"2 + 2 ="}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" 4.\n\nI couldn"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"'t look up the 10-year"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Treasury duration. My"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" only l"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ookup tool is Deep"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Wiki, which answ"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ers questions about GitHub"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" repositories,"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" and it has"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" no market data. I should"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" have said"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" so before cal"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ling it."}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" Instead I"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" ran a query"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" about an"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" unrelated repo (p"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ydantic-ai), and"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" that result has nothing to do"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" with your question,"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" so please"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ignore it.\n\nFrom general"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" knowledge, a"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" 10-year Treasury"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" note has a modified du"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ration of about 8"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" to 9 years. That"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"'s"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" a rough fig"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ure. The"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" exact number"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" depends on the coupon and"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" the"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" current yield."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" For a par"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" b"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ond y"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ielding about 4"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"%, Macaulay du"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ration is roughly 8."}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"2 years. For current"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" fig"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ures, check a source"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" like B"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"loomberg or"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" the i"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Shares f"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"act"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" sheet for the I"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"EF "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"ETF."}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2487,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":308,"output_tokens_details":{"thinking_tokens":60},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}     }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-10-25T16:05:42.539774+00:00

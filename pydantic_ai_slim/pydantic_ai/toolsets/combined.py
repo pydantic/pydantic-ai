@@ -3,9 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
-from typing import Any
-
-from typing_extensions import Self
+from typing import Any, Self
 
 from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
@@ -78,8 +76,10 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                     )
 
                 tool_def = tool.tool_def
-                if tool_def.toolset_id is None and tool_toolset.id is not None:
-                    tool_def = replace(tool_def, toolset_id=tool_toolset.id)
+                # Only an `id` chosen for the toolset is stamped: a hostname-derived one would change tool
+                # definitions that durable engines hash and serialize, and that telemetry exports.
+                if tool_def.toolset_id is None and (toolset_id := tool_toolset._explicit_id) is not None:
+                    tool_def = replace(tool_def, toolset_id=toolset_id)
 
                 all_tools[name] = _CombinedToolsetTool(
                     toolset=tool_toolset,
@@ -96,7 +96,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, _CombinedToolsetTool)
-        return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool)
+        # Dispatch with the `tool_def` from the tool we were handed, not the one `source_tool` cached at
+        # `get_tools()` time: a toolset wrapping this one (like `PreparedToolset`) may have changed it since.
+        # The `toolset_id` on our outward-facing `tool_def` is ours to set, so the source toolset gets its own back.
+        source_tool_def = replace(tool.tool_def, toolset_id=tool.source_tool.tool_def.toolset_id)
+        return await tool.source_toolset.call_tool(
+            name, tool_args, ctx, replace(tool.source_tool, tool_def=source_tool_def)
+        )
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:

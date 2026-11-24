@@ -1,0 +1,54 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "Reply with exactly the word: OK"}]}], "system": [], "inferenceConfig":
+      {"maxTokens": 32}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        OTQ0Y2EwYWUtYjM5Ni00MTdlLTgxYjctMzY4MDUzZjU4NWE4
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '142'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://gateway.pydantic.info/proxy/bedrock/model/global.openai.gpt-5.6-sol/converse
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000
+      content-type:
+      - application/json
+      pydantic-ai-gateway-active-provider:
+      - bedrock
+      pydantic-ai-gateway-price-estimate:
+      - 0.0002USD
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      metrics:
+        latencyMs: 1015
+      output:
+        message:
+          content:
+          - text: OK
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 13
+        outputTokens: 5
+        pydantic_ai_gateway:
+          cost_estimate: '0.000152'
+        serverToolUsage: {}
+        totalTokens: 18
+    status:
+      code: 200
+      message: OK
+version: 1

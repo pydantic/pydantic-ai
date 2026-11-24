@@ -1,0 +1,60 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/google.gemma-3-12b-it/converse
+    headers:
+      amz-sdk-invocation-id:
+      - e8ec810b-e394-4661-9293-5a96a15143e9
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "455"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Return values equal to ["ok"].
+        system: []
+        inferenceConfig: {}
+        outputConfig:
+          textFormat:
+            type: json_schema
+            structure:
+              jsonSchema:
+                name: Result
+                schema: "{\"properties\":{\"values\":{\"items\":{\"type\":\"string\"},\"type\":\"array\",\"description\":\"contains={'type': 'string'}\"}},\"required\":[\"values\"],\"type\":\"object\",\"additionalProperties\":false}"
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "250"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 309
+        output:
+          message:
+            content:
+            - text: |-
+                {
+                  "values": ["ok"]
+                }
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 16
+          outputTokens: 13
+          serverToolUsage: {}
+          totalTokens: 29
+  recorded_at: 2026-10-20T14:41:08.107218+00:00

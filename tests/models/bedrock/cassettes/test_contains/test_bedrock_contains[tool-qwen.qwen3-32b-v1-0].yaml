@@ -1,0 +1,73 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/qwen.qwen3-32b-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 6c62af37-98c8-4e4c-8e99-91a7871a4653
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "504"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Call final_result with values ["ok"].
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: final_result
+              inputSchema:
+                json:
+                  properties:
+                    values:
+                      items:
+                        type: string
+                      type: array
+                      description: "contains={'type': 'string'}"
+                  required:
+                  - values
+                  type: object
+                  additionalProperties: false
+              description: The final response which ends this conversation
+              strict: true
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "325"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 371
+        output:
+          message:
+            content:
+            - toolUse:
+                input:
+                  values:
+                  - ok
+                name: final_result
+                toolUseId: tooluse_fy1xXYgUbe4LvLPIln2d1z
+            role: assistant
+        stopReason: tool_use
+        usage:
+          inputTokens: 191
+          outputTokens: 21
+          serverToolUsage: {}
+          totalTokens: 212
+  recorded_at: 2026-10-20T14:43:13.842072+00:00

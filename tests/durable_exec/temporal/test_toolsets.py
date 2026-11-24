@@ -9,10 +9,11 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
+from pydantic import BaseModel, Field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -26,6 +27,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     MultiModalContent,
     PartStartEvent,
     RequestUsage,
@@ -43,6 +45,8 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
     Capability,
+    PrefixTools,
+    Toolset,
 )
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -55,14 +59,17 @@ from pydantic_ai.models import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN, TOOLS_CHANGE_MID_RUN
 
 from ..._inline_snapshot import snapshot
+from ...wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
 
 try:
-    from temporalio import workflow
+    from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowHistory
     from temporalio.common import RetryPolicy
@@ -78,6 +85,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
@@ -122,9 +130,12 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
+    from fastmcp import FastMCP
     from fastmcp.client.transports import StdioTransport
 
+    from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -176,7 +187,6 @@ with workflow.unsafe.imports_passed_through():
 warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal-toolsets'),
     pytest.mark.filterwarnings(
@@ -185,7 +195,8 @@ pytestmark = [
 ]
 
 
-async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client):
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+async def test_mcp_tools_cached_across_activities(allow_model_requests: None, client: Client, complex_agent_mcp: None):
     """Verify that MCP tool caching reduces server round-trips across activities.
 
     The complex agent makes 3 model requests, each preceded by a get_tools activity.
@@ -198,7 +209,8 @@ async def test_mcp_tools_cached_across_activities(allow_model_requests: None, cl
     methods_called: list[str] = []
 
     async def tracking_send_request(self_: ClientSession, request: ClientRequest, *args: Any, **kwargs: Any) -> Any:
-        methods_called.append(request.root.method)
+        # SDK v1 wraps requests in a `RootModel`; SDK v2 passes the request itself.
+        methods_called.append(getattr(request, 'root', request).method)
         return await original_send_request(self_, request, *args, **kwargs)
 
     with patch.object(ClientSession, 'send_request', tracking_send_request):
@@ -279,6 +291,7 @@ def _scheduled_get_tools_count(history: WorkflowHistory) -> int:
     )
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_temporal_mcp_get_tools_replay_deterministic(allow_model_requests: None, client: Client):
     """#5875 regression: `get_tools` activity scheduling must be replay-deterministic.
 
@@ -333,6 +346,7 @@ async def test_temporal_mcp_get_tools_replay_deterministic(allow_model_requests:
         mcp_replay_holder['agent'] = warm
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_temporal_mcp_get_tools_not_cached_when_disabled(allow_model_requests: None, client: Client):
     """With `cache_tools=False`, `get_tools` is scheduled for every model request (no run cache).
 
@@ -706,6 +720,7 @@ class MultiStepInstructionsAgentWorkflow:
         return result.output
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_instructions_refresh_across_steps_in_workflow(
     allow_model_requests: None, client: Client
 ):
@@ -770,6 +785,7 @@ class DynamicInstructionsReplayWorkflow:
         return result.output
 
 
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_requests: None, client: Client):
     """The per-run `for_run` instructions cache must be replay-deterministic (issue #5282).
 
@@ -811,8 +827,14 @@ async def test_dynamic_toolset_instructions_replay_deterministic(allow_model_req
 
 # --- MCP-based DynamicToolset test ---
 # Tests that @agent.toolset returning an MCPToolset works with Temporal workflows.
-# Uses an HTTP-based MCP server rather than subprocess-based since the subprocess transports
-# don't play nicely with Temporal's sandbox.
+# The server is an in-process stand-in for DeepWiki's MCP server, with the one tool the recorded model
+# responses call: a recorded remote handshake can't replay on both MCP SDK v1 and v2.
+deepwiki_stand_in = FastMCP('deepwiki')
+
+
+@deepwiki_stand_in.tool
+def ask_question(repoName: str, question: str) -> str:
+    return f'{repoName} is a Python agent framework built by the Pydantic team.'
 
 
 mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset_agent')
@@ -821,7 +843,7 @@ mcptoolset_dynamic_toolset_agent = Agent(model, name='mcptoolset_dynamic_toolset
 @mcptoolset_dynamic_toolset_agent.toolset(id='mcptoolset_dynamic')
 def my_mcptoolset_dynamic_toolset(ctx: RunContext) -> MCPToolset:
     """Dynamic toolset that returns an `MCPToolset` — exercises lifecycle + `TemporalMCPToolset`."""
-    return MCPToolset('https://mcp.deepwiki.com/mcp')
+    return MCPToolset(deepwiki_stand_in)
 
 
 mcptoolset_dynamic_toolset_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
@@ -879,7 +901,7 @@ async def test_temporal_agent_run_in_workflow_with_executing_toolsets(allow_mode
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with durable=False (or metadata={'temporal': False}, which takes precedence when set) to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -940,7 +962,8 @@ async def test_temporal_agent_run_in_workflow_with_runtime_external_toolset(allo
             task_queue=TASK_QUEUE,
         )
         assert result.output == DeferredToolRequests(
-            calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+            calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')],
+            validated_args={'call-1': {'query': 'runtime'}},
         )
 
 
@@ -1022,6 +1045,7 @@ class MCPToolsetInstructionsWorkflow:
         return result.output
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_temporal_mcptoolset_instructions_propagate(client: Client):
     """`MCPToolset` instructions propagate through the `TemporalMCPToolset` wrapper."""
     async with Worker(
@@ -1036,7 +1060,12 @@ async def test_temporal_mcptoolset_instructions_propagate(client: Client):
             id=MCPToolsetInstructionsWorkflow.__name__,
             task_queue=TASK_QUEUE,
         )
-        assert output == snapshot('Be a helpful assistant.')
+        assert output == snapshot("""\
+<pyai:context id="toolset:mcp">
+Be a helpful assistant.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""")
 
 
 def test_temporalize_mcptoolset_dispatches_to_temporalmcptoolset():
@@ -1096,7 +1125,7 @@ async def test_oversized_tool_return_payload(client: Client):
     ):
         with workflow_raises(
             UserError,
-            f"Tool 'get_oversized_image' returned a result too large for Temporal. {payload_limit_detail(2133494)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
+            f"Tool 'get_oversized_image' returned a result too large for Temporal. {payload_limit_detail(2133520)}. Binary content like an image is base64-encoded into the activity payload, so if that is the cause, the raw-byte budget is about three quarters of the limit — roughly 1.5MB at the 2MB default. Return a reference instead of the value itself, like a URL or a key your application resolves later. To keep large payloads out of the workflow history without changing what your tools or models return, configure Temporal external storage (or a claim-check `payload_codec`) on your `DataConverter` — `PydanticAIPlugin` preserves it, and it covers every payload in both directions. See https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads",
         ):
             await client.execute_workflow(
                 OversizedToolReturnWorkflow.run,
@@ -1178,6 +1207,148 @@ async def test_tool_metadata_crosses_activity_boundary_as_json():
         await pydantic_data_converter.encode([binary_params])
 
 
+class Job(BaseModel):
+    data: Any = None
+    dry_run: bool = False
+
+
+_received_jobs: list[Job] = []
+"""The arguments `run_job` ran with, recorded in the activity."""
+
+
+def run_job(data: Job) -> str:
+    """Run a job."""
+    _received_jobs.append(data)
+    return 'Job finished.'
+
+
+def _run_job_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        args = {'data': {'path': '/reports'}, 'dry_run': True}
+        return ModelResponse(parts=[ToolCallPart('run_job', args, tool_call_id='c1')])
+    return ModelResponse(parts=[TextPart('Done.')])
+
+
+_run_job_durable_agent = Agent(
+    FunctionModel(_run_job_model),
+    name='tool_args_durable',
+    tools=[run_job],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_run_job_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_run_job_model), name='tool_args_wrapped', tools=[run_job]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class RunJobWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        agent = _run_job_durable_agent if path == 'durability' else _run_job_wrapped_agent
+        result = await agent.run('Run the reports job as a dry run.')
+        return result.output
+
+
+@pytest.mark.parametrize('path', ['durability', 'temporal_agent'])
+async def test_single_model_arg_named_like_its_field_keeps_its_arguments(client: Client, path: str):
+    """A tool's validated arguments reach the activity as JSON and are validated again there.
+
+    For `run_job(data: Job)` they're `{'data': Job(...)}`, transported as `{'data': {...fields}}`. Since `Job` also
+    has a field `data` that accepts a dict, that envelope reads like `Job`'s own input; the tool must still run
+    with the arguments the workflow validated, not with `Job`'s defaults.
+    """
+    _received_jobs.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RunJobWorkflow],
+        plugins=[AgentPlugin(_run_job_durable_agent if path == 'durability' else _run_job_wrapped_agent)],
+    ):
+        output = await client.execute_workflow(
+            RunJobWorkflow.run,
+            args=[path],
+            id=f'{RunJobWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'Done.'
+    assert _received_jobs == [Job(data={'path': '/reports'}, dry_run=True)]
+
+
+class Place(BaseModel):
+    city: str = Field(alias='cityName')
+
+
+class Revision(BaseModel):
+    draft: int = Field(0, alias='draftNumber', exclude=True)
+    number: int = Field(alias='draft')
+
+
+_received_bookings: list[tuple[str, Place, Revision]] = []
+"""The arguments `book` ran with, recorded in the activity."""
+
+
+def book(guest: Annotated[str, Field(alias='guestName')], place: Place, revision: Revision) -> str:
+    """Book a place."""
+    _received_bookings.append((guest, place, revision))
+    return 'Booked.'
+
+
+def _book_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        args = {'guestName': 'Ada', 'place': {'cityName': 'Paris'}, 'revision': {'draft': 7}}
+        return ModelResponse(parts=[ToolCallPart('book', args, tool_call_id='c1')])
+    return ModelResponse(parts=[TextPart('Done.')])
+
+
+_book_durable_agent = Agent(
+    FunctionModel(_book_model),
+    name='aliased_args_durable',
+    tools=[book],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_book_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_book_model), name='aliased_args_wrapped', tools=[book]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class BookWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        agent = _book_durable_agent if path == 'durability' else _book_wrapped_agent
+        result = await agent.run('Book room A1 in Paris for Ada.')
+        return result.output
+
+
+@pytest.mark.parametrize('path', ['durability', 'temporal_agent'])
+async def test_aliased_args_reach_the_activity(client: Client, path: str):
+    """A tool's aliased arguments run in the activity with the values the workflow validated.
+
+    Validated arguments are keyed by Python name, `{'guest': 'Ada', ...}`, while the tool's schema reads
+    `guestName`. Temporal's converter ships nested models by alias, and they keep reading aliases: read by
+    name, `Revision.draft` would get the value of `number`, which ships under the key `draft`.
+    """
+    _received_bookings.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BookWorkflow],
+        plugins=[AgentPlugin(_book_durable_agent if path == 'durability' else _book_wrapped_agent)],
+    ):
+        output = await client.execute_workflow(
+            BookWorkflow.run,
+            args=[path],
+            id=f'{BookWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'Done.'
+    assert _received_bookings == [('Ada', Place(cityName='Paris'), Revision(draftNumber=0, draft=7))]
+
+
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('analyze_data', {})])
@@ -1241,6 +1412,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 parts=[ToolCallPart(tool_name='analyze_data', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:_tool_return_metadata_model:',
+                model_id='function:function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1264,6 +1436,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
                 parts=[TextPart(content='done')],
                 usage=RequestUsage(input_tokens=57, output_tokens=3),
                 model_name='function:_tool_return_metadata_model:',
+                model_id='function:function:_tool_return_metadata_model:',
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1275,7 +1448,7 @@ async def test_tool_return_metadata_survives_temporal(allow_model_requests: None
 mcptoolset_agent = Agent(
     model,
     name='mcptoolset_agent',
-    toolsets=[MCPToolset('https://mcp.deepwiki.com/mcp', id='deepwiki')],
+    toolsets=[MCPToolset(deepwiki_stand_in, id='deepwiki')],
 )
 
 
@@ -1323,6 +1496,8 @@ _mcp_task_agent = Agent(
     ],
 )
 
+_OPTIONAL_TASK_ROUTING = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
+
 _mcp_task_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
     _mcp_task_agent,
     activity_config=BASE_ACTIVITY_CONFIG,
@@ -1336,8 +1511,14 @@ class MCPTaskSupportWorkflow:
         return (await _mcp_task_temporal_agent.run(prompt)).output
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
-    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities."""
+    """Effective task routing in `ToolDefinition.metadata` survives Temporal activities.
+
+    Which way the optional tool routes is the installed generation's call: FastMCP 3 speaks
+    SEP-1686, where the client asks and `prefer_tasks` is off, so it runs inline; FastMCP 4 speaks
+    SEP-2663, where the server directs task creation and takes it up."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -1351,7 +1532,7 @@ async def test_temporal_mcptoolset_preserves_task_routing(client: Client):
             task_queue=TASK_QUEUE,
         )
 
-    assert output == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    assert output == f'{{"required_task_tool":"required_completed","optional_task_tool":"{_OPTIONAL_TASK_ROUTING}"}}'
 
 
 nested_multimodal_tool_return_agent = Agent(TestModel(), name='nested_multimodal_tool_return_agent')
@@ -1453,6 +1634,10 @@ def test_resolve_tool_activity_config_reads_metadata():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -1468,6 +1653,17 @@ def test_resolve_tool_activity_config_reads_metadata():
     # `False` in metadata also wins.
     tool.tool_def.metadata = {'temporal': False}
     assert resolve_tool_activity_config(tool, 'fn_tool', {}) is False
+
+    # The tool's `durable=False` applies when the `'temporal'` key isn't set, which wins when it is.
+    tool.tool_def.metadata = None
+    tool.tool_def.durable = False
+    assert resolve_tool_activity_config(tool, 'fn_tool', {'fn_tool': ActivityConfig(summary='from_dict')}) is False
+    tool.tool_def.metadata = {'temporal': ActivityConfig(summary='from_metadata')}
+    assert resolve_tool_activity_config(tool, 'fn_tool', {}) == {'summary': 'from_metadata'}
+    tool.tool_def.metadata = None
+    tool.tool_def.durable = True
+    assert resolve_tool_activity_config(tool, 'fn_tool', {}) == {}
+    tool.tool_def.durable = None
 
     # Invalid metadata (e.g. a string from a misuse like `metadata={'temporal': '5s'}`)
     # raises `UserError` instead of silently passing the wrong shape to Temporal.
@@ -1516,6 +1712,10 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -1713,6 +1913,15 @@ class _HeartbeatProbeModel(FunctionModel):
         await asyncio.sleep(0.01)
         return ModelResponse(parts=[TextPart('compacted')])
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        await asyncio.sleep(0.01)
+        return RequestUsage(input_tokens=1)
+
 
 _heartbeat_agent = Agent(
     _HeartbeatProbeModel(_heartbeat_model_fn, stream_function=_heartbeat_stream_model_fn),
@@ -1738,6 +1947,7 @@ async def _heartbeats_during_activity(activity_fn: Callable[..., Any], args: Seq
     return beats
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 async def test_every_registered_activity_heartbeats(allow_model_requests: None):
     """Every activity Pydantic AI registers beats while it runs, not just the model ones (#6914).
 
@@ -1800,6 +2010,7 @@ async def test_every_registered_activity_heartbeats(allow_model_requests: None):
                 ),
                 None,
             ],
+            f'{prefix}__model_count_tokens': [request_params, None],
             f'{prefix}__model_cancel_suspended_response': [
                 _CancelParams(
                     response=ModelResponse(parts=[TextPart('suspended')]),
@@ -1960,3 +2171,374 @@ async def test_tool_outliving_configured_heartbeat_timeout_survives(client: Clie
         )
 
     assert output == snapshot('slow tool finished')
+
+
+# --- Retry counts under name-changing wrappers, see https://github.com/pydantic/pydantic-ai/issues/9741 ---
+# `ctx.retries` is keyed by the name the model calls a tool by. A static toolset's `prepare` runs in
+# the workflow, a dynamic toolset's in its discovery, validation and call activities: all of them
+# have to read the count of the name the wrappers give the tool.
+
+
+_wrapped_retries_agents: dict[str, Agent[None, str]] = {
+    name: Agent(
+        FunctionModel(call_while_listed),
+        name=name,
+        deps_type=type(None),
+        toolsets=toolsets,
+        capabilities=[*capabilities, TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    for name, toolsets, capabilities in [
+        ('prefixed_retries', [failing_toolset('prefixed').prefixed('demo')], []),
+        ('nested_prefixes_retries', [failing_toolset('nested').prefixed('a').prefixed('b')], []),
+        ('renamed_retries', [failing_toolset('renamed').renamed({'x': 'fail'})], []),
+        ('prefix_tools_retries', [], [PrefixTools(wrapped=Toolset(failing_toolset('capability')), prefix='cap')]),
+        (
+            'dynamic_renamed_retries',
+            [DynamicToolset[None](lambda ctx: failing_toolset('inner'), id='dynamic_renamed').renamed({'x': 'fail'})],
+            [],
+        ),
+        (
+            'factory_gate_retries',
+            # Gates on the name the model calls the tool by, which is what the factory always saw.
+            [
+                DynamicToolset[None](
+                    lambda ctx: None if ctx.retries.get('demo_fail') else failing_toolset('gated_inner'), id='gated'
+                ).prefixed('demo')
+            ],
+            [],
+        ),
+    ]
+}
+
+
+@workflow.defn
+class WrappedToolRetriesWorkflow:
+    @workflow.run
+    async def run(self, names: list[str]) -> list[str]:
+        return [(await _wrapped_retries_agents[name].run('Try the tool.')).output for name in names]
+
+
+@pytest.mark.parametrize(
+    'names',
+    [
+        pytest.param(
+            ['prefixed_retries', 'nested_prefixes_retries', 'renamed_retries', 'prefix_tools_retries'], id='static'
+        ),
+        pytest.param(['dynamic_renamed_retries', 'factory_gate_retries'], id='dynamic'),
+    ],
+)
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
+async def test_prepare_sees_retry_under_wrapper_in_workflow(client: Client, names: list[str]):
+    """A `prepare` that hides its tool after a failure sees the failure under each wrapper, as outside a workflow.
+
+    The factory gate reads `ctx.retries` by the name the model calls the tool by instead, which has
+    to keep working in its discovery and call activities alike.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WrappedToolRetriesWorkflow],
+        plugins=[AgentPlugin(_wrapped_retries_agents[name]) for name in names],
+    ):
+        outputs = await client.execute_workflow(
+            WrappedToolRetriesWorkflow.run,
+            args=[names],
+            id=f'{WrappedToolRetriesWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert outputs == ['No tools left.'] * len(names)
+
+
+_dynamic_unit_retries: list[tuple[str, int]] = []
+
+
+def _traced_failing_toolset(ctx: RunContext[None]) -> FunctionToolset[None]:
+    toolset = FunctionToolset[None](id='traced_inner')
+
+    @toolset.instructions
+    def failures(ctx: RunContext[None]) -> str:
+        return f'demo_fail failed {ctx.retries.get("demo_fail", 0)} times'
+
+    async def hide_after_two_failures(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        _dynamic_unit_retries.append((activity.info().activity_type.rsplit('__', 1)[-1], ctx.retry))
+        return None if ctx.retry >= 2 else tool_def
+
+    def accept(ctx: RunContext[None]) -> None:
+        pass
+
+    @toolset.tool(prepare=hide_after_two_failures, args_validator=accept, retries=3)
+    async def fail(ctx: RunContext[None]) -> str:
+        raise ModelRetry('Choose another approach.')
+
+    return toolset
+
+
+def _report_instructions_once_unlisted(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if info.function_tools:
+        return ModelResponse(parts=[ToolCallPart(info.function_tools[0].name, {})])
+    requests = [message for message in messages if isinstance(message, ModelRequest)]
+    return ModelResponse(parts=[TextPart(' | '.join(str(request.instructions) for request in requests))])
+
+
+_traced_dynamic_retries_agent = Agent(
+    FunctionModel(_report_instructions_once_unlisted),
+    name='traced_dynamic_retries',
+    deps_type=type(None),
+    toolsets=[DynamicToolset[None](_traced_failing_toolset, id='traced').prefixed('demo')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class TracedDynamicRetriesWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _traced_dynamic_retries_agent.run('Try the tool.')).output
+
+
+@pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
+async def test_wrapped_dynamic_toolset_activities_agree_on_retry(client: Client):
+    """Discovery, argument validation and the call each list the toolset again, and all read the same count.
+
+    The toolset's instructions read `ctx.retries` by the name the model calls the tool by, and keep
+    reporting each failure.
+    """
+    _dynamic_unit_retries.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TracedDynamicRetriesWorkflow],
+        plugins=[AgentPlugin(_traced_dynamic_retries_agent)],
+    ):
+        output = await client.execute_workflow(
+            TracedDynamicRetriesWorkflow.run,
+            id=f'{TracedDynamicRetriesWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert (output, _dynamic_unit_retries) == snapshot(
+        (
+            'demo_fail failed 0 times | demo_fail failed 1 times | demo_fail failed 2 times',
+            [
+                ('get_tools', 0),
+                ('validate_args', 0),
+                ('call_tool', 0),
+                ('get_tools', 1),
+                ('validate_args', 1),
+                ('call_tool', 1),
+                ('get_tools', 2),
+            ],
+        )
+    )
+
+
+_snapshot_reads: list[tuple[str, str, list[str], int]] = []
+
+
+def _record_snapshot_read(site: str, ctx: RunContext[None]) -> None:
+    _snapshot_reads.append(
+        (
+            activity.info().activity_type.rsplit('__', 1)[-1],
+            site,
+            sorted(ctx.available_tool_names),
+            len(ctx.active_capability_ids),
+        )
+    )
+
+
+_snapshot_reading_agent = Agent(
+    FunctionModel(call_probe_once),
+    name='prefixed_dynamic_snapshots',
+    deps_type=type(None),
+    toolsets=[DynamicToolset[None](snapshot_probe_toolset(_record_snapshot_read), id='snapshots').prefixed('demo')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class PrefixedDynamicSnapshotsWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _snapshot_reading_agent.run('Probe.')).output
+
+
+async def test_prefixed_dynamic_toolset_activities_keep_context_snapshots(client: Client):
+    """Under `.prefixed()`, a dynamic toolset's activities still answer from the snapshots serialized at dispatch.
+
+    `available_tool_names` and `active_capability_ids` are not `RunContext` fields, so every context copy made
+    inside an activity has to keep them: the ones that carry or strip the tool name path, the one a tool's
+    `prepare` gets, and the ones the inner prefix and rename make before the tool runs.
+    """
+    _snapshot_reads.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PrefixedDynamicSnapshotsWorkflow],
+        plugins=[AgentPlugin(_snapshot_reading_agent)],
+    ):
+        output = await client.execute_workflow(
+            PrefixedDynamicSnapshotsWorkflow.run,
+            id=f'{PrefixedDynamicSnapshotsWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert (output, _snapshot_reads) == snapshot(
+        (
+            'Done.',
+            [
+                ('get_tools', 'factory', [], 3),
+                ('get_tools', 'prepare', [], 3),
+                ('get_tools', 'instructions', [], 3),
+                ('validate_args', 'factory', ['demo_probe'], 3),
+                ('validate_args', 'prepare', ['demo_probe'], 3),
+                ('validate_args', 'validator', ['demo_probe'], 3),
+                ('call_tool', 'factory', ['demo_probe'], 3),
+                ('call_tool', 'prepare', ['demo_probe'], 3),
+                ('call_tool', 'body', ['demo_probe'], 3),
+                ('get_tools', 'factory', ['demo_probe'], 3),
+                ('get_tools', 'prepare', ['demo_probe'], 3),
+                ('get_tools', 'instructions', ['demo_probe'], 3),
+            ],
+        )
+    )
+
+
+# --- `FunctionToolset` defaults on `Tool` instances, across the upgrade that applied them ---
+
+
+def _call_both_tools_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(
+        parts=[ToolCallPart('first', {}, tool_call_id='1'), ToolCallPart('second', {}, tool_call_id='2')]
+    )
+
+
+def first() -> str:
+    return 'first'
+
+
+def second() -> str:
+    return 'second'
+
+
+def _tool_instances_agent(name: str, toolset: FunctionToolset[None]) -> Agent[None, str]:
+    return Agent(
+        FunctionModel(_call_both_tools_once),
+        name=name,
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+
+async def _force_sequential(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
+    return replace(tool_def, sequential=True)
+
+
+_shared_first = Tool(first)
+# Turns on `sequential` for `_shared_first`, which the `shared_sequential` agent holds through a toolset without it.
+_sequential_toolset = FunctionToolset([_shared_first], sequential=True)
+
+_tool_instances_agents = {
+    'sequential': _tool_instances_agent(
+        'sequential_tool_instances', FunctionToolset([Tool(first), Tool(second)], id='tools', sequential=True)
+    ),
+    'defer_loading': _tool_instances_agent(
+        'deferred_tool_instances', FunctionToolset([Tool(first), Tool(second)], id='tools', defer_loading=True)
+    ),
+    'shared_sequential': _tool_instances_agent(
+        'shared_sequential_tool_instance', FunctionToolset([_shared_first, Tool(second)], id='tools')
+    ),
+    'prepare_sequential': _tool_instances_agent(
+        'prepare_sequential_tool_instances',
+        FunctionToolset(
+            [Tool(first, prepare=_force_sequential), Tool(second, prepare=_force_sequential)],
+            id='tools',
+            sequential=True,
+        ),
+    ),
+}
+
+
+@workflow.defn
+class ToolInstancesWorkflow:
+    @workflow.run
+    async def run(self, flag: str) -> str:
+        return (await _tool_instances_agents[flag].run('Call both tools.')).output
+
+
+def _tool_activity_events(history: WorkflowHistory) -> list[str]:
+    """When each `call_tool` activity was scheduled and completed, in history order."""
+    scheduled: set[int] = set()
+    events: list[str] = []
+    for event in history.events:
+        if event.HasField('activity_task_scheduled_event_attributes'):
+            if event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__call_tool'):
+                scheduled.add(event.event_id)
+                events.append('scheduled')
+        elif event.HasField('activity_task_completed_event_attributes'):
+            if event.activity_task_completed_event_attributes.scheduled_event_id in scheduled:
+                events.append('completed')
+    return events
+
+
+_at_once = ['scheduled', 'scheduled', 'completed', 'completed']
+_one_at_a_time = ['scheduled', 'completed', 'scheduled', 'completed']
+
+
+@pytest.mark.parametrize(
+    ('flag', 'unpatched_events', 'patched_events'),
+    [
+        ('sequential', _at_once, _one_at_a_time),
+        ('defer_loading', _at_once, []),
+        ('shared_sequential', _at_once, _one_at_a_time),
+        ('prepare_sequential', _one_at_a_time, _one_at_a_time),
+    ],
+)
+async def test_function_toolset_defaults_on_tool_instances_replay(
+    client: Client, monkeypatch: pytest.MonkeyPatch, flag: str, unpatched_events: list[str], patched_events: list[str]
+):
+    """A history recorded before `FunctionToolset` applied `sequential` or `defer_loading` to `Tool` instances replays.
+
+    Without the patch marker, the workflow lists the tools the way it did before: both calls are dispatched at once
+    and neither tool is deferred, including a `Tool` that another toolset made sequential, while a tool whose own
+    `prepare` makes it sequential stays sequential. A new run gets the toolset's value. Unsandboxed, so
+    `workflow.patched` can be faked for the original run.
+    """
+    agent = _tool_instances_agents[flag]
+
+    async def run_workflow() -> WorkflowHistory:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[ToolInstancesWorkflow],
+            plugins=[AgentPlugin(agent)],
+            workflow_runner=UnsandboxedWorkflowRunner(),
+        ):
+            handle = await client.start_workflow(
+                ToolInstancesWorkflow.run,
+                args=[flag],
+                id=f'tool-instances-{flag}-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+            )
+            await handle.result()
+        return await handle.fetch_history()
+
+    def unpatched(patch_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(workflow, 'patched', unpatched)
+    unpatched_history = await run_workflow()
+    monkeypatch.undo()
+    patched_history = await run_workflow()
+
+    assert _tool_activity_events(unpatched_history) == unpatched_events
+    assert _tool_activity_events(patched_history) == patched_events
+
+    replayer = Replayer(
+        workflows=[ToolInstancesWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    )
+    for history in (unpatched_history, patched_history):
+        assert (await replayer.replay_workflow(history)).replay_failure is None
