@@ -23,9 +23,11 @@ import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from importlib.util import find_spec
+from typing import TypeVar
 
 import anyio
 
+from pydantic_ai.computer_use import Point, Region
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
@@ -35,8 +37,23 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential, ref_provider
+from pydantic_ai_harness.computer_use import (
+    Display,
+    DisplayAction,
+    SupportsCursorPosition,
+    SupportsDisplay,
+    SupportsZoom,
+    UnsupportedActionError,
+)
+from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
+    SANDBOX_ENV,
+    GitHubCredential,
+    harness_ref,
+    ref_provider,
+)
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+
+_T = TypeVar('_T')
 
 IMAGE = 'python:3.13'
 """Debian with bash and git, which the copy of the checkout needs; the engine pulls it the first time."""
@@ -55,7 +72,7 @@ def _not_on_intel_mac(title: str) -> str | None:
 
 
 async def _boot(
-    backend: SandboxBackend, name: str, delete: Callable[[WorkspaceRef], Awaitable[None]]
+    backend: SandboxBackend, name: str, delete: Callable[[WorkspaceRef], Awaitable[None]], *, desktop: bool = False
 ) -> tuple[WorkspaceRef, SandboxBackend]:
     """Boot a new VM and make its working folder, deleting it if that fails; the ref `/sandbox` records for it."""
     try:
@@ -66,7 +83,7 @@ async def _boot(
                 await delete(backend.ref)
         raise
     assert backend.ref is not None
-    return WorkspaceRef(provider=ref_provider(name), id=backend.ref.id), backend
+    return WorkspaceRef(provider=ref_provider(name, desktop=desktop), id=backend.ref.id), backend
 
 
 @dataclass(frozen=True)
@@ -77,11 +94,18 @@ class SmolProvider:
     title: str = 'SmolVM'
     working_dir: str = '/workspace'
     token_in_sandbox: bool = True
+    has_desktop_url: bool = False
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
         from pydantic_ai_harness._smolvm_cli import find_cli
 
-        if find_spec('smol') is not None or find_cli() is not None:
+        if find_spec('smol') is not None:
+            return None
+        if desktop:
+            if sys.platform == 'win32':
+                return 'SmolVM desktop mode needs smolmachines, which has no Windows build.'
+            return _not_on_intel_mac(self.title) or f'SmolVM desktop support needs smolmachines. {_INSTALL}'
+        if find_cli() is not None:
             return None
         if sys.platform == 'win32':
             return (
@@ -91,17 +115,23 @@ class SmolProvider:
             )
         return _not_on_intel_mac(self.title) or f'SmolVM support is not installed. {_INSTALL}'
 
-    def _backend(self, ref: WorkspaceRef | None) -> SandboxBackend:
-        ref = None if ref is None else WorkspaceRef(provider='smol', id=ref.id)
+    def _backend(self, ref: WorkspaceRef | None, *, desktop: bool = False) -> SandboxBackend:
+        ref = None if ref is None else harness_ref('smol', ref)
         if find_spec('smol') is not None:
             from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend
 
             if ref is not None:
                 # Checks the name, so a history cannot open a VM of another tool's, such as one with folders mounted.
-                return _Reached(SmolSandbox[None](working_dir=self.working_dir, env=SANDBOX_ENV).backend(ref))
+                return _Reached(
+                    SmolSandbox[None](working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop).backend(ref)
+                )
             return _Reached(
                 SmolSandboxBackend(
-                    image=IMAGE, allow_internet_access=True, working_dir=self.working_dir, env=SANDBOX_ENV
+                    image=IMAGE,
+                    allow_internet_access=True,
+                    working_dir=self.working_dir,
+                    env=SANDBOX_ENV,
+                    desktop=desktop,
                 )
             )
         from pydantic_ai_harness._smolvm_cli import SmolvmCliBackend
@@ -110,11 +140,17 @@ class SmolProvider:
             ref=ref, image=IMAGE, allow_internet_access=True, working_dir=self.working_dir, env=SANDBOX_ENV
         )
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
-        return await _boot(self._backend(None), self.name, self.delete)
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
+        return await _boot(self._backend(None, desktop=desktop), self.name, self.delete, desktop=desktop)
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
-        return self._backend(ref)
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
+        return self._backend(ref, desktop=desktop)
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        del backend
+        return None
 
     async def close(self, backend: SandboxBackend) -> None:
         from pydantic_ai_harness._smolvm_cli import SmolvmCliBackend
@@ -139,7 +175,7 @@ class SmolProvider:
         if find_spec('smol') is not None:
             from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
-            await SmolSandbox[None]().destroy(WorkspaceRef(provider='smol', id=ref.id))
+            await SmolSandbox[None]().destroy(harness_ref('smol', ref))
         else:
             from pydantic_ai_harness._smolvm_cli import delete_machine
 
@@ -154,8 +190,10 @@ class BoxLiteProvider:
     title: str = 'BoxLite'
     working_dir: str = '/workspace'
     token_in_sandbox: bool = True
+    has_desktop_url: bool = False
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('boxlite') is not None:
             return None
         if sys.platform == 'win32':
@@ -165,23 +203,34 @@ class BoxLiteProvider:
             or f'BoxLite support is not installed. {_INSTALL} It needs Python 3.14 or older.'
         )
 
-    def _backend(self, ref: WorkspaceRef | None) -> SandboxBackend:
+    def _backend(self, ref: WorkspaceRef | None, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox, BoxLiteSandboxBackend
 
         if ref is not None:
             # Checks the name, so a history cannot open a box of another tool's, such as one with folders mounted.
-            return BoxLiteSandbox[None](working_dir=self.working_dir, env=SANDBOX_ENV).backend(
-                WorkspaceRef(provider='boxlite', id=ref.id)
-            )
+            return BoxLiteSandbox[None](
+                working_dir=self.working_dir, env=SANDBOX_ENV, allow_internet_access=True, desktop=desktop
+            ).backend(harness_ref('boxlite', ref))
         return BoxLiteSandboxBackend(
-            image=IMAGE, allow_internet_access=True, working_dir=self.working_dir, env=SANDBOX_ENV
+            image=IMAGE,
+            allow_internet_access=True,
+            working_dir=self.working_dir,
+            env=SANDBOX_ENV,
+            desktop=desktop,
+            box_options={'disk_size_gb': 4} if desktop else None,
         )
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
-        return await _boot(self._backend(None), self.name, self.delete)
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
+        return await _boot(self._backend(None, desktop=desktop), self.name, self.delete, desktop=desktop)
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
-        return self._backend(ref)
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
+        return self._backend(ref, desktop=desktop)
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        del backend
+        return None
 
     async def close(self, backend: SandboxBackend) -> None:
         # The box stops when Pax exits, keeping its disk, so there is nothing to write back or stop.
@@ -193,7 +242,46 @@ class BoxLiteProvider:
             raise WorkspaceUnavailableError(missing)
         from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
 
-        await BoxLiteSandbox[None]().destroy(WorkspaceRef(provider='boxlite', id=ref.id))
+        await BoxLiteSandbox[None]().destroy(harness_ref('boxlite', ref))
+
+
+class _ReachedDisplay:
+    """Forwards `Display` calls for `_Reached` and records that the VM was booted so `close` syncs its disk."""
+
+    def __init__(self, owner: '_Reached', display: Display) -> None:
+        self._owner = owner
+        self._display = display
+
+    async def _call(self, op: Callable[[], Awaitable[_T]]) -> _T:
+        reached = True
+        try:
+            return await op()
+        except WorkspaceUnavailableError:
+            reached = False
+            raise
+        finally:
+            self._owner.reached = self._owner.reached or reached
+
+    async def display_size(self) -> tuple[int, int]:
+        return await self._call(self._display.display_size)
+
+    async def screenshot(self) -> bytes:
+        return await self._call(self._display.screenshot)
+
+    async def act(self, action: DisplayAction) -> None:
+        await self._call(lambda: self._display.act(action))
+
+    async def zoom(self, region: Region) -> bytes:
+        if not isinstance(self._display, SupportsZoom):
+            raise UnsupportedActionError('This display cannot zoom.')
+        display = self._display
+        return await self._call(lambda: display.zoom(region))
+
+    async def cursor_position(self) -> Point:
+        if not isinstance(self._display, SupportsCursorPosition):
+            raise UnsupportedActionError('This display cannot report the pointer position.')
+        display = self._display
+        return await self._call(display.cursor_position)
 
 
 class _Reached(WorkspaceBackend, SupportsCommands):
@@ -202,6 +290,12 @@ class _Reached(WorkspaceBackend, SupportsCommands):
     def __init__(self, backend: SandboxBackend) -> None:
         self._backend = backend
         self.reached = False
+        inner = backend.display if isinstance(backend, SupportsDisplay) else None
+        self._display: _ReachedDisplay | None = None if inner is None else _ReachedDisplay(self, inner)
+
+    @property
+    def display(self) -> Display | None:
+        return self._display
 
     @property
     def ref(self) -> WorkspaceRef | None:

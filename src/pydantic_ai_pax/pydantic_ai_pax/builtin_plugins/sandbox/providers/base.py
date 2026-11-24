@@ -41,20 +41,36 @@ class GitHubCredential:
         return self.basic if host == 'github.com' else self.bearer
 
 
-def ref_provider(name: str) -> str:
-    """What `WorkspaceRef.provider` holds for the sandboxes of the provider named `name`, such as `local-smol`.
+DESKTOP_SUFFIX = '-desktop'
+"""Suffix on `WorkspaceRef.provider` marking a sandbox started with a desktop (`/computer-use`)."""
 
-    The name, with a hyphen for each space. Never `local`, which names this machine's own folder.
+
+def ref_provider(name: str, *, desktop: bool = False) -> str:
+    """What `WorkspaceRef.provider` holds for the sandboxes of the provider named `name`, such as `local-smol` or `e2b-desktop`.
+
+    The name, with a hyphen for each space, plus `-desktop` when started for `/computer-use`.
+    Never `local`, which names this machine's own folder.
     """
-    return name.replace(' ', '-')
+    base = name.replace(' ', '-')
+    return f'{base}{DESKTOP_SUFFIX}' if desktop else base
+
+
+def is_desktop_ref(ref: WorkspaceRef) -> bool:
+    """Whether `ref` names a `/computer-use` sandbox with a desktop."""
+    return ref.provider.endswith(DESKTOP_SUFFIX)
+
+
+def harness_ref(provider: str, ref: WorkspaceRef) -> WorkspaceRef:
+    """`ref` under the harness backend's own provider name, stripping any `/sandbox` or `-desktop` naming."""
+    return WorkspaceRef(provider=provider, id=ref.id)
 
 
 class SandboxProvider(Protocol):
-    """A sandbox service, on this machine or in the cloud, that `/sandbox` can make, reopen, and delete sandboxes on."""
+    """A sandbox service, on this machine or in the cloud, that `/sandbox` and `/computer-use` use."""
 
     @property
     def name(self) -> str:
-        """The name `/sandbox` takes, such as `e2b` or `local smol`; its refs' `provider` is `ref_provider(name)`."""
+        """The name `/sandbox` and `/computer-use` take, such as `e2b` or `local smol`."""
         ...
 
     @property
@@ -72,22 +88,34 @@ class SandboxProvider(Protocol):
         """Whether the GitHub token is written into the sandbox, as it is where no proxy can sign requests."""
         ...
 
-    def missing(self) -> str | None:
+    @property
+    def has_desktop_url(self) -> bool:
+        """Whether `desktop_url` can return a provider-hosted interactive desktop URL (such as VNC or console)."""
+        ...
+
+    def missing(self, *, desktop: bool = False) -> str | None:
         """What to do before a sandbox can be made, such as a key to add; `None` when nothing is missing."""
         ...
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         """A new, running sandbox whose commands get `SANDBOX_ENV`, and its reference.
 
-        With `github`, a provider whose proxy can sign requests gives the proxy the token for this sandbox only,
-        and the sandbox holds a stand-in the proxy replaces. Where it cannot (`token_in_sandbox`), `/sandbox`
-        writes the token in afterwards with `give_github_login`. Before raising, `create` deletes whatever it
-        made, as no caller has its reference to delete it later.
+        With `desktop=True`, the sandbox gets a graphical display for `ComputerUse` and its ref's provider
+        carries `DESKTOP_SUFFIX`. With `github`, a provider whose proxy can sign requests gives the proxy the token
+        for this sandbox only, and the sandbox holds a stand-in the proxy replaces. Where it cannot
+        (`token_in_sandbox`), `/sandbox` writes the token in afterwards with `give_github_login`. Before raising,
+        `create` deletes whatever it made, as no caller has its reference to delete it later.
         """
         ...
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         """The sandbox `ref` names, attached on first use; its commands get `SANDBOX_ENV`."""
+        ...
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        """A provider-hosted live desktop URL (interactive VNC/console) for `backend`, or `None` when unavailable."""
         ...
 
     async def delete(self, ref: WorkspaceRef) -> None:

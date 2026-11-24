@@ -19,6 +19,8 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
+    harness_ref,
+    ref_provider,
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
@@ -41,12 +43,14 @@ class RenderProvider:
     # Commands run as `root`; the harness backend makes this folder on a new sandbox.
     working_dir: str = '/root/workspace'
     token_in_sandbox: bool = True
+    has_desktop_url: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, RenderAsync]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'RenderAsync'], init=False, compare=False, repr=False
     )
     """The client made for each backend: `RenderSandboxBackend` leaves a client it was given open, so `close` closes it."""
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('render') is None:
             return "Render support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[render]'."
         if saved_key(KEY_NAME) is None or saved_key(WORKSPACE_KEY_NAME) is None:
@@ -62,19 +66,28 @@ class RenderProvider:
         # The constructor reads its package's metadata, so async callers run it in a thread.
         return RenderAsync(token=saved_key(KEY_NAME), owner_id=saved_key(WORKSPACE_KEY_NAME))
 
-    def _backend(self, client: 'RenderAsync', ref: WorkspaceRef | None = None) -> 'RenderSandboxBackend':
+    def _backend(
+        self, client: 'RenderAsync', ref: WorkspaceRef | None = None, *, desktop: bool = False
+    ) -> 'RenderSandboxBackend':
         from pydantic_ai_harness.render_sandbox import RenderSandboxBackend
 
         # Render's longest lifetime, 24 hours.
         backend = RenderSandboxBackend(
-            client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, sandbox_timeout=86_400
+            client=client,
+            ref=None if ref is None else harness_ref('render', ref),
+            working_dir=self.working_dir,
+            env=SANDBOX_ENV,
+            sandbox_timeout=86_400,
+            desktop=desktop,
         )
         self._clients[backend] = client
         return backend
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         client = await to_thread.run_sync(self._client)
-        backend = self._backend(client)
+        backend = self._backend(client, desktop=desktop)
         try:
             await backend.working_dir()  # Creates the sandbox, waits until it runs, and makes `working_dir`.
         except BaseException:
@@ -87,12 +100,16 @@ class RenderProvider:
                     await self.close(backend)
             raise
         assert backend.ref is not None
-        return backend.ref, backend
+        return WorkspaceRef(provider=ref_provider(self.name, desktop=desktop), id=backend.ref.id), backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         # Built here, though it reads its package's metadata: the keys may be only in `/keys`, which a backend
         # left to open its own client would not read.
-        return self._backend(self._client(), ref)
+        return self._backend(self._client(), ref, desktop=desktop)
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        del backend
+        return None
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:
@@ -102,7 +119,7 @@ class RenderProvider:
     async def delete(self, ref: WorkspaceRef) -> None:
         client = await to_thread.run_sync(self._client)
         try:
-            await self._destroy(client, ref)
+            await self._destroy(client, harness_ref('render', ref))
         finally:
             await client.sandboxes.client.get_async_httpx_client().aclose()
 

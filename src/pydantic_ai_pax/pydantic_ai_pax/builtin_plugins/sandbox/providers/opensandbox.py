@@ -26,6 +26,8 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
     give_github_login,
+    harness_ref,
+    ref_provider,
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
@@ -53,8 +55,10 @@ class OpenSandboxProvider:
     title: str = 'OpenSandbox'
     working_dir: str = '/workspace'
     token_in_sandbox: bool = False
+    has_desktop_url: bool = False
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('opensandbox') is None:
             return "OpenSandbox support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[opensandbox]'."
         if saved_key(DOMAIN_NAME) is None:
@@ -78,7 +82,9 @@ class OpenSandboxProvider:
             protocol = 'http' if urlsplit(f'//{domain}').hostname in LOOPBACK_HOSTS else 'https'
         return ConnectionConfig(domain=domain or None, api_key=saved_key(KEY_NAME), protocol=protocol)
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         from opensandbox.models.sandboxes import (
             Credential,
             CredentialAuth,
@@ -98,6 +104,7 @@ class OpenSandboxProvider:
             connection=self._connection(),
             working_dir=self.working_dir,
             env=SANDBOX_ENV,
+            desktop=desktop,
             # OpenSandbox deprecates the credential proxy in a sandbox that reaches any host, which may let a
             # request for a GitHub host, token and all, go somewhere else; so it reaches only those hosts.
             network_policy=None
@@ -140,12 +147,22 @@ class OpenSandboxProvider:
                 finally:
                     await backend.aclose()
             raise
-        return WorkspaceRef(provider=self.name, id=sandbox.id), backend
+        return WorkspaceRef(provider=ref_provider(self.name, desktop=desktop), id=sandbox.id), backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
 
-        return OpenSandboxBackend(ref=ref, connection=self._connection(), working_dir=self.working_dir, env=SANDBOX_ENV)
+        return OpenSandboxBackend(
+            ref=harness_ref('opensandbox', ref),
+            connection=self._connection(),
+            working_dir=self.working_dir,
+            env=SANDBOX_ENV,
+            desktop=desktop,
+        )
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        del backend
+        return None
 
     async def close(self, backend: SandboxBackend) -> None:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
@@ -157,4 +174,4 @@ class OpenSandboxProvider:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox
 
         # The sandbox's egress sidecar, and the token in its memory, go with it.
-        await OpenSandbox[None](connection=self._connection()).destroy(ref)
+        await OpenSandbox[None](connection=self._connection()).destroy(harness_ref('opensandbox', ref))

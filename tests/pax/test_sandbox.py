@@ -137,6 +137,7 @@ class FakeProvider:
     title: str = 'Fake'
     working_dir: str = '/home/user/workspace'
     token_in_sandbox: bool = False
+    has_desktop_url: bool = False
     requirement: str | None = None
     created: list[GitHubCredential | None] = field(default_factory=list[GitHubCredential | None])
     reopened: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
@@ -146,15 +147,19 @@ class FakeProvider:
     """When set, `create` waits for it after starting, as a slow provider would."""
     delete_error: Exception | None = None
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         return self.requirement
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, FakeSandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, FakeSandboxBackend]:
         self.created.append(github)
         if self.creating is not None:
             await self.creating.wait()
         env = {**SANDBOX_ENV, 'GH_TOKEN': 'stand-in'} if github is not None else SANDBOX_ENV
-        ref = WorkspaceRef(provider=self.name, id=f'sbx-{len(self.created)}')
+        provider = f'{self.name}-desktop' if desktop else self.name
+        ref = WorkspaceRef(provider=provider, id=f'sbx-{len(self.created)}')
         folder = anyio.Path(self.folder(ref))
         await folder.mkdir()
         # A fresh global config per sandbox, as a new sandbox has.
@@ -162,9 +167,14 @@ class FakeProvider:
         await anyio.Path(f'{folder}.gitconfig').write_text(rewrite, encoding='utf-8')
         return ref, self._backend(ref, env)
 
-    def reopen(self, ref: WorkspaceRef) -> FakeSandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> FakeSandboxBackend:
+        del desktop
         self.reopened.append(ref)
         return self._backend(ref, {})
+
+    async def desktop_url(self, backend: FakeSandboxBackend) -> str | None:
+        del backend
+        return None
 
     async def delete(self, ref: WorkspaceRef) -> None:
         if self.delete_error is not None:
@@ -774,9 +784,8 @@ async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> N
 
     loaded = load(checkout)
     plugin = plugin_of(loaded)
-    [capability] = loaded.capabilities
     agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
-    session = Session(agent, deps=None, plugins=[capability, Probe()], workspace=checkout)
+    session = Session(agent, deps=None, plugins=[*loaded.capabilities, Probe()], workspace=checkout)
     loaded.host.conversation = session
     await session.prompt('here')
     # A conversation with history refuses `/sandbox`, so start the sandboxed one fresh.
@@ -790,7 +799,7 @@ async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> N
 
     # A background `/fork` keeps its sandbox after `/new` puts a local conversation on screen.
     fork = Session(
-        agent, deps=None, plugins=[capability, Probe()], workspace=checkout, message_history=session.messages
+        agent, deps=None, plugins=[*loaded.capabilities, Probe()], workspace=checkout, message_history=session.messages
     )
     assert fork.conversation_id != session.conversation_id
     loaded.host.conversation = Transcript(conversation_id='shown')
@@ -2345,7 +2354,8 @@ class TestLocal:
         assert (boxlite.name, boxlite.title, boxlite.token_in_sandbox) == ('local boxlite', 'BoxLite', True)
         assert 'local' not in sandbox.PROVIDERS
         plugin = plugin_of(load(checkout))
-        [command] = plugin.get_commands()
+        [command, computer_use_command] = plugin.get_commands()
+        assert computer_use_command.name == 'computer-use'
         assert command.description == (
             'Run a new conversation in a sandbox (local smol, local boxlite, e2b, boxd, daytona, opensandbox, modal, '
             'render, sprites, kubernetes; local ones run a VM on this machine), or show where it runs'

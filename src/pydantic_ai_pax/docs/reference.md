@@ -51,6 +51,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/sandbox [local smol\|local boxlite\|e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a sandbox: `local smol` (SmolVM) and `local boxlite` (BoxLite) run a VM on this machine, the others are cloud sandboxes; `/sandbox local` asks which engine, and no argument says where this one runs. See [Sandboxes](#sandboxes-sandbox) |
+| `/computer-use [PROVIDER\|view\|delete]` | Start a new conversation in a sandbox with a graphical desktop so the model can see and control the screen; no argument opens a provider picker in a terminal (or shows status when already in a sandbox), and `view` opens the live desktop (works mid-turn). See [Computer use](#computer-use-computer-use) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer Pax is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -3148,6 +3149,50 @@ run there can read it. It reaches every command started afterwards; a server sta
 needs a restart. The table says how long it lasts: one kept for this Pax session is gone once the session
 closes the sandbox, as an idle session does, or in a `/fork`, so the agent asks again. The agent asks only in the terminal,
 not in the web UI.
+
+### Computer use: `/computer-use`
+
+Run `/computer-use PROVIDER` in a new conversation, before its first prompt, to start a sandbox
+with a graphical desktop and give the model the `computer` tool (`ComputerUse`). Bare `/computer-use`
+in a terminal opens a provider picker showing which providers are ready and whether each offers an
+interactive live desktop or Pax's live screen viewer; once a desktop sandbox is running, bare
+`/computer-use` shows its status.
+
+Every `/sandbox` provider supports `/computer-use`, with the same checkout seeding, GitHub login,
+`/resume`, `/fork`, and `/computer-use delete` (or `/sandbox delete`) lifecycle:
+
+- `local smol` desktop requires the `smolmachines` package (`pydantic-ai-pax[local]` on macOS Apple
+  silicon or Linux); the Windows `smolvm` CLI fallback has no display.
+- `local boxlite` allocates a 4 GB disk for the desktop image.
+- Plain `/sandbox` conversations and local conversations do not expose the `computer` tool. Desktop
+  mode is recorded on the conversation's `workspace_ref` (`PROVIDER-desktop`), so `/resume`, `/fork`,
+  and compaction keep `ComputerUse` active.
+
+#### Watching what the model is doing: `/computer-use view`
+
+Run `/computer-use view` at any time, including while a turn is running, to see the sandbox desktop:
+
+- **`boxd`**: opens the machine's console Desktop view (`access.desktop_url`), protected by your
+  boxd console login.
+- **`daytona`**: starts the desktop's VNC/noVNC service if needed and opens a 1-hour signed preview
+  URL on port `6080`. The VNC server has no password, so anyone with that link can see and control
+  the desktop until it expires.
+- **All other providers** (and as a fallback if a provider live URL cannot be opened): starts Pax's
+  on-demand loopback live viewer (`http://127.0.0.1:<port>/?token=...&sandbox=...`) and opens it in
+  your browser. The viewer receives every screenshot the model takes in real time over Server-Sent
+  Events, overlays subtle markers where clicks, pointer moves, and drags landed, keeps the last 30
+  frames to scrub through, and provides **Refresh** and an optional 2-second **Auto** snapshot poll.
+  When the provider also supports an interactive desktop (`boxd`, `daytona`), the viewer includes an
+  **Interactive desktop** button to open it on demand.
+
+In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), the `sandbox` plugin also adds a
+**Desktop** side panel that embeds the loopback viewer directly beside the transcript.
+
+Everything on the sandbox screen, secrets included, reaches the model and its provider in
+screenshots, and text on the screen can steer the model like any tool output. The loopback viewer
+binds only to `127.0.0.1`, checks the `Host` header, requires a per-launch random token (and a
+matching loopback `Origin` on `POST /api/*`), and sets a nonce CSP with `frame-ancestors` limited
+to loopback origins.
 
 ### Several sessions in the web UI
 
