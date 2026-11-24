@@ -3018,6 +3018,7 @@ async def test_dbos_durability_retried_model_step_streams_a_later_execution(dbos
     agent = Agent(
         FunctionModel(stream_function=stream),
         name=f'durability_retried_stream_{uuid.uuid4().hex[:8]}',
+        deps_type=type(None),
         capabilities=[
             DBOSDurability(
                 event_stream_handler=handler,

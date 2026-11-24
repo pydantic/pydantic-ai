@@ -42,11 +42,13 @@ async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
 
 async def _stream_events(agent: Agent[None, str]) -> tuple[list[AgentStreamEvent], str]:
     """The run's model-stream events, and its `run_id`."""
+    events: list[AgentStreamEvent] = []
     async with agent.run_stream_events('x') as stream:
-        events = [event async for event in stream]
-    result_event = events.pop()
-    assert isinstance(result_event, AgentRunResultEvent)
-    return events, result_event.result.run_id
+        async for event in stream:
+            if isinstance(event, AgentRunResultEvent):
+                return events, event.result.run_id
+            events.append(event)
+    raise AssertionError('the run ended without a result')  # pragma: no cover
 
 
 def _origin(event: AgentStreamEvent) -> ModelResponseOrigin | None:

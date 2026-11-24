@@ -1905,7 +1905,9 @@ class TestSkipModelRequestInteraction:
         # The replacement is the request step's next attempt, so a consumer can drop the stopped stream's events.
         stopped = ModelResponseOrigin(run_id=events[-1].result.run_id, run_step=1)
         replacement = ModelResponseOrigin(run_id=events[-1].result.run_id, run_step=1, attempt=2)
-        assert [event.origin for event in events[:-1]] == [stopped, stopped, replacement, replacement, replacement]
+        assert [
+            event.origin for event in events if isinstance(event, PartStartEvent | FinalResultEvent | PartEndEvent)
+        ] == [stopped, stopped, replacement, replacement, replacement]
         assert replacement.supersedes(stopped)
 
     async def test_wrap_model_request_retrying_after_stopping_its_handler_mid_stream(self):

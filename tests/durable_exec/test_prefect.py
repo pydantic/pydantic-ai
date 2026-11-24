@@ -618,6 +618,7 @@ async def test_prefect_durability_retried_model_task_streams_a_later_execution()
     agent = Agent(
         FunctionModel(stream_function=stream),
         name='prefect_durability_retried_stream',
+        deps_type=type(None),
         capabilities=[
             PrefectDurability(
                 event_stream_handler=handler, model_task_config=TaskConfig(retries=1, retry_delay_seconds=0)
