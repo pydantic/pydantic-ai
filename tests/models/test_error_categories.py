@@ -666,6 +666,14 @@ CASES = [
         has_cause=False,
     ),
     Case(
+        id='openrouter-body-metadata-raw-context-window',
+        model=_openrouter,
+        handler=_json(200, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        has_cause=False,
+    ),
+    Case(
         id='zai-insufficient-balance',
         model=_zai,
         handler=_json(

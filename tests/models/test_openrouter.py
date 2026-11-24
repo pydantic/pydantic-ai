@@ -3416,7 +3416,7 @@ async def test_openrouter_stream_context_window_exceeded_via_metadata_raw(allow_
     outer_error = {
         'code': 400,
         'message': 'Provider returned error',
-        'metadata': {'raw': "Input length (100000) exceeds the model's maximum context length (8192)."},
+        'metadata': {'raw': _CONTEXT_WINDOW_MESSAGE},
     }
     error_chunk = f'data: {json.dumps({"error": outer_error})}\n\n'.encode()
     error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
