@@ -9,6 +9,7 @@ the model in without knowing each provider's wire format.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, cast
@@ -41,8 +42,12 @@ with try_import() as cohere_available:
     from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.providers.cohere import CohereProvider
 
-Voice: TypeAlias = Literal['system', 'developer', 'user', 'assistant', 'tool']
-"""The role a piece of text reaches the model in, normalized across providers."""
+Voice: TypeAlias = Literal['system', 'developer', 'user', 'data', 'assistant', 'tool']
+"""The voice a piece of text reaches the model in, normalized across providers.
+
+The role that carries it, except that text framed in a tag in the user turn is `'data'`, and text in a `<system>` frame
+is `'system'` whatever role carries it.
+"""
 
 CapturedProvider: TypeAlias = Literal['anthropic', 'openai-chat', 'openai-responses', 'google', 'mistral', 'cohere']
 
@@ -92,13 +97,31 @@ class CapturedRequest:
     def voices(self) -> list[tuple[Voice, str]]:
         """Every piece of text in the request, in order, with the voice it reaches the model in.
 
+        Tool call arguments aren't text in a voice, so they're left out.
+
         A model without inline system messages gets the application's voice as a `<system>` frame in the user turn,
-        so text in such a frame counts as `'system'`, whatever role carries it.
+        so text in such a frame counts as `'system'`, whatever role carries it. Text in another frame in the user turn,
+        sent either in one piece or as an opening tag, the body and a closing tag, is `'data'`.
         """
-        return [
-            ('system' if _is_inline_system(text) else voice, text)
-            for voice, text in _VOICE_READERS[self.provider](self.body)
-        ]
+        voices: list[tuple[Voice, str]] = []
+        open_frame: str | None = None
+        for voice, text in _VOICE_READERS[self.provider](self.body):
+            if _is_inline_system(text):
+                voices.append(('system', text))
+            elif voice != 'user':
+                voices.append((voice, text))
+            elif open_frame is not None:
+                voices.append(('data', text))
+                if text.strip() == f'</{open_frame}>':
+                    open_frame = None
+            elif (opened := _FRAME_OPEN.fullmatch(text.strip())) is not None:
+                open_frame = opened.group(1)
+                voices.append(('data', text))
+            elif _FRAMED.fullmatch(text.strip()) is not None:
+                voices.append(('data', text))
+            else:
+                voices.append((voice, text))
+        return voices
 
     def voices_of(self, marker: str) -> list[Voice]:
         """The voices of the pieces of text that contain `marker`."""
@@ -135,6 +158,10 @@ def _texts(content: Any) -> Iterator[str]:
         for key in ('text', 'content', 'output'):
             if key in item:
                 yield from _texts(item[key])
+
+
+_FRAME_OPEN = re.compile(r'<([a-z][a-z0-9_]*)(?: [^<>]*)?>')
+_FRAMED = re.compile(r'<([a-z][a-z0-9_]*)(?: [^<>]*)?>.*</\1>', re.DOTALL)
 
 
 def _is_inline_system(text: str) -> bool:
@@ -175,8 +202,6 @@ def _responses_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
         elif item.get('type') == 'function_call_output':
             for text in _texts(item.get('output')):
                 yield 'tool', text
-        elif item.get('type') == 'function_call':
-            yield 'assistant', item.get('arguments', '')
 
 
 def _google_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
