@@ -3366,6 +3366,9 @@ async def test_before_prompt_content_goes_into_the_prompt_request_in_enqueue_ord
     The app's content is delivered by the drain ahead of the hooks and the hook's by the one after them, so the two
     deliveries go into the same request one after the other. Each enqueue call gets an event, in history order,
     holding its parts as they sit in history.
+
+    A `FunctionModel` test, not VCR: where content lands in history and the order of the events are internal shapes
+    a recording can't pin.
     """
     received: list[list[ModelMessage]] = []
     events: list[EnqueuedMessagesEvent] = []
@@ -3428,6 +3431,8 @@ async def test_without_a_prompt_before_prompt_content_lands_as_append_would_put_
     tool's goes right after its return.
 
     User text the tool enqueued next to its return isn't the prompt either, so the hook's content goes after it.
+
+    A `FunctionModel` test, not VCR: the claim is about history layout, which a recording can't pin.
     """
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -3471,6 +3476,8 @@ async def test_before_prompt_takes_only_data_capability_parts(
 
     Instructions and system prompts stay after the user's words, plain user text there would read as the user
     speaking, and a complete message can't go into a request.
+
+    Not a VCR test: the refusal happens at `enqueue`, before any model request.
     """
 
     agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])))
