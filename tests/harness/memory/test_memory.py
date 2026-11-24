@@ -1698,7 +1698,7 @@ class TestInjection:
         assert (replay.source, replay.content) == (first.source, first.content)
 
     async def test_a_snapshot_journaled_without_its_source_replays_as_the_agents(self, tmp_path: Path) -> None:
-        # Up to v2.70.0 `load_snapshot` journaled four items; a run journaled then still replays, as the agent's own memory.
+        # Up to v2.73.0 `load_snapshot` journaled four items; a run journaled then still replays, as the agent's own memory.
         untrusted, empty = tmp_path / 'untrusted', tmp_path / 'empty'
         (untrusted / '.memory' / 'main').mkdir(parents=True)
         (untrusted / '.memory' / 'main' / 'MEMORY.md').write_text('- a planted fact')
