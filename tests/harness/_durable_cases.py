@@ -12,7 +12,7 @@ import os
 from collections import Counter
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import ParamSpec, TypeVar
 from unittest.mock import patch
 
 import pytest
@@ -31,6 +31,9 @@ from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
 
 PROMPT = 'go'
 """The prompt a case's run starts with, which tells its requests apart from a nested run's."""
+
+P = ParamSpec('P')
+T = TypeVar('T')
 
 UNPROMPTED_REQUEST = 'model.unprompted_request'
 """What `REQUESTS` counts a request without `PROMPT` under: a nested run's, or one after compaction dropped it."""
@@ -101,6 +104,16 @@ def journal_breaks(
     return counted + drifted
 
 
+def _counted(key: str, method: Callable[P, T]) -> Callable[P, T]:
+    """`method`, counting each call in `REQUESTS` under `key`: an async method's call, when its request starts."""
+
+    def counted(*args: P.args, **kwargs: P.kwargs) -> T:
+        REQUESTS[key] += 1
+        return method(*args, **kwargs)
+
+    return counted
+
+
 def counting_requests(monkeypatch: pytest.MonkeyPatch, directory: Path) -> Callable[[], Counter[str]]:
     """Count every request the cases' stand-ins, the `aws` stand-in, and the stores make, from now on.
 
@@ -110,43 +123,17 @@ def counting_requests(monkeypatch: pytest.MonkeyPatch, directory: Path) -> Calla
     aws_count = directory / 'aws_cli_count'
     monkeypatch.setenv(AWS_CLI_COUNT_VARIABLE, str(aws_count))
 
-    for method in ('write', 'list_all', 'disable'):
-        original = getattr(CapabilityStore, method)
-
-        def counted(self: CapabilityStore, *args: Any, _original: Any = original, _method: str = method) -> Any:
-            REQUESTS[f'store.{_method}'] += 1
-            return _original(self, *args)
-
-        monkeypatch.setattr(CapabilityStore, method, counted)
-
+    monkeypatch.setattr(CapabilityStore, 'write', _counted('store.write', CapabilityStore.write))
+    monkeypatch.setattr(CapabilityStore, 'list_all', _counted('store.list_all', CapabilityStore.list_all))
+    monkeypatch.setattr(CapabilityStore, 'disable', _counted('store.disable', CapabilityStore.disable))
     # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
-    original_memory_write = InMemoryMemoryStore.write
-
-    async def counted_memory_write(self: InMemoryMemoryStore, *args: Any, **kwargs: Any) -> Any:
-        REQUESTS['memory.write'] += 1
-        return await original_memory_write(self, *args, **kwargs)
-
-    monkeypatch.setattr(InMemoryMemoryStore, 'write', counted_memory_write)
-
+    monkeypatch.setattr(InMemoryMemoryStore, 'write', _counted('memory.write', InMemoryMemoryStore.write))
     # The plan tools read the store many times; a write is what recovery must not repeat.
-    for method in ('set_items', 'add_item'):
-        original = getattr(SqlitePlanStore, method)
-
-        async def counted_plan(
-            self: SqlitePlanStore, *args: Any, _original: Any = original, _method: str = method
-        ) -> Any:
-            REQUESTS[f'plan.{_method}'] += 1
-            return await _original(self, *args)
-
-        monkeypatch.setattr(SqlitePlanStore, method, counted_plan)
-
-    original_list_runs = SnapshotHistorySource.list_runs
-
-    async def counted_list_runs(self: SnapshotHistorySource) -> Any:
-        REQUESTS['history.list_runs'] += 1
-        return await original_list_runs(self)
-
-    monkeypatch.setattr(SnapshotHistorySource, 'list_runs', counted_list_runs)
+    monkeypatch.setattr(SqlitePlanStore, 'set_items', _counted('plan.set_items', SqlitePlanStore.set_items))
+    monkeypatch.setattr(SqlitePlanStore, 'add_item', _counted('plan.add_item', SqlitePlanStore.add_item))
+    monkeypatch.setattr(
+        SnapshotHistorySource, 'list_runs', _counted('history.list_runs', SnapshotHistorySource.list_runs)
+    )
 
     def snapshot() -> Counter[str]:
         counts = Counter(REQUESTS)
