@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
-from pydantic_ai.messages import InstructionPart
+from pydantic_ai.messages import InstructionChangePolicy, InstructionPart
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -47,15 +47,12 @@ _DELEGATION = (
 """Overrides the instruction a `DelegationTasks` owner adds, which tells the model to delegate when it
 saves context. A delegate starts from a fresh context and re-explores the project, so unrequested
 delegation multiplies tool calls and cost. Sent only to models whose profile sets `delegates_unprompted`: other
-models don't delegate unasked, and get `_DELEGATION_WELCOME` instead."""
+models don't delegate unasked, and keep the `DelegationTasks` guidance as it is.
 
-_DELEGATION_WELCOME = (
-    'Delegating self-contained work to sub-agents with `{tool_name}` is encouraged when it saves time or context.'
-)
-"""The other side of `_DELEGATION`, for models whose profile doesn't set `delegates_unprompted`. After a switch from a
-flagged model, it is appended in place of a withdrawal, which models read as a lifted restriction and repeat to the
-user, and which left Opus and Haiku delegating less than when the rule was never sent. A neutral "you may" wording did
-the same; this one kept delegation at or above never-sent in every family probed."""
+Its block rewrites the prefix when it changes, rather than appending the change: after a switch, a model on the
+other side of the flag is sent the instructions it would have had from the start. An appended withdrawal left
+Claude models delegating less than when the rule was never sent, and they repeated it to the user. The new model is
+cache-cold anyway, so the rewrite costs little."""
 
 _TARGETS = 'Measure results against any numeric target the task states.'
 """Wherever the agent decides on its own when the work is good enough: `'high'`, `'max'`, and every delegate."""
@@ -135,29 +132,31 @@ def _compose(lead: str, *, context: Sequence[str], checks: str, suffix: str) -> 
     return '\n\n'.join([_INTRO, lead, *context, _READING, checks, _FINISHING]) + '\n' + suffix
 
 
-def _profile_says(model: AbstractModel, flag: Callable[[ModelProfile], bool]) -> bool | None:
+def _profile_says(model: AbstractModel, flag: Callable[[ModelProfile], bool]) -> bool:
     try:
         return isinstance(model, Model) and flag(model.profile)
     except NotImplementedError:
         # `FallbackModel` picks its model per request, so no one profile speaks for it.
-        return None
+        return False
 
 
 def _model_specific(
-    name: str, flag: Callable[[ModelProfile], bool], *, flagged: str, unflagged: str = ''
+    name: str,
+    flag: Callable[[ModelProfile], bool],
+    *,
+    flagged: str,
+    on_change: InstructionChangePolicy = 'append',
 ) -> Callable[[RunContext[AgentDepsT]], InstructionPart]:
     """A named block whose text depends on the profile of the model handling the request.
 
-    The block, `capability:coder_instructions:<name>`, is contributed from the first request and appends its changes.
-    So a conversation that moves to a model with a different profile keeps the instructions it started with and is
-    sent the new model's side of the block as a change, or told it was withdrawn when that side is empty. The block is
-    empty when no one profile speaks for the model (`FallbackModel`).
+    The block, `capability:coder_instructions:<name>`, is contributed from the first request. With `'append'`, a
+    conversation that moves to a model with a different profile keeps the instructions it started with and is sent
+    the block as a change, or told it was withdrawn. With `'rewrite'`, the new model is sent instructions with the
+    block as it applies to that model, as if the conversation had started on it.
     """
 
     def instruction(ctx: RunContext[AgentDepsT]) -> InstructionPart:
-        says = _profile_says(ctx.model, flag)
-        text = '' if says is None else flagged if says else unflagged
-        return InstructionPart(text, name=name, on_change='append')
+        return InstructionPart(flagged if _profile_says(ctx.model, flag) else '', name=name, on_change=on_change)
 
     return instruction
 
@@ -165,18 +164,17 @@ def _model_specific(
 def model_specific_instructions(
     *, autonomy: Autonomy, delegate_tool: str | None
 ) -> list[Callable[[RunContext[AgentDepsT]], InstructionPart]]:
-    """The blocks of `Coder`'s guidance whose text depends on the model.
+    """The blocks of `Coder`'s guidance that only some models get, each empty for the others.
 
-    - `delegation`, with `SubAgents` only: the rule against unrequested delegation, for `delegates_unprompted`, and
-      `_DELEGATION_WELCOME` for every other model, so a switch states the new model's side instead of a withdrawal.
+    - `delegation`, with `SubAgents` only: the rule against unrequested delegation, for `delegates_unprompted`. It
+      rewrites the prefix on a switch instead of appending a withdrawal (see `_DELEGATION`).
     - `misread`: at `'max'`, `_MISREAD_CLASSIFY`, for `reinterprets_malformed_inputs`. It refines the `_MISREAD_MAX`
       check the shared text carries for every model.
     - `handoff`: at `'max'`, `_STRUCTURED_HANDOFF`, for `omits_handoff_evidence`.
     - `runtime_constraints`: at `'max'`, `_RUNTIME_CONSTRAINTS`, for `ignores_stated_runtime_constraints`.
 
-    The last three are empty for models without their flag. Below `'max'`, they are left out rather than sent empty,
-    so they don't add dynamic parts to an otherwise static instruction list; a block that first appears later in a
-    conversation is still appended.
+    Below `'max'`, the last three are left out rather than sent empty, so they don't add dynamic parts to an otherwise
+    static instruction list; a block that first appears later in a conversation is still appended.
     """
     delegation = (
         [
@@ -184,7 +182,7 @@ def model_specific_instructions(
                 'delegation',
                 lambda p: p.get('delegates_unprompted', False),
                 flagged=_DELEGATION.format(tool_name=delegate_tool),
-                unflagged=_DELEGATION_WELCOME.format(tool_name=delegate_tool),
+                on_change='rewrite',
             )
         ]
         if delegate_tool is not None

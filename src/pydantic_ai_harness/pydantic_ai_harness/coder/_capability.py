@@ -144,9 +144,9 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     the first dynamic part. It contributes no toolset. `id` is set on the instance, not as a class
     default, so two copies are rejected rather than merged. A delegate's text comes from
     `delegation_depth()`, which the delegating run sets before the child run is awaited, and which
-    a recorded delegation sets again on the worker. The text that depends on the model, such as the rule against
-    unrequested delegation for models whose profile sets `delegates_unprompted` and the encouragement to delegate for
-    the rest, is in blocks of its own: see `model_specific_instructions`.
+    a recorded delegation sets again on the worker. The text only some models get, such as the rule against
+    unrequested delegation for models whose profile sets `delegates_unprompted`, is in blocks of its own: see
+    `model_specific_instructions`.
     """
 
     guidance: str

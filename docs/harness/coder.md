@@ -207,12 +207,12 @@ delegate can delegate in turn, up to three levels counting the top-level run (`S
 On OpenAI's GPT models, `Coder`'s instructions tell the agent not to spawn sub-agents with `delegate_task`
 unless the user or `AGENTS.md` asks, the rule Codex gives its models for `spawn_agent`. Without it, GPT models delegate
 work nobody asked for, and Claude, measured the same way, doesn't. The rule goes to models whose profile sets
-`delegates_unprompted`; every other model is told that delegating self-contained work to sub-agents is encouraged
-when it saves time or context. The line follows the model handling each request: after a fallback with the
+`delegates_unprompted`, and follows the model handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability, or a later run on another
-model, the new model is sent its own side of the line after the conversation so far. A model told the rule was
-withdrawn instead delegated less than one never sent it, and repeated the withdrawal to the user. A `FallbackModel`
-gets no model-specific instructions, and `Coder` warns once when it runs on one. See
+model, the new model is sent the instructions it would have had from the start, with or without the rule. Telling a
+model the rule was withdrawn instead left it delegating less than one never sent the rule, and it repeated the
+withdrawal to the user. A `FallbackModel` gets no model-specific instructions, and `Coder` warns once
+when it runs on one. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 A delegate explores the project again from a fresh context, so delegation the user did not ask for multiplies tool
 calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
@@ -279,10 +279,10 @@ a flag for the behavior it corrects:
 
 The evidence for them is weak: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'`, one run each, `Coder` scored 53.2
 with the three sentences against 51.0 without them, within that benchmark's single-run noise of about 5.6 points.
-Like the delegation line (see [Sub-agents](#sub-agents)), each is its own instruction block that
-follows the model handling each request: after a fallback with the
+Each is its own instruction block that follows the model handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without the flag,
-the model is told the sentences were withdrawn. Models without the flags get only the shared `'max'` guidance. See
+the model is told the sentences were withdrawn, unless the rule against unrequested delegation (see
+[Sub-agents](#sub-agents)) changed too, which sends the new model its own instructions. Models without the flags get only the shared `'max'` guidance. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
