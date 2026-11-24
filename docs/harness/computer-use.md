@@ -94,8 +94,9 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
 ```
 
 Gemini can flag an action for a person to approve. `ComputerUse` then asks for approval itself, after your hooks run,
-so no hook can skip it. If your own hook already asked and the call was approved, that approval counts. See
-[Google](../models/google.md#actions-that-need-approval).
+so no hook can skip it. If your own hook already asked and the call was approved, that approval counts. A Gemini
+agent without a way to resolve the approval fails at the first flagged action; see
+[Google](../models/google.md#actions-that-need-approval) for the handler to add.
 
 A read-only workspace gets no `computer` tool, since actions on the screen can change anything the workspace holds.
 
