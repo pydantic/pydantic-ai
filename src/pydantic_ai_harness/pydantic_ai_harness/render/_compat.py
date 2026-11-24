@@ -457,7 +457,7 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         context['tracer'] = settings.tracer if settings is not None else NoOpTracer()
         # The run's flag crossed the wire, but spans go to this worker's tracer, so they record content
         # only if this worker's instrumentation allows it too.
-        if 'trace_include_content' in context:
+        if 'trace_include_content' in context:  # pragma: no branch - the default serialize_run_context carries it
             context['trace_include_content'] = (
                 context['trace_include_content'] is True and settings is not None and settings.include_content
             )
