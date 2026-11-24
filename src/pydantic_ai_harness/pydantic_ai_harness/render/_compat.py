@@ -46,6 +46,7 @@ from pydantic_ai.durable_exec import (
     revalidate_function_call,
 )
 from pydantic_ai.durable_exec._toolset import opts_out_of_durable_unit
+from pydantic_ai.durable_exec._utils import agent_instrumentation_settings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -483,10 +484,9 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
             return None
         if isinstance(self._agent.model, InstrumentedModel):
             return self._agent.model.instrumentation_settings
-        # Core has no public getter for the effective agent/global settings.
-        # Keep that lookup in this compatibility seam instead of duplicating
-        # its precedence or losing Agent.instrument_all's custom provider.
-        return self._agent._resolve_instrumentation_settings()  # pyright: ignore[reportPrivateUsage]
+        # The agent's `Instrumentation` capability wins, as it does in the run, over `agent.instrument`
+        # and `Agent.instrument_all()`.
+        return agent_instrumentation_settings(self._agent)
 
     def _resolve_model(self, context: Mapping[str, Any]) -> Model | None:
         """Resolve the serialized model ID against this worker's registry.
