@@ -232,7 +232,7 @@ class _ToXml:
                 child.set('key', key)
             element.append(child)
 
-    def _parse_data_structures(  # noqa: C901
+    def _parse_data_structures(
         self,
         value: Any,
         path: str = '',
@@ -241,19 +241,25 @@ class _ToXml:
         if value is None or isinstance(value, (str | int | float | date | time | timedelta | bytearray | bytes | bool)):
             return
         elif isinstance(value, Mapping):
-            with self._enter_container(value) as should_traverse:
-                if should_traverse:
-                    for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
-                        self._parse_data_structures(v, self._child_path(path, f'{k}'))
+            self._parse_mapping(value, path)
         elif is_dataclass(value) and not isinstance(value, type):
             self._parse_dataclass(value, path)
         elif isinstance(value, BaseModel):
             self._parse_model(value, path)
         elif isinstance(value, Iterable):
-            with self._enter_container(value) as should_traverse:
-                if should_traverse:
-                    for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
-                        self._parse_data_structures(item, self._child_path(path, f'[{n}]'))
+            self._parse_iterable(value, path)
+
+    def _parse_mapping(self, value: Mapping[Any, Any], path: str) -> None:
+        with self._enter_container(value) as should_traverse:
+            if should_traverse:
+                for k, v in value.items():
+                    self._parse_data_structures(v, self._child_path(path, f'{k}'))
+
+    def _parse_iterable(self, value: Iterable[Any], path: str) -> None:
+        with self._enter_container(value) as should_traverse:
+            if should_traverse:
+                for n, item in enumerate(value):
+                    self._parse_data_structures(item, self._child_path(path, f'[{n}]'))
 
     def _parse_dataclass(self, value: DataclassInstance, path: str) -> None:
         with self._enter_container(value) as should_traverse:
