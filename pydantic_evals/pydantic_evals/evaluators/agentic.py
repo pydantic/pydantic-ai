@@ -452,27 +452,35 @@ class ArgumentCorrectness(Evaluator[object, object, object]):
                 ),
             )
 
+        # Parse and compare/print the arguments inside one guard: on deeply nested arguments,
+        # comparing and printing the parsed value can overflow wherever parsing does.
         try:
             actual_args = json.loads(selected.arguments)
-        except (ValueError, RecursionError) as e:  # also integers past the digit limit, and deeply nested JSON
-            return EvaluationReason(
-                value=False,
-                reason=f'Tool {self.tool_name!r} arguments could not be parsed as JSON: {e}',
-            )
-
-        if not isinstance(actual_args, dict):
+            if isinstance(actual_args, dict):
+                diffs = _diff_arguments(cast(dict[str, Any], actual_args), self.expected_arguments, self.match_mode)
+                if diffs:
+                    return EvaluationReason(
+                        value=False,
+                        reason=f'Tool {self.tool_name!r} argument mismatch: ' + '; '.join(diffs),
+                    )
+                return EvaluationReason(value=True)
             return EvaluationReason(
                 value=False,
                 reason=f'Tool {self.tool_name!r} arguments are not a JSON object: {actual_args!r}',
             )
-
-        diffs = _diff_arguments(cast(dict[str, Any], actual_args), self.expected_arguments, self.match_mode)
-        if diffs:
+        except ValueError as e:  # also integers past the digit limit
             return EvaluationReason(
                 value=False,
-                reason=f'Tool {self.tool_name!r} argument mismatch: ' + '; '.join(diffs),
+                reason=f'Tool {self.tool_name!r} arguments could not be parsed as JSON: {e}',
             )
-        return EvaluationReason(value=True)
+        except RecursionError:
+            return EvaluationReason(
+                value=False,
+                reason=(
+                    f'Tool {self.tool_name!r} arguments could not be parsed or compared as JSON: '
+                    'they are too deeply nested.'
+                ),
+            )
 
     def _select(self, matches: list[_ToolCallInfo]) -> _ToolCallInfo | None:
         if self.occurrence == 'first':
