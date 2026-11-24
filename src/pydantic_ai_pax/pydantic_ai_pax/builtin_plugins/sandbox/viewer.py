@@ -15,16 +15,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import secrets
+import tempfile
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html import escape
+from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, quote
 
 import anyio
+from anyio import to_thread
 
 from pydantic_ai.computer_use import ComputerResult, ComputerToolAction
 from pydantic_ai.workspaces import WorkspaceRef
@@ -566,6 +570,22 @@ def create_viewer_app(viewer: DesktopViewer, *, token: str, hosts: frozenset[str
     return _ViewerGuard(app, token=token, hosts=hosts)
 
 
+def _write_launch_page(url: str) -> Path:
+    """Write a `0600` redirect page to `url`, keeping any access token out of browser command-line arguments."""
+    descriptor, name = tempfile.mkstemp(prefix='pax-desktop-', suffix='.html')
+    with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
+        escaped = escape(url)
+        file.write(
+            f'<!doctype html><meta http-equiv="refresh" content="0;url={escaped}"><a href="{escaped}">Open desktop</a>'
+        )
+    return Path(name)
+
+
+def _unlink_pages(pages: list[Path]) -> None:
+    for page in pages:
+        page.unlink(missing_ok=True)
+
+
 class DesktopViewer:
     """Manages one on-demand loopback viewer server for a Pax session's desktop sandboxes."""
 
@@ -573,6 +593,7 @@ class DesktopViewer:
         self._sessions: dict[str, DesktopSession] = {}
         self._token = secrets.token_urlsafe(24)
         self._server: WebServer | None = None
+        self._launch_pages: list[Path] = []
 
     def register(self, session: DesktopSession) -> DesktopSession:
         self._sessions[session.key] = session
@@ -604,11 +625,21 @@ class DesktopViewer:
             f'http://127.0.0.1:{port}/?token={quote(self._token, safe="")}&sandbox={quote(sandbox_key(ref), safe="")}'
         )
 
+    async def launch_url(self, url: str) -> str:
+        """Return a private `file://` redirect URL for `url`, tracked for cleanup in `close`."""
+        page = await to_thread.run_sync(_write_launch_page, url)
+        self._launch_pages.append(page)
+        return page.as_uri()
+
     async def close(self) -> None:
-        """Close all SSE streams and stop the loopback server if it was started."""
+        """Close all SSE streams, remove private redirect pages, and stop the loopback server if started."""
         for session in list(self._sessions.values()):
             session.close()
         self._sessions.clear()
+        if self._launch_pages:
+            pages, self._launch_pages = self._launch_pages, []
+            with anyio.CancelScope(shield=True):
+                await to_thread.run_sync(_unlink_pages, pages)
         if (server := self._server) is not None:
             self._server = None
             with anyio.CancelScope(shield=True):

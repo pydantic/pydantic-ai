@@ -320,6 +320,7 @@ def test_action_formatting_markers_and_rendering() -> None:
         Click(x=10, y=20),
         Click(x=30, y=40, button='right', count=2, modifiers=('ctrl',)),
         Click(count=3),
+        Click(x=5, y=6, count=4),
         MouseMove(x=50, y=60),
         Drag(path=(Point(x=1, y=2), Point(x=3, y=4), Point(x=9, y=8))),
         MouseDown(button='left'),
@@ -342,6 +343,7 @@ def test_action_formatting_markers_and_rendering() -> None:
         'click (10, 20)',
         'ctrl+right-double-click (30, 40)',
         'triple-click',
+        'click ×4 (5, 6)',
         'move (50, 60)',
         'drag (1, 2) -> (9, 8)',
         'mouse-down left',
@@ -360,9 +362,10 @@ def test_action_formatting_markers_and_rendering() -> None:
         'cursor-position',
     ]
     assert format_actions(actions[:2]) == 'click (10, 20) · ctrl+right-double-click (30, 40)'
-    assert action_markers(actions[:5]) == (
+    assert action_markers(actions[:6]) == (
         ActionMarker(kind='click', points=((10, 20),), label='click (10, 20)'),
         ActionMarker(kind='click', points=((30, 40),), label='ctrl+right-double-click (30, 40)'),
+        ActionMarker(kind='click', points=((5, 6),), label='click ×4 (5, 6)'),
         ActionMarker(kind='move', points=((50, 60),), label='move (50, 60)'),
         ActionMarker(kind='drag', points=((1, 2), (3, 4), (9, 8)), label='drag (1, 2) -> (9, 8)'),
     )
@@ -605,20 +608,28 @@ async def test_view_native_url_fallback_and_side_panel(
     note_view = await panel.view()
     assert note_view.url is None and '/computer-use PROVIDER' in note_view.note
 
-    # Provider with native live desktop URL -> `/computer-use view` opens it directly.
+    # Provider with native live desktop URL -> `/computer-use view` opens it via a private redirect file (no token in argv).
     desktop_provider.has_desktop_url = True
     desktop_provider.live_url_value = 'https://console.example/desktop/sbx-1'
     await plugin.computer_use_command(['fake'])
     msg = await plugin.computer_use_command(['view'])
     assert msg == 'Opened live desktop in your browser: https://console.example/desktop/sbx-1'
-    assert opened == ['https://console.example/desktop/sbx-1']
+    assert len(opened) == 1 and opened[0].startswith('file://')
+    first_page = anyio.Path(opened[0].removeprefix('file://'))
+    assert 'https://console.example/desktop/sbx-1' in await first_page.read_text(encoding='utf-8')
 
     # If native URL fails, falls back to local viewer (stubbing ensure_started so no socket binds inside sandbox).
     monkeypatch.setattr(plugin._viewer, 'ensure_started', lambda: 43210)  # pyright: ignore[reportPrivateUsage]
     desktop_provider.live_url_error = WorkspaceError('temporarily unavailable')
     fallback_msg = await plugin.computer_use_command(['view'])
     assert fallback_msg.startswith('Opened desktop viewer in your browser: http://127.0.0.1:43210/?token=')
-    assert len(opened) == 2
+    assert len(opened) == 2 and opened[1].startswith('file://') and 'token=' not in opened[1]
+    second_page = anyio.Path(opened[1].removeprefix('file://'))
+    assert 'http://127.0.0.1:43210/?token=' in await second_page.read_text(encoding='utf-8')
+
+    # Session end unlinks the private redirect files.
+    await plugin.on_session_end(SessionEnd(reason='exit'))
+    assert not await first_page.exists() and not await second_page.exists()
 
     # Headless view does not call open_browser and tolerates failed initial capture.
     desktop_provider.has_desktop_url = False

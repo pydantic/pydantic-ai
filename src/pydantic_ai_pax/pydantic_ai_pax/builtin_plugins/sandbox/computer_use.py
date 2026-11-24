@@ -58,7 +58,7 @@ class ActionMarker:
 def _format_click(action: Click) -> str:
     prefix = '+'.join(action.modifiers)
     button = '' if action.button == 'left' else f'{action.button}-'
-    verb = {1: 'click', 2: 'double-click', 3: 'triple-click'}[action.count]
+    verb = {1: 'click', 2: 'double-click', 3: 'triple-click'}.get(action.count, f'click ×{action.count}')
     name = f'{prefix}+{button}{verb}' if prefix else f'{button}{verb}'
     return f'{name} ({action.x}, {action.y})' if action.x is not None and action.y is not None else name
 

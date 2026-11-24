@@ -488,7 +488,7 @@ class SandboxPlugin(Plugin):
                 )
                 live_url = None
             if live_url is not None:
-                opened = _open_if_terminal(self.host.console.is_terminal, live_url)
+                opened = await self._open_in_browser(live_url)
                 action = 'Opened live desktop in your browser' if opened else 'Live desktop'
                 return f'{action}: {live_url}'
         session = self._viewer_session(sandbox)
@@ -499,9 +499,16 @@ class SandboxPlugin(Plugin):
                 # Best effort: the viewer still opens and updates on the first computer action or Refresh click.
                 pass
         url = self._viewer.url(sandbox.ref)
-        opened = _open_if_terminal(self.host.console.is_terminal, url)
+        opened = await self._open_in_browser(url)
         action = 'Opened desktop viewer in your browser' if opened else 'Desktop viewer'
         return f'{action}: {url}'
+
+    async def _open_in_browser(self, url: str) -> bool:
+        """Open `url` via a private redirect page off the event loop, keeping tokens out of process argv."""
+        if not self.host.console.is_terminal:
+            return False
+        target = await self._viewer.launch_url(url)
+        return await to_thread.run_sync(open_browser, target, abandon_on_cancel=True)
 
     async def _start(self, provider: SandboxProvider, *, desktop: bool = False) -> str:
         cmd = '/computer-use' if desktop else '/sandbox'
@@ -594,10 +601,6 @@ def _already_in_sandbox(current: _Sandbox, provider: SandboxProvider, *, desktop
             )
         return f'This conversation already runs in {provider.title} sandbox {current.ref.id}.'
     raise ValueError(f'This conversation runs in {current.provider.title} sandbox {current.ref.id}. Run /new first.')
-
-
-def _open_if_terminal(is_terminal: bool, url: str) -> bool:
-    return open_browser(url) if is_terminal else False
 
 
 async def _in_sandbox(ctx: RunContext[None], tool: ToolDefinition) -> ToolDefinition | None:
