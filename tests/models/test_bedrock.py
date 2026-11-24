@@ -9533,7 +9533,9 @@ async def test_bedrock_claude_thinking_drops_the_sampling_settings_it_rejects(
     assert result.output.strip() == snapshot('4')
     sent = single_request_body(vcr)
     assert sent.get('inferenceConfig') == snapshot({'maxTokens': 64000})
-    assert sent['additionalModelRequestFields'] == snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+    assert sent['additionalModelRequestFields'] == snapshot(
+        {'thinking': {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}}
+    )
 
 
 @pytest.mark.vcr(additional_matchers=['body'])

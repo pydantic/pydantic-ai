@@ -3973,6 +3973,7 @@ def test_openai_compatible_qwen3_next():
                 'supports_json_schema_output': True,
                 'supports_json_object_output': True,
                 'native_output_requires_schema_in_instructions': True,
+                'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
                 'may_tokenize_special_tokens_in_content': True,
             },
             'sambanova': {
@@ -4562,6 +4563,7 @@ def test_otari_gemini():
             'supports_tool_return_schema': True,
             'supports_video_input': True,
             'supports_thinking': True,
+            'thinking_enabled_by_default': True,
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,

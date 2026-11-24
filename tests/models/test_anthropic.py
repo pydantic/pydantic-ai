@@ -2372,7 +2372,7 @@ async def test_anthropic_thinking_drops_the_sampling_settings_it_rejects(
     assert result.output.strip() == snapshot('4')
     body = request_capture.body('/v1/messages')
     assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k', 'thinking')} == (
-        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}})
     )
 
 
@@ -2451,7 +2451,7 @@ async def test_anthropic_thinking_keeps_sampling_settings_without_the_restrictio
     )
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000}
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}
     assert kwargs['extra_body'] == {'temperature': 0.5, 'top_p': 0.9, 'top_k': 40}
 
 
