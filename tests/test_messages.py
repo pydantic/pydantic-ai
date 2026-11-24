@@ -779,6 +779,21 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     result_part = chained.apply(part)
     assert result_part.provider_details == {'from_callable': 'yes', 'from_dict': 'also'}
 
+    # Applying callable delta to dict delta preserves dict details even when callable ignores input
+    first_dict = ThinkingPartDelta(content_delta='a', provider_details={'first': 1})
+    second_cb = ThinkingPartDelta(content_delta='b', provider_details=lambda _d: {'second': 2})
+    assert second_cb.apply(first_dict).apply(ThinkingPart(content='')).provider_details == {
+        'first': 1,
+        'second': 2,
+    }
+
+    # Applying callable delta to callable delta preserves first details even when second ignores input
+    first_cb = ThinkingPartDelta(content_delta='a', provider_details=lambda _d: {'first': 1})
+    assert second_cb.apply(first_cb).apply(ThinkingPart(content='')).provider_details == {
+        'first': 1,
+        'second': 2,
+    }
+
 
 def test_thinking_part_delta_callable_provider_details_serializable():
     # Reproduce the real streaming path: OpenAI's gpt-oss raw-CoT handler passes a callable

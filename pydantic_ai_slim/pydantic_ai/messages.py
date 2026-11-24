@@ -6836,9 +6836,17 @@ def _chain_provider_details(
         if callable(existing):
 
             def chained_both(d: dict[str, Any] | None) -> dict[str, Any]:
-                return new(existing(d))
+                first = {**(d or {}), **(existing(d) or {})} or None
+                return {**(first or {}), **(new(first) or {})}
 
             return chained_both
+        if isinstance(existing, dict):
+
+            def chained_with_existing(d: dict[str, Any] | None) -> dict[str, Any]:
+                first = {**(d or {}), **existing}
+                return {**first, **(new(first) or {})}
+
+            return chained_with_existing
         return new  # pragma: no cover
     if callable(existing):
 
