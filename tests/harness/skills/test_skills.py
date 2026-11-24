@@ -614,6 +614,45 @@ class TestUntrustedWorkspaces:
         assert 'vendored' not in (requests[0].instructions or '')
         assert _tool_results(requests) == [{'skills': {'vendored': 'Vendored help.'}}]
 
+    async def test_read_skill_file_reads_a_skill_list_skills_lists(self, tmp_path: Path) -> None:
+        # A lowered skill is never loaded with `load_capability`, so the tool takes one `list_skills` lists, and its
+        # files reach the model as tool output, like its instructions from `load_skill`.
+        _write_skill(
+            tmp_path / 'skills', 'guide', description='Guide help.', files={'references/guide.md': 'Use tabs.'}
+        )
+        model, requests, tools = _calling(
+            ToolCallPart('list_skills', {}),
+            ToolCallPart('read_skill_file', {'skill': 'guide', 'path': 'references/guide.md'}),
+        )
+
+        await Agent(model, capabilities=[Skills('skills', read_files=True)]).run('go', workspace=_untrusted(tmp_path))
+
+        assert tools == ['read_skill_file', 'list_skills', 'load_skill']
+        assert _tool_results(requests) == [{'skills': {'guide': 'Guide help.'}}, 'Use tabs.']
+        system_voice = [request.instructions or '' for request in requests] + [
+            str(part.content) for request in requests for part in request.parts if isinstance(part, SystemPromptPart)
+        ]
+        assert not any('Use tabs.' in text for text in system_voice)
+
+    async def test_read_skill_file_still_needs_an_operator_skill_loaded(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'own', description='Own help.', files={'notes.md': 'Own notes.'})
+        _write_skill(tmp_path / 'skills', 'vendored', description='Vendored help.', files={'notes.md': 'Vendor notes.'})
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority={'skills/vendored': 'none'}
+        )
+        model, requests, tools = _calling(
+            ToolCallPart('read_skill_file', {'skill': 'own', 'path': 'notes.md'}),
+            ToolCallPart('read_skill_file', {'skill': 'vendored', 'path': 'notes.md'}),
+        )
+
+        await Agent(model, capabilities=[Skills('skills', read_files=True)]).run('go', workspace=workspace)
+
+        assert tools == ['load_capability', 'read_skill_file', 'list_skills', 'load_skill']
+        assert _tool_results(requests) == [
+            "Load the skill 'own' with `load_capability` before reading its files.",
+            'Vendor notes.',
+        ]
+
     @pytest.mark.parametrize('lowered', ['vendor', 'vendor/skills', 'vendor/skills/evil'])
     async def test_a_skill_linked_out_of_a_lowered_directory_stays_lowered(self, tmp_path: Path, lowered: str) -> None:
         # The repository controls `vendor`, so it can make a skill there a link to outside the workspace. Naming the
