@@ -2025,9 +2025,15 @@ Queue: closed.
     )
 
 
-@pytest.mark.parametrize('as_input', [(False, True), (True, False)], ids=['turned-on', 'turned-off'])
+@pytest.mark.parametrize(
+    'as_input, expected_roles',
+    [
+        pytest.param((False, True), ['system', 'user', 'assistant', 'user'], id='turned-on'),
+        pytest.param((True, False), ['user', 'assistant', 'user'], id='turned-off'),
+    ],
+)
 async def test_openai_responses_auto_chain_resends_history_when_instruction_placement_changes(
-    allow_model_requests: None, as_input: tuple[bool, bool]
+    allow_model_requests: None, as_input: tuple[bool, bool], expected_roles: list[str]
 ):
     """A response stored with its instructions in the top-level field doesn't hold them in its input, and one stored
     with them as leading input does, so a request that would send them the other way resends the history."""
@@ -2051,9 +2057,7 @@ async def test_openai_responses_auto_chain_resends_history_when_instruction_plac
 
     second_request = get_mock_responses_kwargs(mock_client)[1]
     assert 'previous_response_id' not in second_request
-    assert [item.get('role') for item in second_request['input']] == (
-        ['system', 'user', 'assistant', 'user'] if as_input[1] else ['user', 'assistant', 'user']
-    )
+    assert [item.get('role') for item in second_request['input']] == expected_roles
 
 
 async def test_openai_responses_auto_chain_compaction_resends_the_window(allow_model_requests: None):
