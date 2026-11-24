@@ -30,6 +30,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_ai_pax.builtin_plugins.web.app import HEADER, ASGIApp, create_app
 from pydantic_ai_pax.builtin_plugins.web.server import WebServer
 from pydantic_ai_pax.plugins import InstallProgress
+from pydantic_ai_pax.plugins.menus import Option
 from tests.pax.browser.conftest import Serve
 from tests.pax.test_web import TOKEN
 from tests.pax.test_web_sessions import Fleet
@@ -376,8 +377,10 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
 
 VIEWS = ['sessions', 'projects']
 """The sidebar's two listings, which render different rows and row controls."""
-FIELD_VIEWS = [*VIEWS, 'command palette', 'plugin settings']
-"""The views above, plus the command palette's and the plugin settings' search fields."""
+FIELD_VIEWS = [*VIEWS, 'command palette', 'plugin settings', 'filter dialog']
+"""The views above, plus the command palette's, the plugin settings' and a long choice dialog's filter fields."""
+FILTERED = [Option(value=letter, label=letter) for letter in 'abcdefghi']
+"""More options than a choice dialog lists without its Filter field."""
 
 MARK_CONTROLS = """() => {
   const controls = [...document.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')]
@@ -455,16 +458,24 @@ async def test_each_field_with_a_placeholder_has_an_accessible_name(page: Page, 
     """A field with no name of its own is named by its placeholder, not by whatever else its wrapping label holds.
 
     A wrapping label named the session search 'Archived Ctrl K' (#11306), and one holding only an icon left the command
-    palette's and the plugin settings' search fields with no name at all.
+    palette's and the plugin settings' search fields, and a long choice dialog's Filter field, with no name at all.
     """
     judged = 0
     for view in FIELD_VIEWS:
         await open_view(page, web_ui, view)
+        asked = None
+        if view == 'filter dialog':
+            choose = web_ui.fleet.service.dialogs.choose
+            asked = web_ui.fleet.portal.start_task_soon(lambda: choose(title='Pick a letter', options=FILTERED))
+            await expect(page.get_by_placeholder('Filter')).to_be_visible()
         fields: list[tuple[str, bool]] = await page.evaluate(MARK_PLACEHOLDER_FIELDS)
         for index, (placeholder, named) in enumerate(fields):
             field = page.locator(f'[data-placeholder-field="{index}"]')
             await expect(field).to_have_accessible_name(re.compile(r'\S' if named else re.escape(placeholder)))
         judged += len(fields)
+        if asked is not None:
+            await page.keyboard.press('Escape')
+            assert await asyncio.wrap_future(asked) is None
     assert judged, f'no view in {FIELD_VIEWS} has a field with a placeholder: open one that does'
 
 
