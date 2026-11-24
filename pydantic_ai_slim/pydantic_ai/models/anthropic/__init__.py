@@ -3505,11 +3505,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         self, thread_history: Sequence[ModelMessage], map_context: _MapMessagesContext
     ) -> None:
         """Note the thread's computer toolset calls, so a result in the new messages names the toolset."""
+        sent = map_context.sent_native_computer
         for message in thread_history:
             if isinstance(message, ModelResponse):
                 for part in message.parts:
-                    if isinstance(part, ToolCallPart):
-                        self._map_tool_call_part(part, [], map_context)
+                    if isinstance(part, ToolCallPart) and self._is_toolset_computer_call(part, sent):
+                        map_context.toolset_computer_call_ids.add(_guard_tool_call_id(t=part))
+
+    def _is_toolset_computer_call(self, part: ToolCallPart, sent: _computer.NativeComputer | None) -> bool:
+        """Whether `part` goes back as Claude's call to the computer toolset, so its result names the toolset."""
+        return (
+            sent is not None and sent.is_toolset and _computer.stored_computer_call(part, self.system, sent) is not None
+        )
 
     def _map_tool_call_part(
         self,

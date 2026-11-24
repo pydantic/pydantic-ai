@@ -710,6 +710,27 @@ async def test_a_streamed_member_call_whose_input_came_with_its_start_keeps_it(a
     }
 
 
+@pytest.mark.parametrize('partial_json', ['{"coordinate": [5', '[]'], ids=['cut-off', 'not-an-object'])
+async def test_a_streamed_member_call_with_unusable_input_keeps_it_raw(
+    allow_model_requests: None, partial_json: str
+) -> None:
+    events = _stream(_tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}))
+    events[2] = BetaRawContentBlockDeltaEvent(
+        type='content_block_delta',
+        index=0,
+        delta=BetaInputJSONDelta(type='input_json_delta', partial_json=partial_json),
+    )
+    (call,) = (await _streamed(events)).parts
+    # Kept as a string, so the agent treats it like any other incomplete or invalid tool call.
+    assert isinstance(call, ComputerCallPart)
+    assert (call.tool_name, call.args, call.tool_call_id, call.provider_details) == (
+        'computer',
+        partial_json,
+        'toolu_1',
+        None,
+    )
+
+
 async def test_member_calls_keep_their_order_streamed_or_not(allow_model_requests: None) -> None:
     blocks = [
         _tool_use('toolu_1', 'left_click', {'coordinate': [5, 6]}),

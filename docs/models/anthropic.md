@@ -991,8 +991,9 @@ model with `ComputerUse(native=False)` get a regular function tool named `comput
 
 Keep the screen within the model's [image size limit](https://platform.claude.com/docs/en/build-with-claude/vision#evaluate-image-size).
 `computer_toolset_20260801` refuses a screenshot over 2576 pixels on its longer side or over 4784 image tokens (one
-token per 28x28 pixels), and the request fails with a `ModelHTTPError`. The older tools, and the function tool, shrink
-a larger screenshot without saying so, so Claude's clicks miss.
+token per 28x28 pixels), and the request fails with a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The older tools, and the function tool, shrink a larger
+screenshot without saying so, so Claude's clicks miss.
 
 To send Anthropic's tool to a model or client that isn't listed, add `ComputerTool` to the profile's
 [`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces the model's own

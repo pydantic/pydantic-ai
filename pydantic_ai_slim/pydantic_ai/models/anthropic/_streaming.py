@@ -8,7 +8,6 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
-import pydantic_core
 from anthropic import AsyncStream
 from anthropic.types.beta import (
     BetaAdvisorToolResultBlock,
@@ -42,6 +41,7 @@ from anthropic.types.beta import (
     BetaWebFetchToolResultBlock,
     BetaWebSearchToolResultBlock,
 )
+from pydantic import TypeAdapter, ValidationError
 
 from ... import _utils
 from ..._context_size import mark_context_input_tokens
@@ -89,6 +89,9 @@ AnthropicEventStream: TypeAlias = _utils.PeekableAsyncStream[
     BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
 ]
 """A streamed response whose first event has been read, so an error that stops it is raised before it's processed."""
+
+_COMPUTER_INPUT_ADAPTER = TypeAdapter(dict[str, Any])
+"""Parses a streamed computer use call's input, which must be a JSON object."""
 
 
 @dataclass
@@ -413,7 +416,7 @@ class AnthropicStreamedResponse(StreamedResponse):
         if event.index in self._ignored_block_indices:
             self._ignored_block_indices.remove(event.index)
         elif native_computer and native_computer.is_computer_call(current_block):
-            yield self._map_computer_block_stop(native_computer, current_block)
+            yield from self._map_computer_block_stop(event.index, native_computer, current_block)
         elif isinstance(current_block, BetaMCPToolUseBlock):
             # A call with no arguments streams no input JSON, so restore the `{}` dropped at block start.
             no_input = (
@@ -442,14 +445,23 @@ class AnthropicStreamedResponse(StreamedResponse):
         self._current_block = None
 
     def _map_computer_block_stop(
-        self, native_computer: NativeComputer, current_block: BetaToolUseBlock
-    ) -> ModelResponseStreamEvent:
+        self, index: int, native_computer: NativeComputer, current_block: BetaToolUseBlock
+    ) -> Iterator[ModelResponseStreamEvent]:
         # With no input deltas, the whole input came with the block's start event.
-        computer_args: dict[str, Any] = (
-            pydantic_core.from_json(''.join(self._computer_input)) if self._computer_input else {**current_block.input}
-        )
+        computer_args: dict[str, Any] = {**current_block.input}
+        if self._computer_input:
+            raw_input = ''.join(self._computer_input)
+            try:
+                computer_args = _COMPUTER_INPUT_ADAPTER.validate_json(raw_input)
+            except ValidationError:
+                # A call cut off by `max_tokens` streams only part of its input. It becomes a plain `computer` call
+                # with the raw input, so the agent handles it like any other incomplete or invalid tool call.
+                yield from self._parts_manager.handle_tool_call_delta_events(
+                    vendor_part_id=index, tool_name=native_computer.name, args=raw_input, tool_call_id=current_block.id
+                )
+                return
         block = ComputerBlock(id=current_block.id, name=current_block.name, input=computer_args)
-        return self._parts_manager.handle_part(
+        yield self._parts_manager.handle_part(
             vendor_part_id=block['id'], part=native_computer.map_computer_call(block, self.provider_name)
         )
 
