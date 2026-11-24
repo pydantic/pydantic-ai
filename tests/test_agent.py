@@ -5458,7 +5458,7 @@ class _LengthFunctionModel(FunctionModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as response:
             response.finish_reason = 'length'
             yield response
@@ -5478,7 +5478,12 @@ async def test_streamed_output_tool_call_with_empty_args_is_cut_off_only_when_la
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         async with agent.run_stream('Hello') as result:
             await result.get_output()
-    assert isinstance(exc_info.value, IncompleteToolCall) == last
+    if last:
+        assert isinstance(exc_info.value, IncompleteToolCall)
+    else:
+        assert str(exc_info.value) == snapshot(
+            'Output validation failed during streaming, and retries are not supported in `run_stream()`'
+        )
 
 
 def test_truncated_output_tool_call_does_not_override_valid_output_in_same_response():
