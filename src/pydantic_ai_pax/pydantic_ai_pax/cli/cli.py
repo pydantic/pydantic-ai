@@ -16,7 +16,7 @@ from pydantic_ai_pax.ui.rendering.splash import Splash
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable, Generator, Sequence
 
     from pydantic_ai_pax.cli.self_update import Relaunch, WebHandoff
     from pydantic_ai_pax.config import Settings, UpdateChannel
@@ -101,6 +101,14 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument('-m', '--model', help='Provider-qualified model name')
     parser.add_argument(
+        '-x',
+        '--plugin',
+        action='append',
+        default=[],
+        metavar='NAME',
+        help='Load this plugin for this launch only, even if it is disabled; repeat for more; nothing is saved',
+    )
+    parser.add_argument(
         '-p', '--prompt', metavar='TEXT', help='Run one prompt without interaction and print only the answer'
     )
     parser.add_argument(
@@ -175,6 +183,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
         project = load_project_settings(Path.cwd(), store=store)
+        _check_plugins(args.plugin, store=store, project=project)
         _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
         settings_for = _settings_for(
@@ -201,6 +210,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                         agent=agent,
                         session_id=args.session_id,
                         fork_session=args.fork_session,
+                        launch_plugins=args.plugin,
                     )
                 )
             )
@@ -222,6 +232,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                     port=args.port,
                     token=None if args.token_file is None else read_token(args.token_file),
                     restart=served,
+                    launch_plugins=args.plugin,
                 )
             )
             return
@@ -246,6 +257,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                     worktree=worktree,
                     web=served,
                     settings_for=settings_for,
+                    launch_plugins=args.plugin,
                 )
             )
             offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
@@ -277,6 +289,20 @@ def _frozen_imports(*, enabled: bool) -> 'Generator[None]':
     finally:
         gc.freeze()
         gc.enable()
+
+
+def _check_plugins(names: 'Sequence[str]', *, store: 'SettingsStore', project: 'ProjectSettings') -> None:
+    """Fail on a `--plugin` name that is neither built in, saved, a drop-in, nor declared by the project."""
+    if not names:
+        return
+    from rich.console import Console
+
+    from pydantic_ai_pax.app import STOCK_PLUGINS
+    from pydantic_ai_pax.config.settings_store import canonical_plugin_declarations
+    from pydantic_ai_pax.plugins.process_plugins import ProcessPlugins
+
+    plugins = ProcessPlugins[None](store=store, builtin=STOCK_PLUGINS, launch=names)
+    plugins.check_launch(canonical_plugin_declarations(project.plugins), console=Console(stderr=True))
 
 
 def _resolve_paths(args: argparse.Namespace) -> None:
@@ -465,6 +491,8 @@ def relaunch_argv(
         argv += ['--model', args.model]
     if args.request_limit is not None:
         argv += ['--request-limit', str(args.request_limit)]
+    for name in args.plugin:
+        argv += ['--plugin', name]
     if args.database is not None:
         argv += ['--database', str(args.database)]
     if session_id is not None:
@@ -579,11 +607,15 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         or args.agent is not None
         or args.session_id is not None
         or args.fork_session
+        or args.plugin
     ):
         parser.error(
-            '--resume, --continue, --session-id, --fork-session, --worktree, and --agent cannot be combined with'
-            ' config, plugins, or sessions'
+            '--resume, --continue, --session-id, --fork-session, --worktree, --agent, and --plugin cannot be combined'
+            ' with config, plugins, or sessions'
         )
+    if args.agent is not None and args.plugin:
+        # `--agent` loads no plugins; giving its agent some needs a check that their tools don't clash with its own.
+        parser.error('--plugin cannot be combined with --agent')
     if args.update and (
         args.command
         or args.prompt is not None
@@ -595,10 +627,11 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         or args.worktree is not None
         or args.model is not None
         or args.request_limit is not None
+        or args.plugin
     ):
         parser.error(
             '--update cannot be combined with config, plugins, sessions, --prompt, --web, --resume, --continue, '
-            '--session-id, --agent, --worktree, --model, or --request-limit'
+            '--session-id, --agent, --worktree, --model, --request-limit, or --plugin'
         )
     # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
     resume = '' if args.continue_session else args.resume

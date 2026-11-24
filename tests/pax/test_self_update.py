@@ -785,7 +785,7 @@ async def test_restart_imports_nothing_after_the_install(tmp_path: Path, monkeyp
 
 def _args(**options: object) -> argparse.Namespace:
     defaults: dict[str, object] = dict(
-        agent=None, model=None, request_limit=None, database=None, web=False, port=None, token_file=None
+        agent=None, model=None, request_limit=None, database=None, web=False, port=None, token_file=None, plugin=[]
     )
     return argparse.Namespace(**(defaults | options))
 
@@ -828,6 +828,17 @@ def test_relaunch_argv(tmp_path: Path) -> None:
         str(tmp_path / 'c.db'),
         '--resume',
         'abc',
+    ]
+    # `--plugin` choices are for the launch, so the restarted build loads them too.
+    plugins = _args(plugin=['sandbox', 'mcp'])
+    assert relaunch_argv(plugins, executable='/b/pax', session_id='s') == [
+        '/b/pax',
+        '--plugin',
+        'sandbox',
+        '--plugin',
+        'mcp',
+        '--resume',
+        's',
     ]
 
 

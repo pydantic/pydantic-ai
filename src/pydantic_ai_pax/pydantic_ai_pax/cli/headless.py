@@ -2,7 +2,7 @@
 
 import os
 import sys
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 
 from anyio import CancelScope
@@ -46,13 +46,14 @@ async def run_headless(
     agent: AbstractAgent[None, object] | None = None,
     session_id: str | None = None,
     fork_session: bool = False,
+    launch_plugins: Sequence[str] = (),
 ) -> int:
     """Print only the final answer; preserve sessions and report failures on stderr.
 
     `resume_from` imports the `resume` session from Claude Code or Codex first.
 
     A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
-    `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
+    `resume`, `session_id`, `fork_session`, and `launch_plugins` work as for `chat`, except that `resume` needs an ID.
     """
     if resume == '':
         # The browser needs a terminal, which a headless run has none of.
@@ -77,6 +78,7 @@ async def run_headless(
             project=project,
             headless=True,
             load_plugins=load_plugins,
+            launch_plugins=launch_plugins,
         )
         async with agent:
             with shell.screen.bound(no_screen):  # pragma: no branch -- bound never suppresses exceptions.
@@ -115,10 +117,10 @@ async def run_headless(
 
 
 async def _load_plugins(loader: SessionPlugins[None]) -> None:
-    """Load every enabled plugin but `ask_user`, skipping one that a plugin loaded before it includes."""
+    """Load every enabled or launched plugin but `ask_user`, skipping one that a plugin loaded before it includes."""
     # Skip before activation, even when a saved declaration overrides the built-in.
     for entry in loader.entries():
-        if entry.declaration.enabled and entry.name != 'ask_user':
+        if (entry.declaration.enabled or entry.name in loader.process.launch) and entry.name != 'ask_user':
             # Read afresh: a plugin loaded earlier in this loop may include this one.
             current = next(other for other in loader.entries() if other.name == entry.name)
             if current.included_in is None:

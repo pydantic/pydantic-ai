@@ -194,6 +194,7 @@ async def chat(
     worktree: Worktree | None = None,
     web: WebHandoff | None = None,
     settings_for: Callable[[ProjectSettings], Settings] | None = None,
+    launch_plugins: Sequence[str] = (),
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
@@ -203,6 +204,8 @@ async def chat(
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
+    `launch_plugins` names plugins to load for this launch even when disabled, as `pax -x NAME` does; nothing
+    saved changes, and `/reload` keeps them.
     `resume` restores a saved conversation (`''` opens the browser); `fork_session` then continues in a copy.
     `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
     or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.
@@ -237,6 +240,7 @@ async def chat(
         settings_for=settings_for,
         worktree=worktree,
         background=background,
+        launch_plugins=launch_plugins,
     )
     fresh = False
     warming: Thread | None = None
@@ -354,6 +358,7 @@ def _create_home_shell(
     settings_for: Callable[[ProjectSettings], Settings] | None,
     worktree: Worktree | None,
     background: str | None,
+    launch_plugins: Sequence[str],
 ) -> SessionRuntime[DepsT, OutputT]:
     """Build the session Pax starts with, under the launch banner, in colours for the terminal's `background`."""
     with (
@@ -375,6 +380,7 @@ def _create_home_shell(
             transcript=transcript,
             load_plugins=load_plugins,
             settings_for=settings_for,
+            launch_plugins=launch_plugins,
         )
 
 
@@ -464,6 +470,7 @@ def _reload_shell(
             load_plugins=load_plugins,
             workspace=Path(shell.session.workspace),
             settings_for=shell.context.settings_for,
+            launch_plugins=tuple(shell.process.plugins.launch),
         )
     )
 

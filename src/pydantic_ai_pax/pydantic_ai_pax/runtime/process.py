@@ -42,11 +42,20 @@ class ClaiProcess(Generic[DepsT]):
     """The native Codex provider per account, shared by every session's `ModelResolver`, so each refreshes once."""
 
     @classmethod
-    def open(cls, store: SettingsStore | None = None, *, builtin_plugins: Sequence[PluginSettings] = ()) -> Self:
-        """The process over `store`, by default the user's settings database, with `builtin_plugins` shipped."""
+    def open(
+        cls,
+        store: SettingsStore | None = None,
+        *,
+        builtin_plugins: Sequence[PluginSettings] = (),
+        launch_plugins: Sequence[str] = (),
+    ) -> Self:
+        """The process over `store`, by default the user's settings database, with `builtin_plugins` shipped.
+
+        `launch_plugins` are loaded at the start of every session, enabled or not, without saving anything.
+        """
         store = store or SettingsStore()
         conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
-        plugins = ProcessPlugins[DepsT](store=store, builtin=builtin_plugins)
+        plugins = ProcessPlugins[DepsT](store=store, builtin=builtin_plugins, launch=launch_plugins)
         plugins.live = live = LiveRuntimes(conversations=conversations)
         return cls(
             store=store,

@@ -12,7 +12,7 @@ import hashlib
 import importlib
 import logging
 import os
-from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -373,10 +373,17 @@ class ProcessPlugins(Generic[DepsT]):
     included, or failed can differ between sessions; its changes come through `change` and `follow`.
     """
 
-    def __init__(self, *, store: SettingsStore, builtin: Sequence[PluginSettings] = ()) -> None:
-        """`builtin` ships with Pax; the store overrides it, as it does each session's project declarations."""
+    def __init__(
+        self, *, store: SettingsStore, builtin: Sequence[PluginSettings] = (), launch: Iterable[str] = ()
+    ) -> None:
+        """`builtin` ships with Pax; the store overrides it, as it does each session's project declarations.
+
+        `launch` names plugins every session loads at start even when disabled, as `pax -x NAME` asks for.
+        """
         self.store = store
         self.builtin = canonical_plugin_declarations(builtin)
+        self.launch: frozenset[str] = frozenset(canonical_plugin_id(name) for name in launch)
+        """Plugins loaded at start for this launch only, enabled or not; nothing saved says they are enabled."""
         self.staged: dict[str, PluginSettings] = {}
         """A `/plugins add` declaration being tried before it is saved, so rejected settings never reach the store."""
         self.editing: set[str] = set()
@@ -417,6 +424,13 @@ class ProcessPlugins(Generic[DepsT]):
             for name in shipped.keys() - declared.keys():
                 declared[name] = shipped[name]
         return declared
+
+    def check_launch(self, project: Mapping[str, PluginSettings], *, console: Console) -> None:
+        """Fail on a `launch` name that no declaration a session with `project` sees has, listing the ones it has."""
+        declared = self.declared(project, console=console)
+        if unknown := sorted(self.launch - declared.keys()):
+            names = ', '.join(unknown)
+            raise ValueError(f'Unknown plugin {names}; available: {", ".join(sorted(declared))}')
 
     def upgrade(self, saved: PluginSettings) -> PluginSettings:
         """Resolve moved plugin paths and retired harness built-ins in stored declarations.

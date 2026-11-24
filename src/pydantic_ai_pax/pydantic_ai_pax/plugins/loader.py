@@ -460,10 +460,10 @@ class SessionPlugins(Generic[DepsT]):
             await self.fire(failure)
 
     def _loads_at_start(self, entry: PluginEntry[DepsT]) -> bool:
-        """Whether `load_all` loads `entry`: enabled, not loaded yet, and not included in a loaded plugin."""
+        """Whether `load_all` loads `entry`: enabled or launched, not loaded yet, and not included in a loaded plugin."""
         # From what is loaded now: a plugin loaded earlier in this loop may include this one.
         return (
-            entry.declaration.enabled
+            (entry.declaration.enabled or entry.name in self._process.launch)
             and entry.loaded is None
             and included_by(entry.declaration.factory, self._loaded_includes()) is None
         )
@@ -638,6 +638,9 @@ class SessionPlugins(Generic[DepsT]):
             return
         # The declaration saved now, not at load: another Pax process may have replaced it since.
         stored = self._process.stored(entry.name)
+        if entry.name in self._process.launch:
+            # Loaded for this launch only: saving its settings leaves it as enabled or disabled as it was.
+            update['enabled'] = (stored or entry.declaration).enabled
         if stored is None:
             store.save_plugin(entry.declaration.model_copy(update=update), requires=host.requirements)
             return
@@ -853,6 +856,8 @@ class SessionPlugins(Generic[DepsT]):
         _requested('disable', name)
         requires = self._requirements(entry)
         await self.unload(name)
+        # Disabled on purpose: a session started later in this launch doesn't load it again.
+        self._process.launch -= {name}
         self._process.store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
         await self._load_released(entry)
 
