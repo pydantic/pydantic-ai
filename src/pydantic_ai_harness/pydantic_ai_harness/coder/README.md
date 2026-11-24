@@ -74,7 +74,7 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 With `LocalWorkspace`, [`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) and [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) work in the same directory. With a sandbox, the CLI keeps one sandbox for the session, but `to_web()` starts a new one for each message because the web protocol does not carry the workspace ref, so use `LocalWorkspace` when files must persist between web messages.
 
 The exported `pydantic_ai_harness.coder:coder_agent` is the same agent, model-less and named `coder`, working in the directory that is current when it is imported.
-Use it with the Pydantic AI CLI:
+[Pax](https://pydantic.dev/docs/ai/harness/pax/) runs it as a TUI with no setup (`uvx pydantic-ai-pax`). Or use it with the Pydantic AI CLI:
 
 ```bash
 uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5

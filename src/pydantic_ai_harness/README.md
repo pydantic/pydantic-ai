@@ -22,7 +22,7 @@ Three packages, each built on the one before it. Start with the one that matches
 |---|---|---|
 | [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
 | [Pydantic AI Harness](#capabilities) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
-| [Pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+| [Pax](https://pydantic.dev/docs/ai/harness/pax/) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
 
 Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. Pax is not the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
 
@@ -66,6 +66,13 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 ```
 
 Coder provides six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`, plus `delegate_task` to hand a sub-task to a fresh run of the same agent, repository context, and context controls. Shell commands are unrestricted and can persist beyond individual runs. Default instructions guide autonomous investigation, editing, and verification; pass `instructions=` to add your own guidance.
+
+```bash
+uv tool install --compile-bytecode pydantic-ai-pax
+pax
+```
+
+Or run the exported agent as a chat with `clai`:
 
 ```bash
 uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5

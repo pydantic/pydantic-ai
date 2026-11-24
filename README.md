@@ -70,7 +70,14 @@ capabilities = [
 ]
 ```
 
-Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://pydantic.dev/docs/ai/integrations/cli/#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
+Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, [Pax](https://pydantic.dev/docs/ai/harness/pax/) is the harness TUI over any Pydantic AI agent, and runs `Coder` by default:
+
+    ```bash
+    uv tool install --compile-bytecode pydantic-ai-pax
+    pax
+    ```
+
+    Or run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/) with [`clai`](https://pydantic.dev/docs/ai/integrations/cli/#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
 ```bash
 uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5-2

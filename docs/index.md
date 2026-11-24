@@ -81,7 +81,14 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ]
     ```
 
-    Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
+    Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, [Pax](harness/clai2.md) is the harness TUI over any Pydantic AI agent, and runs `Coder` by default:
+
+    ```bash
+    uv tool install --compile-bytecode pydantic-ai-pax
+    pax
+    ```
+
+    Or run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
 
     ```bash
     uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
@@ -460,7 +467,14 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 
 ## Next steps
 
-**Run something right now.** One command puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
+**Run something right now.** [Pax](harness/clai2.md), the harness TUI, puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
+
+```bash
+uv tool install --compile-bytecode pydantic-ai-pax
+pax
+```
+
+Or run the same agent as a chat with [`clai`](cli.md#custom-agents):
 
 ```bash
 uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
