@@ -1485,7 +1485,9 @@ command and returns to the prompt. On POSIX the command runs in its own session,
 so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
 background jobs and programs that ignore Ctrl-C. Only a process that detaches
-on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
+on purpose with `setsid()`, as daemons do, outlives the command. When the system
+refuses a signal to that process group, CLAI still kills the shell itself, and
+reports that the command may still be running instead of interrupted. Detached jobs
 should redirect stdout and stderr: CLAI stops collecting their output shortly
 after the shell exits. On Windows the console
 delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
