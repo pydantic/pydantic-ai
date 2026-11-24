@@ -61,8 +61,8 @@ For any other workspace, see [Your own display](#your-own-display).
 
 ### What the display needs
 
-[Daytona](daytona-sandbox.md#give-the-agent-a-desktop) starts its own desktop. Every other sandbox above
-needs these programs:
+[Daytona](daytona-sandbox.md#give-the-agent-a-desktop) and [boxd](boxd-sandbox.md#give-the-agent-a-desktop) start their own
+desktops. Every other sandbox above needs these programs:
 
 - Xvfb, unless an X server is already running
 - `xdotool`
