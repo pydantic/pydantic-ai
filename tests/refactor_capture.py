@@ -1336,11 +1336,11 @@ class RefactorCapture:
                     'target': method_target(type(capability), name),
                     # The run context is the run's, and the handler a function.
                     'kwargs': {
-                        key: normalized(
+                        arg: normalized(
                             f'{type(value).__name__}: {value}' if isinstance(value, BaseException) else value
                         )
-                        for key, value in kwargs.items()
-                        if key not in ('ctx', 'handler')
+                        for arg, value in kwargs.items()
+                        if arg not in ('ctx', 'handler')
                     },
                 }
                 self.records.append(record)
