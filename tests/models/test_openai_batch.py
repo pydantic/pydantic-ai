@@ -1196,3 +1196,26 @@ async def test_batch_create_errors_are_categorized_and_not_retried(
     with pytest.raises(error_class):
         await model.batch_create([await model.batch_encode(_request())])
     assert api.requests.count(('POST', '/batches')) == 1
+
+
+async def test_batch_encode_reads_default_headers_off_event_loop_thread(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`batch_encode()` must not trigger `AsyncOpenAI.default_headers` (e.g. `uname -p`) on the event loop thread."""
+    import threading
+
+    loop_thread = threading.current_thread()
+    header_threads: list[threading.Thread] = []
+
+    api = _FakeBatchAPI(batch=_batch_json('validating'))
+    model = _fake_model(api)
+    client = model.client
+
+    class _TrackingClient(type(client)):
+        @property
+        def default_headers(self) -> Any:
+            header_threads.append(threading.current_thread())
+            return super().default_headers
+
+    monkeypatch.setattr(client, '__class__', _TrackingClient)
+    await model.batch_encode(_request())
+    assert header_threads
+    assert all(t is not loop_thread for t in header_threads)

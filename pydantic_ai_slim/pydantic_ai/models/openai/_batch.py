@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Required, cast
 
+import anyio
 import httpx2
 from openai import APIError, APIStatusError, AsyncOpenAI, Omit
 from openai.types import Batch as OpenAIBatch, responses
@@ -126,7 +127,7 @@ class _InputLine(BaseModel):
 
 
 async def batch_encode(model: OpenAIResponsesModel, request: BatchRequest) -> EncodedBatchRequest:
-    group = batch_group(model)
+    group = await _batch_group_async(model)
     prepared_settings, model_request_parameters = model.prepare_request(
         request.model_settings, request.model_request_parameters
     )
@@ -181,7 +182,7 @@ def input_line(request: EncodedBatchRequest) -> bytes:
 async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBatchRequest]) -> Batch:
     check_allow_model_requests()
     group = shared_group(requests, 'OpenAI', 'client configurations or models')
-    validate_batch_group(model, group)
+    await _validate_batch_group_async(model, group)
     check_batch_bytes(requests, request_size, MAX_BATCH_BYTES, 'OpenAI')
     client = batch_client(model).with_options(max_retries=0)
     lines = (input_line(request) for request in requests)
@@ -199,7 +200,7 @@ async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBa
             with suppress(APIError, httpx2.HTTPStatusError):
                 await client.files.delete(file.id)
         raise
-    _UPLOADED_INPUT_FILES[batch_credential(model), batch.id] = _UploadedInputFile(file.id)
+    _UPLOADED_INPUT_FILES[await _batch_credential_async(model), batch.id] = _UploadedInputFile(file.id)
     while len(_UPLOADED_INPUT_FILES) > _UPLOADED_INPUT_FILES_SIZE:
         _UPLOADED_INPUT_FILES.popitem(last=False)
     return to_batch(model, batch, group, len(requests))
@@ -207,11 +208,11 @@ async def batch_create(model: OpenAIResponsesModel, requests: Sequence[EncodedBa
 
 async def batch_status(model: OpenAIResponsesModel, batch: Batch) -> Batch:
     check_allow_model_requests()
-    validate_batch_group(model, batch.group, collecting=True)
+    await _validate_batch_group_async(model, batch.group, collecting=True)
     openai_batch = await batch_client(model).batches.retrieve(batch.id)
     if (
         openai_batch.status == 'completed'
-        and (uploaded := _UPLOADED_INPUT_FILES.get((batch_credential(model), batch.id))) is not None
+        and (uploaded := _UPLOADED_INPUT_FILES.get((await _batch_credential_async(model), batch.id))) is not None
     ):
         uploaded.completed = True
     return to_batch(model, openai_batch, batch.group, batch.request_count)
@@ -220,7 +221,7 @@ async def batch_status(model: OpenAIResponsesModel, batch: Batch) -> Batch:
 async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[BatchResult]:
     check_allow_model_requests()
     require_ended(batch)
-    validate_batch_group(model, batch.group, collecting=True)
+    await _validate_batch_group_async(model, batch.group, collecting=True)
     client = batch_client(model)
     # The handle of an ended batch already names its final files, so they aren't looked up again.
     details = _DETAILS_ADAPTER.validate_python(batch.provider_details)
@@ -232,7 +233,7 @@ async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[Batch
             result = to_result(_OutputLine.model_validate_json(line))
             results[result.custom_id] = result
     if details['status'] == 'completed':
-        uploaded_key = (batch_credential(model), batch.id)
+        uploaded_key = (await _batch_credential_async(model), batch.id)
         if (uploaded := _UPLOADED_INPUT_FILES.get(uploaded_key)) is not None and uploaded.completed:
             del _UPLOADED_INPUT_FILES[uploaded_key]
             # Every request ran, so the input file isn't needed again; OpenAI would otherwise keep it for 30 days.
@@ -249,7 +250,7 @@ async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[Batch
 
 async def batch_cancel(model: OpenAIResponsesModel, batch: Batch) -> Batch:
     check_allow_model_requests()
-    validate_batch_group(model, batch.group, collecting=True)
+    await _validate_batch_group_async(model, batch.group, collecting=True)
     openai_batch = await batch_client(model).batches.cancel(batch.id)
     return to_batch(model, openai_batch, batch.group, batch.request_count)
 
@@ -359,6 +360,18 @@ def validate_batch_group(model: OpenAIResponsesModel, group: str, *, collecting:
             'The OpenAI client or model does not match the batch request group. '
             'Use the model and client configuration that encoded the requests.'
         )
+
+
+async def _batch_group_async(model: OpenAIResponsesModel) -> str:
+    return await anyio.to_thread.run_sync(batch_group, model)
+
+
+async def _batch_credential_async(model: OpenAIResponsesModel) -> str:
+    return await anyio.to_thread.run_sync(batch_credential, model)
+
+
+async def _validate_batch_group_async(model: OpenAIResponsesModel, group: str, *, collecting: bool = False) -> None:
+    await anyio.to_thread.run_sync(lambda: validate_batch_group(model, group, collecting=collecting))
 
 
 def batch_client(model: OpenAIResponsesModel) -> AsyncOpenAI:
