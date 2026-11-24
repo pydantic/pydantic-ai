@@ -376,6 +376,8 @@ async def test_sidebar_search_accessible_name(page: Page, web_ui: WebUI) -> None
 
 VIEWS = ['sessions', 'projects']
 """The sidebar's two listings, which render different rows and row controls."""
+FIELD_VIEWS = [*VIEWS, 'command palette', 'plugin settings']
+"""The views above, plus surfaces whose search fields have no name of their own."""
 
 MARK_CONTROLS = """() => {
   const controls = [...document.querySelectorAll('a[href], button, input, select, textarea, summary, [tabindex]')]
@@ -404,6 +406,12 @@ async def open_view(page: Page, web_ui: WebUI, view: str) -> None:
     if view == 'projects':
         await sidebar.get_by_role('button', name='Projects', exact=True).click()
         await expect(sidebar.locator('.project-head').first).to_be_visible()
+    elif view == 'command palette':
+        await page.keyboard.press('ControlOrMeta+Shift+P')
+        await expect(page.get_by_placeholder('Search commands')).to_be_visible()
+    elif view == 'plugin settings':
+        await page.evaluate("() => { location.hash = '#settings/plugins' }")
+        await expect(page.get_by_placeholder('Search plugins')).to_be_visible()
 
 
 @pytest.mark.parametrize('view', VIEWS)
@@ -443,16 +451,17 @@ async def test_tab_reaches_every_control_a_pointer_can(page: Page, web_ui: WebUI
     assert not missed, f'Tab never focuses these controls a pointer can use; hide one by size or opacity: {missed}'
 
 
-@pytest.mark.parametrize('view', VIEWS)
-async def test_a_field_with_no_name_of_its_own_is_named_by_its_placeholder(
-    page: Page, web_ui: WebUI, view: str
-) -> None:
+async def test_a_field_with_no_name_of_its_own_is_named_by_its_placeholder(page: Page, web_ui: WebUI) -> None:
     """A wrapping label names a field after everything inside it, as it named the session search 'Archived Ctrl K' (#11306)."""
-    await open_view(page, web_ui, view)
-    placeholders: list[str] = await page.evaluate(MARK_UNNAMED_FIELDS)
-    for index, placeholder in enumerate(placeholders):
-        field = page.locator(f'[data-unnamed="{index}"]')
-        await expect(field).to_have_accessible_name(re.compile(re.escape(placeholder)))
+    judged = 0
+    for view in FIELD_VIEWS:
+        await open_view(page, web_ui, view)
+        placeholders: list[str] = await page.evaluate(MARK_UNNAMED_FIELDS)
+        for index, placeholder in enumerate(placeholders):
+            field = page.locator(f'[data-unnamed="{index}"]')
+            await expect(field).to_have_accessible_name(re.compile(re.escape(placeholder)))
+        judged += len(placeholders)
+    assert judged, f'no field in {FIELD_VIEWS} relies on its placeholder for a name: open a view that has one'
 
 
 async def test_project_heading_title_is_its_folder(page: Page, web_ui: WebUI) -> None:

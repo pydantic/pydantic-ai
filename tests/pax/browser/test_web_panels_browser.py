@@ -2,7 +2,8 @@
 
 A panel asks the server again on triggers the page guesses, such as a turn ending. Three moments have each left one
 showing stale data: a turn the session keeps after the page hears it end (#11874), a panel opened during a turn
-(#11983), and a running turn that writes while the panel is open (#12223). Every panel below is checked at each one.
+(#11983), and a running turn that writes while the panel is open (#12223). Each built-in panel below is checked at each
+one, and a plugin's panel at the two its view can catch.
 """
 
 import json
@@ -146,7 +147,13 @@ def folder(panel: str, moment: Moment) -> str:
 
 
 BUILT_IN = [name for name, entry in PANELS.items() if isinstance(entry, Panel)]
-CASES: list[tuple[str, Moment]] = [(panel, moment) for panel in [*BUILT_IN, 'Plugin panel'] for moment in MOMENTS]
+PLUGIN_MOMENTS: tuple[Moment, ...] = ('opened mid-turn', 'written while open')
+"""The moments a plugin's view can catch: `Turns` changes as a turn starts, not as the session keeps it."""
+MOMENTS_BY_PANEL: list[tuple[str, tuple[Moment, ...]]] = [
+    *((name, MOMENTS) for name in BUILT_IN),
+    ('Plugin panel', PLUGIN_MOMENTS),
+]
+CASES: list[tuple[str, Moment]] = [(panel, moment) for panel, moments in MOMENTS_BY_PANEL for moment in moments]
 
 
 @dataclass
@@ -241,9 +248,14 @@ async def test_a_built_in_panel_catches_up(page: Page, panels_ui: PanelsUI, pane
         release()
 
 
-@pytest.mark.parametrize('moment', MOMENTS)
+def listed(panels_ui: PanelsUI) -> list[PanelInfo]:
+    """The plugin panels as the server would show them now."""
+    return TypeAdapter(list[PanelInfo]).validate_python(panels_ui.fleet.get('/api/panels').json())
+
+
+@pytest.mark.parametrize('moment', PLUGIN_MOMENTS)
 async def test_a_plugin_panel_catches_up(page: Page, panels_ui: PanelsUI, moment: Moment) -> None:
-    """A test plugin's side panel shows the view the plugin gives now, as `/api/panels` reports it."""
+    """A test plugin's side panel, opened before or during a turn, shows the view the plugin gives once it starts."""
     [info] = listed(panels_ui)
     show = page.get_by_role('button', name=re.compile(rf'^Show {re.escape(info.title)}'))
     release = await run_moment(page, panels_ui, ('Plugin panel', moment), show.click)
@@ -252,8 +264,3 @@ async def test_a_plugin_panel_catches_up(page: Page, panels_ui: PanelsUI, moment
         await expect(page.get_by_role('complementary', name=now.title)).to_contain_text(now.note)
     finally:
         release()
-
-
-def listed(panels_ui: PanelsUI) -> list[PanelInfo]:
-    """The plugin panels as the server would show them now."""
-    return TypeAdapter(list[PanelInfo]).validate_python(panels_ui.fleet.get('/api/panels').json())
