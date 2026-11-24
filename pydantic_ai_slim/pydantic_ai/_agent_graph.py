@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import functools
 import inspect
 import time
 from collections import Counter, deque
@@ -2540,6 +2541,13 @@ async def _outside_attempts(awaitable: Awaitable[T]) -> T:
         ) from retry
 
 
+ResponseRejection: TypeAlias = Callable[
+    [_messages.ModelResponse, bool], Awaitable[_messages.ModelResponseRejectedEvent | None]
+]
+"""Awaited by a request step's `AgentStream` once its model stream has finished or been cut short, with what it
+streamed and whether it was cut short, for the event reporting that its response was rejected, if it was."""
+
+
 @dataclasses.dataclass
 class _HandlerVerdict:
     """Whether the streaming handler has finished, and whether it asked the model again.
@@ -2784,7 +2792,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                     self._did_stream = True
                     agent_stream = self._build_agent_stream(
-                        ctx, sr, req_ctx.model_request_parameters, model_id=self._serving_model_id, rejection=_rejection
+                        ctx, sr, req_ctx.model_request_parameters, model_id=self._serving_model_id, rejection=rejection
                     )
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
@@ -2859,12 +2867,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             except exceptions.ModelRetry:
                 return None
 
-        def _rejection(
-            streamed: _messages.ModelResponse, cut_short: bool
-        ) -> Awaitable[_messages.ModelResponseRejectedEvent | None]:
-            return self._stream_rejection(
-                ctx, streamed, cut_short, stream_done=stream_done, handler=handler_verdict, wrap=wrap
-            )
+        rejection = functools.partial(
+            self._stream_rejection, ctx, stream_done=stream_done, handler=handler_verdict, wrap=wrap
+        )
 
         # Wait for handler to start or wrap to complete (short-circuit).
         # If outer cancellation arrives during this wait, drain both tasks before re-raising
@@ -3087,8 +3092,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters: models.ModelRequestParameters,
         *,
         model_id: str | None = None,
-        rejection: Callable[[_messages.ModelResponse, bool], Awaitable[_messages.ModelResponseRejectedEvent | None]]
-        | None = None,
+        rejection: ResponseRejection | None = None,
     ) -> result.AgentStream[DepsT, T]:
         """Build an AgentStream from the given stream response and context, which came from the model `model_id` identifies."""
         return result.AgentStream[DepsT, T](
@@ -4302,18 +4306,25 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         teardown acts on it, raising any other error, once the consumer is done with the stream.
         """
         if not cut_short:
-            if not ctx.deps.root_capability._has_after_model_request:  # pyright: ignore[reportPrivateUsage]
+            root_capability = ctx.deps.root_capability
+            # A retry uses up the output budget once every retry is used, and then ends the run, which leaves no
+            # next request's stream to report a retry `wrap_model_request` decides on after its handler returned.
+            last_retry_spent = (
+                root_capability._has_wrap_model_request  # pyright: ignore[reportPrivateUsage]
+                and ctx.state.output_retries_used >= ctx.deps.max_output_retries
+            )
+            if not root_capability._has_after_model_request and not last_retry_spent:  # pyright: ignore[reportPrivateUsage]
                 # Nothing can reject the response inside the handler, so it finishes once the consumer leaves the
                 # stream, as it always has. A retry `wrap_model_request` decides on is reported from there.
                 return None
             # The consumer has seen the whole response, so let the handler finish as it would once the consumer
             # leaves the stream, and `after_model_request` pass its verdict before the stream ends. The rest of
-            # `wrap_model_request` is only waited for when the handler asked the model again: a wrapper can still
-            # be busy otherwise, like a parallel input guardrail, and its verdict is acted on once the consumer
-            # is done with the stream.
+            # `wrap_model_request` is only waited for when the handler asked the model again, or when its retry
+            # would end the run: a wrapper can still be busy otherwise, like a parallel input guardrail, and its
+            # verdict is acted on once the consumer is done with the stream.
             stream_done.set()
             await handler.finished.wait()
-            if not handler.retried:
+            if not handler.retried and not last_retry_spent:
                 return None
         elif not streamed.parts:
             # Cut short before the model produced anything, so the consumer has nothing to set apart.
@@ -4364,8 +4375,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         That's a rejection decided after the stream ended, by `wrap_model_request` or after the consumer left
         the stream early. It's buffered so it reaches the consumer ahead of the retry's events.
         """
-        if self._rejection_feedback is None or self._rejection_feedback[0] is not error:
+        if self._reported_feedback(error) is None:
             ctx.state.event_stream_buffer.append(self._reject_with_retry(ctx, response, error))
+
+    def _reported_feedback(self, error: exceptions.ModelRetry) -> _messages.RetryFeedbackPart | None:
+        """The feedback the stream reported the response's rejection for `error` with, which the retry then sends."""
+        if self._rejection_feedback is not None and self._rejection_feedback[0] is error:
+            return self._rejection_feedback[1]
+        return None
 
     async def _build_retry_node(
         self,
@@ -4377,11 +4394,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
         self._emit_capability_load_records(ctx)
-        if self._rejection_feedback is not None and self._rejection_feedback[0] is error:
-            # The streamed response's rejection was reported with this feedback already.
-            m = self._rejection_feedback[1]
-        else:
-            m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
+        m = self._reported_feedback(error) or _messages.RetryFeedbackPart(
+            content=error.message, retry=_messages.RetryInfo(cause='model_retry')
+        )
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
         # response was kept in history it answers them, and this is a no-op.

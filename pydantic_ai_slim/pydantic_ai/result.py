@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Self, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeAlias, cast, overload
 
 import anyio
 from pydantic import ValidationError
@@ -43,6 +43,7 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._agent_graph import ResponseRejection
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
@@ -53,6 +54,9 @@ __all__ = (
     'OutputValidatorFunc',
     'StreamedRunResultSync',
 )
+
+_ModelOrRejectionEvent: TypeAlias = ModelResponseStreamEvent | _messages.ModelResponseRejectedEvent
+"""An event of a request step's model stream, or the one reporting that its response was rejected."""
 
 
 @dataclass(kw_only=True)
@@ -82,9 +86,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
 
-    _rejection: (
-        Callable[[_messages.ModelResponse, bool], Awaitable[_messages.ModelResponseRejectedEvent | None]] | None
-    ) = field(default=None, repr=False)
+    _rejection: ResponseRejection | None = field(default=None, repr=False)
     """Awaited once the model stream has finished or been abandoned, with what it streamed and whether it was cut
     short, for the event reporting that its response was rejected, if it was."""
 
@@ -567,9 +569,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return None
         return await self._rejection(streamed, cut_short)
 
-    async def _model_events(
-        self,
-    ) -> AsyncIterator[ModelResponseStreamEvent | _messages.ModelResponseRejectedEvent]:
+    async def _model_events(self) -> AsyncIterator[_ModelOrRejectionEvent]:
         """The model stream's events, followed by its replacement's if the stream was abandoned.
 
         A rejection of the streamed response is reported between the two, or after the model stream's events
@@ -637,9 +637,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             ):
                 yield event
 
-    async def _events_iter(
-        self, base_iter: AsyncIterator[ModelResponseStreamEvent | _messages.ModelResponseRejectedEvent]
-    ) -> AsyncIterator[AgentStreamEvent]:
+    async def _events_iter(self, base_iter: AsyncIterator[_ModelOrRejectionEvent]) -> AsyncIterator[AgentStreamEvent]:
         try:
             while True:
                 # Drain events emitted into the run's event buffer before each pull, so they interleave with the
@@ -1319,11 +1317,11 @@ class FinalResult(Generic[OutputDataT]):
 
 
 def _get_usage_checking_stream_response(
-    events: AsyncIterator[ModelResponseStreamEvent | _messages.ModelResponseRejectedEvent],
+    events: AsyncIterator[_ModelOrRejectionEvent],
     limits: UsageLimits | None,
     get_usage: Callable[[], RunUsage],
     get_request_input_tokens: Callable[[], int],
-) -> AsyncIterator[ModelResponseStreamEvent | _messages.ModelResponseRejectedEvent]:
+) -> AsyncIterator[_ModelOrRejectionEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():
