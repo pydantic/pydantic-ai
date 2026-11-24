@@ -42,8 +42,6 @@ from daytona import (
 )
 from daytona.common.errors import SOURCE_PROXY
 
-from pydantic_ai_harness.daytona_sandbox._desktop import ADD_CHROMIUM_NO_SANDBOX_FLAG
-
 from ..display_fakes import FAKE_SCREENSHOT
 
 
@@ -82,7 +80,7 @@ class FakeProcess:
             target = shlex.split(command)[-1]
             resolved = posixpath.normpath(posixpath.join(cwd or self.owner.workdir, target))
             return SimpleNamespace(result=resolved + '\n', exit_code=0)
-        if command == ADD_CHROMIUM_NO_SANDBOX_FLAG:
+        if '/etc/chromium.d' in command:
             # Not run on the host: it writes under `/etc`.
             return SimpleNamespace(result='', exit_code=0)
         if command.startswith('[ -p '):
@@ -537,7 +535,6 @@ class FakeSandbox:
         self.id = sandbox_id
         self.name: str | None = None
         self.state = SandboxState.STARTED
-        self.public = False
         self.purged = False
         self.refresh_error: Exception | None = None
         # What a toolbox call to a deleted sandbox raises, when not the default 404.

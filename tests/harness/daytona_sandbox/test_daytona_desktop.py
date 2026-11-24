@@ -44,7 +44,6 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
-from pydantic_ai_harness.daytona_sandbox._desktop import ADD_CHROMIUM_NO_SANDBOX_FLAG, CHROMIUM_SETTINGS_DIR
 
 from ..display_fakes import full_display, look_click_then_finish
 from .fake_daytona import FakeDaytona, FakeSandbox
@@ -424,7 +423,7 @@ async def test_the_desktop_start_lets_chromium_start(fake_daytona: FakeDaytona) 
     await _started(fake_daytona)
 
     (sandbox,) = fake_daytona.sandboxes
-    assert ADD_CHROMIUM_NO_SANDBOX_FLAG in sandbox.exec_commands
+    assert [command for command in sandbox.exec_commands if '/etc/chromium.d' in command]
 
 
 @pytest.mark.skipif(os.name == 'nt', reason='POSIX shell scripts')
@@ -436,9 +435,11 @@ async def test_the_desktop_start_lets_chromium_start(fake_daytona: FakeDaytona) 
         pytest.param(1001, True, False, id='sandbox-works'),
     ],
 )
-def test_chromium_gets_no_sandbox_only_where_its_sandbox_cannot_work(
-    tmp_path: Path, uid: int, namespaces_work: bool, flag_added: bool
+async def test_chromium_gets_no_sandbox_only_where_its_sandbox_cannot_work(
+    fake_daytona: FakeDaytona, tmp_path: Path, uid: int, namespaces_work: bool, flag_added: bool
 ) -> None:
+    _, sandbox = await _started(fake_daytona)
+    (add_flag,) = [command for command in sandbox.exec_commands if '/etc/chromium.d' in command]
     settings = tmp_path / 'chromium.d'
     settings.mkdir()
     bin_dir = tmp_path / 'bin'
@@ -454,9 +455,7 @@ def test_chromium_gets_no_sandbox_only_where_its_sandbox_cannot_work(
 
     # Daytona runs it with zsh.
     shell = shutil.which('zsh') or '/bin/sh'
-    subprocess.run(
-        [shell, '-c', ADD_CHROMIUM_NO_SANDBOX_FLAG.replace(CHROMIUM_SETTINGS_DIR, str(settings))], env=env, check=True
-    )
+    subprocess.run([shell, '-c', add_flag.replace('/etc/chromium.d', str(settings))], env=env, check=True)
 
     added = [path.read_text() for path in settings.iterdir()]
     assert added == (['CHROMIUM_FLAGS="$CHROMIUM_FLAGS --no-sandbox"\n'] if flag_added else [])
@@ -549,21 +548,6 @@ async def test_a_desktop_size_is_set_on_a_new_sandbox(fake_daytona: FakeDaytona)
         {'DISPLAY': ':0', 'VNC_RESOLUTION': '1280x800'},
         None,
     ]
-
-
-async def test_a_public_sandbox_gets_no_desktop(fake_daytona: FakeDaytona) -> None:
-    """Daytona's VNC preview of the desktop has no password, and a public sandbox's previews need no token."""
-    sandbox = fake_daytona.sandbox()
-    sandbox.public = True
-    agent = Agent(FunctionModel(look_click_then_finish), capabilities=[ComputerUse(native=False)])
-
-    with pytest.raises(
-        UserError, match=r"^The Daytona sandbox 'sb-existing' is public, so anyone with its preview URL"
-    ):
-        await agent.run(
-            'Click.', workspace=DaytonaSandboxBackend(ref=WorkspaceRef(provider='daytona', id=sandbox.id), desktop=True)
-        )
-    assert sandbox.desktop_calls == []
 
 
 def test_a_desktop_sandbox_reattaches_with_its_display() -> None:

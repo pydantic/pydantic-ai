@@ -126,8 +126,11 @@ Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
 
 Daytona's default snapshot has a desktop with a terminal and Chromium. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/).
 
-- A public sandbox gets no desktop, since its preview link needs no token and anyone with it can control the desktop: the run fails with `UserError`.
-- Where the snapshot's Chromium can't run its own sandbox, as in Daytona's default snapshot, `desktop=True` adds `--no-sandbox` to its flags through a file in `/etc/chromium.d/`, written as root or with passwordless `sudo`. The file stays after the run, also on a sandbox you attached with `ref=` or `sandbox=`, so a page that breaks out of Chromium's renderer reaches the rest of the sandbox. A custom snapshot whose Chromium sandbox works is left alone.
+- The desktop runs a VNC server with no password on one of the sandbox's preview ports.
+- On a private sandbox, anyone who holds a preview token for that port can see the screen and control the mouse and keyboard.
+- On a public sandbox, Daytona's preview links need no token, so anyone with the preview URL can see and control the desktop.
+- Where the snapshot's Chromium can't run its own sandbox, as in Daytona's default snapshot, the desktop start adds `--no-sandbox` to Chromium's flags through a file in `/etc/chromium.d/`. It writes the file as root or with passwordless `sudo`, on sandboxes it creates and on ones you attach with `ref=` or `sandbox=`. The file stays after the run, so a web page that breaks out of Chromium's renderer can reach the rest of the sandbox. A custom snapshot whose Chromium sandbox works is left alone.
+- Keep the sandbox private if others shouldn't see or control the desktop.
 - On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
 - The desktop can't press print screen, pause, scroll lock or the menu key, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one.
 
@@ -237,7 +240,7 @@ git config --global credential.https://github.com.helper '!f() { echo username=x
 | `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the sandbox, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 | `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies to a new sandbox. Default: `False`. |
 
-`client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new sandbox.
+`client`, `working_dir`, `env`, `desktop` (but not its size), `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new sandbox.
 
 ## Limits
 

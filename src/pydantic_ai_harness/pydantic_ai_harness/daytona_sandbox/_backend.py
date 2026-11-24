@@ -20,7 +20,6 @@ import anyio
 import anyio.lowlevel
 import anyio.to_thread
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -885,12 +884,6 @@ class DaytonaSandboxBackend(
     async def _display_operation(self) -> AsyncGenerator[None]:
         async with self._operation():
             sandbox = await self.get_sandbox()
-            if sandbox.public:
-                # Daytona's VNC preview of the desktop has no password, and a public sandbox's previews need no token.
-                raise UserError(
-                    f'The Daytona sandbox {sandbox.id!r} is public, so anyone with its preview URL could control its '
-                    'desktop. Make it private with `sandbox.set_public(False)` to use the desktop.'
-                )
             try:
                 async with _mapped_errors('The Daytona desktop failed', sandbox=sandbox):
                     try:
