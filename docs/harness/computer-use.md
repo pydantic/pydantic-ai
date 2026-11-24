@@ -66,6 +66,8 @@ Gemini can flag an action for a person to approve. `ComputerUse` then asks for a
 so no hook can skip it. If your own hook already asked and the call was approved, that approval counts. See
 [Google](../models/google.md#actions-that-need-approval).
 
+A read-only workspace gets no `computer` tool, since actions on the screen can change anything the workspace holds.
+
 ## Durable execution
 
 Use `TemporalDurability` or `PrefectDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't
