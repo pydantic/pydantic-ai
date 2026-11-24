@@ -209,6 +209,10 @@ the agent's message history.
 
 `BackgroundTools` works with Temporal.
 
+A run that executes tools sequentially, as AWS Lambda, Absurd and pgtask do by default, runs
+background tools in the foreground. The model is not told about background calls, and a warning
+names the tools that run in the foreground.
+
 With DBOS, put durable work in an explicit DBOS step and call that step from the background tool.
 
 Do not call `ctx.enqueue()` inside a durable activity or task. Its messages cannot be restored during

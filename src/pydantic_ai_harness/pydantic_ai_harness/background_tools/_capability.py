@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from collections.abc import Iterator, Sequence
 from contextlib import suppress
 from contextvars import ContextVar
@@ -73,9 +74,14 @@ _backgrounded_call: ContextVar[ToolCallPart | None] = ContextVar(
 """The tool call a background task is running, so another `BackgroundTools` instance does not schedule it again."""
 
 
+def _runs_tools_sequentially(ctx: RunContext[Any]) -> bool:
+    """Whether the run executes its tool calls one at a time, so no tool can run in the background."""
+    return ctx.tool_manager is not None and ctx.tool_manager.get_parallel_execution_mode() == 'sequential'
+
+
 def _instructions(ctx: RunContext[Any]) -> str | None:
-    # Realtime sessions run tools concurrently already; see `_background_mode`.
-    return None if ctx.realtime else _INSTRUCTIONS
+    # No call runs in the background in a realtime session or a sequential run; see `_background_mode`.
+    return None if ctx.realtime or _runs_tools_sequentially(ctx) else _INSTRUCTIONS
 
 
 def _position_in_response(ctx: RunContext[Any], call: ToolCallPart) -> int:
@@ -275,6 +281,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     _prepared_modes: dict[str, Literal['always', 'optional'] | None] = field(
         default_factory=dict[str, Literal['always', 'optional'] | None], init=False, repr=False, compare=False
     )
+    _warned_foreground: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether this run has warned that its tools run in the foreground because it executes them sequentially."""
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return _instructions
@@ -294,8 +302,13 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition
     ) -> Literal['always', 'optional'] | None:
         """Whether `tool_def` always runs in the background, may on request, or cannot in this run."""
-        run_sequential = ctx.tool_manager is not None and ctx.tool_manager.get_parallel_execution_mode() == 'sequential'
-        if ctx.realtime or run_sequential or tool_def.sequential:
+        return None if _runs_tools_sequentially(ctx) else await self._selected_mode(ctx, tool_def)
+
+    async def _selected_mode(
+        self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition
+    ) -> Literal['always', 'optional'] | None:
+        """How `tool_def` is configured to run, whatever the run's parallel execution mode."""
+        if ctx.realtime or tool_def.sequential:
             return None
         if await matches_tool_selector(self.tools, ctx, tool_def):
             return 'always'
@@ -317,11 +330,25 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         # Core skips a deferred capability's hooks until it is loaded, but not its wrapper toolset.
         if self.defer_loading is True and self.id not in ctx.active_capability_ids:
             return tool_defs
+        sequential = _runs_tools_sequentially(ctx)
         prepared: list[ToolDefinition] = []
+        foreground: list[str] = []
         for tool_def in tool_defs:
-            mode = await self._background_mode(ctx, tool_def)
+            mode = await self._selected_mode(ctx, tool_def)
+            if sequential and mode is not None:
+                foreground.append(tool_def.name)
+                mode = None
             self._prepared_modes[tool_def.name] = mode
             prepared.append(_with_run_in_background(tool_def) if mode == 'optional' else tool_def)
+        if foreground and not self._warned_foreground:
+            self._warned_foreground = True
+            warnings.warn(
+                f'`BackgroundTools` runs {", ".join(map(repr, foreground))} in the foreground because this run '
+                "executes tools sequentially (parallel execution mode 'sequential', which a durable engine such as "
+                'AWS Lambda, Absurd or pgtask sets by default), and does not tell the model about background calls.',
+                UserWarning,
+                stacklevel=2,
+            )
         return prepared
 
     async def _prepared_mode(

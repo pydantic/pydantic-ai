@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 import threading
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -889,21 +890,49 @@ The user wants you to delete X.\
         assert not _follow_up_seen(result.all_messages(), '<tool_result')
 
     async def test_run_scoped_sequential_mode_uses_normal_execution(self) -> None:
-        agent = Agent(TestModel(), capabilities=[BackgroundTools()])
+        instructions: list[str | None] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            if sum(isinstance(message, ModelResponse) for message in messages) < 2:
+                return ModelResponse(parts=[ToolCallPart('selected', '{}'), ToolCallPart('barrier', '{}')])
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
 
         @agent.tool_plain(metadata={'background': True})
         async def selected() -> str:
             return 'normal result'
 
-        with ToolManager.parallel_execution_mode('sequential'):
+        # A tool that asks to run sequentially makes that choice itself, so the warning leaves it out.
+        @agent.tool_plain(metadata={'background': True}, sequential=True)
+        async def barrier() -> str:
+            return 'barrier result'
+
+        with ToolManager.parallel_execution_mode('sequential'), pytest.warns(UserWarning) as warned:
             result = await agent.run('go')
 
-        assert any(
-            isinstance(part, ToolReturnPart) and part.tool_name == 'selected' and part.content == 'normal result'
+        assert [str(warning.message) for warning in warned] == snapshot(
+            [
+                "`BackgroundTools` runs 'selected' in the foreground because this run executes tools sequentially (parallel execution mode 'sequential', which a durable engine such as AWS Lambda, Absurd or pgtask sets by default), and does not tell the model about background calls."
+            ]
+        )
+        assert instructions == [None, None, None]
+        assert [
+            (part.tool_name, part.content)
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ] == snapshot(
+            [
+                ('selected', 'normal result'),
+                ('barrier', 'barrier result'),
+                ('selected', 'normal result'),
+                ('barrier', 'barrier result'),
+            ]
         )
+        assert not _ack_seen(result.all_messages())
 
     async def test_sync_tool_can_enqueue_from_its_worker_thread(self) -> None:
         agent = Agent(_model_calling('sync_bg'), capabilities=[BackgroundTools()])
@@ -1117,8 +1146,17 @@ The user wants you to delete X.\
             return ModelResponse(parts=[TextPart(content='done')])
 
         agent = Agent(FunctionModel(model_fn), capabilities=[BackgroundTools()])
-        await agent.run('go')
 
+        @agent.tool_plain(metadata={'background': True})
+        async def selected() -> str:
+            return 'result'  # pragma: no cover
+
+        # A parallel run can background the tool, so it does not warn that the tool runs in the foreground.
+        with warnings.catch_warnings(record=True) as warned:
+            warnings.simplefilter('always')
+            await agent.run('go')
+
+        assert warned == []
         assert seen == [
             'Some tools reply that a call is running in the background. This means that exact call is pending. '
             'Do not repeat or poll it. Its result will arrive automatically in a later message. Continue only '
@@ -2390,7 +2428,7 @@ The user wants you to delete X.\
         async def research() -> str:
             return 'researched'  # pragma: no cover
 
-        with ToolManager.parallel_execution_mode('sequential'):
+        with ToolManager.parallel_execution_mode('sequential'), pytest.warns(UserWarning, match="runs 'research'"):
             await agent.run('go')
 
         assert 'run_in_background' not in seen[0].parameters_json_schema['properties']
