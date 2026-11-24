@@ -336,9 +336,11 @@ would grow the trace without recording a decision. Write the reason down. An
 undocumented silence is indistinguishable from an oversight.
 
 The house pattern uses four functions from `pydantic_ai._telemetry`, plus `records_content` for
-content that costs something to build; its other names are the run telemetry these read. Each takes the run first, as
-its `ctx` or, where there is none, `current_run_telemetry()`, and does nothing when that run isn't
-traced, so an uninstrumented run pays nothing:
+content that costs something to build. The module's other names (`RunTelemetry`,
+`current_run_telemetry`, `run_telemetry_scope`) are how code without a `ctx` reaches the run's
+telemetry. Each function takes the run first, as its `ctx` or, where there is none,
+`current_run_telemetry()`, and does nothing when that run isn't traced, so an uninstrumented run
+pays nothing:
 
 ```python
 from pydantic_ai._telemetry import current_span, open_span, record_decision, set_content_attribute
@@ -415,8 +417,9 @@ Content:
   building a content value costs something or can raise, such as `str()` of an object a guard returned
   or a serialized message, build it only `if records_content(ctx)` and pass `None` otherwise:
   `content={'guardrail.replacement': str(replacement)} if records_content(ctx) else None`. Don't read
-  `ctx.trace_include_content` for this: it raises in a durable unit that didn't carry it. Don't test `span.is_recording()` either: `record_decision`
-  gives you no span, and a span records when the run is traced without content too.
+  `ctx.trace_include_content` for this: it raises in a durable unit that didn't carry it. Don't test
+  `span.is_recording()` either: `record_decision` gives you no span, and a span records when the run
+  is traced without content too.
 
 Names:
 
