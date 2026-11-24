@@ -418,9 +418,9 @@ async def test_prompt_title_follows_the_selection(width: int) -> None:
         if width == 80:
             frame = BUILTIN_SPINNERS['binary'].frames[0]
             # An empty queue and draft have nothing to steer, so the title carries no queue hints.
-            assert plain.rstrip('─') == f'─ Working {frame} '
+            assert plain.rstrip('─') == f'─ Working {frame} 0s · Esc to interrupt '
             assert f'{accent}{frame}' in title
-            hint = f'─ Working {frame} | Enter: queue | Alt+Enter: steer '
+            hint = f'─ Working {frame} 0s · Esc to interrupt · Enter to queue · Alt+Enter to steer '
             live.buffer.replace('typed')
             assert Text.from_ansi(live.frame()[0]).plain.startswith(hint)
             live.buffer.replace('')

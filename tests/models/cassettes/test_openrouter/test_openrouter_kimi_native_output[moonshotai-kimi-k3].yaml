@@ -1,0 +1,108 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "400"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: moonshotai/kimi-k3
+        stream: false
+        messages:
+        - role: user
+          content: Dana Reyes is a structural engineer.
+        response_format:
+          type: json_schema
+          json_schema:
+            name: Person
+            schema:
+              properties:
+                name:
+                  type: string
+                role:
+                  enum:
+                  - architect
+                  - engineer
+                  - planner
+                  type: string
+              required:
+              - name
+              - role
+              type: object
+              additionalProperties: false
+            strict: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        WWW-Authenticate,PAYMENT-REQUIRED,Payment-Receipt,PAYMENT-RESPONSE,Location,X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1795443948-CMKRH2yRsl5xt8E7nbOc
+        object: chat.completion
+        created: 1795443948
+        model: moonshotai/kimi-k3
+        provider: KT
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: "{\"name\":\"Dana Reyes\",\"role\":\"engineer\"}"
+            refusal: null
+            reasoning: null
+        usage:
+          prompt_tokens: 131
+          completion_tokens: 13
+          total_tokens: 144
+          cost: 0.00025395
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.00025395
+            upstream_inference_prompt_cost: 0.00005895
+            upstream_inference_completions_cost: 0.000195
+          completion_tokens_details:
+            reasoning_tokens: 0
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-23T14:25:50.066768+00:00

@@ -671,16 +671,18 @@ agent without a trigger, `ClearToolResults`, `SlidingWindowCompaction` and `Summ
 raise `UserError`. Any object with `async def compact(messages, ctx) -> list[ModelMessage]` (the
 `CompactionStrategy` protocol) can be a tier.
 
-Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail, which holds the
-whole current turn, the first user message under `preserve_first_user_message`, and pinned parts.
-Those set a lower bound on how far the chain can shrink the history, and a `target_tokens` below it
-can't be reached. A `SummarizingCompaction` tier with `keep_tokens` whose only candidates are
-messages it keeps anyway makes no model call and leaves the history unchanged. When the last tier
-leaves the history above the target, the outermost `TieredCompaction` logs a warning on each attempt
-on the `pydantic_ai_harness.compaction._tiered_compaction` logger, and sets
-`compaction.target_unreached` on its [span](#tracing) when the history changes. If no tier changes the
-history, no span is emitted; the warning still reports the estimate and target. Pass
-`preserve_first_user_message=False` to a tier that may drop or summarize the first user message.
+Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail, which holds
+the whole current turn, the first user message under `preserve_first_user_message`, pinned parts,
+and the latest response when it names a workspace (its `workspace_ref`) and only requests follow it,
+as the next run finds its workspace there (kept whatever its size). Those set a lower bound on how
+far the chain can shrink the history, and a `target_tokens` below it can't be reached. A
+`SummarizingCompaction` tier with `keep_tokens` whose only candidates are messages it keeps anyway
+makes no model call and leaves the history unchanged. When the last tier leaves the history above
+the target, the outermost `TieredCompaction` logs a warning on each attempt on the
+`pydantic_ai_harness.compaction._tiered_compaction` logger, and sets `compaction.target_unreached`
+on its [span](#tracing) when the history changes. If no tier changes the history, no span is
+emitted; the warning still reports the estimate and target. Pass `preserve_first_user_message=False`
+to a tier that may drop or summarize the first user message.
 
 On its own trigger, `TieredCompaction` skips a tier that raises one of its `skip_on` exceptions (by default `ModelAPIError`, `FallbackExceptionGroup` and `UnexpectedModelBehavior`, such as a summarizer whose provider is down or that exhausted its retries; unlike `FallbackCompaction`'s `fallback_on`, this includes `UnexpectedModelBehavior`, because the next tier can still shrink the history without that model) and moves on to the next tier. The skipped tier's receipts are discarded, a warning is logged, and a `compact_messages` span records the tier as `compaction.strategy`, with `compaction.skipped='tier_failed'` and `error.type`. Other exceptions, such as programming errors and `UsageLimitExceeded`, propagate, as does every exception on a direct `compact()` call, so a `FallbackCompaction` around it still falls back. Pass `skip_on=()` to propagate every tier failure.
 

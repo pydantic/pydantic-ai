@@ -1,9 +1,9 @@
-"""CLAI's default model and per-family settings sit beneath agent and capability configuration.
+"""Pax's default model and per-family settings sit beneath agent and capability configuration.
 
 Only what the user chose (a model, saved per-model settings) is passed to `agent.run`, so a
 capability that selects a model or supplies settings, such as Logfire's `AgentControl`, takes
-effect over CLAI's defaults. Without such a capability, the effective model and settings are
-what they were when CLAI passed both to `agent.run`.
+effect over Pax's defaults. Without such a capability, the effective model and settings are
+what they were when Pax passed both to `agent.run`.
 """
 
 from collections.abc import AsyncIterator, Callable
@@ -38,7 +38,7 @@ from tests.pax.menu_script import make_context
 
 @dataclass
 class Recorder:
-    """Stands in for every model CLAI resolves, recording the name and the merged settings each request got.
+    """Stands in for every model Pax resolves, recording the name and the merged settings each request got.
 
     The model supports thinking, so the generic `thinking` setting is recorded too: core moves it
     out of the settings into the request parameters.
@@ -118,7 +118,7 @@ class Case:
     id: str
     model: str
     chosen: bool = True
-    """Whether the user chose the model; otherwise it is CLAI's default, the stock agent's own model."""
+    """Whether the user chose the model; otherwise it is Pax's default, the stock agent's own model."""
     saved: dict[str, JsonValue] = field(default_factory=dict[str, JsonValue])
     effective: ModelSettings = field(default_factory=ModelSettings)
     run_level: ModelSettings = field(default_factory=ModelSettings)
@@ -260,7 +260,7 @@ CASES = [
 @pytest.mark.parametrize('stock', [True, False], ids=['stock', 'supplied'])
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_effective_settings_unchanged(tmp_path: Path, case: Case, stock: bool) -> None:
-    """The model sees what it saw when CLAI passed defaults and overrides together to `agent.run`.
+    """The model sees what it saw when Pax passed defaults and overrides together to `agent.run`.
 
     `before` replays that: the model run with `model_settings=context.model_settings(name)`, the
     merged family defaults and saved overrides. Now only the overrides reach `agent.run`. A
@@ -289,7 +289,7 @@ async def test_effective_settings_unchanged(tmp_path: Path, case: Case, stock: b
 
 
 async def test_capability_settings_beat_defaults_not_overrides(tmp_path: Path) -> None:
-    """A capability's settings replace CLAI's family defaults; the user's saved settings still win."""
+    """A capability's settings replace Pax's family defaults; the user's saved settings still win."""
     name = 'openai-codex:gpt-6-astra'
     recorder, _ = await run_turn(
         tmp_path,
@@ -328,7 +328,7 @@ class Outermost(Published):
 
 @pytest.mark.parametrize('stock', [True, False], ids=['stock', 'supplied'])
 async def test_outermost_capability_settings_beat_defaults(tmp_path: Path, stock: bool) -> None:
-    """CLAI's family defaults sit beneath a capability's settings even when that capability is `outermost` too."""
+    """Pax's family defaults sit beneath a capability's settings even when that capability is `outermost` too."""
     recorder = Recorder()
     outermost = Outermost(settings=OpenAIResponsesModelSettings(openai_reasoning_effort='low'))
     await run_turn(
@@ -342,7 +342,7 @@ async def test_outermost_capability_settings_beat_defaults(tmp_path: Path, stock
 
 
 async def test_capability_model_beats_default_model(tmp_path: Path) -> None:
-    """A capability's model replaces CLAI's default and resolves through CLAI; the GPT defaults do not follow it.
+    """A capability's model replaces Pax's default and resolves through Pax; the GPT defaults do not follow it.
 
     The capability's Claude model gets only the prompt caching default, which core moves out of the settings.
 
@@ -378,9 +378,9 @@ async def test_saved_settings_stay_with_their_model(tmp_path: Path, stock: bool)
 
 
 async def test_agent_capability_settings_beat_family_defaults(tmp_path: Path) -> None:
-    """A capability on a supplied agent, such as `Thinking`, now takes effect over CLAI's family defaults.
+    """A capability on a supplied agent, such as `Thinking`, now takes effect over Pax's family defaults.
 
-    CLAI used to pass the family defaults to `agent.run`, where they overrode it. Agent-level
+    Pax used to pass the family defaults to `agent.run`, where they overrode it. Agent-level
     `model_settings` still sit beneath them, as before.
     """
     recorder = Recorder()
@@ -411,7 +411,7 @@ async def test_agent_capability_settings_beat_family_defaults(tmp_path: Path) ->
 
 @pytest.mark.parametrize('model', [None, 'anthropic:claude-sonnet-4-6'])
 async def test_fork_keeps_how_the_model_was_chosen(tmp_path: Path, model: str | None) -> None:
-    """A fork of a session on CLAI's default model leaves a capability free to replace it, unless the fork names one."""
+    """A fork of a session on Pax's default model leaves a capability free to replace it, unless the fork names one."""
     store = SettingsStore(tmp_path / 'config.db')
     shell = create_shell(
         create_stock_agent(),
@@ -434,10 +434,10 @@ async def test_fork_keeps_how_the_model_was_chosen(tmp_path: Path, model: str | 
 
 @pytest.mark.parametrize('stock', [True, False], ids=['stock', 'supplied'])
 async def test_selected_model_resolves_through_clai_first(tmp_path: Path, stock: bool) -> None:
-    """CLAI resolves the selected model before a resolver on the agent or a plugin, as when it did so before each run."""
+    """Pax resolves the selected model before a resolver on the agent or a plugin, as when it did so before each run."""
 
     def claim(ctx: ModelResolutionContext[None], model_id: str) -> Model:
-        raise AssertionError(f'{model_id!r} reached a resolver after CLAI')  # pragma: no cover
+        raise AssertionError(f'{model_id!r} reached a resolver after Pax')  # pragma: no cover
 
     resolver = ResolveModelId[None](claim)
     recorder, _ = await run_turn(
@@ -465,7 +465,7 @@ async def test_names_clai_does_not_handle_are_left_to_other_resolvers(tmp_path: 
         settings=resolve_settings({'model': 'my-alias'}) if chosen else Settings(),
         plugins=(Alias(model=None if chosen else 'my-alias'),),
         recorder=recorder,
-        # Like CLAI's resolver, which returns a name it has no integration for unchanged.
+        # Like Pax's resolver, which returns a name it has no integration for unchanged.
         resolve=lambda name: recorder.resolve(name) if name == default else name,
     )
     assert [name for name, _ in recorder.calls] == ['anthropic:claude-sonnet-4-6']
@@ -499,7 +499,7 @@ async def test_chosen_model_beats_capability_model(tmp_path: Path, source: str) 
 
 @pytest.mark.parametrize('command', ['/set model', '/model', '/model add', '/add_model'])
 async def test_set_model_chooses_and_reset_restores_default(tmp_path: Path, command: str) -> None:
-    """Every way to pick a model by name makes a choice; resetting it, or changing another setting, leaves CLAI's default.
+    """Every way to pick a model by name makes a choice; resetting it, or changing another setting, leaves Pax's default.
 
     `/model NAME` takes a model that is not in the saved list yet and adds it.
     """

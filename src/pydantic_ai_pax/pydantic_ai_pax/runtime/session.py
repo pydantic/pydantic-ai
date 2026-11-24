@@ -70,7 +70,7 @@ OutputT = TypeVar('OutputT')
 
 STEERING = 'clai2_steering'
 """Request metadata marking the user's steering message, so a UI can tell it from input a capability enqueues."""
-_CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('clai2_session_id', default=None)
+_CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('pax_session_id', default=None)
 
 
 def current_session_id() -> str | None:
@@ -91,7 +91,7 @@ def session_context(session_id: str) -> Generator[None]:
 class SessionStepStore(SqliteStepStore):
     """Step records in `sessions.db`, where a write another process keeps locked out is skipped, not raised.
 
-    Every CLAI on the machine writes to the one `sessions.db`, and SQLite lets one of them write at a time.
+    Every Pax on the machine writes to the one `sessions.db`, and SQLite lets one of them write at a time.
     Step records are a recovery aid beside the saved conversation, which stays the record of the turn,
     so a run, event, checkpoint or tool effect still locked out after the store's busy timeout is logged
     and dropped rather than failing the tool call or the turn. Resume then uses an earlier checkpoint.
@@ -130,16 +130,16 @@ def step_store(conversations: SqliteConversationStore) -> SessionStepStore:
 
 
 FamilyDefaults = Callable[[str], ModelSettings | None]
-"""CLAI's family default settings for a model, given its name."""
+"""Pax's family default settings for a model, given its name."""
 
 
 def supports_local_workspace() -> bool:
-    """Whether CLAI can give runs a `LocalWorkspace` on this platform; on Windows, it gives them a `WindowsWorkspace`."""
+    """Whether Pax can give runs a `LocalWorkspace` on this platform; on Windows, it gives them a `WindowsWorkspace`."""
     return sys.platform != 'win32'
 
 
 def local_workspace_provider() -> str:
-    """The `WorkspaceRef.provider` of the folder workspace CLAI gives runs on this platform."""
+    """The `WorkspaceRef.provider` of the folder workspace Pax gives runs on this platform."""
     return 'local' if supports_local_workspace() else 'windows'
 
 
@@ -174,30 +174,38 @@ def _supplies_workspace(
     )
 
 
-def _overrides_get_workspace(
-    leaf: AbstractCapability[DepsT], *, include_dynamic: bool, messages: Sequence[ModelMessage]
-) -> bool:
-    while isinstance(leaf, WrapperCapability):
-        if type(leaf).get_workspace is not WrapperCapability.get_workspace:
-            return True
+def _workspace_leaf(leaf: AbstractCapability[DepsT]) -> AbstractCapability[DepsT] | None:
+    """The capability `leaf` takes its workspace from: itself, or the one its plain wrappers pass `get_workspace` to.
+
+    A wrapper overriding `get_workspace` is that capability itself. `None` for a wrapper around several
+    capabilities, as `apply` visits them on their own.
+    """
+    while isinstance(leaf, WrapperCapability) and type(leaf).get_workspace is WrapperCapability.get_workspace:
         wrapped: list[AbstractCapability[DepsT]] = []
         leaf.wrapped.apply(wrapped.append)
         if len(wrapped) != 1 or wrapped[0] is not leaf.wrapped:
-            # A wrapped tree's leaves are visited on their own; only a lone wrapped capability hides behind its wrapper.
-            return False
+            return None
         leaf = leaf.wrapped
-    if isinstance(leaf, ConversationWorkspace):
-        return leaf.supplies(messages)
-    if isinstance(leaf, DynamicCapability):
+    return leaf
+
+
+def _overrides_get_workspace(
+    leaf: AbstractCapability[DepsT], *, include_dynamic: bool, messages: Sequence[ModelMessage]
+) -> bool:
+    if (supplier := _workspace_leaf(leaf)) is None:
+        return False
+    if isinstance(supplier, ConversationWorkspace):
+        return supplier.supplies(messages)
+    if isinstance(supplier, DynamicCapability):
         # A capability function's capability, and so its workspace, is known only once the run starts.
-        return include_dynamic and not isinstance(leaf, WorkspacelessCapability)
-    return type(leaf).get_workspace is not AbstractCapability.get_workspace
+        return include_dynamic and not isinstance(supplier, WorkspacelessCapability)
+    return type(supplier).get_workspace is not AbstractCapability.get_workspace
 
 
 class ConversationWorkspace(AbstractCapability[DepsT]):
     """A capability that supplies the run's workspace in some conversations only, such as the `sandbox` plugin's.
 
-    CLAI asks `supplies` before each run, with the history the run continues. While it is false, CLAI attaches
+    Pax asks `supplies` before each run, with the history the run continues. While it is false, Pax attaches
     the session's directory as it would without this capability; while it is true, `get_workspace` supplies
     the run's workspace instead.
     """
@@ -206,13 +214,52 @@ class ConversationWorkspace(AbstractCapability[DepsT]):
         """Whether the workspace of a run continuing `messages` comes from this capability."""
         return False
 
+    def shell_line_workspace(self, messages: Sequence[ModelMessage]) -> 'ShellLineWorkspace | None':
+        """Where a `!command` line typed in a conversation continuing `messages` runs, while `supplies` is true.
+
+        `None` runs it on this machine, in the session's directory.
+        """
+        return None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ShellLineWorkspace:
+    """The workspace a `!command` line runs in instead of this machine, such as the conversation's sandbox."""
+
+    workspace: WorkspaceBackend
+    name: str
+    """Where the command runs, as Pax's messages say it: `the Daytona sandbox`."""
+
+
+def shell_line_workspace(
+    plugins: Sequence[AgentCapability[DepsT]], messages: Sequence[ModelMessage]
+) -> ShellLineWorkspace | None:
+    """The workspace a `!command` line runs in for a conversation over `messages`; `None` runs it on this machine.
+
+    Pass the capabilities a run's workspace is chosen from, the agent's own and the run's. Like that choice,
+    a leaf loaded only on request (`defer_loading`) does not count, and plain wrappers are looked through,
+    so a `!` line runs in the sandbox a
+    `ConversationWorkspace` gives the agent's commands. Another capability overriding `get_workspace` is
+    not asked, and its `!` lines run on this machine.
+    """
+    leaves: list[AbstractCapability[DepsT]] = []
+    for plugin in plugins:
+        if isinstance(plugin, AbstractCapability):
+            cast('AbstractCapability[DepsT]', plugin).apply(leaves.append)
+    for leaf in leaves:
+        if leaf.defer_loading:
+            continue
+        if isinstance(supplier := _workspace_leaf(leaf), ConversationWorkspace) and supplier.supplies(messages):
+            return supplier.shell_line_workspace(messages)
+    return None
+
 
 class WorkspacelessCapability(DynamicCapability[DepsT]):
     """A capability function that never supplies the run's workspace, such as a built-in plugin's MCP server.
 
-    A plain capability function might return a sandbox, so CLAI attaches the session's directory (`Session.workspace`) only once the
+    A plain capability function might return a sandbox, so Pax attaches the session's directory (`Session.workspace`) only once the
     run's capability functions have resolved, after every `for_run`; harness `Skills` reads its libraries
-    there and finds no workspace. For this one, CLAI attaches it before `for_run`, and a
+    there and finds no workspace. For this one, Pax attaches it before `for_run`, and a
     run whose function does return a workspace fails.
     """
 
@@ -253,11 +300,11 @@ def _requested_model(ctx: RunContext[DepsT]) -> str:
 
 @dataclass
 class ModelDefaults(AbstractCapability[DepsT]):
-    """CLAI's default settings for the model each request uses, beneath other capabilities' settings.
+    """Pax's default settings for the model each request uses, beneath other capabilities' settings.
 
     Merged first among capabilities, wrapping every other one, even another `outermost` one, so
     another capability's settings and the run's own take precedence. An agent's own `model_settings`
-    merge before any capability's, so these defaults still override them, as they did when CLAI
+    merge before any capability's, so these defaults still override them, as they did when Pax
     passed them to the run. Resolved per request, so the defaults follow a model a capability selects.
     """
 
@@ -273,10 +320,10 @@ class ModelDefaults(AbstractCapability[DepsT]):
 
 @dataclass
 class SessionModels(ResolveModelId[DepsT]):
-    """Resolve model names through CLAI first, as when CLAI resolved the selected model before each run.
+    """Resolve model names through Pax first, as when Pax resolved the selected model before each run.
 
     Outermost, so it is tried before a resolver on the agent or a plugin, unless that one is outermost
-    too. Names CLAI returns unchanged are left to those resolvers, then to `infer_model`.
+    too. Names Pax returns unchanged are left to those resolvers, then to `infer_model`.
     """
 
     def get_ordering(self) -> CapabilityOrdering:
@@ -399,7 +446,7 @@ def _command_env() -> dict[str, str]:
 def local_workspace(
     configured: Sequence[AgentCapability[DepsT]], directory: str | Path, messages: Sequence[ModelMessage] = ()
 ) -> AgentCapability[DepsT] | None:
-    """The workspace at `directory` that CLAI adds beside `configured`; `None` when it adds none.
+    """The workspace at `directory` that Pax adds beside `configured`; `None` when it adds none.
 
     That is a `LocalWorkspace`, or a `WindowsWorkspace` on Windows. None is added when a capability loaded
     up front supplies the workspace of a run continuing `messages`, such as a sandbox. When only a capability
@@ -460,7 +507,7 @@ def stale_fork_mark(summary: ConversationSummary) -> bool:
 
 
 def busy_elsewhere(summary: ConversationSummary) -> bool:
-    """Whether another live CLAI process runs this saved session now, rather than one that died mid-turn."""
+    """Whether another live Pax process runs this saved session now, rather than one that died mid-turn."""
     # This process's own turn either belongs to a live session here or ended without saving its outcome.
     return summary.owner_pid != os.getpid() and busy_conflict(summary) is not None
 
@@ -476,7 +523,7 @@ class Continuation:
 
 
 async def continuing_fork(conversations: SqliteConversationStore, source: ConversationSummary) -> Continuation | None:
-    """When a live process runs `source`, the newest copy CLAI made to continue it that no other process runs.
+    """When a live process runs `source`, the newest copy Pax made to continue it that no other process runs.
 
     Only those copies record `forked_from`; a fork the user asked for is theirs to open. `None` when nothing
     runs `source`, or it has no such copy, so continuing it here saves a new one. Checking a process can spawn
@@ -527,7 +574,7 @@ def _first_title(text: str | None) -> str:
 
 
 class StockAgent(Agent[DepsT, OutputT]):
-    """A CLAI-owned agent whose configuration can be rebuilt with active plugins."""
+    """A Pax-owned agent whose configuration can be rebuilt with active plugins."""
 
     def __init__(
         self,
@@ -569,7 +616,7 @@ class StockAgent(Agent[DepsT, OutputT]):
 class Session(Generic[DepsT, OutputT]):
     """Run prompts to completion, retaining successful and interrupted turns in memory.
 
-    Stock agents are rebuilt when the plugin snapshot or CLAI's unchosen default model changes,
+    Stock agents are rebuilt when the plugin snapshot or Pax's unchosen default model changes,
     so delegates carry the same capabilities. Supplied agents keep their existing run-level plugins.
     """
 
@@ -608,14 +655,14 @@ class Session(Generic[DepsT, OutputT]):
         """Where code mode keeps each saved conversation's `run_code` REPL between prompts."""
         self.model: str | None = None
         self.model_chosen = True
-        """Whether the user chose `model`. A stock agent takes CLAI's default as its own model instead,
+        """Whether the user chose `model`. A stock agent takes Pax's default as its own model instead,
         so a capability that selects a model takes precedence over it; a chosen model is passed to each run."""
         self.model_settings: AgentModelSettings[DepsT] | None = None
         """Settings the user chose for this session's model, passed to each run, where they take precedence
         over all others. A request on another model, which a capability selected, does not get them. A
         callable is resolved before every model request, so it can change mid-run."""
         self.model_defaults: FamilyDefaults | None = None
-        """CLAI's default settings for a model name, beneath the agent's capabilities' settings."""
+        """Pax's default settings for a model name, beneath the agent's capabilities' settings."""
         self.tool_retries: int | None = None
         self.instructions = ''
         """The user's own instructions, sent after the agent's and its plugins' on each request; empty sends none.
@@ -690,7 +737,7 @@ class Session(Generic[DepsT, OutputT]):
         if conversation_id is not None:
             await self._ensure_unused(conversation_id)
             if self.repl_states is not None:
-                # A REPL left by a session deleted outside CLAI must not reach the new conversation.
+                # A REPL left by a session deleted outside Pax must not reach the new conversation.
                 await to_thread.run_sync(self.repl_states.delete, conversation_id)
         cleared = len(self._messages)
         self.replace_messages(())
@@ -787,7 +834,7 @@ class Session(Generic[DepsT, OutputT]):
         the history to the caller, for a startup restore that runs before the observability plugin subscribes
         and plugin renderers load. `unarchive=False` leaves an
         archived session archived, for a restore that continues in a fork of it. One another live session
-        of this CLAI holds raises `ValueError`. `continuation` is what `continuation(conversation_id)` returned to a
+        of this Pax holds raises `ValueError`. `continuation` is what `continuation(conversation_id)` returned to a
         caller that claimed it already, so it is not looked up again.
         """
         continuation = continuation or await self.continuation(conversation_id)
@@ -866,7 +913,7 @@ class Session(Generic[DepsT, OutputT]):
                 )
             if unarchive and forking is None and summary.archived_at is not None:
                 # The session being worked in is listed again. Saving new content lists one archived while open
-                # in another CLAI again.
+                # in another Pax again.
                 await self.conversations.set_archived(conversation_id=summary.id, archived=False)
                 summary = replace(summary, archived_at=None)
             if forking is not None:
@@ -923,7 +970,7 @@ class Session(Generic[DepsT, OutputT]):
         )
 
     async def resolved_model(self) -> Model | str | None:
-        """The selected model after `resolve_model`, else the agent's own (CLAI's default).
+        """The selected model after `resolve_model`, else the agent's own (Pax's default).
 
         A capability that selects a model can replace that default per request, so a run may use another.
         """
@@ -969,7 +1016,7 @@ class Session(Generic[DepsT, OutputT]):
         run_model = selected
         capabilities = [*self.plugins, *selection]
         if isinstance(self._base_agent, StockAgent):
-            # CLAI's default is the agent's own model, so a capability that selects one wins.
+            # Pax's default is the agent's own model, so a capability that selects one wins.
             agent_model = None if self.model_chosen else selected
             if agent_model is not None:
                 run_model = None
@@ -1073,7 +1120,7 @@ class Session(Generic[DepsT, OutputT]):
             raise ValueError(script.refused)
 
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
-        """Add CLAI's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
+        """Add Pax's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
         configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
         if (local := local_workspace(configured, self.workspace, self._messages)) is None:
             return False
@@ -1097,7 +1144,7 @@ class Session(Generic[DepsT, OutputT]):
     def _bind_prompt(
         self, text: str | None, previous: Sequence[ModelMessage], models: Sequence[str]
     ) -> tuple[str | None, list[AgentCapability[DepsT]], Literal['new'] | None]:
-        """`_bind` for a prompt, plus its task reports and CLAI's `LocalWorkspace`, and the run's `workspace`.
+        """`_bind` for a prompt, plus its task reports and Pax's `LocalWorkspace`, and the run's `workspace`.
 
         The `workspace` is `'new'` when `previous` last worked in another local directory.
         """

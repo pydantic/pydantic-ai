@@ -1,8 +1,8 @@
-"""Workspaces in this CLAI's web UI: the session the orchestrator runs in each, and their checkouts in the sidebar.
+"""Workspaces in this Pax's web UI: the session the orchestrator runs in each, and their checkouts in the sidebar.
 
-A workspace's session is a live session of this CLAI in its checkout, as one started with New session there
+A workspace's session is a live session of this Pax in its checkout, as one started with New session there
 is, so the sidebar lists it under its repository, by branch. Its conversation is kept in the workspace's
-record, following a `/new` or `/resume` there, so it opens again after it closed for being idle or CLAI restarted.
+record, following a `/new` or `/resume` there, so it opens again after it closed for being idle or Pax restarted.
 """
 
 from typing import TYPE_CHECKING

@@ -41,12 +41,20 @@ class GitHubCredential:
         return self.basic if host == 'github.com' else self.bearer
 
 
+def ref_provider(name: str) -> str:
+    """What `WorkspaceRef.provider` holds for the sandboxes of the provider named `name`, such as `local-smol`.
+
+    The name, with a hyphen for each space. Never `local`, which names this machine's own folder.
+    """
+    return name.replace(' ', '-')
+
+
 class SandboxProvider(Protocol):
-    """A cloud sandbox service that `/sandbox` can make, reopen, and delete sandboxes on."""
+    """A sandbox service, on this machine or in the cloud, that `/sandbox` can make, reopen, and delete sandboxes on."""
 
     @property
     def name(self) -> str:
-        """The name `/sandbox` takes and `WorkspaceRef.provider` holds, such as `e2b`."""
+        """The name `/sandbox` takes, such as `e2b` or `local smol`; its refs' `provider` is `ref_provider(name)`."""
         ...
 
     @property
@@ -87,7 +95,11 @@ class SandboxProvider(Protocol):
         ...
 
     async def close(self, backend: SandboxBackend) -> None:
-        """Close what `create` or `reopen` opened for `backend`, such as an API client; the sandbox keeps running."""
+        """Close what `create` or `reopen` opened for `backend`, such as an API client; the sandbox keeps its files.
+
+        It keeps running too, except one that would otherwise outlive this process, such as a `local smol` VM run through
+        the `smolvm` CLI: that one may be stopped, and its next command starts it again.
+        """
         ...
 
 

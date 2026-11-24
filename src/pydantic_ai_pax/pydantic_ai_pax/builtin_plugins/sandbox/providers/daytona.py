@@ -52,7 +52,7 @@ class DaytonaProvider:
 
     def missing(self) -> str | None:
         if find_spec('daytona') is None:
-            return "Daytona support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[daytona]'."
+            return "Daytona support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[daytona]'."
         if saved_key(KEY_NAME) is None:
             return (
                 f'Add your Daytona API key in /keys as {KEY_NAME}. Make one at https://app.daytona.io/dashboard/keys.'

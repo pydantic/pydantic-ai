@@ -7,7 +7,7 @@ _DETAIL = 200
 
 
 def error_message(error: BaseException) -> str:
-    """Explain Codex refresh failures and CLAI's rate-limit veto, including wrapped errors.
+    """Explain Codex refresh failures and Pax's rate-limit veto, including wrapped errors.
 
     A fallback chain or `PROVIDER@*` that failed on every model lists why each one failed, in order.
     """

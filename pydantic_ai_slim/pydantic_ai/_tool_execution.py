@@ -1185,6 +1185,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 try:
                     validated = await self.tool_manager.validate_tool_call(call)
                 except exceptions.UnexpectedModelBehavior:
+                    self.ctx.state.check_incomplete_tool_call()
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
 

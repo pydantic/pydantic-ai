@@ -1809,9 +1809,9 @@ async def test_interrupted_stream_has_a_failure_terminal_result(
 
 
 def code_mode_off_args(tmp_path: Path) -> tuple[str, str]:
-    """CLI arguments that point CLAI at a settings database with code mode off.
+    """CLI arguments that point Pax at a settings database with code mode off.
 
-    CLAI folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
+    Pax folds tools into `run_code` by default, and `TestModel` cannot write code that runs.
     """
     from pydantic_ai_pax.config.settings_store import SettingsStore
 

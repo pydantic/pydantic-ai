@@ -72,7 +72,7 @@ function places(projects: Project[], unfolded: (key: string) => boolean, current
   return found
 }
 
-/** Where a new session runs: a project CLAI has sessions in, by default the current one, or one of its worktrees, which
+/** Where a new session runs: a project Pax has sessions in, by default the current one, or one of its worktrees, which
  * its chevron unfolds; a new worktree of the highlighted place's repository; or any other directory by its path,
  * completed as it is typed, with each repository's worktrees unfolded. */
 export function NewSessionDialog({
@@ -336,7 +336,7 @@ export function NewSessionDialog({
                 spellCheck={false}
                 autoFocus
                 value={branch}
-                placeholder="Generated, as with clai2 --worktree"
+                placeholder="Generated, as with pax --worktree"
                 disabled={sending}
                 onChange={(event) => {
                   setBranch(event.target.value)
