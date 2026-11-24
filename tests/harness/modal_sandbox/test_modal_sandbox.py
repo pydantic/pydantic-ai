@@ -710,6 +710,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'authority',
         'create_app_if_missing',
         'description',
+        'desktop',
         'env',
         'id',
         'idle_timeout',
@@ -732,6 +733,7 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'idle_timeout': 60,
         'working_dir': '/work',
         'env': {'A': '1'},
+        'desktop': (1440, 900),
         'warn_if_no_tools': False,
     }
     assert ModalSandbox[None].from_spec(**spec_fields) == ModalSandbox(**spec_fields)
