@@ -134,7 +134,7 @@ _BACKGROUND_NAME = (
     'capability that wrote it (`background_tools/_capability.py`, `_format_background_result`)'
 )
 _PLAN_IN_CARRIER = (
-    "`Planning` finds the plan a plan tool returned only in that tool's own `ToolReturnPart`, so after a plan tool "
+    f"{_ISSUE}14441: `Planning` finds the plan a plan tool returned only in that tool's own `ToolReturnPart`, so after a plan tool "
     'runs inside another carrier it records the plan again in a `<plan_reminder>`'
 )
 
