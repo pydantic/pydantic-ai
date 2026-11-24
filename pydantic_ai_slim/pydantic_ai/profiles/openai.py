@@ -133,14 +133,15 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
+_GPT_6_2_MODEL_PREFIXES = ('gpt-6.2-sol', 'gpt-6.2-astra')
+
 _GPT_6_MODEL_PREFIXES = (
     'gpt-6-astra',
     'gpt-6-sol',
     'gpt-6-luna',
     'gpt-6.1-sol',
     'gpt-6.1-terra',
-    'gpt-6.2-sol',
-    'gpt-6.2-astra',
+    *_GPT_6_2_MODEL_PREFIXES,
 )
 
 _GPT_6_ALWAYS_ON_REASONING = _ReasoningSupport(
@@ -567,6 +568,25 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When enabled, [`CachePoint`][pydantic_ai.messages.CachePoint] markers are translated into
     `prompt_cache_breakpoint` fields on the preceding content block, on both the Chat Completions and
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
+    """
+
+    openai_responses_stable_instructions_as_input: bool
+    """Whether the Responses API gets the instructions that keep the prompt prefix stable as leading input messages.
+    Default: `False`.
+
+    Those are the literal instructions and the [`on_change='append'`](../agent.md#appending-instruction-changes)
+    blocks, whose changes are appended to the history. The instructions that rewrite the prefix when they change stay
+    in the top-level `instructions` field, and with
+    [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]
+    too. All of them stay there on a request that sets a concrete `openai_previous_response_id` or
+    `openai_conversation_id`, continues a compacted history, has a dynamic system prompt, or uses the `'user'` system
+    prompt role. With `openai_previous_response_id='auto'` (which `openai_transport='websocket'` sets by default), they
+    lead the input when the chain starts or resends the history, and are left out while it continues: each response's
+    history digest records them, so a request with different ones resends the history.
+
+    Set by `OpenAIProvider` for `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level `instructions` after
+    `input` and bill them at the uncached rate on every request:
+    https://developers.openai.com/api/docs/guides/prompt-caching#how-prefix-matching-works.
     """
 
     openai_responses_tool_choice_accepts_additional_tools: bool
