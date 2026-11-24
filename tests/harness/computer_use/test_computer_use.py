@@ -704,42 +704,21 @@ The `computer` tool shows and controls this computer's screen.
         await agent.run('Go.')
         assert provider.actions == [MouseUp()]
 
-    async def test_on_a_read_only_workspace_the_model_can_look_but_not_act(self) -> None:
-        provider = ScreenProvider()
-        offered: list[set[str]] = []
-
-        async def record(ctx: RunContext[object], request_context: ModelRequestContext) -> ModelRequestContext:
-            (tool,) = request_context.model_request_parameters.function_tools
-            offered.append(
-                set(tool.parameters_json_schema['properties']['actions']['items']['discriminator']['mapping'])
-            )
-            return request_context
-
-        model = _scripted([{'type': 'click', 'x': 1, 'y': 1}], [{'type': 'screenshot'}])
-        capabilities = [provider.capability(read_only=True), ComputerUse(), Hooks(before_model_request=record)]
-        refused, looked = _returns((await Agent(model, capabilities=capabilities).run('Go.')).all_messages())
-
-        # The schema offers only the actions that look. A call that acts anyway, as a provider's tool can, is refused.
-        assert offered[0] == {'screenshot', 'zoom', 'wait', 'cursor_position'}
-
-        assert refused.content == snapshot(
-            'This workspace is read-only, so the `computer` tool can only look: take screenshots, zoom, read the '
-            'pointer position and wait. No action ran.'
-        )
-        assert looked.metadata == {'performed': 1}
-        assert provider.actions == []
-
-    async def test_a_read_only_workspace_sends_the_narrowed_tool_instead_of_the_providers(self) -> None:
-        # The provider's computer tool can't be narrowed to the actions that look.
-        natives: list[AbstractNativeTool] = []
+    async def test_a_read_only_workspace_gets_no_computer_tool(self) -> None:
+        """Neither the `computer` tool nor the provider's own computer tool is sent, as `Shell` offers none there."""
+        sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            natives.extend(info.model_request_parameters.native_tools)
+            params = info.model_request_parameters
+            sent.append(([tool.name for tool in params.function_tools], list(params.native_tools)))
             return ModelResponse(parts=[TextPart('done')])
 
-        capabilities = [ScreenProvider().capability(read_only=True), ComputerUse()]
-        await Agent(FunctionModel(respond), capabilities=capabilities).run('Go.')
-        assert natives == []
+        provider = ScreenProvider()
+        await Agent(FunctionModel(respond), capabilities=[provider.capability(read_only=True), ComputerUse()]).run(
+            'Go.'
+        )
+        assert sent == [([], [])]
+        assert provider.actions == []
 
     async def test_positions_on_a_screenshot_of_another_size_are_refused(self) -> None:
         """A history rebuilt without metadata still gives the size of the screenshot the model last saw."""
