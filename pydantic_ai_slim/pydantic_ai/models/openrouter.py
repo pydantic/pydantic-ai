@@ -1,12 +1,11 @@
 from __future__ import annotations as _annotations
 
-import json
 from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from itertools import chain
-from typing import Annotated, Any, Literal, NoReturn, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast, overload
 
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
@@ -16,8 +15,10 @@ from .._run_context import RunContext
 from .._utils import is_str_dict
 from ..exceptions import (
     ModelAPIError,
+    ModelAuthenticationError,
     ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelNotFoundError,
     ModelRequestRejectedError,
     UserError,
 )
@@ -60,7 +61,7 @@ from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_rea
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
 
 try:
-    from openai import APIConnectionError, APIError, AsyncOpenAI, omit
+    from openai import APIConnectionError, APIError, AsyncOpenAI, AsyncStream, omit
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
@@ -470,23 +471,23 @@ class _OpenRouterError(BaseModel):
     metadata: dict[str, Any] | None = None
 
 
-def _openrouter_metadata_raw_message(metadata: Mapping[str, Any] | None) -> str | None:
-    if metadata is None:
-        return None
-    raw = metadata.get('raw')
+def _metadata_raw_reports_context_window(metadata: object) -> bool:
+    """Whether the upstream error OpenRouter forwards in an error's `metadata.raw` says the context window was exceeded.
+
+    OpenRouter puts it there behind a generic message like `Provider returned error`, as plain text or as a JSON
+    `{"error": {...}}` string. Only its message is read: a nested code or type, like a generic `400`, never counts.
+    """
+    raw = metadata.get('raw') if is_str_dict(metadata) else None
     if not isinstance(raw, str):
-        return None
-    try:
-        raw_error = json.loads(raw)
-    except json.JSONDecodeError:
-        return raw
-    if not is_str_dict(raw_error):
-        return None
-    nested_error = raw_error.get('error')
-    if not is_str_dict(nested_error):
-        return None
-    message = nested_error.get('message')
-    return message if isinstance(message, str) else None
+        return False
+    parsed, _, fields = _model_errors.parse_error_body(raw)
+    if parsed is None:
+        message = raw
+    elif is_str_dict(parsed) and 'error' in parsed:
+        message = fields.get('message')
+    else:
+        return False
+    return _model_errors.openai_compatible_category(None, None, None, message) is ModelContextWindowExceededError
 
 
 def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream: bool = False) -> ModelHTTPError:
@@ -496,12 +497,8 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
     the response's own status was 200.
     """
     category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
-    if category is ModelRequestRejectedError:
-        nested_message = _openrouter_metadata_raw_message(error.metadata)
-        if nested_message is not None:
-            nested_category = _model_errors.openai_compatible_category(error.code, None, None, nested_message)
-            if nested_category is ModelContextWindowExceededError:
-                category = nested_category
+    if category is ModelRequestRejectedError and _metadata_raw_reports_context_window(error.metadata):
+        category = ModelContextWindowExceededError
     if error.code == 403 and flags_input(error.metadata):
         # A 403 for flagged input is a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
@@ -513,41 +510,6 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
         provider_error_code=str(error.code),
         in_stream=in_stream,
     )
-
-
-def _raise_context_window_exceeded_error(error: ModelHTTPError) -> NoReturn:
-    """Re-raise a rejected request as a context-window error when OpenRouter's metadata proves it is one.
-
-    OpenRouter reports an exceeded context window as a plain rejection, e.g. an HTTP 400, with the provider's
-    nested error hidden in `metadata.raw`; recover the category from that message. Any other error is re-raised
-    unchanged.
-    """
-    body = error.body
-    error_body = body.get('error', body) if is_str_dict(body) else None
-    metadata = error_body.get('metadata') if is_str_dict(error_body) else None
-    nested_message = _openrouter_metadata_raw_message(metadata if is_str_dict(metadata) else None)
-    if nested_message is None:
-        raise error
-
-    category = _model_errors.openai_compatible_category(
-        error.status_code, error.provider_error_code, error.provider_error_type, nested_message
-    )
-    if category is not ModelContextWindowExceededError:
-        raise error
-
-    cause = error.__cause__ if error.__cause__ is not None else error
-    raise ModelHTTPError.for_category(
-        ModelContextWindowExceededError,
-        status_code=error.status_code,
-        model_name=error.model_name,
-        body=error.body,
-        headers=error.headers,
-        suggested_model_id=error.suggested_model_id,
-        provider_error_code=error.provider_error_code,
-        provider_error_type=error.provider_error_type,
-        retry_after=error.retry_after,
-        in_stream=error.in_stream,
-    ) from cause
 
 
 class _OpenRouterFileAnnotation(BaseModel, frozen=True):
@@ -1255,14 +1217,7 @@ class OpenRouterModel(OpenAIChatModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         messages, model_settings = self._effort_delta_request(messages, model_settings, model_request_parameters)
-        try:
-            return await super().request(messages, model_settings, model_request_parameters)
-        except ModelRequestRejectedError as error:
-            if isinstance(error, ModelContextWindowExceededError):
-                raise
-            if not isinstance(error, ModelHTTPError):
-                raise
-            _raise_context_window_exceeded_error(error)
+        return await super().request(messages, model_settings, model_request_parameters)
 
     @override
     @asynccontextmanager
@@ -1278,6 +1233,60 @@ class OpenRouterModel(OpenAIChatModel):
             messages, model_settings, model_request_parameters, run_context
         ) as streamed_response:
             yield streamed_response
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncStream[chat.ChatCompletionChunk] | ModelResponse: ...
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | ModelResponse: ...
+
+    @override
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk] | ModelResponse:
+        # Sees the error status of the request or of opening a stream; an error inside an open stream is mapped by
+        # `_map_openrouter_error`.
+        try:
+            return await super()._completions_create(messages, stream, model_settings, model_request_parameters)
+        except ModelHTTPError as error:
+            body = error.body
+            # The error object, or the whole response body for a status a retrying transport gave up on.
+            error_object = body.get('error', body) if is_str_dict(body) else None
+            metadata = error_object.get('metadata') if is_str_dict(error_object) else None
+            if (
+                # Only a generic rejection narrows: a more specific category, or flagged input, keeps its own.
+                not isinstance(error, ModelRequestRejectedError)
+                or isinstance(error, (ModelContextWindowExceededError, ModelAuthenticationError, ModelNotFoundError))
+                or flags_input(metadata)
+                or not _metadata_raw_reports_context_window(metadata)
+            ):
+                raise
+            raise ModelHTTPError.for_category(
+                ModelContextWindowExceededError,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                body=error.body,
+                headers=error.headers,
+                provider_error_code=error.provider_error_code,
+                provider_error_type=error.provider_error_type,
+                retry_after=error.retry_after,
+            ) from error.__cause__
 
     def _effort_delta_request(
         self,

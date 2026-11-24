@@ -560,6 +560,7 @@ _CONTEXT_WINDOW_MESSAGE = "Input length (100000) exceeds the model's maximum con
 _CONTEXT_WINDOW_RAW = json.dumps(
     {'error': {'message': _CONTEXT_WINDOW_MESSAGE, 'type': 'BadRequestError', 'param': None, 'code': 400}}
 )
+_DEEPLY_NESTED_RAW = '[' * 100_000 + ']' * 100_000
 
 
 async def _openrouter_status_error(status_code: int, error_body: dict[str, object], *, stream: bool) -> ModelAPIError:
@@ -630,6 +631,12 @@ async def test_openrouter_context_window_exceeded_via_metadata_raw(
             {'code': 400, 'metadata': {'raw': json.dumps({'error': {'type': 'BadRequestError', 'code': 400}})}},
             ModelRequestRejectedError,
             id='400-generic-nested-type',
+        ),
+        pytest.param(
+            400,
+            {'code': 400, 'metadata': {'raw': _DEEPLY_NESTED_RAW}},
+            ModelRequestRejectedError,
+            id='400-deeply-nested-raw',
         ),
     ],
 )
@@ -3417,7 +3424,16 @@ async def test_openrouter_stream_context_window_exceeded_via_metadata_raw(allow_
 
 
 @pytest.mark.vcr(ignore_hosts=['openrouter.example'])
-@pytest.mark.parametrize('raw', ['[]', '{"error": null}', '{"error": {"message": "ordinary provider error"}}', None])
+@pytest.mark.parametrize(
+    'raw',
+    [
+        '[]',
+        '{"error": null}',
+        '{"error": {"message": "ordinary provider error"}}',
+        None,
+        pytest.param(_DEEPLY_NESTED_RAW, id='deeply-nested'),
+    ],
+)
 async def test_openrouter_stream_context_window_metadata_raw_non_context_error(
     allow_model_requests: None, raw: str | None
 ) -> None:
