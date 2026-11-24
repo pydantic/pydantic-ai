@@ -67,7 +67,7 @@ For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../filesystem/
 ```python {names="defined"}
 from pydantic_ai import Agent, RunContext
 from pydantic_ai_harness.agentcore_sandbox import AgentCoreSandbox
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[AgentCoreSandbox(region_name='us-east-1'), Shell(), FileSystem()])
