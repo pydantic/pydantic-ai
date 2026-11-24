@@ -1102,6 +1102,17 @@ def test_structured_judge_serialization():
     assert evaluator.build_serialization_arguments()['output_type'] == snapshot("typing.Literal['polite', 'curt']")
 
 
+def test_structured_judge_with_rubrics_round_trips_through_a_file(tmp_path: Path):
+    """A mapping of rubrics saves to a dataset file and loads back as the same evaluator."""
+    evaluator = StructuredJudge({'polite': 'The reply is polite.', 'on_topic': 'The reply answers the question.'})
+    dataset = Dataset[str, str, Any](name='rubrics', cases=[Case(inputs='x')], evaluators=[evaluator])
+    path = tmp_path / 'dataset.yaml'
+
+    dataset.to_file(path)
+
+    assert Dataset[str, str, Any].from_file(path).evaluators == [evaluator]
+
+
 def test_structured_judge_serializes_a_model_of_questions_by_name():
     """A model of questions is written by name, so a result's `source` still serializes to JSON."""
 
