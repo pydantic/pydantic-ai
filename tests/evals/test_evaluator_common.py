@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from enum import Enum, IntEnum
@@ -11,7 +12,7 @@ from pydantic import BaseModel, Field, RootModel, computed_field, model_serializ
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -664,7 +665,7 @@ class ReplyReview(BaseModel):
 class JudgeCall:
     """What one judge request carried, captured from the model it was sent to."""
 
-    prompt: Any
+    prompt: str | Sequence[UserContent]
     instructions: str | None
     schema: dict[str, Any]
 
