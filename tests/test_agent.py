@@ -5193,7 +5193,11 @@ def test_tool_exceeds_token_limit_error():
 
 
 def test_tool_exceeds_token_limit_with_empty_args():
-    """A function tool call with no arguments at the token limit was cut off: Anthropic sends `{}` for one."""
+    """A function tool call with no arguments at the token limit was cut off: Anthropic sends `{}` for one.
+
+    `FunctionModel` scripts the cut-off response: what's under test is how the agent graph handles a function tool
+    call like that, while `test_anthropic_tool_output_cut_off_by_max_tokens` records what Anthropic sends.
+    """
     requests = 0
 
     def return_empty_args(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
