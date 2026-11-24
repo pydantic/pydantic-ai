@@ -248,6 +248,7 @@ _ENFORCED_POLICY_PAGE_SCRIPT = """
 delete self.RTCPeerConnection;
 delete self.webkitRTCPeerConnection;
 delete self.WebTransport;
+delete self.WebSocketStream;
 delete self.IdentityCredential;
 delete self.IdentityProvider;
 (() => {

@@ -4257,6 +4257,7 @@ class TestEnforcedPolicyPageApis:
             'RTCPeerConnection',
             'webkitRTCPeerConnection',
             'WebTransport',
+            'WebSocketStream',
             'IdentityCredential',
             'IdentityProvider',
         ):
