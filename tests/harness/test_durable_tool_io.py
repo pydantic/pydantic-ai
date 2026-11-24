@@ -34,16 +34,12 @@ from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.capability_creation import CapabilityStore
-from pydantic_ai_harness.conversation_search import SnapshotHistorySource
-from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanCompletedEvent,
     PlanItem,
     Planning,
     PlanStatusChangedEvent,
-    SqlitePlanStore,
 )
 from pydantic_ai_harness.shell import Shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
@@ -51,8 +47,7 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 from ..append_only import skip_unless_installed
 from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS
 from ._contracts import CASES, assert_holds, contract_cases
-from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
-from ._durable_cases import build_case, installed, journal_breaks, one_call_per_response
+from ._durable_cases import build_case, counting_requests, installed, journal_breaks, one_call_per_response
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
@@ -121,56 +116,7 @@ _WORKFLOWS = {key: _workflow(agent) for key, agent in _AGENTS.items()}
 
 @pytest.fixture
 def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[], Counter[str]]:
-    """Count every request the cases' stand-ins, the `aws` stand-in, and the stores make."""
-    REQUESTS.clear()
-    aws_count = tmp_path / 'aws_cli_count'
-    monkeypatch.setenv(AWS_CLI_COUNT_VARIABLE, str(aws_count))
-
-    for method in ('write', 'list_all', 'disable'):
-        original = getattr(CapabilityStore, method)
-
-        def counted(self: CapabilityStore, *args: Any, _original: Any = original, _method: str = method) -> Any:
-            REQUESTS[f'store.{_method}'] += 1
-            return _original(self, *args)
-
-        monkeypatch.setattr(CapabilityStore, method, counted)
-
-    # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
-    original_memory_write = InMemoryMemoryStore.write
-
-    async def counted_memory_write(self: InMemoryMemoryStore, *args: Any, **kwargs: Any) -> Any:
-        REQUESTS['memory.write'] += 1
-        return await original_memory_write(self, *args, **kwargs)
-
-    monkeypatch.setattr(InMemoryMemoryStore, 'write', counted_memory_write)
-
-    # The plan tools read the store many times; a write is what recovery must not repeat.
-    for method in ('set_items', 'add_item'):
-        original = getattr(SqlitePlanStore, method)
-
-        async def counted_plan(
-            self: SqlitePlanStore, *args: Any, _original: Any = original, _method: str = method
-        ) -> Any:
-            REQUESTS[f'plan.{_method}'] += 1
-            return await _original(self, *args)
-
-        monkeypatch.setattr(SqlitePlanStore, method, counted_plan)
-
-    original_list_runs = SnapshotHistorySource.list_runs
-
-    async def counted_list_runs(self: SnapshotHistorySource) -> Any:
-        REQUESTS['history.list_runs'] += 1
-        return await original_list_runs(self)
-
-    monkeypatch.setattr(SnapshotHistorySource, 'list_runs', counted_list_runs)
-
-    def snapshot() -> Counter[str]:
-        counts = Counter(REQUESTS)
-        if aws_count.exists():
-            counts['aws_cli'] = len(aws_count.read_text().splitlines())
-        return counts
-
-    return snapshot
+    return counting_requests(monkeypatch, tmp_path)
 
 
 @pytest.mark.parametrize('name', contract_cases(DURABLE_DBOS))

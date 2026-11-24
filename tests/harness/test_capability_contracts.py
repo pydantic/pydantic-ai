@@ -428,9 +428,11 @@ async def test_a_nested_run_on_a_durable_case_model_is_answered_and_counted() ->
     async def ask() -> str:
         return (await Agent(model).run('nested')).output
 
-    result = await Agent(model, tools=[ask]).run(PROMPT)
-    assert (result.output, REQUESTS) == ('done', {UNPROMPTED_REQUEST: 1})
-    REQUESTS.clear()
+    try:
+        result = await Agent(model, tools=[ask]).run(PROMPT)
+        assert (result.output, REQUESTS) == ('done', {UNPROMPTED_REQUEST: 1})
+    finally:
+        REQUESTS.clear()
 
 
 def test_a_drifted_journal_breaks_the_durable_contracts() -> None:

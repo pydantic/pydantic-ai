@@ -9,17 +9,25 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from collections.abc import Sequence
+from collections import Counter
+from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
+
+import pytest
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness.capability_creation import CapabilityStore
+from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.memory import InMemoryMemoryStore
+from pydantic_ai_harness.planning import SqlitePlanStore
 
 from ..append_only import ToolCall
 from ._contracts import CASES
-from ._counting_clients import REQUESTS
+from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
 
 PROMPT = 'go'
 """The prompt a case's run starts with, which tells its requests apart from a nested run's."""
@@ -91,3 +99,59 @@ def journal_breaks(
         ]
     )
     return counted + drifted
+
+
+def counting_requests(monkeypatch: pytest.MonkeyPatch, directory: Path) -> Callable[[], Counter[str]]:
+    """Count every request the cases' stand-ins, the `aws` stand-in, and the stores make, from now on.
+
+    Both D1 suites count with it, so a request means the same thing in each. `directory` holds the `aws` count.
+    """
+    REQUESTS.clear()
+    aws_count = directory / 'aws_cli_count'
+    monkeypatch.setenv(AWS_CLI_COUNT_VARIABLE, str(aws_count))
+
+    for method in ('write', 'list_all', 'disable'):
+        original = getattr(CapabilityStore, method)
+
+        def counted(self: CapabilityStore, *args: Any, _original: Any = original, _method: str = method) -> Any:
+            REQUESTS[f'store.{_method}'] += 1
+            return _original(self, *args)
+
+        monkeypatch.setattr(CapabilityStore, method, counted)
+
+    # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
+    original_memory_write = InMemoryMemoryStore.write
+
+    async def counted_memory_write(self: InMemoryMemoryStore, *args: Any, **kwargs: Any) -> Any:
+        REQUESTS['memory.write'] += 1
+        return await original_memory_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(InMemoryMemoryStore, 'write', counted_memory_write)
+
+    # The plan tools read the store many times; a write is what recovery must not repeat.
+    for method in ('set_items', 'add_item'):
+        original = getattr(SqlitePlanStore, method)
+
+        async def counted_plan(
+            self: SqlitePlanStore, *args: Any, _original: Any = original, _method: str = method
+        ) -> Any:
+            REQUESTS[f'plan.{_method}'] += 1
+            return await _original(self, *args)
+
+        monkeypatch.setattr(SqlitePlanStore, method, counted_plan)
+
+    original_list_runs = SnapshotHistorySource.list_runs
+
+    async def counted_list_runs(self: SnapshotHistorySource) -> Any:
+        REQUESTS['history.list_runs'] += 1
+        return await original_list_runs(self)
+
+    monkeypatch.setattr(SnapshotHistorySource, 'list_runs', counted_list_runs)
+
+    def snapshot() -> Counter[str]:
+        counts = Counter(REQUESTS)
+        if aws_count.exists():
+            counts['aws_cli'] = len(aws_count.read_text().splitlines())
+        return counts
+
+    return snapshot

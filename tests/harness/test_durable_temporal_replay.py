@@ -16,9 +16,10 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 
@@ -31,8 +32,7 @@ from tests.temporal_utils import temporal_dev_server_cache_dir
 from ..append_only import skip_unless_installed
 from ..capability_cases import DURABLE_TEMPORAL
 from ._contracts import CASES, assert_holds, contract_cases
-from ._counting_clients import REQUESTS
-from ._durable_cases import PROMPT, build_case, installed, journal_breaks, one_call_per_response
+from ._durable_cases import PROMPT, build_case, counting_requests, installed, journal_breaks, one_call_per_response
 
 pytest.importorskip('temporalio')
 
@@ -119,7 +119,7 @@ async def temporal(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[_T
     _AGENTS.clear()
 
 
-async def _breaks(name: str, temporal: _Temporal) -> list[str]:
+async def _breaks(name: str, temporal: _Temporal, count_requests: Callable[[], Counter[str]]) -> list[str]:
     """How the case of `name` breaks `DURABLE_TEMPORAL`."""
     if (refusal := temporal.refused.get(name)) is not None:
         return [f'Temporal refuses the agent: {refusal}']
@@ -139,7 +139,7 @@ async def _breaks(name: str, temporal: _Temporal) -> list[str]:
     assert output == 'done'
     history = await temporal.client.get_workflow_handle(workflow_id).fetch_history()
 
-    before = Counter(REQUESTS)
+    before = count_requests()
     replayer = Replayer(
         workflows=[CaseWorkflow],
         plugins=[PydanticAIPlugin(), AgentPlugin(_AGENTS[name])],
@@ -147,7 +147,7 @@ async def _breaks(name: str, temporal: _Temporal) -> list[str]:
     )
     replay = await replayer.replay_workflow(history, raise_on_replay_failure=False)
     failure = replay.replay_failure
-    after = Counter(REQUESTS)
+    after = count_requests()
     breaks = [] if failure is None else [f'the recorded history does not replay: {failure!r}']
     breaks += [] if after == before else [f'replaying made a request again: {before} became {after}']
     activities = [
@@ -166,6 +166,9 @@ async def _breaks(name: str, temporal: _Temporal) -> list[str]:
 
 
 @pytest.mark.parametrize('name', contract_cases(DURABLE_TEMPORAL))
-async def test_a_case_replays_equal_under_temporal(name: str, temporal: _Temporal) -> None:
+async def test_a_case_replays_equal_under_temporal(
+    name: str, temporal: _Temporal, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     skip_unless_installed(name, CASES[name].requires)
-    assert_holds(DURABLE_TEMPORAL, name, await _breaks(name, temporal))
+    count_requests = counting_requests(monkeypatch, tmp_path)
+    assert_holds(DURABLE_TEMPORAL, name, await _breaks(name, temporal, count_requests))
