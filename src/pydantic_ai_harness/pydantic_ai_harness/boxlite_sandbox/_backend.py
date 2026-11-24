@@ -52,7 +52,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import DEFAULT_DESKTOP_BASE_IMAGE, checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -61,8 +60,9 @@ from pydantic_ai_harness._workspace_provider import (
     command_argv,
     require_asyncio,
 )
-from pydantic_ai_harness._x11 import DISPLAY, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import DEFAULT_DESKTOP_BASE_IMAGE, checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, x11_display
 
 if TYPE_CHECKING:
     from anyio.abc import TaskGroup
