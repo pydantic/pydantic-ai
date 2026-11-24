@@ -214,11 +214,14 @@ Common entry points:
 - `Dataset`
 - evaluator classes from `pydantic_evals.evaluators`, or plain functions taking an `EvaluatorContext` for checks without parameters (saved to dataset files under the function's name, so pass them in `custom_evaluator_types` to load)
 
-`LLMJudge` asks one question per request. When the user wants several measures of the same output, reach
-for `StructuredJudge` instead: it takes a mapping of measure name to rubric, or a Pydantic model whose
-fields are the questions, and answers all of them in one request. The trade is that one failed request
-loses every measure at once and the answers can shift, since each question is answered in the presence of
-the others.
+`LLMJudge` grades an output against one rubric per request and records the judge's reason. When the user
+wants typed answers instead, or several measures of the same output, reach for `StructuredJudge`: it takes
+one question (`StructuredJudge('Is the reply polite?', output_type=bool)`, where `output_type` can also be a
+`Literal`, a string `Enum` or a bounded `float`), a mapping of measure name to rubric, or a Pydantic model,
+dataclass or `TypedDict` whose fields are the questions, and answers all of them in one request. A
+confidence the judge reports, as a decision model does, becomes each answer's reason. The trade is that one
+failed request loses every measure at once and the answers can shift, since each question is answered in
+the presence of the others.
 
 ## Build Custom Toolsets, Models, or Agents
 

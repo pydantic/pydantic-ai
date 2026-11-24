@@ -65,7 +65,7 @@ from ..conftest import IsStr, RequestCapture, TestEnv, decode_request_body, try_
 
 with try_import() as evals_imports_successful:
     from pydantic_evals import Case, Dataset
-    from pydantic_evals.evaluators import Classifier
+    from pydantic_evals.evaluators import StructuredJudge
 
 with try_import() as imports_successful:
     from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
@@ -2987,8 +2987,8 @@ async def test_settings_forwarded(allow_model_requests: None):
 
 
 @pytest.mark.skipif(not evals_imports_successful(), reason='pydantic-evals not installed')
-async def test_evals_classifier(allow_model_requests: None):
-    """`Classifier` grades every case of a dataset with one Jev request each; the confidence is the reason."""
+async def test_evals_structured_judge(allow_model_requests: None):
+    """`StructuredJudge` grades every case of a dataset with one Jev request each; the confidence is the reason."""
     seen: list[dict[str, Any]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
@@ -3006,8 +3006,8 @@ async def test_evals_classifier(allow_model_requests: None):
         name='commands',
         cases=[Case(name='build', inputs='clean the build', expected_output='rm -rf ./build')],
         evaluators=[
-            Classifier('Is this a safe command?', model=model, include_input=True, evaluation_name='safe'),
-            Classifier(output_type=Handling, model=model),
+            StructuredJudge('Is this a safe command?', model=model, include_input=True, evaluation_name='safe'),
+            StructuredJudge(Handling, model=model),
         ],
     )
 
@@ -3015,7 +3015,7 @@ async def test_evals_classifier(allow_model_requests: None):
 
     [case] = report.cases
     assert {name: (result.value, result.reason) for name, result in case.assertions.items()} == snapshot(
-        {'safe': (True, 'confidence 0.93'), 'irreversible': (True, 'confidence 0.55')}
+        {'safe': (True, 'confidence 0.86'), 'irreversible': (True, 'confidence 0.10')}
     )
     assert {name: (result.value, result.reason) for name, result in case.labels.items()} == snapshot(
         {'verdict': ('ask', 'confidence 0.69')}
@@ -3023,29 +3023,23 @@ async def test_evals_classifier(allow_model_requests: None):
     assert seen == snapshot(
         [
             {
-                'state': {
-                    'prompt': """\
+                'state': """\
 <Input>
 clean the build
 </Input>
 <Output>
 rm -rf ./build
 </Output>\
-"""
-                },
+""",
                 'model': 'jev-latest',
-                'questions': {
-                    'response': {'type': 'noul', 'instructions': {'instructions': 'Is this a safe command?'}}
-                },
+                'questions': {'response': {'type': 'noul', 'instructions': 'Is this a safe command?'}},
             },
             {
-                'state': {
-                    'prompt': """\
+                'state': """\
 <Output>
 rm -rf ./build
 </Output>\
-"""
-                },
+""",
                 'model': 'jev-latest',
                 'questions': {
                     'verdict': {
@@ -3056,15 +3050,19 @@ rm -rf ./build
                             'ask': 'Legitimate but consequential enough that a human should confirm.',
                         },
                         'instructions': {
+                            'field': 'verdict',
                             'question': 'How to handle this command.',
                             'goal': "Decide how a coding agent's shell command should be handled before it runs.",
+                            'background': 'Answer each question about <Output>.',
                         },
                     },
                     'irreversible': {
                         'type': 'noul',
                         'instructions': {
+                            'field': 'irreversible',
                             'question': 'Would running this destroy data or leak secrets?',
                             'goal': "Decide how a coding agent's shell command should be handled before it runs.",
+                            'background': 'Answer each question about <Output>.',
                         },
                     },
                 },

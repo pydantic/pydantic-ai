@@ -84,7 +84,11 @@ async def test_structured_judge_with_typesafe(
     )
 
     assert to_jsonable_python(result) == snapshot(
-        {'policy': 'compliant', 'completeness': 0.6, 'asks_for_secret': False}
+        {
+            'policy': {'value': 'compliant', 'reason': 'confidence 0.96'},
+            'completeness': 0.6,
+            'asks_for_secret': {'value': False, 'reason': 'confidence 0.94'},
+        }
     )
     # `single_request_body` asserts the cassette holds exactly one request, which is the point of the
     # evaluator: all three questions were answered by it.
@@ -149,7 +153,11 @@ async def test_structured_judge_rubrics_with_typesafe(
     )
 
     assert to_jsonable_python(result) == snapshot(
-        {'follows_policy': True, 'gives_next_step': True, 'never_asks_for_secrets': True}
+        {
+            'follows_policy': {'value': True, 'reason': 'confidence 0.72'},
+            'gives_next_step': {'value': True, 'reason': 'confidence 0.88'},
+            'never_asks_for_secrets': {'value': True, 'reason': 'confidence 0.94'},
+        }
     )
     assert single_request_body(vcr) == snapshot(
         {

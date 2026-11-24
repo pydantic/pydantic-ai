@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from textwrap import dedent
 from typing import Any
 
 from pydantic import BaseModel, Field
+from pydantic.fields import FieldInfo
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
+from typing_extensions import TypeForm
 
 from pydantic_ai import Agent, StructuredDict, UserContent, models
+from pydantic_ai._utils import is_str_dict
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
+from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES, ModelResponse
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -19,6 +22,7 @@ from pydantic_ai.settings import ModelSettings
 __all__ = (
     'GEvalOutput',
     'GradingOutput',
+    'JudgeAnswer',
     'judge_g_eval',
     'judge_input_output',
     'judge_input_output_expected',
@@ -472,14 +476,48 @@ def _rubrics_output_type(rubrics: Mapping[str, str]) -> type[JsonSchemaValue]:
     )
 
 
+@dataclass(frozen=True)
+class JudgeAnswer:
+    """The judge's answer to one question from [`judge_questions`][pydantic_evals.evaluators.llm_as_a_judge.judge_questions]."""
+
+    value: object
+    """The answer, as the question's field validated it, so an `Enum` field's answer is an `Enum` member."""
+
+    confidence: float | None = None
+    """How sure the judge is of the answer, from 0 to 1, or `None` when the judge reports no confidence.
+
+    A [decision model](https://pydantic.dev/docs/ai/models/decision/), such as TypeSafe's Jev, reports one per
+    question in `provider_details['confidence']`.
+    """
+
+
+def _question_fields(questions: type[object]) -> dict[str, str]:
+    """Each field of a model-like type, mapped to the name it is asked under: its alias, if it has one.
+
+    A model, a dataclass and a `TypedDict` all answer with an object of named fields, but only Pydantic's own
+    classes record an alias, so the rest are asked under the names they were written with.
+    """
+    if (fields := getattr(questions, '__pydantic_fields__', None)) is not None:
+        pydantic_fields: dict[str, FieldInfo] = fields
+        return {name: field.alias or name for name, field in pydantic_fields.items()}
+    if is_dataclass(questions):
+        return {field.name: field.name for field in dataclass_fields(questions)}
+    return {name: name for name in questions.__annotations__}
+
+
+def _answer_confidence(response: ModelResponse) -> Mapping[str, float]:
+    """The confidence a decision model reports for each question, keyed by the name it was asked under."""
+    return (response.provider_details or {}).get('confidence') or {}
+
+
 async def judge_questions(
     output: Any,
-    questions: type[BaseModel] | Mapping[str, str],
+    questions: type[object] | Mapping[str, str],
     inputs: Any | None = None,
     expected_output: Any | None = None,
     model: models.Model | models.KnownModelName | str | None = None,
     model_settings: ModelSettings | None = None,
-) -> dict[str, Any]:
+) -> dict[str, JudgeAnswer]:
     """Answer several questions about one output in a single model request.
 
     The questions go on the output type rather than into the prompt, which carries only the material to
@@ -488,16 +526,16 @@ async def judge_questions(
 
     Args:
         output: The output being judged.
-        questions: A Pydantic model whose fields are the questions, or a mapping of question name to a
-            rubric answered with a yes or a no.
+        questions: A Pydantic model, dataclass or `TypedDict` whose fields are the questions, or a mapping of
+            question name to a rubric answered with a yes or a no.
         inputs: Optional inputs to show alongside the output.
         expected_output: Optional expected output to show alongside the output.
         model: The model to use. If not specified, the default judge model is used.
         model_settings: Optional model settings.
 
     Returns:
-        The answers keyed by question name, in the order the questions were declared. A model's fields
-        come back as the values they validated to, so an `Enum` field is an `Enum` member.
+        The answers keyed by question name, in the order the questions were declared, each with the
+        confidence the judge reported for it.
     """
     user_prompt, context = _build_prompt(output=output, inputs=inputs, expected_output=expected_output)
     considering = f', taking {" and ".join(context)} into account' if context else ''
@@ -506,39 +544,65 @@ async def judge_questions(
     instructions = f'Answer each question about <Output>{considering}.'
     resolved_model = _resolve_judge_model(model)
     if isinstance(questions, Mapping):
-        answers = (
-            await _judge_questions_agent.run(
-                user_prompt,
-                model=resolved_model,
-                model_settings=model_settings,
-                instructions=instructions,
-                output_type=_rubrics_output_type(questions),
-            )
-        ).output
-        verdicts: dict[str, Any] = {}
-        for name in questions:
-            # A rubric is a yes-or-no question, and not every model is held to the schema it was given.
-            # A `'false'` that got through would be recorded as a label rather than as the assertion the
-            # rubric asked for, so it is refused here instead.
-            verdict = answers.get(name)
-            if not isinstance(verdict, bool):
-                raise ValueError(f'Judge returned an invalid verdict for {name!r}: {verdict!r}')
-            verdicts[name] = verdict
-        return verdicts
-    answer = (
-        await _judge_questions_agent.run(
+        result = await _judge_questions_agent.run(
             user_prompt,
             model=resolved_model,
             model_settings=model_settings,
             instructions=instructions,
-            output_type=questions,
+            output_type=_rubrics_output_type(questions),
         )
-    ).output
-    # Read the validated instance field by field rather than dumping it: the dump is the model's
+        confidence = _answer_confidence(result.response)
+        verdicts: dict[str, JudgeAnswer] = {}
+        for name in questions:
+            # A rubric is a yes-or-no question, and not every model is held to the schema it was given.
+            # A `'false'` that got through would be recorded as a label rather than as the assertion the
+            # rubric asked for, so it is refused here instead.
+            verdict = result.output.get(name)
+            if not isinstance(verdict, bool):
+                raise ValueError(f'Judge returned an invalid verdict for {name!r}: {verdict!r}')
+            verdicts[name] = JudgeAnswer(verdict, confidence.get(name))
+        return verdicts
+    result = await _judge_questions_agent.run(
+        user_prompt,
+        model=resolved_model,
+        model_settings=model_settings,
+        instructions=instructions,
+        output_type=questions,
+    )
+    confidence = _answer_confidence(result.response)
+    fields = _question_fields(questions)
+    # Read the validated answer field by field rather than dumping it: the dump is the model's
     # serialization, which a computed field, an alias or a custom `@model_serializer` can add to,
-    # rename or replace, and none of that is what the judge was asked. The field names are the
-    # user's, so they are not statically known here.
-    return {name: getattr(answer, name) for name in questions.model_fields}
+    # rename or replace, and none of that is what the judge was asked.
+    if is_str_dict(result.output):
+        # A `TypedDict` answers with a `dict`, which leaves out a key that is not required and was not answered.
+        values = {name: result.output.get(name) for name in fields}
+    else:
+        values = {name: getattr(result.output, name) for name in fields}
+    return {name: JudgeAnswer(values[name], confidence.get(asked_as)) for name, asked_as in fields.items()}
+
+
+async def _judge_question(  # pyright: ignore[reportUnusedFunction]
+    output: Any,
+    question: str,
+    output_type: TypeForm[object],
+    inputs: Any | None,
+    expected_output: Any | None,
+    model: models.Model | models.KnownModelName | str | None,
+    model_settings: ModelSettings | None,
+) -> JudgeAnswer:
+    """Ask one typed question about an output; the question is the instructions and its answer the output."""
+    user_prompt, _ = _build_prompt(output=output, inputs=inputs, expected_output=expected_output)
+    result = await _judge_questions_agent.run(
+        user_prompt,
+        model=_resolve_judge_model(model),
+        model_settings=model_settings,
+        instructions=question,
+        output_type=output_type,
+    )
+    confidence = _answer_confidence(result.response)
+    # A bare answer is one question, so it has one confidence, whatever the field wrapping it is called.
+    return JudgeAnswer(result.output, next(iter(confidence.values())) if len(confidence) == 1 else None)
 
 
 class GEvalOutput(BaseModel):

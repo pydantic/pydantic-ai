@@ -60,9 +60,11 @@ dataset = Dataset(
 )
 ```
 
-When you want several measures of the same output, [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge]
-asks them in one request instead of one per measure — see
-[Several Measures in One Request](llm-judge.md#several-measures-in-one-request) for what that costs.
+Reach for [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] to grade an output against a rubric and keep the
+judge's reason for its verdict. Reach for [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] to ask
+typed questions — a yes or no, one of a set of options, or a 0-to-1 score — and report the answers themselves,
+several of them in one request; see [Several Measures in One Request](llm-judge.md#several-measures-in-one-request)
+for what sharing a request costs.
 
 For metrics aligned with widely-used evaluation methods (G-Eval, the Ragas RAG metrics, GEMBA),
 see [Standard Quality Metrics](standard-quality-metrics.md): the

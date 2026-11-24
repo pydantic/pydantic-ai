@@ -360,8 +360,10 @@ dataset = Dataset(
 
 ### StructuredJudge
 
-Several measures of one output, answered in a single model request: one measure per question, named
-after the question.
+Ask a judge typed questions about the output and report its answers: a yes or no as an assertion, one of a
+set of options as a label, or a 0-to-1 score. Several questions go out in one model request, one measure
+per question, named after the question. Where [`LLMJudge`](#llmjudge) grades against a rubric and
+explains its verdict, `StructuredJudge` reports the answers themselves, with no prose.
 
 ```python
 from typing import Literal
@@ -369,6 +371,16 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from pydantic_evals.evaluators import StructuredJudge
+
+# One question, answered yes or no
+StructuredJudge('Is the reply polite?')
+
+# One question with a typed answer: a choice is a label
+StructuredJudge(
+    'How does the reply treat the customer?',
+    output_type=Literal['warm', 'neutral', 'curt'],
+    evaluation_name='tone',
+)
 
 # A rubric per measure, each answered with a pass/fail assertion
 StructuredJudge(
@@ -392,22 +404,30 @@ StructuredJudge(ReplyReview, include_input=True)
 
 **Parameters:**
 
-- `questions` (type[BaseModel] | Mapping[str, str]): The questions to answer together, as a model whose
-  fields are the questions or as a mapping of measure name to rubric (required)
+- `questions` (str | Mapping[str, str] | type): One question; a mapping of measure name to rubric; or a
+  Pydantic model, dataclass or `TypedDict` whose fields are the questions (required)
+- `output_type`: The type of a single question's answer: `bool` (default), a `Literal` or `Enum` of
+  strings, or a `float` bounded 0 to 1. A rubric is answered yes or no, and a field with its own type, so
+  pass a model of questions as `questions`, not as `output_type`
 - `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
 - `include_input` (bool): Include task inputs in the prompt (default: `False`)
 - `include_expected_output` (bool): Include the expected output in the prompt (default: `False`)
 - `model_settings` (ModelSettings | None): Custom model settings
+- `evaluation_name` (str | None): Custom name for a single question's measure (default:
+  `'StructuredJudge'`); a rubric or a field is named after its key
 
-**Returns:** a mapping of question name to answer — `bool` as an assertion, `int`/`float` as a score,
-`str` as a label, and an `Enum` as whatever its value is. A field answered with `None` is reported as no
-measure.
+**Returns:** the answer to a single question, or a mapping of question name to answer — `bool` as an
+assertion, `int`/`float` as a score, `str` as a label, and an `Enum` as whatever its value is. An answer of
+`None` is reported as no measure. When the judge reports a confidence for an answer, as a
+[decision model](../../models/decision.md) such as [TypeSafe's Jev](../../models/typesafe.md) does, the
+confidence is the answer's reason.
 
 One request answering every question also fails as one, and asking the questions together can move the
 answers. See [Several Measures in One Request](llm-judge.md#several-measures-in-one-request).
 
-Only the mapping of rubrics can be written in a YAML or JSON dataset file; a Pydantic model is a Python
-type, so an evaluator that uses one is built in Python.
+A question answered yes or no and the mapping of rubrics can be written in a YAML or JSON dataset file. Any
+other `output_type`, and a model of questions, is a Python type, so an evaluator that uses one is built in
+Python.
 
 ---
 
@@ -543,7 +563,7 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | `bool` + reason | Free | Instant |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
-| [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] | Several measures, one request | mapping of measures | $$ | Slow |
+| [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] | Typed questions, one request | `bool`, `str` or `float` per question + confidence | $$ | Slow |
 | [`GEval`][pydantic_evals.evaluators.GEval] | Chain-of-thought scoring | `int` + reason | $$ | Slow |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
 

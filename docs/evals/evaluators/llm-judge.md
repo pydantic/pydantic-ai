@@ -547,6 +547,40 @@ A `bool` field is reported as an assertion, an `int` or `float` as a score, and 
 — the same rules any evaluator returning a mapping is reported by. The evaluator is
 the source of all of them, so a report shows three measures, not three evaluators.
 
+A single question is a string, with the type of its answer as `output_type`. It is answered yes or no by
+default, and its measure is named `evaluation_name`, or after the evaluator:
+
+```python {title="structured_judge_question.py"}
+from typing import Literal
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import StructuredJudge
+
+
+def support_agent(question: str) -> str:
+    return 'I cannot reset your password, but you can do it yourself from the account page.'
+
+
+dataset = Dataset(
+    name='support_replies',
+    cases=[Case(name='locked_out', inputs='I am locked out of my account.')],
+    evaluators=[
+        StructuredJudge('Is the reply polite?', evaluation_name='polite'),
+        StructuredJudge(
+            'How does the reply treat the customer?',
+            output_type=Literal['warm', 'neutral', 'curt'],
+            evaluation_name='tone',
+        ),
+    ],
+)
+report = dataset.evaluate_sync(support_agent)
+case = report.cases[0]
+print({name: result.value for name, result in case.assertions.items()})
+#> {'polite': True}
+print({name: result.value for name, result in case.labels.items()})
+#> {'tone': 'warm'}
+```
+
 Write the questions on the output type, not into the rubric text of a prompt. That is what lets a judge
 whose whole design is typed questions — [TypeSafe's Jev](../../models/typesafe.md) — answer all of them
 in one API call; on Jev the one-evaluator-per-measure shape gives the advantage away entirely.
@@ -559,10 +593,11 @@ in one API call; on Jev the one-evaluator-per-measure shape gives the advantage 
 - **A failure takes all of them.** One request answering three questions fails all three at once, leaving
   a single [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] where three judges would have
   failed independently. Independence is what the extra requests buy.
-- **There is no per-measure reason.** [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] records why it
-  reached its verdict; a shared request has one answer per question and no room for three explanations.
-  Add a `str` field to the output type if you want the judge to write one, and keep one judge per measure
-  when the reason is the point.
+- **There is no written reason.** [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] records why it
+  reached its verdict; `StructuredJudge` reports the answers alone. When the judge reports how confident
+  it is in an answer, as a [decision model](../../models/decision.md) does, that confidence is the
+  answer's reason. Add a `str` field to the output type if you want the judge to write a reason, and use
+  `LLMJudge` when the reason is the point.
 
 ## Validating a Judge Against Human Labels
 

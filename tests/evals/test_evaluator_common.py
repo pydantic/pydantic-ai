@@ -4,13 +4,14 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
-from enum import Enum, IntEnum
-from typing import TYPE_CHECKING, Any, Literal
+from enum import Enum, IntEnum, StrEnum
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field, RootModel, computed_field, model_serializer
 from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
+from typing_extensions import TypedDict
 
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -21,7 +22,7 @@ from .._inline_snapshot import snapshot
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
+    from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext, llm_as_a_judge
     from pydantic_evals.evaluators.common import (
         DEFAULT_EVALUATORS,
         Contains,
@@ -670,8 +671,14 @@ class JudgeCall:
     schema: dict[str, Any]
 
 
-def structured_judge_model(answer: dict[str, Any], calls: list[JudgeCall]) -> FunctionModel:
-    """A judge that records the one request it is sent and answers every question in it."""
+def structured_judge_model(
+    answer: dict[str, Any], calls: list[JudgeCall], confidence: dict[str, float] | None = None
+) -> FunctionModel:
+    """A judge that records the one request it is sent and answers every question in it.
+
+    A `confidence` is reported the way a decision model such as Jev reports it, keyed by the name each
+    question was asked under.
+    """
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
@@ -685,7 +692,10 @@ def structured_judge_model(answer: dict[str, Any], calls: list[JudgeCall]) -> Fu
                 schema=output_tool.parameters_json_schema,
             )
         )
-        return ModelResponse(parts=[ToolCallPart(output_tool.name, answer)])
+        return ModelResponse(
+            parts=[ToolCallPart(output_tool.name, answer)],
+            provider_details={'confidence': confidence} if confidence else None,
+        )
 
     return FunctionModel(respond)
 
@@ -906,3 +916,185 @@ def test_structured_judge_refuses_a_root_model():
     """A root model has one unnamed value, so it cannot name the measures it would produce."""
     with pytest.raises(ValueError, match='`questions` must be a model with named fields, not a `RootModel`'):
         StructuredJudge(RootModel[bool])
+
+
+class Tone(StrEnum):
+    polite = 'polite'
+    curt = 'curt'
+
+
+async def test_structured_judge_answers_a_single_question():
+    """A single question's answer is the measure: a `bool` asserts, a `Literal` or `Enum` labels, a bounded `float` scores."""
+    ctx = MockContext(output='30 days.')
+    calls: list[JudgeCall] = []
+
+    assert await StructuredJudge(
+        'Is the reply polite?', model=structured_judge_model({'response': True}, calls)
+    ).evaluate(ctx) == snapshot(True)
+    evaluator = StructuredJudge(
+        'How does it treat the customer?', output_type=Tone, model=structured_judge_model({'response': 'curt'}, calls)
+    )
+    assert await evaluator.evaluate(ctx) == snapshot('curt')
+    evaluator = StructuredJudge(
+        'How does it treat the customer?',
+        output_type=Literal['polite', 'curt'],
+        model=structured_judge_model({'response': 'polite'}, calls),
+    )
+    assert await evaluator.evaluate(ctx) == snapshot('polite')
+    evaluator = StructuredJudge(
+        'How well does it answer the question?',
+        output_type=Annotated[float, Field(ge=0, le=1)],
+        model=structured_judge_model({'response': 0.7}, calls),
+    )
+    assert await evaluator.evaluate(ctx) == snapshot(0.7)
+
+    def answer_none(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # `float | None` offers `None` as an output tool of its own.
+        tool = next(tool for tool in info.output_tools if tool.name.endswith('None'))
+        return ModelResponse(parts=[ToolCallPart(tool.name, {'response': None})])
+
+    evaluator = StructuredJudge(
+        'How well does it follow the refund policy, if it mentions refunds at all?',
+        output_type=float | None,
+        model=FunctionModel(answer_none),
+    )
+    # An answer of `None` is no measure at all, as it is for a field.
+    assert await evaluator.evaluate(ctx) == snapshot({})
+
+
+async def test_structured_judge_asks_a_single_question_as_the_instructions():
+    """The question is the judge's instructions, and the case goes in the same tagged sections `LLMJudge` uses."""
+    ctx = MockContext(output='30 days.', inputs='Can I get a refund?', expected_output='Yes, within 30 days.')
+    calls: list[JudgeCall] = []
+    model = structured_judge_model({'response': True}, calls)
+
+    await StructuredJudge('Is the reply polite?', model=model).evaluate(ctx)
+    await StructuredJudge(
+        'Is the reply polite?', model=model, include_input=True, include_expected_output=True
+    ).evaluate(ctx)
+
+    assert [(call.prompt, call.instructions) for call in calls] == snapshot(
+        [
+            ('<Output>\n30 days.\n</Output>', 'Is the reply polite?'),
+            (
+                '<Input>\nCan I get a refund?\n</Input>\n<Output>\n30 days.\n</Output>\n'
+                '<ExpectedOutput>\nYes, within 30 days.\n</ExpectedOutput>',
+                'Is the reply polite?',
+            ),
+        ]
+    )
+
+
+async def test_structured_judge_confidence_is_the_reason():
+    """A confidence the judge reports, as Jev does, becomes the reason of the answer it belongs to."""
+    ctx = MockContext(output='30 days.')
+    calls: list[JudgeCall] = []
+
+    # A bare answer is one question, so its one confidence is the answer's, whatever the wrapper field is called.
+    model = structured_judge_model({'response': True}, calls, confidence={'response': 0.93})
+    assert await StructuredJudge('Is the reply polite?', model=model).evaluate(ctx) == snapshot(
+        EvaluationReason(value=True, reason='confidence 0.93')
+    )
+
+    model = structured_judge_model({'is_polite': True, 'is_brief': False}, calls, confidence={'is_polite': 0.81})
+    evaluator = StructuredJudge({'is_polite': 'The reply is polite.', 'is_brief': 'The reply is brief.'}, model=model)
+    assert await evaluator.evaluate(ctx) == snapshot(
+        {'is_polite': EvaluationReason(value=True, reason='confidence 0.81'), 'is_brief': False}
+    )
+
+
+async def test_structured_judge_reads_every_object_question_type():
+    """A model, a dataclass and a `TypedDict` each ask one question per field."""
+    ctx = MockContext(output='30 days.')
+    calls: list[JudgeCall] = []
+
+    class ModelReply(BaseModel):
+        polite: bool
+        tone: Tone
+
+    @dataclass
+    class DataclassReply:
+        polite: bool
+        tone: Tone
+
+    class TypedDictReply(TypedDict):
+        polite: bool
+        tone: Tone
+
+    for questions in (ModelReply, DataclassReply, TypedDictReply):
+        model = structured_judge_model({'polite': True, 'tone': 'curt'}, calls, confidence={'tone': 0.6})
+        assert await StructuredJudge(questions, model=model).evaluate(ctx) == snapshot(
+            {'polite': True, 'tone': EvaluationReason(value='curt', reason='confidence 0.60')}
+        )
+
+    class PartialReply(TypedDict, total=False):
+        polite: bool
+        tone: Tone
+
+    # A key a `TypedDict` does not require can go unanswered, which is no measure.
+    model = structured_judge_model({'polite': True}, calls)
+    assert await StructuredJudge(PartialReply, model=model).evaluate(ctx) == snapshot({'polite': True})
+
+
+async def test_structured_judge_confidence_for_an_aliased_field():
+    """A field is asked under its alias, so its confidence comes back under the alias, not the Python name."""
+
+    class AliasedReply(BaseModel):
+        is_polite: bool = Field(alias='is-polite', description='Is the reply polite?')
+
+    calls: list[JudgeCall] = []
+    model = structured_judge_model({'is-polite': True}, calls, confidence={'is-polite': 0.91})
+
+    assert await StructuredJudge(AliasedReply, model=model).evaluate(MockContext(output='30 days.')) == snapshot(
+        {'is_polite': EvaluationReason(value=True, reason='confidence 0.91')}
+    )
+    assert calls[0].schema['properties'].keys() == {'is-polite'}
+
+
+async def test_structured_judge_default_model_and_settings(mocker: MockerFixture):
+    """Without a `model` the default judge model answers, and `model_settings` reach it."""
+    seen: list[ModelSettings | None] = []
+
+    def record(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.model_settings)
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': True})])
+
+    mocker.patch.object(llm_as_a_judge, '_default_model', FunctionModel(record))
+    evaluator = StructuredJudge('Is the reply polite?', model_settings={'temperature': 0.0})
+    assert await evaluator.evaluate(MockContext(output='30 days.')) is True
+    assert seen == snapshot([{'temperature': 0.0}])
+
+
+def test_structured_judge_output_type_is_for_a_single_question():
+    """`output_type` types one question's answer, and a model of questions is passed as the questions themselves."""
+
+    with pytest.raises(ValueError, match=re.escape('pass the model as `questions`: `StructuredJudge(ReplyReview)`')):
+        StructuredJudge('Judge the reply.', output_type=ReplyReview)
+    with pytest.raises(ValueError, match='`output_type` only applies to a single question'):
+        StructuredJudge({'is_polite': 'The reply is polite.'}, output_type=Tone)
+    with pytest.raises(ValueError, match='`output_type` only applies to a single question'):
+        StructuredJudge(ReplyReview, output_type=Tone)
+    with pytest.raises(ValueError, match='`questions` must be a question, a mapping of measure name to rubric'):
+        StructuredJudge(Tone)
+
+
+def test_structured_judge_evaluation_name():
+    """A single question's measure is named `evaluation_name`, or after the evaluator."""
+    assert StructuredJudge('Is the reply polite?').get_default_evaluation_name() == 'StructuredJudge'
+    assert StructuredJudge('Is the reply polite?', evaluation_name='polite').get_default_evaluation_name() == 'polite'
+
+
+def test_structured_judge_serialization():
+    """A yes/no question round-trips through a dataset file; any other `output_type` is written by name."""
+    assert StructuredJudge('Is the reply polite?').as_spec().model_dump() == snapshot(
+        {'name': 'StructuredJudge', 'arguments': ('Is the reply polite?',)}
+    )
+    evaluator = StructuredJudge('How does it treat the customer?', output_type=Tone, model=TestModel())
+    assert evaluator.as_spec().model_dump() == snapshot(
+        {
+            'name': 'StructuredJudge',
+            'arguments': {'questions': 'How does it treat the customer?', 'output_type': 'Tone', 'model': 'test:test'},
+        }
+    )
+    evaluator = StructuredJudge('How does it treat the customer?', output_type=Literal['polite', 'curt'])
+    assert evaluator.build_serialization_arguments()['output_type'] == snapshot("typing.Literal['polite', 'curt']")
