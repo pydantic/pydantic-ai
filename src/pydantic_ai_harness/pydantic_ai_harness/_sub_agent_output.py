@@ -68,8 +68,8 @@ class ServingModelRecorder(AbstractCapability[Any]):
     def __init__(self) -> None:
         self.model: Model | None = None
         self.answered_by: str | None = None
-        """The model that answered the last request, as `<system>:<model_name>`, from the response as core's
-        `gen_ai.response.model` is."""
+        """The model that answered the last request, as `<provider_name>:<model_name>` from the response,
+        falling back to the request model's `system` and `model_name`."""
         self.output_tools: frozenset[str] = frozenset()
 
     async def after_model_request(
