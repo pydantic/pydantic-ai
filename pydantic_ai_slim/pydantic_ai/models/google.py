@@ -1799,8 +1799,8 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _web_search_billed_per_prompt: bool = False
-    _computer: _google_computer.NativeComputer | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _computer: _google_computer.NativeComputer | None = None
     _usage_received: bool | None = field(default=False, init=False)
     _file_search_tool_call_ids: list[str] = field(default_factory=list[str], init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
