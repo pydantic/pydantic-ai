@@ -659,6 +659,50 @@ class TestUntrustedWorkspaces:
         ]
         assert not any('Use tabs.' in text for text in system_voice)
 
+    async def test_a_lowered_skills_text_reaches_the_model_only_as_tool_output(self, tmp_path: Path) -> None:
+        # Text from a skill below `'operator'` (its description, body and files) is never in the instructions, a
+        # system or user part, or a tool definition: the model only sees it in what `list_skills`, `load_skill` and
+        # `read_skill_file` return.
+        canary = 'CANARY-7f3a'
+        _write_skill(
+            tmp_path / 'skills',
+            'guide',
+            description=f'Guide help {canary}.',
+            body=f'Guide directions {canary}.',
+            files={'references/guide.md': f'Use tabs {canary}.'},
+        )
+        calls = [
+            ToolCallPart('list_skills', {}),
+            ToolCallPart('load_skill', {'name': 'guide'}),
+            ToolCallPart('read_skill_file', {'skill': 'guide', 'path': 'references/guide.md'}),
+        ]
+        requests: list[ModelRequest] = []
+        tool_definitions: list[str] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            requests.append(request)
+            tool_definitions.extend(
+                f'{tool.name} {tool.description} {tool.parameters_json_schema}' for tool in info.function_tools
+            )
+            if len(requests) <= len(calls):
+                return ModelResponse(parts=[calls[len(requests) - 1]])
+            return ModelResponse(parts=[TextPart('done')])
+
+        await Agent(FunctionModel(respond), capabilities=[Skills('skills', read_files=True)]).run(
+            'go', workspace=_untrusted(tmp_path)
+        )
+
+        tool_output = [str(content) for content in _tool_results(requests)]
+        assert [canary in text for text in tool_output] == [True, True, True]
+        elsewhere = [
+            *(request.instructions or '' for request in requests),
+            *(repr(part) for request in requests for part in request.parts if not isinstance(part, ToolReturnPart)),
+            *tool_definitions,
+        ]
+        assert not [text for text in elsewhere if canary in text]
+
     async def test_read_skill_file_still_needs_an_operator_skill_loaded(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'skills', 'own', description='Own help.', files={'notes.md': 'Own notes.'})
         _write_skill(tmp_path / 'skills', 'vendored', description='Vendored help.', files={'notes.md': 'Vendor notes.'})
