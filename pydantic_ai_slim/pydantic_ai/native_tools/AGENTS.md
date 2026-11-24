@@ -10,5 +10,5 @@
 - A setting that restricts what the tool may do never goes in `provider_settings`: other adapters skip those entries, so the restriction would silently stop applying. Keep it top level and list it in `restricting_settings`
 - Provider support must be documented in three places: the tool class docstring 'Supported by' list, `docs/native-tools.md` provider table, and field-level docstrings for provider-specific semantics
 - When a tool field maps directly to a provider API field name, prefer that name — users may have provider docs open alongside pydantic-ai docs
-- Validate mutual exclusivity of a tool's own fields in `__post_init__` — fail fast with clear messages (e.g., 'Cannot specify both allowed_x_handles and excluded_x_handles'). Leave a limit the provider API enforces to the API, per the pre-send rule in `models/AGENTS.md`
+- Validate mutual exclusivity and limits in `__post_init__` — fail fast with clear messages (e.g., 'Cannot specify both allowed_x_handles and excluded_x_handles')
 - Native tool names in pydantic-ai must round-trip through provider APIs — if the API uses a different function name (e.g., xAI sends `x_keyword_search` not `x_search`), preserve the original name when replaying history
