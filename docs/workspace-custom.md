@@ -126,6 +126,8 @@ Pydantic AI shows it to the model by level:
 To do the same in your own capability, send the text in a
 [capability part](capabilities/custom.md#capability-parts) whose source is
 [`await WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace].
+Pass `label=` to show the model a shorter path, such as a file name without a private directory: the authority still
+comes from `path`.
 
 - What a tool returns, such as a file `read_file` read, is tool output whatever the authority.
 - Built-in capabilities that load workspace files into instructions check `authority` as they adopt it. In
