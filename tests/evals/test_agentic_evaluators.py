@@ -10,6 +10,7 @@ go through the public evaluator API.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -858,6 +859,27 @@ def test_argument_correctness_deeply_nested_json():
     assert result.value is False
     assert result.reason is not None
     assert 'could not be parsed as JSON' in result.reason or 'are not a JSON object' in result.reason
+
+
+def test_argument_correctness_non_object_json_too_deep_to_print(monkeypatch: pytest.MonkeyPatch):
+    """Arguments that parse but nest too deeply to print fail the check instead of raising.
+
+    From Python 3.14, `json.loads` parses arrays nested deeper than `repr` can print only within a band of stack sizes.
+    The parse is replaced with one whose result raises `RecursionError` when printed, to reach that case on any stack.
+    """
+
+    class TooDeepToPrint:
+        def __repr__(self) -> str:
+            raise RecursionError('Stack overflow while getting the repr of an object')
+
+    def parse_too_deep_to_print(s: str) -> list[TooDeepToPrint]:
+        return [TooDeepToPrint()]
+
+    tree = _build_tree([_v3_tool_span(name='search', span_id=1, args='[[]]', start_offset=0.0)])
+    monkeypatch.setattr(json, 'loads', parse_too_deep_to_print)
+    result = ArgumentCorrectness(tool_name='search', expected_arguments={'q': 'cats'}).evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason == "Tool 'search' arguments are not a JSON object: a JSON array nested too deeply to display"
 
 
 def test_argument_correctness_non_object_json():
