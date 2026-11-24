@@ -269,6 +269,9 @@ _WEBSOCKET_RETRY_AFTER_LIMIT = 60.0
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
 
+_TOOL_SEARCH_CALL_ITEM_ID_PREFIX = 'tsc_'
+
+
 class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
     """Provider details for OpenAI Responses API continuation."""
 
@@ -2926,7 +2929,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # `tool_search_call` (`tsc_*`) item ID, which the Responses API rejects on a
             # `function_call` item. The item ID is optional here, so only that prefix is dropped:
             # compatible APIs can issue opaque IDs of their own.
-            if isinstance(item, ToolSearchCallPart) and id and id.startswith('tsc_'):
+            if isinstance(item, ToolSearchCallPart) and id and id.startswith(_TOOL_SEARCH_CALL_ITEM_ID_PREFIX):
                 id = None
             context.openai_messages.append(
                 self._map_function_call(item, call_id, id, context, should_send_item_id=should_send_item_id)
