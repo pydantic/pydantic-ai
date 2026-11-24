@@ -1087,18 +1087,17 @@ class BrowserEvent:
             parts.append(self.message)
         return ' '.join(parts)
 
-    def attributes(self, *, include_content: bool = True) -> dict[str, str | int]:
+    def attributes(self) -> dict[str, str | int]:
         """Render the event as OpenTelemetry span-event attributes.
 
         Names follow the OTel HTTP semantic conventions where one applies, so a
         backend that already understands `url.full` or `http.response.status_code`
-        reads these without a custom mapping. A span event keeps `browser.event.message`
-        and `url.full` only when `include_content` is true.
+        reads these without a custom mapping.
         """
         attributes: dict[str, str | int] = {'browser.event.kind': self.kind, 'browser.event.level': self.level}
-        if include_content and self.message:
+        if self.message:
             attributes['browser.event.message'] = self.message
-        if include_content and self.url is not None:
+        if self.url is not None:
             attributes['url.full'] = self.url
         if self.method is not None:
             attributes['http.request.method'] = self.method
@@ -1268,7 +1267,12 @@ class PlaywrightBrowserSession:
         self.events_recorded += 1
         span = self.operation_span
         if span is not None and span.is_recording():
-            span.add_event(f'browser.{event.kind}', event.attributes(include_content=self._operation_includes_content))
+            attributes = event.attributes()
+            if not self._operation_includes_content:
+                # The message and URL can quote page text, form values or tokens in a query string.
+                attributes.pop('browser.event.message', None)
+                attributes.pop('url.full', None)
+            span.add_event(f'browser.{event.kind}', attributes)
 
     def failure_since_operation_start(self) -> BrowserEvent | None:
         """The last refused or failed request caused by the running operation, if any.
