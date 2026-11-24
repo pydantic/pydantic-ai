@@ -52,7 +52,9 @@ garbage collector" or "the caller remembers" is a bug, not a design.
   the failure path. `ShellToolset` tracks its detached workspace jobs in a dict
   that `__aexit__` terminates and cleans up (`shell/_toolset.py`), and
   `LocalStackContainer` pairs a startup `fail_after` with a shielded teardown
-  (`localstack/_container.py`).
+  (`localstack/_container.py`). `WorkspaceBackendSuite` checks process
+  lifecycles for workspace backends, and `tests/harness/shell/test_process_lifecycle.py`
+  checks them for `Shell` jobs. Add a lifecycle case for either one there.
 
 ### Cancellation: level vs. edge
 

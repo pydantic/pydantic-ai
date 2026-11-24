@@ -33,6 +33,7 @@
 ::: pydantic_ai.workspaces.conformance
     options:
         members:
+            - Unsupported
             - WorkspaceBackendSuite
 
 # `pydantic_ai.workspaces.windows`
