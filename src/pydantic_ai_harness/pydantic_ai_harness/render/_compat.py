@@ -477,16 +477,14 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
 
     def _resolve_instrumentation(self, model: Model | None) -> InstrumentationSettings | None:
         """Recover instrumentation from worker configuration, never from the wire."""
-        if isinstance(model, InstrumentedModel):
-            return model.instrumentation_settings
         # Binding supplies a concrete Agent.
         if not isinstance(self._agent, Agent):  # pragma: no cover
             return None
-        if isinstance(self._agent.model, InstrumentedModel):
-            return self._agent.model.instrumentation_settings
-        # The agent's `Instrumentation` capability wins, as it does in the run, over `agent.instrument`
-        # and `Agent.instrument_all()`.
-        return agent_instrumentation_settings(self._agent)
+        instrumented = next((m for m in (model, self._agent.model) if isinstance(m, InstrumentedModel)), None)
+        # The agent's `Instrumentation` capability wins over an `InstrumentedModel`, as it does in the run.
+        return agent_instrumentation_settings(
+            self._agent, model_settings=instrumented.instrumentation_settings if instrumented is not None else None
+        )
 
     def _resolve_model(self, context: Mapping[str, Any]) -> Model | None:
         """Resolve the serialized model ID against this worker's registry.
