@@ -195,7 +195,8 @@ async def test_workspace_content_needs_the_workers_content_setting_too(tmp_path:
 async def test_a_task_records_content_only_if_the_worker_allows_it(worker_content: bool, configured_on: str) -> None:
     """A run that allows content still records none in a task whose worker doesn't, since the task's spans go to it.
 
-    An `Instrumentation` capability on the worker's agent wins over `agent.instrument`, as it does in the run.
+    An `Instrumentation` capability on the worker's agent wins over an `InstrumentedModel` and `agent.instrument`,
+    as it does in the run.
     """
     provider = TracerProvider()
     settings = InstrumentationSettings(tracer_provider=provider, include_content=worker_content)
@@ -206,10 +207,14 @@ async def test_a_task_records_content_only_if_the_worker_allows_it(worker_conten
             InstrumentedModel(model, settings), name='content-flag', deps_type=type(None), capabilities=[runtime]
         )
     else:
+        content_on = InstrumentationSettings(tracer_provider=provider, include_content=True)
         agent = Agent(
-            model, name='content-flag', deps_type=type(None), capabilities=[runtime, Instrumentation(settings=settings)]
+            InstrumentedModel(model, content_on),
+            name='content-flag',
+            deps_type=type(None),
+            capabilities=[runtime, Instrumentation(settings=settings)],
         )
-        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=True)
+        agent.instrument = content_on
     seen: list[bool] = []
 
     @agent.tool
