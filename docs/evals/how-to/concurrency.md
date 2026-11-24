@@ -218,36 +218,31 @@ async def run_evaluation():
 
 ## Monitoring Concurrency
 
-Track execution to optimize settings:
+To estimate how many tasks were running on average, divide the sum of the completed cases' task durations by the elapsed time for the whole evaluation.
 
 ```python {test="skip"}
-import time
+import asyncio
+from time import perf_counter
 
 from pydantic_evals import Case, Dataset
 
 
-def task(inputs: str) -> str:
+async def task(inputs: str) -> str:
+    await asyncio.sleep(0.1)  # Simulate an I/O-bound task
     return f'Result: {inputs}'
 
 
 dataset = Dataset(name='monitoring', cases=[Case(inputs=f'test{i}') for i in range(10)])
 
-t0 = time.time()
-report = dataset.evaluate_sync(task, max_concurrency=10)
-duration = time.time() - t0
+start = perf_counter()
+report = dataset.evaluate_sync(task, max_concurrency=5)
+elapsed = perf_counter() - start
 
-num_cases = len(report.cases) + len(report.failures)
-avg_duration = duration / num_cases
-
-print(f'Total: {duration:.2f}s')
-#> Total: 0.01s
-print(f'Cases: {num_cases}')
-#> Cases: 10
-print(f'Avg per case: {avg_duration:.2f}s')
-#> Avg per case: 0.00s
-print(f'Effective concurrency: ~{num_cases * avg_duration / duration:.1f}')
-#> Effective concurrency: ~1.0
+task_seconds = sum(case.task_duration for case in report.cases)
+print(f'Average concurrent tasks: {task_seconds / elapsed:.1f}')
 ```
+
+The ten tasks can run in two groups of five. Evaluation overhead counts toward elapsed time, so the measured average can be below five.
 
 ## Handling Rate Limits
 
