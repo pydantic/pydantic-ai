@@ -252,8 +252,12 @@ jobs:
                 gh issue create --title "$title" --body-file "${RUNNER_TEMP}/issue.md" --label pydanty:triage-issue
                 ;;
               success)
+                # Only this workflow's own comments say whether it already reported the pass: triage and
+                # maintainers comment on these issues too.
                 if [ -n "$number" ] \
-                  && ! gh issue view "$number" --json comments --jq '.comments[-1].body // ""' | grep -q '^Passed'; then
+                  && ! gh issue view "$number" --json comments \
+                    --jq '[.comments[] | select(.author.login == "github-actions")] | last | .body // ""' \
+                  | grep -q '^Passed'; then
                   gh issue comment "$number" --body "Passed on ${image}: ${RUN_URL}"
                 fi
                 ;;
