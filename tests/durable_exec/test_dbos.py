@@ -69,6 +69,7 @@ from pydantic_ai.capabilities import (
     DynamicCapability,
     Hooks,
     ModelFallback,
+    NativeCompaction,
     SetToolMetadata,
     WrapperCapability,
     on_event,
@@ -107,6 +108,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -7190,6 +7192,50 @@ async def test_dbos_durability_compaction_runs_model_calls_as_steps(dbos: DBOS) 
     )
 
 
+async def test_dbos_run_compact_runs_the_compaction_as_a_step(dbos: DBOS) -> None:
+    """`run(compact=...)` in a workflow compacts through the durable model, so the provider call is a DBOS step."""
+
+    class CompactingModel(FunctionModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            return ModelResponse(
+                parts=[CompactionPart(content=f'a summary of {len(request_context.messages)}, about {instructions}')]
+            )
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        [summary] = messages[0].parts
+        assert isinstance(summary, CompactionPart)
+        return ModelResponse(parts=[TextPart(f'answered from {summary.content}')])
+
+    model = CompactingModel(
+        answer, profile=ModelProfile(supports_compaction_on_demand=True, compaction_instructions='replaces_prompt')
+    )
+    agent = Agent(model, name='durability_run_compact', capabilities=[NativeCompaction(), DBOSDurability()])
+
+    @DBOS.workflow()
+    async def compact_durably() -> tuple[str, list[str]]:
+        result = await agent.run(
+            'What did I say?',
+            message_history=[
+                ModelRequest(parts=[UserPromptPart('Hello DBOS')]),
+                ModelResponse(parts=[TextPart('Hello!')]),
+            ],
+            compact={'focus': 'the greeting'},
+        )
+        return result.output, [record.handler for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        output, handlers = await compact_durably()
+    assert output == 'answered from a summary of 2, about the greeting'
+    assert handlers == ['native']
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(
+        ['durability_run_compact__model.compact_messages', 'durability_run_compact__model.request']
+    )
+
+
 # --- `FunctionToolset` defaults on `Tool` instances, across the upgrade that applied them ---
 
 tool_instances_crash_armed = threading.Event()
@@ -7496,3 +7542,84 @@ async def test_dbos_tool_instance_defaults_patch_cache_holds_its_result_after_ca
     monkeypatch.setitem(_cancelled_probe_events, 'release', release)
     with SetWorkflowID(f'tool-instances-cancelled-run-{uuid.uuid4()}'):
         await cancelled_tool_instances_run_workflow()
+
+
+async def compaction_event_stream_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+@pytest.mark.parametrize('threshold', [2, 100], ids=['compacting', 'not-compacting'])
+@pytest.mark.parametrize('with_handler', [False, True], ids=['without-handler', 'with-handler'])
+async def test_dbos_stateless_openai_compaction_events_are_steps(
+    dbos: DBOS, with_handler: bool, threshold: int
+) -> None:
+    """Stateless `OpenAICompaction` compacts through `compact_history`, so its compaction events reach the handler.
+
+    With an `event_stream_handler`, the `CompactionStartEvent` and `CompactionEndEvent` it handles are two steps of
+    their own, which a workflow started before the upgrade didn't record. Without one, or without a compaction, the
+    steps are the ones it always had.
+    """
+    from pydantic_ai.models.openai import OpenAICompaction, OpenAIResponsesModel
+
+    class Responses(OpenAIResponsesModel):
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('answered')], model_name=self.model_name)
+
+        @asynccontextmanager
+        async def request_stream(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+            run_context: RunContext[Any] | None = None,
+        ) -> AsyncGenerator[StreamedResponse]:
+            async with stand_in.request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as stream:
+                yield stream
+
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            return ModelResponse(parts=[CompactionPart(content='summary', provider_name='openai')])
+
+    async def answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'answered'
+
+    stand_in = FunctionModel(stream_function=answer)
+    name = f'stateless_openai_compaction_{with_handler}_{threshold}'
+    agent = Agent(
+        Responses('gpt-5.4-nano', provider=OpenAIProvider(api_key='test')),
+        name=name,
+        capabilities=[
+            OpenAICompaction(message_count_threshold=threshold),
+            DBOSDurability(event_stream_handler=compaction_event_stream_handler if with_handler else None),
+        ],
+    )
+
+    @DBOS.workflow(name=f'{name}_workflow')
+    async def compact_durably() -> list[str]:
+        result = await agent.run(
+            'And now?',
+            message_history=[ModelRequest(parts=[UserPromptPart('Hi')]), ModelResponse(parts=[TextPart('Hello!')])],
+        )
+        return [record.handler for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        assert await compact_durably() == (['native'] if threshold == 2 else [])
+    steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    handled = [f'{name}__event_stream_handler'] * 2
+    expected = {
+        (False, 2): [f'{name}__model.compact_messages', f'{name}__model.request'],
+        (True, 2): [f'{name}__model.compact_messages', f'{name}__model.request_stream', *handled],
+        (False, 100): [f'{name}__model.request'],
+        (True, 100): [f'{name}__model.request_stream'],
+    }
+    assert steps == expected[with_handler, threshold]
