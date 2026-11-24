@@ -758,14 +758,14 @@ def test_compiler_versions_accepts_a_uniform_set(tmp_path: Path):
 
 
 def test_compiled_runner_contract_rejects_the_legacy_runner(tmp_path: Path):
-    """A legacy runner must not silently bypass CLAI 2 and canonical capture."""
+    """A legacy runner must not silently bypass Pax and canonical capture."""
     lock = _write(
         tmp_path / 'w.lock.yml',
         'jobs: {agent: {steps: [{id: agentic_execution, run: pydantic-ai-runner-launch}]}}',
     )
     violations = check_compiled_runner_contract(lock)
     assert [violation.check for violation in violations] == ['compiled-runner-contract']
-    assert 'public CLAI 2 harness' in violations[0].message
+    assert 'public Pax harness' in violations[0].message
 
 
 _PUBLIC_ENGINE_LOCK = """
@@ -783,7 +783,7 @@ jobs:
           PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
           PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
           PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
-          PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
+          PAI_MODEL: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
           ANTHROPIC_API_KEY: ${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}
           XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
           PYTHONPATH: /tmp/gh-aw/workflow-python
@@ -797,6 +797,14 @@ def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
     """The public engine retains policy, model and proxy credential exclusion."""
     lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK)
     assert check_compiled_runner_contract(lock) == []
+
+
+def test_compiled_runner_contract_rejects_the_variable_of_older_locks(tmp_path: Path):
+    """`GH_AW_MODEL` stays on the model older locks are priced for, so a new lock must read `GH_AW_ZAI_MODEL`."""
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('vars.GH_AW_ZAI_MODEL', 'vars.GH_AW_MODEL'))
+    violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic' in violations[0].message
 
 
 @pytest.mark.parametrize('version', ['0.64.0', '0.70.0', '0.71.1', 'invalid'])
@@ -1084,15 +1092,13 @@ def test_ai_credits_accounting_checks_glm_overlay_units(tmp_path: Path, per_mill
     unit = 1 if per_million else 1_000_000
     config: dict[str, object] = {
         'apiProxy': {
-            'defaultAiCreditsPricing': {'input': 0.6, 'cachedInput': 0.03, 'output': 2.4}
+            'defaultAiCreditsPricing': {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
             if stale_fallback
-            else {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50},
+            else {'input': 1.4, 'cachedInput': 0.26, 'output': 4.4},
             'providers': {
                 'anthropic': {
                     'models': {
-                        'glm-5.3-flash': {
-                            'cost': {'input': 0.15 / unit, 'cache_read': 0.03 / unit, 'output': 0.50 / unit}
-                        }
+                        'glm-5.4': {'cost': {'input': 1.4 / unit, 'cache_read': 0.26 / unit, 'output': 4.4 / unit}}
                     }
                 }
             },

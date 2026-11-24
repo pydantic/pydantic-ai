@@ -1,11 +1,11 @@
 """Browser sign-in to Logfire with the OAuth device flow (RFC 8628), as Code Puppy's Logfire plugin does.
 
-CLAI shows a link and a code and opens the link. That Logfire page signs the user in, or signs a new
+Pax shows a link and a code and opens the link. That Logfire page signs the user in, or signs a new
 user up, and approves the code. No local callback server is involved, so it also works over SSH: open
 the link on any device. The client registers itself (RFC 7591) and uses PKCE; the authorization server
 is discovered from the MCP URL (RFC 9728), so self-hosted Logfire works too.
 
-Tokens are kept per MCP URL in CLAI's credential store (the OS keyring, or a private file) and refreshed
+Tokens are kept per MCP URL in Pax's credential store (the OS keyring, or a private file) and refreshed
 when they expire. A run never starts a sign-in: `DeviceAuth` raises `SignInRequiredError` instead, and
 `LogfireSignIn` signs in when the user asks, from `/logfire login` or the settings menu.
 """
@@ -197,7 +197,7 @@ class _Granted(BaseModel):
     def _bearer(cls, token_type: str) -> str:
         # MCP sends tokens as `Authorization: Bearer`; another scheme would be sent wrongly.
         if token_type.lower() != 'bearer':
-            raise ValueError(f'CLAI needs a Bearer token, not {token_type!r}')
+            raise ValueError(f'Pax needs a Bearer token, not {token_type!r}')
         return token_type
 
     def covers(self, scope: str) -> bool:
@@ -250,11 +250,11 @@ async def _discover(http: httpx.AsyncClient, resource: str) -> tuple[_Server, li
 
 async def _register(http: httpx.AsyncClient, server: _Server, scope: str) -> str:
     if server.registration_endpoint is None:
-        raise SignInError('This Logfire server does not let CLAI register for browser sign-in. Use an API key.')
+        raise SignInError('This Logfire server does not let Pax register for browser sign-in. Use an API key.')
     response = await http.post(
         server.registration_endpoint,
         json={
-            'client_name': 'CLAI',
+            'client_name': 'Pax',
             'client_uri': 'https://github.com/pydantic/pydantic-ai',
             'grant_types': [DEVICE_GRANT, 'refresh_token'],
             'token_endpoint_auth_method': 'none',
@@ -263,7 +263,7 @@ async def _register(http: httpx.AsyncClient, server: _Server, scope: str) -> str
         },
     )
     if response.is_error:
-        raise SignInError(f'Logfire refused to register CLAI: {_problem(response).error_description}')
+        raise SignInError(f'Logfire refused to register Pax: {_problem(response).error_description}')
     return _Registered.model_validate_json(response.content).client_id
 
 
@@ -299,7 +299,7 @@ async def sign_in(
         form = {'scope': scope, 'resource': resource, 'code_challenge': challenge, 'code_challenge_method': 'S256'}
         response = await http.post(server.device_authorization_endpoint, data={**form, 'client_id': client_id})
         if reusable and response.is_error and _problem(response).error == 'invalid_client':
-            # The server forgot the client CLAI registered earlier; register again once.
+            # The server forgot the client Pax registered earlier; register again once.
             client_id = await _register(http, server, scope)
             response = await http.post(server.device_authorization_endpoint, data={**form, 'client_id': client_id})
         if response.is_error:
@@ -452,7 +452,7 @@ class DeviceAuth(httpx.Auth, httpx2.Auth):  # pyright: ignore[reportIncompatible
             if tokens is None or not tokens.serves(read_only=self._read_only):
                 raise SignInRequiredError(NOT_SIGNED_IN)
             if tokens != rejected and tokens.fresh():
-                return tokens  # Another request, or another CLAI process, may have refreshed it already.
+                return tokens  # Another request, or another Pax process, may have refreshed it already.
             async with self._http() as http:
                 refreshed = await _refresh(http, resource=self._resource, tokens=tokens)
             if refreshed is None:

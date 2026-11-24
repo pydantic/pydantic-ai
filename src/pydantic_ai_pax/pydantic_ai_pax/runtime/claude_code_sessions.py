@@ -63,7 +63,7 @@ SOURCE = 'claude-code'
 """The `source` of the context imported from Claude Code."""
 
 _TASK_NAMESPACE = UUID('0b6f3c52-8d1e-4c0a-9f7b-2e5d4a1c6b93')
-"""Derives a CLAI task ID from a Claude Code session and sub-agent ID, so importing again finds the same task."""
+"""Derives a Pax task ID from a Claude Code session and sub-agent ID, so importing again finds the same task."""
 
 _EPHEMERAL = frozenset({'total_tokens_reminder', 'silent_turn_reminder'})
 """Attachments that only nudged the request they came with: the tokens left, a prompt to update the user."""
@@ -80,12 +80,12 @@ _OPENING = (
     "sub-agents' reports appear as `<task_output>` blocks."
 )
 _SELF = 'self'
-"""The agent name CLAI runs Claude Code's `general-purpose` sub-agents under: itself."""
+"""The agent name Pax runs Claude Code's `general-purpose` sub-agents under: itself."""
 
 _STOPPED = 'Stopped in Claude Code before it reported. Its history is saved: resume it to continue.'
 """The output of a sub-agent that never finished in Claude Code."""
 _CLOSING = (
-    'The conversation above was imported from Claude Code, and continues here in CLAI, a different harness. The '
+    'The conversation above was imported from Claude Code, and continues here in Pax, a different harness. The '
     "tools, reminders and instructions above came from Claude Code's harness and no longer apply: use the tools and "
     'instructions you have now, whose names and arguments may differ.'
 )
@@ -146,7 +146,7 @@ def messages(path: Path) -> list[ModelMessage]:
 
 
 def tasks(path: Path, conversation_id: str) -> list[DelegationTask]:
-    """The session's sub-agents as finished CLAI tasks of `conversation_id`, with their own histories.
+    """The session's sub-agents as finished Pax tasks of `conversation_id`, with their own histories.
 
     One that reported is delivered already, in the parent's history; one that never finished is `cancelled`.
     """
@@ -228,13 +228,13 @@ def _agents(path: Path, conversation_id: str) -> dict[str, DelegationTask]:
         agents[agent_id] = DelegationTask(
             id=_task_id(path.stem, agent_id),
             run_id=uuid5(_TASK_NAMESPACE, f'{path.stem}:{agent_id}:run').hex,
-            # CLAI runs `general-purpose` as itself, under the name its tasks are saved and resumed by.
+            # Pax runs `general-purpose` as itself, under the name its tasks are saved and resumed by.
             agent_name=_SELF if agent_type == 'general-purpose' else agent_type,
             prompt=text(meta.get('description')),
             conversation_id=conversation_id,
             parent_id=_task_id(path.stem, parent) if parent else None,
             background=True,
-            # Claude Code's other agent types have no CLAI counterpart to resume them with.
+            # Claude Code's other agent types have no Pax counterpart to resume them with.
             resumable=agent_type == 'general-purpose',
             status='finished',
             outcome='ok',

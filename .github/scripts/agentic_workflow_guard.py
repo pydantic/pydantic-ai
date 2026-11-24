@@ -598,9 +598,9 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
             and command[3] == 'clai2'
             for command in harness_commands[-1:]
         ):
-            missing.append('the public CLAI 2 harness')
+            missing.append('the public Pax harness')
         for name, expected, description in (
-            ('XDG_CONFIG_HOME', '/tmp/gh-aw/clai2-config', 'isolated CLAI settings for the workflow budgets'),
+            ('XDG_CONFIG_HOME', '/tmp/gh-aw/clai2-config', 'isolated Pax settings for the workflow budgets'),
             ('PYTHONPATH', '/tmp/gh-aw/workflow-python', 'the staged workflow-policy import path'),
             ('PAI_AGENT', 'pydantic_ai_gh_aw_shim.agent:agent', 'the repository workflow policy'),
             ('PAI_RESULT_METADATA', 'pydantic_ai_gh_aw_shim.agent:result_metadata', 'authenticated workflow metadata'),
@@ -620,8 +620,8 @@ def check_compiled_runner_contract(lock: Path) -> list[Violation]:
             missing.append('AWF exclusion of the provider credential')
         if not env.get('PYDANTIC_AI_TASK_ID') or 'PYDANTIC_AI_TASK_ID' in exclusions:
             missing.append('task identity available inside the agent sandbox')
-        if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_MODEL }}':
-            missing.append('the unchanged Z.ai model selected through Anthropic')
+        if env.get('PAI_MODEL') != 'anthropic/${{ vars.GH_AW_ZAI_MODEL }}':
+            missing.append('the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic')
         if env.get('ANTHROPIC_API_KEY') != ENGINE_CREDENTIAL:
             missing.append('injection of the account-selected Z.ai key at the provider proxy')
     return [Violation(str(lock), 'compiled-runner-contract', 'Missing ' + ', '.join(missing) + '.')] if missing else []
@@ -722,18 +722,21 @@ def compiled_awf_configs(lock: Path) -> list[Mapping[str, object]]:
 
 
 def check_ai_credits_accounting(lock: Path) -> list[Violation]:
-    """Allow verified GLM prices in USD per token, never per-million overlay values."""
+    """Allow verified GLM prices in USD per token, never per-million overlay values.
+
+    Z.ai published no GLM-5.4 API price as of 2026-11-23, so GLM-5.4 is priced at GLM-5.3's rates.
+    """
     expected: dict[str, object] = {
         'anthropic': {
-            'models': {'glm-5.3-flash': {'cost': {'input': 0.00000015, 'cache_read': 0.00000003, 'output': 0.00000050}}}
+            'models': {'glm-5.4': {'cost': {'input': 0.0000014, 'cache_read': 0.00000026, 'output': 0.0000044}}}
         }
     }
-    fallback: dict[str, float] = {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
+    fallback: dict[str, float] = {'input': 1.4, 'cachedInput': 0.26, 'output': 4.4}
     return [
         Violation(
             str(lock),
             'ai-credits-accounting',
-            '`models.providers` must use the verified GLM-5.3-Flash USD-per-token rates; '
+            '`models.providers` must price GLM-5.4 at the verified GLM-5.3 USD-per-token rates; '
             'per-million values incorrectly exhaust the fixed AWF credit cap. '
             '`models.default-ai-credits-pricing` must use the same rates in USD per million tokens.',
         )

@@ -1,4 +1,4 @@
-"""Strict mode off for every tool and output tool CLAI sends to a model."""
+"""Strict mode off for every tool and output tool Pax sends to a model."""
 
 from dataclasses import dataclass, replace
 
@@ -29,4 +29,4 @@ def _non_strict(tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
 
 
 NON_STRICT_SCHEMAS = NonStrictSchemas()
-"""The one instance CLAI binds, so a session's plugin snapshot keeps its identity between runs."""
+"""The one instance Pax binds, so a session's plugin snapshot keeps its identity between runs."""

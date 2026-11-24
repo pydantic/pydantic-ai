@@ -10,7 +10,7 @@ Commands run between turns, so a `/fork` typed during a turn is queued like any
 other command. Completion output waits until no turn or command owns the
 terminal, then prints one fork banner, the Markdown response, and the saved
 session id that `/resume` continues. Cancelling a turn cancels running forks;
-exiting or reloading CLAI cancels them too.
+exiting or reloading Pax cancels them too.
 """
 
 import asyncio
