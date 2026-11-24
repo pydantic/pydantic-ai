@@ -183,6 +183,8 @@ runs it graded fully correct. Cost comes from each run's token counts priced wit
 - Uploads and downloads are not available: downloads are denied, and the commands that take host file paths are
   left out of the defaults.
 - On Windows, which has no process groups, teardown kills Chrome's own process only.
+- The capability does not bound Chrome's memory or CPU use. Where that matters, run it under container or cgroup
+  limits.
 - It cannot attach to a browser that is already running; that is tracked in
   [#14246](https://github.com/pydantic/pydantic-ai/issues/14246).
 
