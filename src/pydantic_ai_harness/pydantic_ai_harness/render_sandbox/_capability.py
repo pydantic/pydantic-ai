@@ -12,7 +12,6 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_path_authority,
@@ -20,6 +19,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     reject_defer_loading,
 )
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
 
 from ._backend import (
     DEFAULT_SANDBOX_TIMEOUT,

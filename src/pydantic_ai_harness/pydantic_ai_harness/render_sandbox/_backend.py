@@ -39,7 +39,6 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -50,8 +49,9 @@ from pydantic_ai_harness._workspace_provider import (
     require_asyncio,
     run_to_completion,
 )
-from pydantic_ai_harness._x11 import DISPLAY, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, x11_display
 
 try:
     from render import RenderAsync
