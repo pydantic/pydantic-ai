@@ -1,0 +1,374 @@
+"""Folder trust: the first-run question, `/trust`, the footer, where the decision is kept, and what it sets."""
+
+import io
+import json
+import os
+import subprocess
+from pathlib import Path
+
+import anyio
+import pytest
+from prompt_toolkit.input import create_pipe_input
+from rich.console import Console
+from rich.text import Text
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import Authority
+from pydantic_ai.models.test import TestModel
+from pydantic_ai_pax.app import _decide_trust  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_pax.cli import cli, headless, web
+from pydantic_ai_pax.commands import config_command
+from pydantic_ai_pax.config import Settings
+from pydantic_ai_pax.config.project_settings import ProjectSettings, load_project_settings
+from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_ai_pax.runtime.workspace_trust import (
+    WorkspaceTrust,
+    repository_files,
+    trust_command,
+    trust_scope,
+    undecided_notice,
+)
+from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.status import Status
+
+
+def git(directory: Path, *args: str) -> str:
+    return subprocess.run(
+        ['git', '-C', str(directory), *args], check=True, capture_output=True, text=True, timeout=15
+    ).stdout.strip()
+
+
+@pytest.fixture
+def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv('GIT_CONFIG_GLOBAL', os.devnull)
+    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    git(repo, 'init', '--quiet', '--initial-branch=main')
+    git(repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '--quiet', '--allow-empty', '-m', 'first')
+    return repo.resolve()
+
+
+class AuthorityProbe(AbstractCapability[None]):
+    """Records the authority each run's workspace gives the folder's instruction file."""
+
+    def __init__(self) -> None:
+        self.seen: list[Authority] = []
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        self.seen.append(await ctx.workspace.authority_of('AGENTS.md'))
+
+
+def shell_in(directory: Path, store: SettingsStore, *plugins: AbstractCapability[None]) -> SessionRuntime[None, str]:
+    return create_shell(
+        Agent(TestModel(call_tools=[]), deps_type=type(None), output_type=str),
+        deps=None,
+        plugins=plugins,
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=Settings(model=None),
+        store=store,
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        headless=True,
+        workspace=directory,
+    )
+
+
+async def test_a_folder_is_untrusted_until_you_trust_it(tmp_path: Path) -> None:
+    """Nothing decided: the run's files are the repository's (`'none'`); `/trust yes` makes them yours."""
+    probe = AuthorityProbe()
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = shell_in(tmp_path, store, probe)
+    try:
+        assert shell.session.trust is not None and not shell.session.trust.decided
+        assert 'untrusted' in shell.status.text()
+        await shell.session.prompt('one')
+        assert await shell.commands.execute_async('/trust yes') == (
+            f'Trusted {tmp_path.resolve()}. Applies from the next prompt.'
+        )
+        assert 'untrusted' not in shell.status.text() and 'trusted' in shell.status.text()
+        await shell.session.prompt('two')
+        assert (await shell.commands.execute_async('/trust no')).startswith(f'Untrusted {tmp_path.resolve()}.')
+        await shell.session.prompt('three')
+        assert (await shell.commands.execute_async('/trust')).startswith('This folder is untrusted.\n')
+        assert probe.seen == ['none', 'operator', 'none']
+        assert store.workspace_trust(tmp_path.resolve()) is False
+        with pytest.raises(ValueError, match=r'Usage: /trust \[yes\|no\]'):
+            await shell.commands.execute_async('/trust maybe')
+    finally:
+        await shell.close('exit')
+
+
+async def test_trust_shows_what_it_covers(repository: Path) -> None:
+    (repository / 'AGENTS.md').write_text('Be careful.')
+    (repository / '.claude' / 'skills').mkdir(parents=True)
+    (repository / '.clai').mkdir()
+    (repository / '.clai' / 'settings.json').write_text('{}')
+    store = SettingsStore(repository.parent / 'config.db')
+    shell = shell_in(repository / '.claude', store)
+    try:
+        assert await shell.commands.execute_async('/trust') == (
+            f'This folder is untrusted, as every folder is until you decide.\n'
+            f'{repository}: this repository and its worktrees.\n'
+            'Trusted, these reach the model as your own instructions: ../AGENTS.md, skills.\n'
+            "Untrusted, the agent can still read, edit and run code here, but Pax treats the folder's files as the "
+            "repository's, not yours.\n"
+            'Either way, these still wait for their own approval: ../.clai/settings.json (/project approve, /plugins enable).\n'
+            '/trust yes trusts it; /trust no keeps it untrusted.'
+        )
+    finally:
+        await shell.close('exit')
+
+
+@pytest.fixture
+def terminal(monkeypatch: pytest.MonkeyPatch) -> Console:
+    """A terminal console with a terminal to answer in, as the interactive shell has."""
+    monkeypatch.setattr('sys.stdin.isatty', lambda: True)
+    return Console(file=io.StringIO(), force_terminal=True, width=100, height=30)
+
+
+async def test_first_run_question_is_asked_once_and_remembered(tmp_path: Path, terminal: Console) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    folder = tmp_path / 'project'
+    folder.mkdir()
+    asked: list[str] = []
+
+    async def answer(details: str) -> bool:
+        asked.append(details)
+        return True
+
+    console = terminal
+    shell = shell_in(folder, store)
+    try:
+        await _decide_trust(shell, console=console, ask=answer)
+        assert shell.session.trust is not None and shell.session.trust.trusted
+    finally:
+        await shell.close('exit')
+    assert len(asked) == 1 and asked[0].startswith(f'{folder.resolve()}: this folder and its subfolders.')
+    assert store.workspace_trust(folder.resolve()) is True
+
+    again = shell_in(folder, store)
+    try:
+        await _decide_trust(again, console=console, ask=answer)
+        assert again.session.trust is not None and again.session.trust.trusted
+    finally:
+        await again.close('exit')
+    assert len(asked) == 1, 'a decided folder is not asked about again'
+
+
+async def test_no_keeps_the_folder_untrusted_and_is_remembered(tmp_path: Path, terminal: Console) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    console = terminal
+
+    async def decline(details: str) -> bool:
+        return False
+
+    shell = shell_in(tmp_path, store)
+    try:
+        await _decide_trust(shell, console=console, ask=decline)
+        assert shell.session.trust is not None and shell.session.trust.authority == 'none'
+    finally:
+        await shell.close('exit')
+    assert store.workspace_trust(tmp_path.resolve()) is False
+    assert 'Untrusted' in console.file.getvalue()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType]
+    assert WorkspaceTrust.saved(store, tmp_path).decided
+
+
+async def test_nobody_is_asked_without_a_terminal(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+
+    async def never(details: str) -> bool:
+        raise AssertionError('asked without a terminal')
+
+    shell = shell_in(tmp_path, store)
+    try:
+        await _decide_trust(shell, console=Console(file=io.StringIO()), ask=never)
+        assert shell.session.trust is not None and not shell.session.trust.decided
+    finally:
+        await shell.close('exit')
+
+
+@pytest.mark.parametrize(('keys', 'trusted'), [('1', True), ('\r', False), ('\x1b', False), ('2', False)])
+async def test_the_question_defaults_to_untrusted(
+    tmp_path: Path, terminal: Console, monkeypatch: pytest.MonkeyPatch, keys: str, trusted: bool
+) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = shell_in(tmp_path, store)
+    try:
+        with create_pipe_input() as pipe:
+            monkeypatch.setattr('pydantic_ai_pax.ui.prompt.question_input.create_input', lambda: pipe)
+            pipe.send_text(keys)
+            await _decide_trust(shell, console=terminal)
+        assert shell.session.trust is not None and shell.session.trust.trusted is trusted
+    finally:
+        await shell.close('exit')
+    shown = Text.from_ansi(terminal.file.getvalue()).plain  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownArgumentType]
+    assert f'{tmp_path.resolve()}: this folder and its subfolders.' in ' '.join(shown.split())
+    assert store.workspace_trust(tmp_path.resolve()) is trusted
+
+
+def test_a_repository_is_trusted_as_a_whole(repository: Path, tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    (repository / 'src').mkdir()
+    assert trust_scope(repository / 'src') == trust_scope(repository)
+    assert trust_scope(repository).key == repository and trust_scope(repository).repository
+    WorkspaceTrust.saved(store, repository / 'src').decide(store, trusted=True)
+    assert store.workspace_trust(repository) is True
+    assert WorkspaceTrust.saved(store, repository).trusted
+
+
+def test_a_worktree_shares_its_repository_decision(repository: Path, tmp_path: Path) -> None:
+    worktree = tmp_path / 'linked'
+    git(repository, 'worktree', 'add', '--quiet', '-b', 'side', str(worktree))
+    assert trust_scope(worktree).key == repository
+
+
+def test_a_nested_repository_is_asked_about_on_its_own(repository: Path, tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    nested = repository / 'vendor' / 'clone'
+    nested.mkdir(parents=True)
+    git(nested, 'init', '--quiet')
+    WorkspaceTrust.saved(store, repository).decide(store, trusted=True)
+    assert trust_scope(nested).key == nested.resolve()
+    assert not WorkspaceTrust.saved(store, nested).decided
+
+
+def test_a_git_file_cannot_borrow_a_trusted_repository(repository: Path, tmp_path: Path) -> None:
+    """A downloaded folder whose `.git` file names a trusted repository's Git directory is not one of its worktrees."""
+    store = SettingsStore(tmp_path / 'config.db')
+    WorkspaceTrust.saved(store, repository).decide(store, trusted=True)
+    spoof = tmp_path / 'download'
+    spoof.mkdir()
+    (spoof / '.git').write_text(f'gitdir: {repository / ".git"}\n')
+    assert trust_scope(spoof).key == spoof.resolve()
+    assert not WorkspaceTrust.saved(store, spoof).trusted
+
+
+def test_outside_a_repository_a_decision_covers_subfolders(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    parent = tmp_path / 'notes'
+    child = parent / 'drafts' / 'old'
+    child.mkdir(parents=True)
+    WorkspaceTrust.saved(store, parent).decide(store, trusted=True)
+    inherited = WorkspaceTrust.saved(store, child)
+    assert trust_command(inherited, store, child, []).startswith(
+        f'This folder is trusted, as you decided for {parent.resolve()}.\n'
+    )
+    assert (inherited.trusted, inherited.decided_for, inherited.scope.key) == (True, parent.resolve(), child.resolve())
+    inherited.decide(store, trusted=False)
+    assert not WorkspaceTrust.saved(store, child).trusted, 'the nearest decision wins'
+    assert WorkspaceTrust.saved(store, parent / 'drafts').trusted
+
+
+async def test_trust_in_the_home_folder_holds_for_the_session_only(tmp_path: Path) -> None:
+    home = Path.home().resolve()
+    home.mkdir(parents=True, exist_ok=True)
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = shell_in(home, store)
+    try:
+        assert shell.session.trust is not None and not shell.session.trust.scope.remembered
+        assert await shell.commands.execute_async('/trust yes') == (
+            f'Trusted {home} for this session. Applies from the next prompt.'
+        )
+        assert shell.session.trust.trusted
+        assert 'holds for this session only' in await shell.commands.execute_async('/trust')
+    finally:
+        await shell.close('exit')
+    assert store.workspace_trust(home) is None
+    assert not WorkspaceTrust.saved(store, home).decided, 'asked again next launch'
+    (home / 'scratch').mkdir()
+    store.set_workspace_trust(home, trusted=True)  # As an older build or a hand edit could have left it.
+    assert not WorkspaceTrust.saved(store, home / 'scratch').decided, 'a decision above is never read for home'
+
+
+async def test_a_project_file_cannot_trust_its_repository(repository: Path, tmp_path: Path) -> None:
+    (repository / '.clai').mkdir()
+    (repository / '.clai' / 'settings.json').write_text(
+        json.dumps({'trust': True, 'trusted': True, 'workspace_trust': 'trusted', 'hasTrustDialogAccepted': True})
+    )
+    store = SettingsStore(tmp_path / 'config.db')
+    project = load_project_settings(repository, store=store)
+    assert project.unknown == ('hasTrustDialogAccepted', 'trust', 'trusted', 'workspace_trust')
+    assert not WorkspaceTrust.saved(store, repository).decided
+    with pytest.raises(ValueError, match='Unknown settings'):
+        config_command(store, ['set', 'workspace_trust', 'true'])
+
+
+def test_footer_shows_the_trust_level() -> None:
+    level: list[str] = ['untrusted']
+    status = Status(trust=lambda: 'untrusted' if level[0] == 'untrusted' else 'trusted')
+    assert (theme.WARNING, 'untrusted') in status.toolbar()
+    level[0] = 'trusted'
+    assert (theme.MUTED, 'trusted') in status.toolbar()
+    assert 'trusted' not in Status().text(), "a host's own session shows no trust level"
+    assert Status(trust=lambda: 'trusted', fields=lambda: ['model']).text() == 'agent default'
+
+
+async def test_headless_run_uses_the_saved_decision_without_asking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    probe = AuthorityProbe()
+    store = SettingsStore(tmp_path / 'config.db')
+
+    async def run() -> int:
+        agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None), capabilities=[probe])
+        return await headless.run_headless(
+            text='go', settings=Settings(model=None), store=store, project=ProjectSettings(), agent=agent
+        )
+
+    assert await run() == 0
+    assert capsys.readouterr().err == (
+        f'{tmp_path.resolve()} is untrusted, as you have not decided whether to trust it. '
+        'Start Pax there and answer its question, or enter /trust yes, to trust it.\n'
+    )
+    await anyio.to_thread.run_sync(lambda: store.set_workspace_trust(tmp_path.resolve(), trusted=True))
+    assert await run() == 0
+    assert capsys.readouterr().err == ''
+    assert probe.seen == ['none', 'operator']
+
+
+def test_repository_files_lists_names_only(repository: Path) -> None:
+    (repository / 'CLAUDE.md').write_text('x')
+    (repository / '.agents' / 'agents').mkdir(parents=True)
+    (repository / '.mcp.json').write_text('{}')
+    files = repository_files(repository)
+    assert (files.trusted, files.approved_separately) == (
+        ('CLAUDE.md', '.agents/agents'),
+        (('.mcp.json', '/mcp trust'),),
+    )
+
+
+def test_without_a_home_folder_every_folder_is_remembered(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def no_home() -> Path:
+        raise RuntimeError('Could not determine home directory.')
+
+    monkeypatch.setattr(Path, 'home', staticmethod(no_home))
+    assert trust_scope(tmp_path).remembered
+
+
+async def test_web_launch_names_an_undecided_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    store = SettingsStore(tmp_path / 'config.db')
+    levels: list[bool] = []
+
+    async def serve(shell: SessionRuntime[None, str], **_: object) -> None:
+        assert shell.session.trust is not None
+        levels.append(shell.session.trust.trusted)
+
+    monkeypatch.setattr(web, '_serve_web', serve)
+    settings_for = cli._settings_for(store, model=None, request_limit=None)  # pyright: ignore[reportPrivateUsage]
+
+    async def launch() -> str:
+        console = Console(file=io.StringIO(), width=1000)
+        await web.run_web(settings_for=settings_for, store=store, project=ProjectSettings(), console=console)
+        return console.file.getvalue()  # pyright: ignore[reportAttributeAccessIssue,reportUnknownMemberType,reportUnknownVariableType]
+
+    assert 'is untrusted, as' in await launch()
+    await anyio.to_thread.run_sync(lambda: store.set_workspace_trust(tmp_path.resolve(), trusted=True))
+    assert 'untrusted' not in await launch()
+    assert levels == [False, True]
+    assert undecided_notice(None) is None

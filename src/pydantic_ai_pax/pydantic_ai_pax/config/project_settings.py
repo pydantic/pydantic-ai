@@ -129,6 +129,12 @@ def repository_directories(workspace: Path) -> list[Path]:
     return [start]
 
 
+def repository_root(workspace: Path) -> Path | None:
+    """The nearest folder at or above `workspace` holding a `.git`, resolved; `None` outside a repository."""
+    root = repository_directories(workspace)[-1]
+    return root if _present(root / '.git') else None
+
+
 def _unapproved(plugin: PluginSettings, *, root: Path) -> PluginSettings:
     """`plugin` switched off, with its file anchored to the project `root`.
 

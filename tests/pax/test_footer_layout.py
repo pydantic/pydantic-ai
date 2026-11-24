@@ -452,7 +452,7 @@ async def test_visible_moves_skip_hidden_neighbours_without_enabling_them(tmp_pa
     store = SettingsStore(tmp_path / 'config.db')
     context = CommandContext(settings=Settings(), store=store, apply_setting=lambda key, settings: None)
     source = FooterSource(context)
-    for name in ('workspace', 'context'):
+    for name in ('workspace', 'trust', 'context'):
         await source.configure(name, ScriptedDialogs([Pick(value='toggle')]))
     visible = set(context.settings.footer_fields)
     assert await source.configure('context', ScriptedDialogs([Pick(value='earlier')])) == [

@@ -56,6 +56,8 @@ class Status:
     model: str = 'agent default'
     workspace: str = ''
     """The session's working directory; hidden while empty."""
+    trust: Callable[[], Literal['trusted', 'untrusted'] | None] = lambda: None
+    """Whether you trust the session's directory, painted after it; hidden for `None`, as for a host that decides."""
     context_tokens: int | None = None
     context_estimated: bool = False
     """`context_tokens` is a character estimate, made before any response reported usage; painted with `~`."""
@@ -88,6 +90,7 @@ class Status:
         ('hide', 'updates'),
         ('hide', 'live'),
         ('hide', 'workspace'),
+        ('hide', 'trust'),
         ('hide', 'plugins'),
         ('shorten', 'context'),
         ('hide', 'model'),
@@ -215,6 +218,7 @@ class Status:
         path = _short_path(terminal_text(shown.workspace, keep=''))
         folder = f'…/{PurePath(path).name}'
         figure = (theme.WARNING if shown.context_alert else theme.MUTED, context)
+        trust = self.trust()
         shorter: dict[FooterField, list[tuple[str, str]]] = {
             'workspace': [(theme.MUTED, folder if cell_len(folder) < cell_len(path) else path)],
             'context': [figure],
@@ -222,6 +226,7 @@ class Status:
         return {
             'model': [*named, (theme.MUTED, shown.model)],
             'workspace': [(theme.MUTED, path)],
+            'trust': [(theme.WARNING if trust == 'untrusted' else theme.MUTED, trust or '')],
             'context': [(theme.MUTED, 'context: '), figure, (theme.MUTED, ' tokens')],
             'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
             'cost': [(theme.MUTED, cost)],

@@ -1,13 +1,15 @@
 """The terminal app: `chat`, its stock agent, and `open_stock_agent` for runs from code."""
 
 import os
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
+import sys
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager, nullcontext
+from functools import partial
 from pathlib import Path
 from threading import Thread
 from typing import TypeVar
 
-from anyio import CancelScope, create_task_group
+from anyio import CancelScope, create_task_group, to_thread
 from pydantic import JsonValue
 from rich.console import Console
 
@@ -48,6 +50,7 @@ from pydantic_ai_pax.runtime.session import (
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.temporary_directory import temporary_directory
+from pydantic_ai_pax.runtime.workspace_trust import describe
 from pydantic_ai_pax.runtime.worktrees import Worktree
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.terminal import Terminal
@@ -222,7 +225,7 @@ async def chat(
     use_stock_defaults = builtin_plugins is STOCK_PLUGINS
     # Before the banner, the first output painted in the theme's colours.
     background = _terminal_background(console)
-    shell = _create_home_shell(
+    shell: SessionRuntime[DepsT, OutputT] = _create_home_shell(
         agent,
         deps=deps,
         plugins=plugins,
@@ -238,6 +241,8 @@ async def chat(
         worktree=worktree,
         background=background,
     )
+    with theme.use(lambda: shell.context.settings.theme, background=background), transcript.capture(console):
+        await _decide_trust(shell, console=console)
     fresh = False
     warming: Thread | None = None
     served: WebHandoff | None = None
@@ -378,6 +383,33 @@ def _create_home_shell(
         )
 
 
+async def _decide_trust(
+    shell: SessionRuntime[DepsT, OutputT],
+    *,
+    console: Console,
+    ask: Callable[[str], Awaitable[bool]] | None = None,
+) -> None:
+    """Ask whether you trust the folder of `shell`, the session Pax starts with, unless you decided before.
+
+    Asked only with a terminal to answer in, before any plugin loads or turn runs, through `ask` (by default
+    the inline question), and kept in your settings. Nothing the folder holds is read to decide whether to
+    ask, only its file names to say what trusting it covers.
+    """
+    trust = shell.session.trust
+    assert trust is not None, 'create_shell sets the trust of every session it builds'
+    if trust.decided or not (console.is_terminal and sys.stdin.isatty()):
+        return
+    if ask is None:
+        from pydantic_ai_pax.ui.menus.trust_prompt import ask_trust
+
+        ask = partial(ask_trust, console=console)
+    trusted = await ask(await to_thread.run_sync(describe, trust, Path(shell.session.workspace)))
+    await to_thread.run_sync(partial(trust.decide, shell.context.store, trusted=trusted))
+    level = 'Trusted' if trusted else "Untrusted: the agent can still work here, with its files as the repository's"
+    held = '' if trust.scope.remembered else ' for this session'
+    console.print(f'{level}{held}. /trust changes it.', style=theme.color(theme.INFO), markup=False)
+
+
 async def _start_session(
     shell: SessionRuntime[DepsT, OutputT],
     *,
@@ -464,6 +496,8 @@ def _reload_shell(
             load_plugins=load_plugins,
             workspace=Path(shell.session.workspace),
             settings_for=shell.context.settings_for,
+            # A reload keeps the decision, also one held for the session only, as in your home folder.
+            trust=shell.session.trust,
         )
     )
 
@@ -511,9 +545,10 @@ def _opener(
     launched_in, launch_project = Path(shell.session.workspace), shell.context.project
 
     def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:
+        launch_directory = directory in (None, launched_in)
         project = (
             with_current_approvals(launch_project, store=shell.context.store)
-            if directory in (None, launched_in)
+            if launch_directory
             else load_project_settings(directory, store=shell.context.store)
         )
         return create_shell(
@@ -532,6 +567,8 @@ def _opener(
             process=shell.process,
             signals=False,
             settings_for=settings,
+            # The launch directory shares the terminal's decision; another one gets the one you saved for it.
+            trust=shell.session.trust if launch_directory else None,
         )
 
     return build

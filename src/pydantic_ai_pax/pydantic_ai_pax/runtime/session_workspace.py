@@ -19,6 +19,7 @@ from pydantic_ai_pax.config.project_settings import ProjectSettings, load_projec
 from pydantic_ai_pax.plugins.loader import SessionPlugins
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.sessions import Sessions
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 from pydantic_ai_pax.ui.rendering.status import Status
 
 
@@ -73,8 +74,11 @@ class SessionWorkspace:
         if self.session.running or self.busy():
             raise RuntimeError('Something is running. Switch directories once it ends.')
         project = await to_thread.run_sync(lambda: load_project_settings(directory, store=self.context.store))
+        trust = await to_thread.run_sync(WorkspaceTrust.saved, self.context.store, directory)
         settings = self.settings(project)
         self.session.workspace = self.status.workspace = str(directory)
+        # The new directory gets its own decision, as if Pax had started there; it is never asked here.
+        self.session.trust = trust
         self.context.use_project(project, settings)
         await self.loader.restart(project=project.plugins)
 
@@ -84,4 +88,7 @@ class SessionWorkspace:
             return f'This session works in {self.session.workspace}.'
         await self.move(args[0])
         await self.session.clear()
-        return f'New session in {self.session.workspace}.'
+        untrusted = self.session.trust is not None and not self.session.trust.trusted
+        return f'New session in {self.session.workspace}.' + (
+            ' This folder is untrusted: /trust shows why.' if untrusted else ''
+        )

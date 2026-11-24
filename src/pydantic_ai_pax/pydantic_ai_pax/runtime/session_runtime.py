@@ -99,6 +99,7 @@ from pydantic_ai_pax.runtime.sessions import Sessions
 from pydantic_ai_pax.runtime.speculation import Speculation
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.tasks import Tasks, question_row, resume_prompt
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust, trust_command
 from pydantic_ai_pax.ui import telemetry
 from pydantic_ai_pax.ui.menus.dialogs import run_settings_menu
 from pydantic_ai_pax.ui.menus.key_menu import keys_command, keys_menu
@@ -209,6 +210,33 @@ def _fast_command(
     )
 
 
+def _attach_trust(
+    session: Session[DepsT, OutputT],
+    trust: WorkspaceTrust | None,
+    *,
+    store: SettingsStore,
+    status: Status,
+    commands: Commands,
+) -> None:
+    """Give `session` its folder's trust, `trust` or the one saved for the folder, with its footer field and `/trust`."""
+    session.trust = trust if trust is not None else WorkspaceTrust.saved(store, Path(session.workspace))
+    status.trust = lambda: None if session.trust is None else session.trust.level
+    commands.register(
+        Command(
+            name='trust',
+            description="Show whether you trust this session's folder, or change it: /trust [yes|no]",
+            handler=lambda args: _trust_command(session, store, args),
+            complete=lambda args: ('yes', 'no') if len(args) <= 1 else (),
+        )
+    )
+
+
+async def _trust_command(session: Session[DepsT, OutputT], store: SettingsStore, args: list[str]) -> str:
+    """`/trust` for `session`, whose folder `create_shell` always gave a trust decision; it reads the folder's names."""
+    assert session.trust is not None, 'create_shell sets the trust of every session it builds'
+    return await to_thread.run_sync(trust_command, session.trust, store, Path(session.workspace), args)
+
+
 def create_shell(
     agent: AbstractAgent[DepsT, OutputT],
     *,
@@ -230,6 +258,7 @@ def create_shell(
     process: ClaiProcess[DepsT] | None = None,
     signals: bool = True,
     settings_for: Callable[[ProjectSettings], Settings] | None = None,
+    trust: WorkspaceTrust | None = None,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
@@ -238,6 +267,7 @@ def create_shell(
     it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
     `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
     `settings_for` gives the settings Pax starts with beside a project file, which `/project` applies from.
+    `trust` is whether you trust the session's directory; by default, what you decided before, else untrusted.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
@@ -517,6 +547,7 @@ def create_shell(
     )
     screen = Screen()
     status = Status(fields=lambda: context.settings.footer_fields)
+    _attach_trust(session, trust, store=store, status=status, commands=commands)
     status.restore_text_age(session.messages)
     loader = SessionPlugins[DepsT](
         process=process.plugins,
