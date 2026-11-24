@@ -1,10 +1,10 @@
-"""A typed client for another CLAI's web UI: what its page does, from Python, for a CLAI that drives another one.
+"""A typed client for another Pax's web UI: what its page does, from Python, for a Pax that drives another one.
 
 `WebClient` makes the page's calls: the state, a prompt or `/command`, an interrupt, a saved session's
 transcript, and answers to questions and dialogs, plus the WebSocket stream of `ServerMessage`s.
 `SessionView` follows that stream as the page does, keeping the transcript's items, whether a turn runs,
 and what is asked, so a caller can wait for a turn to end. It follows any `SessionClient`: `WebClient`, or
-`local_client.LocalClient` for a session of this CLAI.
+`local_client.LocalClient` for a session of this Pax.
 
 The token goes in a header for API calls and in the WebSocket's query, with the server's own address as
 the `Host` and `Origin`, as `app.Guard` requires. Nothing here prints or logs it.
@@ -65,7 +65,7 @@ def _error(response: httpx.Response) -> Exception:
         detail = str(_Failure.model_validate_json(response.content).detail)
     except ValidationError:
         detail = response.text
-    message = f'CLAI answered {response.status_code}: {detail}'
+    message = f'Pax answered {response.status_code}: {detail}'
     if response.status_code == 404:
         return LookupError(message)
     if response.status_code == 409:
@@ -76,7 +76,7 @@ def _error(response: httpx.Response) -> Exception:
 
 
 class WebClient:
-    """Calls to one CLAI's web UI at `url` (`http://HOST:PORT/`, without the token), with `token`.
+    """Calls to one Pax's web UI at `url` (`http://HOST:PORT/`, without the token), with `token`.
 
     Use it as an async context manager, which owns its HTTP connections. Failed calls raise what the
     server's handler raised: `LookupError` (404), `RuntimeError` (409), `ValueError` (400, 422), and
@@ -200,7 +200,7 @@ class _Sent:
 
 
 class SessionView:
-    """One CLAI's session as its page follows it, kept current by `follow` from the client's messages.
+    """One Pax's session as its page follows it, kept current by `follow` from the client's messages.
 
     Prompts and commands sent through `send` count as queued until their turn starts or the command ends,
     so `wait` right after `send` waits for that turn, not for a session that has not started it yet. The

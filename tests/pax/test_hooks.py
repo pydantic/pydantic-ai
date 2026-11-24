@@ -109,7 +109,9 @@ async def test_a_block_without_stderr_gets_a_generic_result(tmp_path: Path) -> N
     result = await note_agent(plugin, written).run('write')
     assert written == []
     assert tool_return(result.all_messages()) == 'A before_tool hook blocked write_note.'
-    assert 'before_tool hook blocked write_note: sh -c exit 2' in output.getvalue()
+    assert output.getvalue() == 'before_tool hook blocked write_note: sh -c exit 2\n\n', (
+        'a blank row parts it from the next block'
+    )
 
 
 async def test_an_interrupt_while_a_command_fails_to_start_still_interrupts(
@@ -674,7 +676,7 @@ async def test_enabling_again_approves_a_program_changed_while_loaded(tmp_path: 
 
 
 async def test_a_program_approval_saved_without_its_contents_is_asked_again(tmp_path: Path) -> None:
-    """An approval saved before CLAI recorded program contents covers the table alone, so it is asked again once."""
+    """An approval saved before Pax recorded program contents covers the table alone, so it is asked again once."""
     repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./mark.sh']}]})
     write_program(repo / 'mark.sh', 'ran')
     store = SettingsStore(tmp_path / 'config.db')
@@ -689,7 +691,7 @@ async def test_a_program_approval_saved_without_its_contents_is_asked_again(tmp_
 
 @pytest.mark.parametrize('program', ['missing', 'directory', 'fifo'])
 async def test_a_program_that_cannot_be_read_cannot_be_approved(tmp_path: Path, program: str) -> None:
-    """Contents CLAI cannot read cannot be compared later, so they are never approved, and reading never blocks."""
+    """Contents Pax cannot read cannot be compared later, so they are never approved, and reading never blocks."""
     repo = repository(tmp_path, 'repo', {'turn_end': [{'command': ['./mark.sh']}]})
     if program == 'directory':
         (repo / 'mark.sh').mkdir()

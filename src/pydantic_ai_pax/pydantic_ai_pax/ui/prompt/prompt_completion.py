@@ -54,7 +54,7 @@ class CompletionWorker:
             CompletionRequest(operation=operation, context=copy_context(), loop=loop, future=future)
         )
         if self._thread is None:
-            self._thread = Thread(target=self._work, name='clai-completion', daemon=True)
+            self._thread = Thread(target=self._work, name='pax-completion', daemon=True)
             try:
                 self._thread.start()
             except BaseException:

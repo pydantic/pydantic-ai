@@ -1,4 +1,4 @@
-"""Reload CLAI's modules before rebuilding the shell, without reloading its dependencies."""
+"""Reload Pax's modules before rebuilding the shell, without reloading its dependencies."""
 
 import ast
 import importlib
@@ -168,7 +168,7 @@ def _reload_plan(names: Iterable[str]) -> tuple[tuple[str, Path], ...]:
 
 
 def _sources() -> dict[str, Path]:
-    """The source file of each CLAI module, by module name, the first of `pydantic_ai_pax.__path__` winning."""
+    """The source file of each Pax module, by module name, the first of `pydantic_ai_pax.__path__` winning."""
     sources: dict[str, Path] = {}
     for directory in pydantic_ai_pax.__path__:
         root = Path(directory)
@@ -181,7 +181,7 @@ def _sources() -> dict[str, Path]:
 
 
 def _module_dependencies(name: str, sources: dict[str, Path]) -> set[str]:
-    """The CLAI modules that importing `name` from its current source executes first."""
+    """The Pax modules that importing `name` from its current source executes first."""
     path = sources[name]
     package = name if path.name == '__init__.py' else name.rpartition('.')[0]
     imports = _Imports(package=package, name=name)

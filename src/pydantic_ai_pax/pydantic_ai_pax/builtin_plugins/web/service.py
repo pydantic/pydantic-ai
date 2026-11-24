@@ -1,6 +1,6 @@
-"""The web UI of one CLAI process: its live sessions, each a `SessionChannel`, and everything the page shares.
+"""The web UI of one Pax process: its live sessions, each a `SessionChannel`, and everything the page shares.
 
-The browser names a session by the conversation it holds. Sessions open and close while CLAI runs,
+The browser names a session by the conversation it holds. Sessions open and close while Pax runs,
 and each one's channel is made when it is first seen and dropped once it is gone.
 """
 
@@ -102,17 +102,17 @@ VIEW_TIMEOUT = 10.0
 
 
 class WebService:
-    """What every browser of this CLAI shares: the live sessions, plugins, settings menus, sidebar, and orchestrator.
+    """What every browser of this Pax shares: the live sessions, plugins, settings menus, sidebar, and orchestrator.
 
     The legacy routes and a browser that never sends `watch` use the default session: the one the
     page opened or started last while it is live, else the newest live one.
     """
 
     def __init__(self, *, host: PluginHost[None], terminal: TerminalAnswerer | None = None) -> None:
-        """`terminal` races the browser to answer the model's questions and approvals, where CLAI has a terminal."""
+        """`terminal` races the browser to answer the model's questions and approvals, where Pax has a terminal."""
         self.host = host
         self.live: LiveSessions = host.live if host.live is not None else HostSessions(host)
-        """The process's live sessions; a host built outside CLAI's loader is its own one."""
+        """The process's live sessions; a host built outside Pax's loader is its own one."""
         self.hub = Hub(default=self._default_id)
         self.answerer = BrowserAnswerer(
             publish=self._question,
@@ -122,7 +122,7 @@ class WebService:
         )
         """Asks the model's questions in the browsers watching the session asking."""
         self.dialogs = BrowserDialogs(publish=self.hub.publish)
-        """Where the settings menus opened in this page, and commands entered while CLAI has no terminal, ask."""
+        """Where the settings menus opened in this page, and commands entered while Pax has no terminal, ask."""
         if isinstance(self.live, LiveRuntimes):
             self.live.dialogs = self.dialogs
         self.orchestrator = Orchestrator(service=self)
@@ -135,7 +135,7 @@ class WebService:
         """Which side panel pages this page can frame; each page's headers are read once."""
         self.version = installed().label
         self.update: UpdateInfo | None = None
-        """`/update` installing a newer CLAI, until the install ends; a browser that connects meanwhile sees it."""
+        """`/update` installing a newer Pax, until the install ends; a browser that connects meanwhile sees it."""
         self._uv_output: list[str] = []
         self._update_asked: tuple[SessionChannel, str] | None = None
         """The page whose About entered `/update now`, and the live session it went into: only that one's tells it."""
@@ -313,7 +313,7 @@ class WebService:
     async def new(self, workspace: str | None = None) -> str:
         """Start a new live session in `workspace`, by default the default session's directory; its conversation ID.
 
-        A CLAI that opens no other sessions starts it in the default session, as `open` does.
+        A Pax that opens no other sessions starts it in the default session, as `open` does.
         """
         if workspace is not None:
             directory = await to_thread.run_sync(workspace_directory, workspace)
@@ -326,7 +326,7 @@ class WebService:
             default = self.default()
             if directory != default.session.workspace:
                 if not self.catalog.follows_workspace:
-                    raise ValueError(f'This CLAI works in {default.session.workspace}. Start CLAI in {directory}.')
+                    raise ValueError(f'This Pax works in {default.session.workspace}. Start Pax in {directory}.')
                 default.session.send_input(f'/workspace {directory}')
             else:
                 default.session.send_input('/new')
@@ -365,7 +365,7 @@ class WebService:
             return 'default'
 
     def settings_changed(self, channel: SessionChannel | None = None) -> None:
-        """Tell browsers CLAI's settings may have changed: the theme if it did, the status rows, and open menus."""
+        """Tell browsers Pax's settings may have changed: the theme if it did, the status rows, and open menus."""
         if (name := self._theme_name()) != self._theme:
             self._theme = name
             self.hub.publish(ThemeChanged(theme=self.theme()))
@@ -435,7 +435,7 @@ class WebService:
     @property
     def plugin_catalog(self) -> PluginCatalog:
         if self.host.plugins is None:
-            raise LookupError('This CLAI has no plugins to manage.')
+            raise LookupError('This Pax has no plugins to manage.')
         return self.host.plugins
 
     def plugins(self) -> list[PluginRow]:
@@ -589,7 +589,7 @@ class WebService:
     ) -> list[str]:
         """Run About's Update, after which `session` hears how the `/update now` it entered ends.
 
-        That runs in the session CLAI restarts from, as `SessionRuntime.restarter` picks it, so only its
+        That runs in the session Pax restarts from, as `SessionRuntime.restarter` picks it, so only its
         `/update now` tells `session`, not one typed in another session meanwhile. A cancelled or refused
         Update enters nothing and returns no messages, so the page that asked before keeps hearing.
         """
@@ -627,7 +627,7 @@ class WebService:
         owned = [(channel, channel.session.tasks) for channel in self.channels()]
         catalogs = [(channel, catalog) for channel, catalog in owned if catalog is not None]
         if not catalogs:
-            raise LookupError('This CLAI runs no delegated tasks.')
+            raise LookupError('This Pax runs no delegated tasks.')
         for channel, catalog in catalogs:
             if any(task.id == task_id for task in catalog.listing()):
                 return channel, catalog
@@ -696,7 +696,7 @@ class WebService:
     def catalog(self) -> SessionCatalog:
         """The saved sessions, one store for every live session."""
         if self.host.sessions is None:
-            raise LookupError('This CLAI does not save sessions.')
+            raise LookupError('This Pax does not save sessions.')
         return self.host.sessions
 
     async def projects(
@@ -769,7 +769,7 @@ class WebService:
         return sorted(projects, key=lambda project: (not project.current, project.key == MISSING))
 
     async def transcript(self, conversation_id: str) -> Transcript:
-        """A saved session to show; one another CLAI runs is only shown, so opening it is the user's choice to fork it."""
+        """A saved session to show; one another Pax runs is only shown, so opening it is the user's choice to fork it."""
         saved = await self.catalog.saved(conversation_id)
         continuable = await self._continuable(saved.summary.workspace)
         busy = continuable and await to_thread.run_sync(busy_elsewhere, saved.summary)
@@ -784,7 +784,7 @@ class WebService:
         )
 
     async def _continuable(self, workspace: str) -> bool:
-        """Whether a session saved in `workspace` can be opened: here, or there while CLAI follows sessions."""
+        """Whether a session saved in `workspace` can be opened: here, or there while Pax follows sessions."""
         here, follows = str(self.default().session.workspace), self.catalog.follows_workspace
         # Checking its folder stats it, so off the event loop.
         return await to_thread.run_sync(lambda: continuable(workspace, here=here, follows=follows))

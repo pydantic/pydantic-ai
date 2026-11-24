@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from io import StringIO
 from pathlib import Path
+from uuid import UUID, uuid5
 
 import anyio
 import pytest
@@ -105,6 +106,59 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
     assert not service.namer.submit(saved_id, client=service.naming)
     context.set_setting(['sessions.naming_model', 'null'])
     assert context.settings.session_namer_model is None
+
+
+async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(tmp_path: Path) -> None:
+    """Naming is on by default, so opening `/resume` must not send a session held with one model to another's provider.
+
+    Choosing `sessions.naming_model` is choosing where names are made, so then every untitled session is queued.
+    """
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('saved turn')])]
+    local = await store.save(summary=ConversationSummary(workspace='/a', model='ollama:llama'), messages=messages)
+    same = await store.save(summary=ConversationSummary(workspace='/b', model='openai:gpt-5'), messages=messages)
+    session = Session(Agent(TestModel()), deps=None, conversations=store, workspace=tmp_path)
+    session.model = 'openai:gpt-5'
+    context = CommandContext(
+        settings=Settings(model=None), store=SettingsStore(tmp_path / 'config.db'), apply_setting=lambda key, s: None
+    )
+    service = Sessions(session=session, store=store, context=context)
+    await service.listing()
+    # The namer queues a conversation once, so a refused `submit` shows the listing queued it.
+    assert not service.namer.submit(same.id, client=service.naming)
+    assert service.namer.submit(local.id, client=service.naming)
+    # Judged again when the worker reaches it, so switching `/model` after queueing sends nothing.
+    session.model = 'anthropic:claude-sonnet-4-5'
+    assert not await service.namer.name(conversation_id=same.id, client=service.naming)
+    session.model = 'openai:gpt-5'
+    # Saving the setting, even back to its default through off and on, is the choice the description names.
+    context.set_setting(['sessions.naming', 'false'])
+    context.set_setting(['sessions.naming', 'true'])
+    assert service.naming_may_see(local)
+    context.reset_setting('sessions.naming')
+    assert not service.naming_may_see(local)
+
+    chosen = Sessions(session=session, store=store, context=context, namer=SessionNamer(store=store))
+    context.set_setting(['sessions.naming_model', 'openai:gpt-5-mini'])
+    await chosen.listing()
+    assert not chosen.namer.submit(local.id, client=chosen.naming)
+
+    # On Pax's default model neither side records a model, but sessions from another agent still wait.
+    context.set_setting(['sessions.naming_model', 'null'])
+    session.model = None
+    native = ConversationSummary(workspace='/a')
+    imported = ConversationSummary(id=str(uuid5(UUID(int=0), 'claude:session')), workspace='/a', tags=('claude',))
+    forked = ConversationSummary(workspace='/a', tags=('claude', 'tests'))
+    assert [service.naming_may_see(s) for s in (native, imported, forked)] == [True, False, False]
+    session.model = 'openai:gpt-5'
+
+    # Turned on while naming was opt-in: that saved choice already covered every session, and still does.
+    settings = SettingsStore(tmp_path / 'opted-in.db')
+    settings.set('sessions.naming', True)
+    opted_in = CommandContext(settings=settings.load(), store=settings, apply_setting=lambda key, s: None)
+    kept = Sessions(session=session, store=store, context=opted_in, namer=SessionNamer(store=store))
+    await kept.listing()
+    assert not kept.namer.submit(local.id, client=kept.naming)
 
 
 async def test_browser_opened_mid_turn_defers_the_restore(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -353,7 +407,7 @@ async def test_archived_sessions_are_hidden_and_resuming_one_lists_it_again(
     assert (await store.get(conversation_id=old)).summary.archived_at is not None
     assert session.conversation_id != old
     await service.resume(old)
-    # Archived meanwhile by another CLAI, as it was open here between turns: the next turn lists it again.
+    # Archived meanwhile by another Pax, as it was open here between turns: the next turn lists it again.
     await store.set_archived(conversation_id=old, archived=True)
     await session.prompt('continued')
     assert old in [entry.id for entry in await service.listing()]

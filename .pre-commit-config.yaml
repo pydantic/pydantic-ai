@@ -69,6 +69,12 @@ repos:
         # `clai` never imports `pydantic-ai-pax`, so a commit confined to it cannot change the output.
         exclude: ^(src/pydantic_ai_pax|tests/pax)/
         pass_filenames: false
+      - id: pax-docs-page
+        name: CLAI docs page
+        entry: python src/pydantic_ai_pax/scripts/sync_docs_page.py
+        language: python
+        files: ^(src/pydantic_ai_pax/(README\.md|scripts/sync_docs_page\.py)|docs/harness/clai2\.md)$
+        pass_filenames: false
       - id: format
         name: Format
         entry: make

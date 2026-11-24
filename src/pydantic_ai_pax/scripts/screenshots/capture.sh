@@ -153,7 +153,7 @@ ln -s "$HOME/.cache/rod" "$home/.cache/rod"
 # Tapes name each other and their screenshots relative to the directory VHS runs in.
 ln -s "$here/tapes" "$root/tapes"
 
-# Every tape starts CLAI with `clai-demo`: the project as committed, and the settings a tape may change reset.
+# Every tape starts Pax with `clai-demo`: the project as committed, and the settings a tape may change reset.
 mkdir -p "$home/bin"
 cat > "$home/bin/clai-demo" <<'EOF'
 #!/usr/bin/env bash

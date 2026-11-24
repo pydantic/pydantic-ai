@@ -1,6 +1,6 @@
 """Contain a plugin capability that rejects its own configuration while a run is set up.
 
-A setting the reader cannot honour, saved by another CLAI build, should cost that capability,
+A setting the reader cannot honour, saved by another Pax build, should cost that capability,
 not every turn. `PluginGuard` turns a `UserError` raised while the run is being built into
 `CapabilitySetupError`, which names the plugin. That turn still fails closed: nothing is retried,
 so no other capability is set up twice. The loader then leaves the capability out of later turns.

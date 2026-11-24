@@ -2,9 +2,11 @@
 
 import argparse
 import asyncio
+import gc
 import os
 import re
 import sys
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,7 +16,7 @@ from pydantic_ai_pax.ui.rendering.splash import Splash
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
     from pydantic_ai_pax.cli.self_update import Relaunch, WebHandoff
     from pydantic_ai_pax.config import Settings, UpdateChannel
@@ -66,7 +68,7 @@ def _unique_prefixes(identifiers: set[str]) -> dict[str, str]:
 
 def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
-    parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
+    parser = argparse.ArgumentParser(description='Pax: streaming Pydantic AI terminal')
     _add_resume_flags(parser)
     parser.add_argument(
         '--session-id',
@@ -104,7 +106,7 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '--web',
         action='store_true',
-        help='Drive CLAI from a local web UI instead of the terminal prompt; prints the address and opens it',
+        help='Drive Pax from a local web UI instead of the terminal prompt; prints the address and opens it',
     )
     parser.add_argument(
         '--port',
@@ -124,7 +126,7 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '--update',
         action='store_true',
-        help='Install the newest CLAI from the updates.channel setting with uv, then exit',
+        help='Install the newest Pax from the updates.channel setting with uv, then exit',
     )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
@@ -143,13 +145,14 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
     """Run the parsed command, or start the session it asks for."""
     _resolve_paths(args)
     try:
-        from pydantic_ai.usage import UsageLimits
-        from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
-        from pydantic_ai_pax.cli.agent_import import import_agent
-        from pydantic_ai_pax.cli.self_update import Relaunch, hold_environment
-        from pydantic_ai_pax.config.project_settings import load_project_settings
-        from pydantic_ai_pax.config.settings_store import SettingsStore
-        from pydantic_ai_pax.runtime.worktrees import offer_worktree_cleanup
+        with _frozen_imports(enabled=splash is not None):
+            from pydantic_ai.usage import UsageLimits
+            from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
+            from pydantic_ai_pax.cli.agent_import import import_agent
+            from pydantic_ai_pax.cli.self_update import Relaunch, hold_environment
+            from pydantic_ai_pax.config.project_settings import load_project_settings
+            from pydantic_ai_pax.config.settings_store import SettingsStore
+            from pydantic_ai_pax.runtime.worktrees import offer_worktree_cleanup
     finally:
         if splash is not None:
             splash.stop()
@@ -256,8 +259,28 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
             raise SystemExit(130) from None
 
 
+@contextmanager
+def _frozen_imports(*, enabled: bool) -> 'Generator[None]':
+    """Import with the garbage collector off, then freeze what was imported out of later collections.
+
+    Startup's imports create about 300,000 objects that live until exit; with the collector on, it walks them
+    again and again as they arrive. Freezing without collecting first keeps the few that are garbage, about
+    2 MB, for the life of the process: a collection here would cost the 70 ms this saves. Freezing takes
+    every object in the process, so only a launch from `main`, the one passing a splash, is `enabled`.
+    """
+    if not enabled or not gc.isenabled():
+        yield
+        return
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.freeze()
+        gc.enable()
+
+
 def _resolve_paths(args: argparse.Namespace) -> None:
-    """Resolve `--database` and `--token-file` against the directory CLAI was launched in."""
+    """Resolve `--database` and `--token-file` against the directory Pax was launched in."""
     if args.database is not None:
         # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
         args.database = args.database.resolve()
@@ -312,7 +335,7 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
 
 
 async def _update(channel: 'UpdateChannel') -> int:
-    """`pax --update`: install the newest CLAI on `channel` as `/update now` does, print how it went, and exit.
+    """`pax --update`: install the newest Pax on `channel` as `/update now` does, print how it went, and exit.
 
     No shell runs, so nothing restarts: the next `pax` is the new build. Exits 1 when uv failed or is missing,
     or other `pax` processes run from the install.
@@ -335,7 +358,7 @@ async def _update(channel: 'UpdateChannel') -> int:
     try:
         print(await updates.command([]))
     except (httpx.HTTPError, ValueError) as exc:  # Offline, rate-limited, or an unexpected release listing.
-        print(f'Could not check for a newer CLAI: {exc}', file=sys.stderr)
+        print(f'Could not check for a newer Pax: {exc}', file=sys.stderr)
         return 1
     return 1 if updates.failed else 0
 
@@ -348,7 +371,7 @@ def _settings_for(
     agent: bool = False,
     agent_model: bool = False,
 ) -> 'Callable[[ProjectSettings], Settings]':
-    """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags.
+    """The settings Pax starts with beside a project file: saved ones, then the project's, then the launch flags.
 
     With `agent`, launched with `--agent`: code mode off. With `agent_model`, no model: the agent's own one is used.
     """
@@ -392,7 +415,7 @@ def _enter_worktree(*, name: str, headless: bool, store: 'SettingsStore') -> 'Wo
 
 
 def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
-    """The linked checkout CLAI starts inside, restoring the first launch's snapshot after `/update`."""
+    """The linked checkout Pax starts inside, restoring the first launch's snapshot after `/update`."""
     from pydantic_ai_pax.runtime.worktrees import current_worktree
 
     worktree = current_worktree()

@@ -22,8 +22,17 @@ from rich.text import Text
 from termflow.ansi import make_clipboard_copy
 from termflow.tui.completion import Completion
 
-from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+)
+from pydantic_ai.messages import BinaryContent, ToolCallPart, ToolReturnPart
+from pydantic_ai_harness.shell import CommandFinishedEvent
 from pydantic_ai_pax import StreamRenderer
 from pydantic_ai_pax.commands import Command, Commands
 from pydantic_ai_pax.ui.prompt.image_input import ImageInput
@@ -224,6 +233,50 @@ async def test_interrupt_targets_work_and_preserves_draft(key: str) -> None:
             await done.wait()
         assert not any('Working' in row for row in live.frame())
         assert live.buffer.text == 'retained draft'
+
+
+async def test_working_rule_counts_the_turn_and_names_esc() -> None:
+    now = [100.0]
+    async with editor() as (live, pipe, _):
+        live.interrupts = Interrupts(clock=lambda: now[0])
+        live.ctrl_enter_steers = False
+        started, done = anyio.Event(), anyio.Event()
+
+        async def operation() -> None:
+            started.set()
+            await anyio.sleep_forever()
+
+        async def run() -> None:
+            assert not await live.interrupts.run(operation())
+            done.set()
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(run)
+            await started.wait()
+            now[0] += 72
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule.startswith('─ Working ⠋ 1m 12s · Esc to interrupt ─')
+            # Too narrow for every hint: a draft's own keys outrank the Esc hint.
+            live.buffer.replace('typed')
+            live.console.width = 60
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ 1m 12s · Enter to queue · Alt+Enter to steer ───'
+            live.console.width = 50
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Enter to queue · Alt+Enter to steer ──'
+            live.buffer.replace('')
+            live.console.width = 30
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Esc to interrupt ─'
+            # A queued prompt keeps the hints with an empty draft: it can still be steered in.
+            live.submit('follow-up')
+            live.console.width = 50
+            rule = next(Text.from_ansi(row).plain for row in live.frame() if 'Working' in row)
+            assert rule == '─ Working ⠋ Enter to queue · Alt+Enter to steer ──'
+            pipe.send_text('\x1b')
+            await done.wait()
+        assert not live.interrupts.exit_requested
+        assert live.interrupts.elapsed == 0
 
 
 async def test_ctrl_l_clears_the_screen_but_keeps_the_draft_and_queue() -> None:
@@ -1102,3 +1155,70 @@ async def test_the_full_screen_editor_takes_the_terminal_from_the_start() -> Non
         assert terminal.alternate
         assert terminal.lines()[0] == ''
         assert terminal.lines()[-1].strip() == 'ready', 'the editor sits at the bottom of the terminal'
+
+
+async def run_command(renderer: StreamRenderer, *, call_id: str, command: str, output: str) -> None:
+    """Stream a finished foreground command and its tool result, whose output ends with the harness's handles."""
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id=call_id))
+    )
+    lines = output.count('\n')
+    await renderer.on_stream_event(
+        CommandFinishedEvent(
+            tool_call_id=call_id,
+            pid=7,
+            output_path='/tmp/out',
+            status_path='/tmp/status',
+            exit_code=0,
+            truncated=False,
+            line_count=lines,
+        )
+    )
+    result = f'{output}PID: 7 (supervisor; use `kill` to stop)\nOutput: /tmp/out\nStatus: /tmp/status'
+    await renderer.on_stream_event(FunctionToolResultEvent(part=ToolReturnPart('shell', result, tool_call_id=call_id)))
+    await renderer.finish()
+
+
+@pytest.mark.parametrize('inline', [False, True])
+async def test_ctrl_o_expands_command_output_in_place_and_keeps_it_across_a_resize(inline: bool) -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, inline=inline) as (live, _, _):
+        renderer = StreamRenderer(live.console, stop_loading=lambda: None)
+        await run_command(renderer, call_id='s', command='make test', output='passed one\npassed two\n')
+
+        def shown() -> list[str]:
+            live.output.refresh()
+            live.paint()
+            return [line for line in terminal.lines() if line][:8]
+
+        assert shown()[:2] == ['● shell make test', '  ⎿ exit 0 · 2 lines · ctrl+o to expand']
+        live.feed('ctrl-o')
+        assert live.notice == 'Showing command output.'
+        expanded = ['● shell make test', '  ⎿ exit 0 · 2 lines', '    passed one', '    passed two']
+        assert shown()[:4] == expanded
+        assert live.output.full_screen is not inline, 'inline output that still fits stays inline'
+        # A result that arrives while output is shown opens expanded.
+        await run_command(renderer, call_id='l', command='ls', output='app.py\n')
+        assert shown()[4:7] == ['● shell ls', '  ⎿ exit 0 · 1 line', '    app.py']
+        terminal.resize(width=30, height=24)
+        live.console.size = (30, 24)
+        live.output.resize_notice()
+        assert shown()[:4] == expanded
+        live.feed('ctrl-o')
+        assert live.notice == 'Hiding command output.'
+        # The hint is left out where it does not fit.
+        assert shown()[:3] == ['● shell make test', '  ⎿ exit 0 · 2 lines', '● shell ls']
+
+
+async def test_ctrl_o_shows_output_already_printed_to_scrollback_on_the_alternate_screen() -> None:
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, inline=True) as (live, _, _):
+        renderer = StreamRenderer(live.console, stop_loading=lambda: None)
+        await run_command(renderer, call_id='l', command='ls src', output='src/app.py\nsrc/util.py\n')
+        # A menu or command between turns prints the inline rows into the terminal's scrollback.
+        live.output.release()
+        live.paint()
+        assert not live.output.full_screen
+        live.feed('ctrl-o')
+        assert live.output.full_screen
+        assert '    src/util.py' in terminal.lines()
