@@ -749,16 +749,19 @@ class GoogleInteractionsModel(Model[Client]):
         groups = self._replay_groups(message, original) if original is not None else {}
         steps: list[gi.StepParam | dict[str, JsonValue]] = []
         sent: set[int] = set()
+        signed = False
         for part in message.parts:
             index = step_index(part)
             if original is not None and index in groups:
                 assert index is not None
-                if index not in sent:
-                    steps.append(replay_step(original[index], groups[index]))
-                    sent.add(index)
-                continue
-            signed = any(step.get('signature') or step.get('type') == 'function_call' for step in steps)
-            steps.extend(await self._map_response_part(message, part, context, signed=signed))
+                if index in sent:
+                    continue
+                sent.add(index)
+                added = [replay_step(original[index], groups[index])]
+            else:
+                added = await self._map_response_part(message, part, context, signed=signed)
+            steps.extend(added)
+            signed = signed or any(step.get('signature') or step.get('type') == 'function_call' for step in added)
         return steps
 
     def _replay_groups(

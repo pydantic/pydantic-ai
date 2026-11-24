@@ -76,6 +76,7 @@ with try_import() as imports_successful:
         GoogleInteractionsModel,
         GoogleInteractionsModelSettings,
         GoogleInteractionsStreamedResponse,
+        _MapMessagesContext,  # pyright: ignore[reportPrivateUsage]
         _replay,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.profiles.google import GoogleModelProfile
@@ -1324,6 +1325,39 @@ async def test_client_history_cannot_replay_file_uris(
     else:
         with pytest.raises(UnexpectedModelBehavior, match=error):
             await model_request(mock_model, messages)
+
+
+async def test_response_parts_check_each_step_once(
+    mock_model: GoogleInteractionsModel, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    """Mapping a response checks each step it emits once for a signature, not again for every later part.
+
+    A unit test: the claim is an operation count. Client-sent history can merge thousands of assistant messages into
+    one response, and checking every earlier step again for each part blocked the event loop for over a second.
+    """
+    reads = 0
+
+    class CountingStep(dict[str, object]):
+        def get(self, key: str, default: object = None) -> object:
+            nonlocal reads
+            reads += 1
+            return super().get(key, default)
+
+    map_part = mock_model._map_response_part  # pyright: ignore[reportPrivateUsage]
+
+    async def counting_map_part(
+        message: ModelResponse, part: ModelResponsePart, context: _MapMessagesContext, *, signed: bool
+    ) -> list[CountingStep]:
+        return [CountingStep(step) for step in await map_part(message, part, context, signed=signed)]
+
+    monkeypatch.setattr(mock_model, '_map_response_part', counting_map_part)
+    parts = 100
+    response = ModelResponse([TextPart(f'part {index}') for index in range(parts)])
+    await model_request(
+        mock_model, [ModelRequest.user_text_prompt('hi'), response, ModelRequest.user_text_prompt('continue')]
+    )
+
+    assert reads == 2 * parts
 
 
 async def test_citations_and_error_metadata(
