@@ -10,6 +10,8 @@ A runtime is addressed by its UUID: the API refuses a name in a runtime path.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -17,7 +19,7 @@ from types import TracebackType
 from typing import Literal
 
 import httpx
-from pydantic import Base64Bytes, BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
@@ -76,7 +78,7 @@ class _RuntimeEnvelope(BaseModel):
 
 class _Frame(BaseModel):
     type: str
-    data_base64: Base64Bytes = b''
+    data_base64: str = ''
     code: int = 0
     message: str = ''
 
@@ -101,16 +103,16 @@ class RuntaExec:
             async for message in self._connection:
                 frame = _Frame.model_validate_json(message)
                 if frame.type == 'stdout':
-                    self.stdout += frame.data_base64
+                    self.stdout += base64.b64decode(frame.data_base64)
                 elif frame.type == 'stderr':
-                    self.stderr += frame.data_base64
+                    self.stderr += base64.b64decode(frame.data_base64)
                 elif frame.type == 'exit':
                     return frame.code
                 elif frame.type == 'error':
                     raise RuntaError(f'Runta could not run the command: {frame.message}')
                 if len(self.stdout) + len(self.stderr) > limit:
                     raise OutputLimitExceeded
-        except (ConnectionClosed, ValidationError) as error:
+        except (ConnectionClosed, ValidationError, binascii.Error) as error:
             raise ExecLost('The Runta exec connection broke before the command exited') from error
         raise ExecLost('The Runta exec connection closed before the command exited')
 

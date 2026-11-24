@@ -153,9 +153,9 @@ class TestRuntaSandbox:
     async def test_a_runtime_that_never_runs_fails_after_the_ready_timeout(
         self, runta: FakeRunta, monkeypatch: pytest.MonkeyPatch
     ):
-        # The backend has no parameter for the ready deadline, so the test shortens the module constant.
-        # real-wait: the ready deadline is what the test proves
-        monkeypatch.setattr('pydantic_ai_harness.runta_sandbox._backend._READY_TIMEOUT', 0.05)
+        # The backend has no parameter for the ready deadline, so the test sets the module constant.
+        # A deadline of zero expires at the first checkpoint, without waiting on the clock.
+        monkeypatch.setattr('pydantic_ai_harness.runta_sandbox._backend._READY_TIMEOUT', 0)
         stuck = runta.create(status='pausing')
 
         with pytest.raises(WorkspaceError, match='is still pausing after'):
