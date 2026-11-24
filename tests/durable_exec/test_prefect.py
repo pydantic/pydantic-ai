@@ -158,6 +158,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 try:
@@ -194,11 +195,12 @@ except ImportError:  # pragma: lax no cover
 
 try:
     from fastmcp import FastMCP
-    from fastmcp.client.transports import StdioTransport
+    from fastmcp.client.transports import FastMCPTransport, StdioTransport
     from fastmcp.server.dependencies import get_http_request
 
     from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_server import mcp as test_mcp_server
     from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -4339,7 +4341,6 @@ async def test_prefect_durability_task_name_assembly_sequence() -> None:
     ]
 
 
-@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bool) -> None:
     assert blockbuster_enabled is False
@@ -4359,8 +4360,10 @@ async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bo
             task_names.append(task_run_context.task.name)
             return InstructionPart(content='Server instructions', dynamic=False)
 
+    # In-process, and with the hang guard as handshake deadline: a stalled runner can exceed the default 5 s.
     toolset = RecordingMCPToolset(
-        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        FastMCPTransport(test_mcp_server),
+        init_timeout=READINESS_WAIT_TIMEOUT,
         id='recording_mcp',
         include_instructions=True,
     )
