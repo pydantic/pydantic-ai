@@ -13,6 +13,7 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Ins
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    ModelResponseRejectedEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -206,7 +207,10 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
     a delta for a part already released is dropped.
 
     The guard screens the run's event stream: `run_stream_events()`, the `event_stream_handler`
-    argument to a run, `node.stream()` under `iter()`, and UI adapters. A `ProcessEventStream`
+    argument to a run, `node.stream()` under `iter()`, and UI adapters. A
+    [`ModelResponseRejectedEvent`][pydantic_ai.messages.ModelResponseRejectedEvent] passes with its
+    response's text, thinking and tool-call parts left out, as the stream already carried what the
+    guard released of them. A `ProcessEventStream`
     capability and an `on_event` hook see each event before the guard, so they are not screened.
     `run_stream()` is not screened: its `stream_text()`, `stream_output()` and `stream_response()`
     read the accumulated response, which never carries a replacement and can hold the start of a
@@ -259,6 +263,11 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         """Hold each screened part's events until the guard has decided on the complete part."""
         hold = _Hold(partial(self._screen, ctx))
         async for event in stream:
+            if isinstance(event, ModelResponseRejectedEvent):
+                # The verdicts apply to the part events, so the rejected response's own parts are as the model
+                # streamed them: a value the guard redacted, or a part cut short before the guard saw it complete.
+                parts = [part for part in event.response.parts if not _is_part(part)]
+                event = replace(event, response=replace(event.response, parts=parts))
             for released in await hold.feed(event):
                 yield released
         for released in await hold.finish():

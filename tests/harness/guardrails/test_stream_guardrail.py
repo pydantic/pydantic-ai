@@ -12,7 +12,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from pydantic_ai import Agent, AgentRunResultEvent
+from pydantic_ai import Agent, AgentRunResultEvent, ModelResponseRejectedEvent, ModelRetry
 from pydantic_ai.capabilities import CapabilityOrdering, Instrumentation, ProcessEventStream
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -440,6 +440,46 @@ class TestStreamGuardrail:
         assert [dict(span.attributes or {}) for span in exporter.get_finished_spans()] == [
             {'guardrail.direction': 'stream', 'guardrail.action': 'block', 'guardrail.tool': 'weather'}
         ]
+
+    async def test_a_rejected_response_reaches_the_caller_without_its_screened_parts(self):
+        """The guard's verdicts apply to the part events, so a rejected response's own parts could carry what it redacted.
+
+        The `ModelResponseRejectedEvent` reporting the response leaves out its text, thinking and tool-call parts.
+        """
+
+        async def ssn_then_answer(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            yield 'Sunny' if len(messages) > 1 else 'SSN 123'
+
+        agent = Agent(FunctionModel(stream_function=ssn_then_answer), capabilities=[StreamGuardrail(guard=_redact_ssn)])
+
+        @agent.output_validator
+        def leave_out_the_ssn(output: str) -> str:
+            if 'SSN' in output:
+                raise ModelRetry('Leave out the SSN.')
+            return output
+
+        events: list[AgentStreamEvent] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            events.extend([event async for event in stream])
+
+        result = await agent.run('weather?', event_stream_handler=handler)
+
+        assert result.output == 'Sunny'
+        assert [_describe(event) for event in events] == snapshot(
+            [
+                "PartStartEvent 0 text '[redacted]'",
+                'FinalResultEvent',
+                "PartEndEvent 0 text '[redacted]'",
+                'ModelResponseRejectedEvent',
+                "PartStartEvent 0 text 'Sunny'",
+                'FinalResultEvent',
+                "PartEndEvent 0 text 'Sunny'",
+            ]
+        )
+        rejected = [event for event in events if isinstance(event, ModelResponseRejectedEvent)]
+        assert [event.response.parts for event in rejected] == [[]]
+        assert 'SSN 123' not in repr(events)
 
     async def test_other_parts_pass_through_unscreened(self):
         async def events() -> AsyncIterator[AgentStreamEvent]:
