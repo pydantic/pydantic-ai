@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TypeGuard
 
+from pydantic_ai.messages import ToolReturn
+
 
 def is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
     return isinstance(value, Mapping)
@@ -36,3 +38,7 @@ def is_object_frozenset(value: object) -> TypeGuard[frozenset[object]]:
 
 def is_object_list_or_tuple(value: object) -> TypeGuard[list[object] | tuple[object, ...]]:
     return isinstance(value, list | tuple)
+
+
+def is_tool_return(value: object) -> TypeGuard[ToolReturn[object]]:
+    return isinstance(value, ToolReturn)

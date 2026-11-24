@@ -10,6 +10,7 @@ from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
+from pydantic_ai._tool_execution import NestedCallContent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
@@ -125,7 +126,9 @@ class _Cell:
     call_count: int = 0
     calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
     returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
-    user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
+    user_content: dict[str, tuple[str | None, list[UserContent]]] = field(
+        default_factory=dict[str, tuple[str | None, list[UserContent]]]
+    )
     usage_limit_exceeded: UsageLimitExceeded | None = None
 
     async def call_function(self, request: str) -> str:
@@ -149,7 +152,7 @@ class _Cell:
         self.call_count += 1
         tool_call_id = f'{self.parent_tool_call_id}__{self.call_count}'
         # Reserved before the call runs, so `ToolReturn.content` reaches the model in call order.
-        self.user_content[tool_call_id] = []
+        self.user_content[tool_call_id] = (None, [])
         call_part = ToolCallPart(
             tool_name=self.tool.sanitized_to_original.get(name, name),
             args=schema_arg_names(self.tool.callable_defs[name], call['args']),
@@ -179,7 +182,7 @@ class _Cell:
             return_value = {'output': output, 'result': result}
         return ToolReturn(
             return_value=return_value,
-            content=[item for items in self.user_content.values() for item in items] or None,
+            content=NestedCallContent([segment for segment in self.user_content.values() if segment[1]]) or None,
             metadata={'code_mode': True, 'tool_calls': self.calls, 'tool_returns': self.returns},
         )
 

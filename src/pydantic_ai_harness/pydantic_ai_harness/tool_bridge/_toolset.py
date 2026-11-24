@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai._tool_execution import NestedCallContent
 from pydantic_ai.capabilities import ToolSearchFunc, keywords_search
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -26,6 +27,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai_harness._code_tools import is_code_execution_tool, reserve_nested_call
+from pydantic_ai_harness._typeguards import is_tool_return
 
 SEARCH_TOOL_NAME = 'tool_search'
 DESCRIBE_TOOL_NAME = 'tool_describe'
@@ -244,7 +246,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         ctx.usage.tool_calls += reserved
         reserved *= 2
         try:
-            return await manager.handle_call(call)
+            result = await manager.handle_call(call)
         except (ApprovalRequired, CallDeferred) as exc:
             raise UserError(
                 f'Tool {name!r} raised `{type(exc).__name__}` behind `ToolBridge`, and no `HandleDeferredToolCalls` '
@@ -261,3 +263,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
+        if not is_tool_return(result) or not result.content:
+            return result
+        # Held to the bridged tool's capability's authority, as if the model had called the tool itself.
+        return replace(result, content=NestedCallContent([(target.tool_def.capability_id, result.content)]))

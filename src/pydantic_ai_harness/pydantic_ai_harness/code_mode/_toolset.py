@@ -18,6 +18,7 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
+from pydantic_ai._tool_execution import NestedCallContent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import durable_operation_dispatch
@@ -735,7 +736,9 @@ class RunCodeExecution:
     nested_returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
     # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
     # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
-    user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
+    user_content: dict[str, tuple[str | None, list[UserContent]]] = field(
+        default_factory=dict[str, tuple[str | None, list[UserContent]]]
+    )
     # Each nested call's error, by call ID in the order the calls settled. Monty hands back only an
     # uncaught error's text, so this is how the feed tells that a `ToolFailed` escaped the snippet.
     nested_errors: dict[str, Exception] = field(default_factory=dict[str, Exception])
@@ -753,7 +756,7 @@ class RunCodeExecution:
             )
         self.call_count += 1
         tool_call_id = f'{self.parent_tool_call_id}__{self.call_count}'
-        self.user_content[tool_call_id] = []
+        self.user_content[tool_call_id] = (None, [])
         return tool_call_id
 
     def finish(self, call_part: ToolCallPart, outcome: NestedCallOutcome) -> Any:
@@ -783,7 +786,7 @@ class RunCodeExecution:
 
         return ToolReturn(
             return_value=return_value,
-            content=[item for items in self.user_content.values() for item in items] or None,
+            content=NestedCallContent([segment for segment in self.user_content.values() if segment[1]]) or None,
             metadata={
                 'code_mode': True,
                 'tool_calls': self.nested_calls,

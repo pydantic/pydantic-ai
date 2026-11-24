@@ -9,7 +9,7 @@ import pytest
 from inline_snapshot import snapshot
 from logfire.testing import CaptureLogfire
 
-from pydantic_ai import Agent, FunctionToolset, RunContext, Tool, ToolDefinition
+from pydantic_ai import Agent, FunctionToolset, RunContext, TextContent, Tool, ToolDefinition
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
@@ -34,7 +34,9 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -345,6 +347,42 @@ class TestToolBridge:
 
         assert seen[0] == ['tool_search', 'tool_describe', 'tool_call']
         assert _returns(result.all_messages()) == ['Sunny in Lima']
+
+    async def test_bridged_tool_content_is_held_to_its_capabilitys_authority(self):
+        """A bridged tool's `ToolReturn.content` reaches the model framed as it would be on a direct call."""
+
+        def fetch() -> ToolReturn:
+            """Fetch a page."""
+            return ToolReturn(return_value='ok', content='page text')
+
+        seen: list[list[object]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            if any(tool.name == 'tool_call' for tool in info.function_tools):
+                return ModelResponse(parts=[_call('tool_call', name='fetch', args_json='{}')])
+            return ModelResponse(parts=[_call('fetch')])
+
+        def plugin() -> Capability[object]:
+            return Capability[object](id='plugin', tools=[fetch]).with_authority('none')
+
+        await Agent(FunctionModel(respond), capabilities=[plugin()]).run('Fetch the page')
+        await Agent(FunctionModel(respond), capabilities=[plugin(), ToolBridge()]).run('Fetch the page')
+
+        direct, bridged = seen
+        assert bridged == direct
+        assert bridged == snapshot(
+            [
+                '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                [
+                    TextContent(content='<capability_content>'),
+                    TextContent(content='page text'),
+                    TextContent(content='</capability_content>'),
+                ],
+            ]
+        )
 
     async def test_bridged_call_counts_toward_tool_calls_limit(self):
         model = _scripted([_call('tool_call', name='_get_weather', args_json='{"city": "Oslo"}')])

@@ -148,6 +148,9 @@ class NestedCallOutcome:
     user_content: str | Sequence[UserContent] | None = None
     """`ToolReturn.content` when the tool returned a `ToolReturn`: model-facing content outside the sandbox."""
 
+    capability_id: str | None = None
+    """The run id of the capability that contributed the called tool, whose authority `user_content` is held to."""
+
     error: Exception | None = None
     """The exception the sandbox sees at the call site."""
 
@@ -228,7 +231,11 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
 
     if isinstance(result, ToolReturn):
         return NestedCallOutcome(
-            content=result.return_value, metadata=result.metadata, user_content=result.content, tool_kind=tool_kind
+            content=result.return_value,
+            metadata=result.metadata,
+            user_content=result.content,
+            capability_id=tool_def.capability_id if tool_def is not None else None,
+            tool_kind=tool_kind,
         )
     return NestedCallOutcome(content=result, tool_kind=tool_kind)
 
@@ -239,12 +246,13 @@ def record_nested_call(
     *,
     calls: dict[str, ToolCallPart],
     returns: dict[str, ToolReturnPart],
-    user_content: dict[str, list[UserContent]],
+    user_content: dict[str, tuple[str | None, list[UserContent]]],
 ) -> None:
     """Record a nested call and how it settled with the typed parts a direct call would leave in history.
 
     A call that failed gets no return part unless a handler denied it. `user_content` gets the call's
-    `ToolReturn.content`, which reaches the model on the enclosing `run_code` return, not inside the code.
+    `ToolReturn.content` with its tool's capability, which reaches the model on the enclosing `run_code` return,
+    not inside the code.
     """
     tool_call_id = call_part.tool_call_id
     tool_kind = outcome.tool_kind
@@ -271,7 +279,7 @@ def record_nested_call(
     # Like core, empty content sends the model nothing.
     if outcome.user_content:
         content = outcome.user_content
-        user_content[tool_call_id] = [content] if isinstance(content, str) else list(content)
+        user_content[tool_call_id] = (outcome.capability_id, [content] if isinstance(content, str) else list(content))
 
 
 def schema_arg_names(tool_def: ToolDefinition, kwargs: dict[str, Any]) -> dict[str, Any]:

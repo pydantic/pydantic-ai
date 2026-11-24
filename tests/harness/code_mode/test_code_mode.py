@@ -44,6 +44,7 @@ from pydantic_ai import (
     Agent,
     ExternalToolset,
     RunContext,
+    TextContent,
     Tool,
     ToolDefinition,
     capture_run_messages,
@@ -3359,6 +3360,53 @@ class TestCodeMode:
         run_code_return = result.all_messages()[2].parts[0]
         assert isinstance(run_code_return, ToolReturnPart)
         assert run_code_return.content == [{'success': True}, 'ok', None]
+
+    async def test_tool_return_content_is_held_to_its_capabilitys_authority(self) -> None:
+        """A nested call's `ToolReturn.content` reaches the model framed as it would be on a direct call.
+
+        Content from a tool of a capability at `'none'` is data naming the capability, and content from other tools
+        stays user text around it, in call order.
+        """
+
+        def fetch() -> ToolReturnMsg:
+            """Fetch a page."""
+            return ToolReturnMsg(return_value='ok', content='page text')
+
+        def note(text: str) -> ToolReturnMsg:
+            """Take a note."""
+            return ToolReturnMsg(return_value='ok', content=text)
+
+        seen: list[list[Any]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            if any(tool.name == 'run_code' for tool in info.function_tools):
+                code = "await note(text='first')\nawait fetch()\nawait note(text='second')"
+                return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
+            return ModelResponse(parts=[ToolCallPart(tool_name='fetch', args={})])
+
+        def plugin() -> Capability[object]:
+            return Capability[object](id='plugin', tools=[fetch]).with_authority('none')
+
+        await Agent(FunctionModel(model_fn), capabilities=[plugin()]).run('Fetch the page')
+        await Agent(FunctionModel(model_fn), capabilities=[plugin(), CodeMode()], tools=[note]).run('Fetch the page')
+
+        direct, nested = seen
+        assert nested == snapshot(
+            [
+                ['first'],
+                '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                [
+                    TextContent(content='<capability_content>'),
+                    TextContent(content='page text'),
+                    TextContent(content='</capability_content>'),
+                ],
+                ['second'],
+            ]
+        )
+        assert nested[1:3] == direct
 
     # ---------------------------------------------------------------------------
     # OTel / Logfire instrumentation

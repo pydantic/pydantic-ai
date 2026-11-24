@@ -24,8 +24,8 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, Tool, ToolReturn
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ToolSearch
+from pydantic_ai import Agent, RunContext, TextContent, Tool, ToolReturn
+from pydantic_ai.capabilities import AbstractCapability, Capability, HandleDeferredToolCalls, ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryImage,
@@ -510,6 +510,46 @@ def book(*, trip: Trip, travellers: int) -> str:
             if isinstance(part, UserPromptPart) and part.content != 'Run the code'
         ]
         assert prompts == [['Note: first', 'Note: second']]
+
+    async def test_tool_return_content_is_held_to_its_capabilitys_authority(self, kernel: IPythonKernel) -> None:
+        """A nested call's `ToolReturn.content` reaches the model framed as it would be on a direct call."""
+
+        def fetch() -> ToolReturn[str]:
+            """Fetch a page."""
+            return ToolReturn(return_value='ok', content='page text')
+
+        seen: list[list[Any]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            if any(tool.name == 'run_code' for tool in info.function_tools):
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'fetch()'})])
+            return ModelResponse(parts=[ToolCallPart('fetch', {})])
+
+        def plugin() -> Capability[None]:
+            return Capability[None](id='plugin', tools=[fetch]).with_authority('none')
+
+        direct_agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[plugin()])
+        nested_agent = Agent(
+            FunctionModel(respond), deps_type=type(None), capabilities=[plugin(), IPythonCodeMode(kernel=kernel)]
+        )
+        await direct_agent.run('Fetch the page')
+        await nested_agent.run('Fetch the page')
+
+        direct, nested = seen
+        assert nested == direct
+        assert nested == snapshot(
+            [
+                '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                [
+                    TextContent(content='<capability_content>'),
+                    TextContent(content='page text'),
+                    TextContent(content='</capability_content>'),
+                ],
+            ]
+        )
 
     async def test_tool_calls_count_toward_usage_limits(self, kernel: IPythonKernel) -> None:
         def ping() -> str:
