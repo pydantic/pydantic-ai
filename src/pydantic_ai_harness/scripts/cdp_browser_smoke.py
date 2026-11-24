@@ -9,7 +9,8 @@ It drives the public `CDPBrowser` surface through scripted agent runs against lo
 
 - a navigation and a `Runtime.evaluate` on a real page,
 - teardown: runs under `blockbuster`, so a blocking call on the event loop fails the check, and after each of
-  several runs no Chrome process started for that run is left and its profile directory is gone,
+  several runs its profile directory is gone and, where `/proc` lists processes, no Chrome process started for
+  that run is left,
 - the egress policy against a real local server: the private-address block on the `navigate` pre-check and its
   decimal-IP spelling, and `blocked_domains` on a navigation a page script starts and an in-page `fetch`, with a
   `block_private_addresses=False` control that reaches the server for the plain-address pre-check and the `fetch`,
@@ -156,9 +157,12 @@ def _profiles() -> set[str]:
 
 
 async def _check_navigate_and_teardown() -> None:
-    """Several runs under blockbuster, each leaving no Chrome process and no profile directory behind."""
+    """Several runs under blockbuster, each leaving no profile directory and, with `/proc`, no Chrome process behind."""
+    # macOS and Windows have no `/proc` to list processes from.
+    procfs = Path('/proc').is_dir()
     async with await _serve('127.0.0.1', {'/': ('text/html', b'<title>smoke page</title>')}) as server:
-        before_profiles, before_processes = _profiles(), _chrome_processes(_PROFILE_PREFIX)
+        before_profiles = _profiles()
+        before_processes = _chrome_processes(_PROFILE_PREFIX) if procfs else set[int]()
         for _ in range(3):
             with blockbuster_ctx():
                 results = await _run_tools(
@@ -167,9 +171,13 @@ async def _check_navigate_and_teardown() -> None:
                 )
             assert "'value': 'smoke page'" in results[-1], results
             assert _profiles() == before_profiles, f'profile left behind: {_profiles() - before_profiles}'
-            leftover = _chrome_processes(_PROFILE_PREFIX) - before_processes
-            assert not leftover, f'Chrome processes left behind: {sorted(leftover)}'
-    print('navigate + evaluate ok; 3 runs under blockbuster left no Chrome process and no profile')
+            if procfs:
+                leftover = _chrome_processes(_PROFILE_PREFIX) - before_processes
+                assert not leftover, f'Chrome processes left behind: {sorted(leftover)}'
+    if procfs:
+        print('navigate + evaluate ok; 3 runs under blockbuster left no Chrome process and no profile')
+    else:
+        print('navigate + evaluate ok; 3 runs under blockbuster left no profile; process check SKIPPED (no /proc)')
 
 
 async def _check_private_address_block() -> None:
