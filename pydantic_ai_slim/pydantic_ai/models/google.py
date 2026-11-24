@@ -773,24 +773,18 @@ class GoogleModel(Model[Client]):
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
 
-        `ComputerTool` is left out of `supported_native_tools` on Google Cloud, where it is unverified, and for models
-        Google doesn't list for computer use. A user who has checked it there can add it to `supported_native_tools`.
+        `google_supports_computer_use` is turned off on Google Cloud, where Google's computer use tool is unverified. A
+        user who has checked it there can turn it back on with `profile=`.
 
         The Gemini API rejects `presence_penalty` and `frequency_penalty` for every model (verified live 2026-11-04),
         while Google Cloud accepts them for the models `google_model_profile` says do. Google Cloud also reads more
         image and document media types than the Gemini API.
         On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`.
         """
-        if self._is_google_cloud or not _google_computer.is_google_computer_use_model(self._model_name):
-            profile = merge_profile(
-                profile,
-                GoogleModelProfile(
-                    supported_native_tools=profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
-                    - {ComputerTool}
-                ),
-            )
         if self._is_google_cloud:
-            profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=False))
+            profile = merge_profile(
+                profile, GoogleModelProfile(google_supports_batch_api=False, google_supports_computer_use=False)
+            )
             return _with_google_cloud_media_types(profile)
         profile = merge_profile(
             profile, GoogleModelProfile(google_supports_batch_api=True, google_supports_penalties=False)
@@ -821,11 +815,15 @@ class GoogleModel(Model[Client]):
         the `profile=` argument already set that flag.
 
         `ImageGenerationTool` is only supported when `supports_image_output` is true, so a text model
-        falls back to the local tool an `ImageGeneration` capability provides.
+        falls back to the local tool an `ImageGeneration` capability provides. Likewise, `ComputerTool` is only
+        supported when `google_supports_computer_use` is true, so other models get a function tool.
         """
         profile: GoogleModelProfile = cast(GoogleModelProfile, super().profile)
         if not profile.get('supports_image_output', False):
             native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ImageGenerationTool}
+            profile = {**profile, 'supported_native_tools': native_tools}
+        if not profile.get('google_supports_computer_use', False):
+            native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ComputerTool}
             profile = {**profile, 'supported_native_tools': native_tools}
         # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
         # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this

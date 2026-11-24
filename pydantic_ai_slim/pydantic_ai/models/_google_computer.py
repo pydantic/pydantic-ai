@@ -23,14 +23,6 @@ from ..computer_use import ComputerCallPart, Modifier
 from ..messages import ModelMessage, ModelResponse, ToolCallPart, ToolReturnPart
 from ._computer_calls import key_from_x11
 
-_COMPUTER_USE_MODEL_PREFIXES = ('gemini-4-', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview')
-"""The models Google lists for computer use: https://ai.google.dev/gemini-api/docs/computer-use#model-versions."""
-
-
-def is_google_computer_use_model(model_name: str) -> bool:
-    """Whether Google lists `model_name` as a computer use model."""
-    return model_name.startswith(_COMPUTER_USE_MODEL_PREFIXES)
-
 
 class GeminiFunctionCall(TypedDict):
     """One call Gemini made to a function of Google's computer use tool, unchanged."""

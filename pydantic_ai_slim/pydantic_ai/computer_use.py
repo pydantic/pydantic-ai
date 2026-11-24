@@ -360,7 +360,9 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
     def confirmation(self) -> str | None:
         """The provider's reason this call must be approved by a person before it runs, or `None`.
 
-        A provider sets it on actions its safety checks flag, such as accepting a cookie banner or sending a message.
+        A provider sets it on actions its safety checks flag, such as accepting a cookie banner or sending a message. A
+        model adapter sets it by putting the reason, as a string, under the `'confirmation'` key of the call's
+        `provider_details`.
         """
         reason = (self.provider_details or {}).get('confirmation')
         return reason if isinstance(reason, str) else None

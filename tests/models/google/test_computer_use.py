@@ -39,6 +39,7 @@ from pydantic_ai.exceptions import ModelRetry, SkipToolValidation, ToolFailed, U
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool
+from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
@@ -675,6 +676,13 @@ def test_computer_use_models_support_it_on_the_gemini_api_only(model_name: str) 
     assert ComputerTool in gemini_api.profile.get('supported_native_tools', frozenset[type[AbstractNativeTool]]())
     vertex = GoogleModel(model_name, provider=GoogleCloudProvider(project='p', location='us-central1'))
     assert ComputerTool not in vertex.profile.get('supported_native_tools', frozenset[type[AbstractNativeTool]]())
+    # A user who has checked the tool on Vertex AI turns it on with `profile=`.
+    checked = GoogleModel(
+        model_name,
+        provider=GoogleCloudProvider(project='p', location='us-central1'),
+        profile=GoogleModelProfile(google_supports_computer_use=True),
+    )
+    assert ComputerTool in checked.profile.get('supported_native_tools', frozenset[type[AbstractNativeTool]]())
 
 
 async def test_calls_gemini_did_not_make_go_back_as_function_calls(allow_model_requests: None) -> None:

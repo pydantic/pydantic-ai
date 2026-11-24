@@ -227,6 +227,19 @@ class GoogleModelProfile(ModelProfile, total=False):
     or BigQuery rather than the uploaded files `GoogleModel` submits.
     """
 
+    google_supports_computer_use: bool
+    """Whether the model takes Google's [computer use tool](https://ai.google.dev/gemini-api/docs/computer-use).
+    Default: `False`.
+
+    Without it, `GoogleModel` leaves [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] out of
+    `supported_native_tools`, so a computer tool goes to the model as a function tool. `google_model_profile` sets it for
+    the models Google lists, and `GoogleModel` turns it off on Google Cloud (Vertex AI), where the tool is unverified.
+    Set it with `profile=` for a model you have checked.
+    """
+
+
+_COMPUTER_USE_MODEL_PREFIXES = ('gemini-4-', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3-flash-preview')
+"""The models Google lists for computer use: https://ai.google.dev/gemini-api/docs/computer-use#model-versions."""
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
@@ -369,6 +382,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_strict_tool_definition=supports_strict_tool_definition,
         google_web_search_billed_per_prompt=is_older_gemini,
         google_supports_penalties=_google_cloud_supports_penalties(model_name),
+        google_supports_computer_use=model_name.startswith(_COMPUTER_USE_MODEL_PREFIXES),
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
