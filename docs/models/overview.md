@@ -772,7 +772,8 @@ print(result.output)
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as
     [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
     `OutputTokenLimitExceeded`, itself an `UnexpectedModelBehavior`). The exceptions are output that was cut off at
-    `'length'` into JSON that doesn't parse: an output tool call raises `IncompleteToolCall` right away, and
+    `'length'` into JSON that doesn't parse, or into a tool call with no arguments at all, as Anthropic returns
+    one: an output tool call raises `IncompleteToolCall` right away, and
     [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
     text raises `OutputTokenLimitExceeded` right away.
 

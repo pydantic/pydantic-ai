@@ -5362,16 +5362,20 @@ def test_text_output_function_validation_error_with_finish_reason_length_is_retr
 
 
 @pytest.mark.parametrize('mode', ['run', 'iter'])
-async def test_truncated_output_tool_call_raises_without_retry(mode: str):
+@pytest.mark.parametrize(
+    'args',
+    ['{"name": "Paris", "popu', {}, ''],
+    # Anthropic sends `{}` for a tool call it cut off, and no input when streamed.
+    ids=['partial_json', 'empty_dict', 'empty_str'],
+)
+async def test_truncated_output_tool_call_raises_without_retry(mode: str, args: str | dict[str, Any]):
     """Output tool arguments the token limit cut off would be cut off again on a retry with the same limit."""
     calls = 0
 
     def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal calls
         calls += 1
-        return ModelResponse(
-            parts=[ToolCallPart(info.output_tools[0].name, '{"name": "Paris", "popu')], finish_reason='length'
-        )
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)], finish_reason='length')
 
     agent = Agent(FunctionModel(truncated), output_type=ToolOutput(_City), retries=3)
     settings = ModelSettings(max_tokens=10)
@@ -5391,10 +5395,12 @@ async def test_truncated_output_tool_call_raises_without_retry(mode: str):
 
 @pytest.mark.parametrize(
     'first',
-    ['{"name": "Paris"}', '["Paris", 2]', '{"name": "Paris", "population": 2}'],
-    ids=['schema', 'non_object', 'output_validator'],
+    ['{"name": "Paris"}', {'name': 'Paris'}, '["Paris", 2]', '{"name": "Paris", "population": 2}'],
+    ids=['schema', 'schema_dict', 'non_object', 'output_validator'],
 )
-def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(first: str):
+def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(
+    first: str | dict[str, Any],
+):
     """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

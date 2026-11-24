@@ -65,6 +65,7 @@ from pydantic_ai import (
     UserContent,
     UserPromptPart,
     WebCitationSource,
+    capture_run_messages,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._framing import lookalike_note_announcement
@@ -79,7 +80,7 @@ from pydantic_ai.capabilities import (
     ToolSearch,
 )
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ContentFilterError, IncompleteToolCall, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
@@ -18081,3 +18082,43 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_anthropic_tool_output_cut_off_by_max_tokens(
+    allow_model_requests: None, anthropic_api_key: str, stream: bool
+):
+    """An output tool call the token limit cut off raises right away instead of re-prompting the model with the same limit.
+
+    Anthropic doesn't send the partial arguments: the tool call comes back with `{}` as its input, or no input when streamed.
+    """
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(
+        model, output_type=ToolOutput(Cities), model_settings=AnthropicModelSettings(max_tokens=40, thinking=False)
+    )
+    prompt = 'List the 20 largest cities in the world.'
+
+    with capture_run_messages() as messages:
+        with pytest.raises(
+            IncompleteToolCall,
+            match=r'Model token limit \(40\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+        ):
+            if stream:
+                async with agent.run_stream(prompt) as result:
+                    await result.get_output()
+            else:
+                await agent.run(prompt)
+
+    [response] = [message for message in messages if isinstance(message, ModelResponse)]
+    assert response.finish_reason == 'length'
+    assert response.provider_details == {'finish_reason': 'max_tokens'}
+    assert response.tool_calls == [IsInstance(ToolCallPart)]
+    assert response.tool_calls[0].args == ('' if stream else {})

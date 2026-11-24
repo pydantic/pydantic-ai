@@ -23,6 +23,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    are_cut_off_tool_args,
     incomplete_tool_call_message,
     is_incomplete_json,
     run_image_process_hooks,
@@ -375,7 +376,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
         except ValidationError as e:
             # Say that the token limit cut the arguments off, as `CallToolsNode` does, rather than only that they're invalid.
-            if cut_off and not allow_partial and is_incomplete_json(e):
+            if cut_off and not allow_partial and are_cut_off_tool_args(tool_call.args):
                 raise exceptions.IncompleteToolCall(incomplete_tool_call_message(self._max_tokens_getter())) from e
             raise
 
