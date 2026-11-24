@@ -297,6 +297,10 @@ class RealtimeModel(AbstractModel):
                 settings.update(model_settings)
         return settings
 
+    def _recorded_model_settings(self, model_settings: RealtimeModelSettings) -> RealtimeModelSettings:
+        """The settings that instrumentation records as `model_settings`: all of them, unless a model overrides this to leave some out."""
+        return model_settings
+
     def _warn_unsupported_settings(
         self, model_settings: RealtimeModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> None:
