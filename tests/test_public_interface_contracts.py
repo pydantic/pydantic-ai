@@ -43,7 +43,8 @@ with try_import() as prefect_imports:
 # "Public" here means the defining module path and the class name carry no leading underscore, and
 # the class is not a `StreamedResponse` implementation -- see `kw_only_walker.py`, which owns both
 # rules and explains why. Classes that hand-write a keyword-only `__init__` under
-# `@dataclass(init=False)` are already safe and are deliberately absent.
+# `@dataclass(init=False)` are already safe and are deliberately absent, and so are subclasses that
+# take their public base's constructor unchanged, since the base's entry already covers it.
 #
 # This list only ever shrinks. Converting an entry to keyword-only breaks positional callers, so
 # the drain path is a major version: drop entries here in the same change that flips them,
