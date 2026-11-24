@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from decimal import Decimal
 
 import pytest
 
@@ -9,7 +10,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import try_import
+from ..conftest import RequestCapture, try_import
 
 with try_import() as imports_successful:
     from openai.types import chat
@@ -148,6 +149,43 @@ async def test_cancelled_stream_does_not_require_finish_reason(allow_model_reque
     assert response.state == 'interrupted'
     assert response.finish_reason is None
     assert response.text == 'partial'
+
+
+@pytest.mark.vcr
+async def test_gemini_stream_usage_replaces_running_totals(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """Gemini's OpenAI-compatible endpoint repeats the running usage on every streamed chunk, so each replaces the last.
+
+    The recording's 7 chunks each report 14 prompt tokens, with completion tokens growing from 2 to 110. Summing them
+    would report 98/455; the input tokens staying at 14 across steps shows each total replaces the last. Usage is
+    requested with `include_usage` alone: the replacement comes from the provider's profile, not
+    `continuous_usage_stats`.
+    """
+    provider = OpenAIProvider(
+        base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
+        api_key=gemini_api_key,
+        http_client=request_capture.client,
+    )
+    agent = Agent(OpenAIChatModel('gemini-3.1-flash-lite', provider=provider))
+
+    async with agent.run_stream('Count from 1 to 40, separated by spaces.') as result:
+        usage_at_each_step = [response.usage async for response in result.stream_response(debounce_by=None)]
+
+    assert request_capture.body('/chat/completions')['stream_options'] == snapshot({'include_usage': True})
+    assert usage_at_each_step == snapshot(
+        [
+            RequestUsage(input_tokens=14, output_tokens=2),
+            RequestUsage(input_tokens=14, output_tokens=20),
+            RequestUsage(input_tokens=14, output_tokens=47),
+            RequestUsage(input_tokens=14, output_tokens=71),
+            RequestUsage(input_tokens=14, output_tokens=95),
+            RequestUsage(input_tokens=14, output_tokens=110),
+            RequestUsage(input_tokens=14, output_tokens=110, cost=Decimal('0.0001685')),
+            RequestUsage(input_tokens=14, output_tokens=110, cost=Decimal('0.0001685')),
+        ]
+    )
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=14, output_tokens=110, cost=Decimal('0.0001685')))
 
 
 async def test_stream_cumulative_usage_profile_opt_out_sums_chunks(allow_model_requests: None):

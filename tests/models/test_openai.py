@@ -5210,7 +5210,6 @@ async def test_compatible_api_gemini_3_tool_call_thought_signature(
         async with agent.run_stream(prompt) as streamed_result:
             output = await streamed_result.get_output()
         messages = streamed_result.all_messages()
-        assert request_capture.body('/chat/completions')['stream_options'] == snapshot({'include_usage': True})
     else:
         result = await agent.run(prompt)
         output, messages = result.output, result.all_messages()
@@ -5222,23 +5221,6 @@ async def test_compatible_api_gemini_3_tool_call_thought_signature(
         True: snapshot('The weather is currently sunny and 28°C in both Taipei and Kaohsiung.'),
     }
     assert output == expected_output[stream]
-    # Gemini repeats the running usage on every streamed chunk (74/17, 74/36, 74/36, then 149/1, 149/20, 149/20),
-    # so it must not be summed.
-    expected_usage: dict[bool, list[RequestUsage]] = {
-        False: snapshot(
-            [
-                RequestUsage(input_tokens=74, output_tokens=36, cost=Decimal('0.0000725')),
-                RequestUsage(input_tokens=149, output_tokens=27, cost=Decimal('0.00007775')),
-            ]
-        ),
-        True: snapshot(
-            [
-                RequestUsage(input_tokens=74, output_tokens=36, cost=Decimal('0.0000725')),
-                RequestUsage(input_tokens=149, output_tokens=20, cost=Decimal('0.00006725')),
-            ]
-        ),
-    }
-    assert [message.usage for message in messages if isinstance(message, ModelResponse)] == expected_usage[stream]
     taipei_call_id, kaohsiung_call_id, signature = IsSameStr(), IsSameStr(), IsSameStr()
     assert messages[1].parts == snapshot(
         [

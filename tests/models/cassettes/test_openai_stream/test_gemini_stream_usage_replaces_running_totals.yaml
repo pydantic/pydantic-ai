@@ -1,0 +1,63 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "169"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.1-flash-lite
+        stream: true
+        messages:
+        - role: user
+          content: Count from 1 to 40, separated by spaces.
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=2805
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        data: {"choices":[{"delta":{"content":"1 ","role":"assistant"},"index":0}],"created":1795536409,"id":"F7YFa-KACdHvxs0Piu6FuA4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":2,"prompt_tokens":14,"total_tokens":16}}
+
+        data: {"choices":[{"delta":{"content":"2 3 4 5 6 7 8 9 10","role":"assistant"},"index":0}],"created":1795536409,"id":"F7YFa-KACdHvxs0Piu6FuA4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":20,"prompt_tokens":14,"total_tokens":34}}
+
+        data: {"choices":[{"delta":{"content":" 11 12 13 14 15 16 17 18 19","role":"assistant"},"index":0}],"created":1795536409,"id":"F7YFa-KACdHvxs0Piu6FuA4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":47,"prompt_tokens":14,"total_tokens":61}}
+
+        data: {"choices":[{"delta":{"content":" 20 21 22 23 24 25 26 27","role":"assistant"},"index":0}],"created":1795536409,"id":"F7YFa-KACdHvxs0Piu6FuA4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":71,"prompt_tokens":14,"total_tokens":85}}
+
+        data: {"choices":[{"delta":{"content":" 28 29 30 31 32 33 34 35","role":"assistant"},"index":0}],"created":1795536409,"id":"F7YFa-KACdHvxs0Piu6FuA4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":95,"prompt_tokens":14,"total_tokens":109}}
+
+        data: {"choices":[{"delta":{"content":" 36 37 38 39 40","role":"assistant"},"index":0}],"created":1795536409,"id":"F7YFa-KACdHvxs0Piu6FuA4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":110,"prompt_tokens":14,"total_tokens":124}}
+
+        data: {"choices":[{"delta":{"extra_content":{"google":{"thought_signature":"EqkBCqYBAWkUfRMN5JIzH+9u5QqSvxWqeGQcvik0LtUfiMh28Dm1rIbd2ZClDF7E1shvUingojZiC9f6DHlCkjU24tGs2LN47MvF7Orycj/ndmG2u9m2qRuL8aERClobrOblPzLlW+ZAwNDZQt+o9LubWJcMq/SetsVH6/juuD3AEh+ukn5s5mt+XLQjOHfOEpG99NIYKvNfcyFHAOlojORdwy01+Jq0nIgrKg=="}},"role":"assistant"},"finish_reason":"stop","index":0}],"created":1795536409,"id":"F7YFa-KACdHvxs0Piu6FuA4","model":"gemini-3.1-flash-lite","object":"chat.completion.chunk","usage":{"completion_tokens":110,"prompt_tokens":14,"total_tokens":124}}
+
+        data: [DONE]
+
+  recorded_at: 2026-11-24T16:06:50.009489+00:00
