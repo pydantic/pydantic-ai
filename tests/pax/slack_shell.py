@@ -1,4 +1,4 @@
-"""A CLAI shell with only the `slack` plugin loaded, scripted terminal widgets, and scripted dialogs."""
+"""A Pax shell with only the `slack` plugin loaded, scripted terminal widgets, and scripted dialogs."""
 
 import io
 from collections.abc import Awaitable, Sequence

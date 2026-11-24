@@ -435,7 +435,7 @@ class TestCommand:
         request, response = loaded.host.conversation.messages
         assert isinstance(request, ModelRequest)
         [part] = request.parts
-        # CLAI's note, not a typed prompt, so `/rewind` never cuts the history back past the sandbox.
+        # Pax's note, not a typed prompt, so `/rewind` never cuts the history back past the sandbox.
         assert imported_kind(part) == 'sandbox'
         # The response only names the sandbox: with no parts, the model is not made to have said anything.
         assert isinstance(response, ModelResponse)
@@ -550,7 +550,7 @@ class TestCommand:
         named: list[WorkspaceRef | None] = []
 
         async def seeding(backend: SandboxBackend, checkout: Snapshot) -> None:
-            # Copying can take minutes, so the history names the sandbox first: a CLAI that dies now leaves it findable.
+            # Copying can take minutes, so the history names the sandbox first: a Pax that dies now leaves it findable.
             named.append(history_sandbox(plugin.host.conversation.messages))
             await seed(backend, checkout)
 
@@ -1004,7 +1004,7 @@ class TestRequestEnv:
             'sk-typed',
         ]
         assert returns[1] == (
-            'ANTHROPIC_API_KEY is set for every command started from now on, until CLAI restarts; ask again if a '
+            'ANTHROPIC_API_KEY is set for every command started from now on, until Pax restarts; ask again if a '
             'command then finds it missing. Restart a server started before it.'
         )
         [asked] = dialogs.asked
@@ -1082,7 +1082,7 @@ class TestRequestEnv:
                 'API_KEY\n',
                 "'API_KEY\\n' is not an environment variable name: use capitals, digits, and underscores.",
             ),
-            ('GH_TOKEN', 'CLAI sets GH_TOKEN in the sandbox itself, so it cannot be replaced.'),
+            ('GH_TOKEN', 'Pax sets GH_TOKEN in the sandbox itself, so it cannot be replaced.'),
         ],
         ids=['declined', 'bad name', 'trailing newline', 'GitHub stand-in'],
     )
@@ -1163,7 +1163,7 @@ class TestE2B:
 
         monkeypatch.setattr(e2b_provider, 'find_spec', not_installed)
         assert e2b.missing() == (
-            "E2B support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[e2b]'."
+            "E2B support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[e2b]'."
         )
 
     async def test_create_reopen_delete(self, fake_e2b: 'FakeE2B', monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1305,7 +1305,7 @@ class TestBoxd:
 
         monkeypatch.setattr(boxd_provider, 'find_spec', not_installed)
         assert provider.missing() == (
-            "boxd support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[boxd]'."
+            "boxd support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[boxd]'."
         )
 
     async def test_create_reopen_delete(
@@ -1622,7 +1622,7 @@ class TestDaytona:
         assert provider.missing() is None
         monkeypatch.setattr(daytona_provider, 'find_spec', not_installed)
         assert provider.missing() == (
-            "Daytona support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[daytona]'."
+            "Daytona support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[daytona]'."
         )
 
     async def test_create_reopen_delete(
@@ -1787,7 +1787,7 @@ class TestModal:
         assert provider.missing() is None
         monkeypatch.setattr(modal_provider, 'find_spec', not_installed)
         assert provider.missing() == (
-            "Modal support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[modal]'."
+            "Modal support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[modal]'."
         )
 
     async def test_create_reopen_delete(self, fake_modal: 'FakeModal', tmp_path: Path) -> None:
@@ -1824,7 +1824,7 @@ class TestModal:
 
 @pytest.fixture
 def fake_render(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 'Iterator[WorkspaceHarness]':
-    """The harness's Render fake, whose commands run here; every client CLAI makes is wired to it."""
+    """The harness's Render fake, whose commands run here; every client Pax makes is wired to it."""
     import render
 
     from tests.harness.render_sandbox.workspace_helpers import client_is_closed, make_workspace_harness
@@ -1864,7 +1864,7 @@ class TestRender:
         assert provider.missing() is None
         monkeypatch.setattr(render_provider, 'find_spec', not_installed)
         assert provider.missing() == (
-            "Render support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[render]'."
+            "Render support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[render]'."
         )
 
     async def test_create_reopen_delete(self, fake_render: 'WorkspaceHarness', tmp_path: Path) -> None:
@@ -1968,7 +1968,7 @@ class TestSprites:
         assert provider.missing() is None
         monkeypatch.setattr(sprites_provider, 'find_spec', not_installed)
         assert provider.missing() == (
-            "Sprites support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[sprites]'."
+            "Sprites support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[sprites]'."
         )
 
     async def test_create_reopen_delete(self, fake_sprites: 'SpriteTransport', tmp_path: Path) -> None:
@@ -2046,7 +2046,7 @@ class TestOpenSandbox:
         assert provider.missing() is None
         monkeypatch.setattr(opensandbox_provider, 'find_spec', not_installed)
         assert provider.missing() == (
-            "OpenSandbox support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[opensandbox]'."
+            "OpenSandbox support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[opensandbox]'."
         )
 
     @pytest.mark.parametrize(
@@ -2192,10 +2192,10 @@ class TestKubernetes:
         monkeypatch.setenv('CLAI_KUBERNETES_WARM_POOL', 'pool')
         assert provider.missing() is None
         monkeypatch.setattr(kubernetes_provider.shutil, 'which', not_installed)
-        assert provider.missing() == 'Install kubectl: CLAI reaches the sandbox pods through kubectl port-forward.'
+        assert provider.missing() == 'Install kubectl: Pax reaches the sandbox pods through kubectl port-forward.'
         monkeypatch.setattr(kubernetes_provider, 'find_spec', not_installed)
         assert provider.missing() == (
-            "Kubernetes support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[kubernetes]'."
+            "Kubernetes support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[kubernetes]'."
         )
 
     async def test_create_reopen_delete(self, fake_cluster: 'FakeCluster', monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2407,14 +2407,14 @@ class TestLocal:
             if platform == 'win32'
             else 'SmolVM runs only on Macs with Apple silicon.'
             if on_intel_mac
-            else "SmolVM support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'."
+            else "SmolVM support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[local]'."
         )
         assert boxlite.missing() == (
             BOXLITE_ON_WINDOWS
             if platform == 'win32'
             else 'BoxLite runs only on Macs with Apple silicon.'
             if on_intel_mac
-            else "BoxLite support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[local]'. "
+            else "BoxLite support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[local]'. "
             'It needs Python 3.14 or older.'
         )
 
@@ -2457,7 +2457,7 @@ class TestLocal:
         provider = local_host.provider(working_dir=str(tmp_path.resolve() / 'workspace'))
         ref, backend = await provider.create(github=None)
         await provider.close(backend)
-        # As after CLAI restarts: a conversation reopened and closed without a command leaves its VM stopped.
+        # As after Pax restarts: a conversation reopened and closed without a command leaves its VM stopped.
         local_host.stop(ref.id)
         await provider.close(provider.reopen(ref))
         assert local_host.states() == {ref.id: 'stopped'}
@@ -2524,7 +2524,7 @@ class TestLocalCli:
         await provider.close(provider.reopen(ref))
         [name] = windows.machines
         assert windows.machines[name] == 'running'
-        # The VM would otherwise outlive CLAI; its next command starts it again.
+        # The VM would otherwise outlive Pax; its next command starts it again.
         await provider.close(backend)
         assert windows.machines[name] == 'stopped'
         assert (await provider.reopen(ref).run(['true'])).exit_code == 0
@@ -2633,7 +2633,7 @@ class TestCompaction:
         notice = await compaction.commands.execute_async('/compact')
         assert notice is not None and notice.startswith('Compacted'), notice
         ref = WorkspaceRef(provider='fake', id='sbx-1')
-        # A CLAI restarted on the saved history finds the sandbox the same way.
+        # A Pax restarted on the saved history finds the sandbox the same way.
         restarted = plugin_of(load(checkout, Transcript(messages=session.messages))).current()
 
         result = await session.prompt('and now?')

@@ -58,7 +58,9 @@ from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.messages import (
     BinaryContent,
+    BinaryImage,
     CompactionPart,
+    ImageUrl,
     InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
@@ -729,6 +731,7 @@ _AGUI_ACTIVITY = (
     "With `framing_announcement='when_needed'`, a dropped mid-conversation system prompt also takes the framing "
     "announcement out of the standing prompt on the next turn; accepted, and documented: UI apps set `'always'`"
 )
+_AGUI_FILE_IDENTIFIER = "`AGUIAdapter.dump_messages` doesn't carry a user file's custom `identifier`; #14284"
 _RETRY = (
     "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
     '`outcome="failed"` instead of `"retried"`; #8185'
@@ -987,6 +990,26 @@ SCENARIOS = [
         agent_kwargs={'capabilities': [_RequestScopedReminder()]},
     ),
     Scenario(id='multimodal_tool_return', script=_image_script, setup=_image_tools),
+    Scenario(
+        id='custom_file_identifiers',
+        script=_text_script,
+        gaps=_gaps(_AGUI_FILE_IDENTIFIER, ('load', 'dump', 'agui'), ('load', 'stream', 'agui')),
+        seed=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [
+                            'Question 0',
+                            BinaryImage(data=_PNG.data, media_type='image/png', identifier='chart'),
+                            BinaryContent(data=b'%PDF-1.7', media_type='application/pdf', identifier='contract'),
+                            ImageUrl(url='https://example.com/logo.png', identifier='logo'),
+                        ]
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart('Three files received.')]),
+        ],
+    ),
     Scenario(
         id='structured_content',
         script=_enqueue_script,

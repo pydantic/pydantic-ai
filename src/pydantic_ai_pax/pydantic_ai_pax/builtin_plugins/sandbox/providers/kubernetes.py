@@ -43,9 +43,9 @@ class KubernetesProvider:
 
     def missing(self) -> str | None:
         if find_spec('k8s_agent_sandbox') is None or find_spec('grpc') is None:
-            return "Kubernetes support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[kubernetes]'."
+            return "Kubernetes support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[kubernetes]'."
         if shutil.which('kubectl') is None:
-            return 'Install kubectl: CLAI reaches the sandbox pods through kubectl port-forward.'
+            return 'Install kubectl: Pax reaches the sandbox pods through kubectl port-forward.'
         if saved_key(WARM_POOL_NAME) is None:
             return (
                 f'Add the agent-sandbox warm pool to claim sandboxes from in /keys as {WARM_POOL_NAME}, '

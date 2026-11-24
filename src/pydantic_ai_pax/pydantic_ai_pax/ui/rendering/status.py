@@ -95,7 +95,7 @@ class Status:
     """How a footer too wide for the terminal gives way, first step first.
 
     `workspace` shortens to its last folder and `context` to its bare figure. `activity` is never
-    hidden, nor is `context`'s figure: they say whether CLAI is working and how full the conversation
+    hidden, nor is `context`'s figure: they say whether Pax is working and how full the conversation
     is. `model` goes last because it names a focused subagent whose figures are shown.
     """
 

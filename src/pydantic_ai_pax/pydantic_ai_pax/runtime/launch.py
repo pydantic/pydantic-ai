@@ -4,7 +4,7 @@ from uuid import UUID
 
 
 def launch_session_id(*, resume: str | None, session_id: str | None, fork: bool) -> str | None:
-    """Check the launch options as Claude Code takes them; return `session_id` as CLAI saves it.
+    """Check the launch options as Claude Code takes them; return `session_id` as Pax saves it.
 
     Raises `ValueError` for `fork` without `resume`, `session_id` with `resume` but without `fork`,
     or a `session_id` that is not a UUID.

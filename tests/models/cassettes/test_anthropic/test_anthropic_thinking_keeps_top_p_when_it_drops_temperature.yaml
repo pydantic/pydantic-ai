@@ -1,0 +1,112 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "234"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is 2+2? Answer with the number only.
+            type: text
+        model: claude-haiku-4-5
+        stream: true
+        thinking:
+          type: enabled
+          budget_tokens: 10000
+        top_p: 0.97
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=71
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c8d68ab8106dd476cb5f65928ff62c48-fb118a441b26b1b0-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-4-5-20251001","id":"msg_011Ch9FNP18b6drNREuRUqT4","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":49,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available","speed":"standard"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"The user is asking"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" for "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"2+2 "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"and wants only"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" the number as the"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" answer.\n\n2"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"+2 ="}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" 4"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EucCCrgBCBMYAipANTvHL4CUSauvMwgzgRye6Xfsnhb0UZNxnHioM4lZ7Sa/eYV92R0p0cHvgSKkJd9lojwWLN/+QDmkGDncNOy2/zIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNDRhZTY3NmMtOTU4Zi00ZDY4LTkxMDgtZWFlOWRlN2IzNjZimgEbChljbGF1ZGUtaGFpa3UtNC01LTIwMjUxMDAxqAHLm/PXBhIMVOK06/gtQpXuGQEAGgzpXVv5OplOllmx1TEiMBInQykRJ19wpjLcRLlzqr3bUGoYz2AD6cYfeqJAI1M8c0+ggZrABxwrB3U4F2TUBSpcTmDSiw1XyC/11/B22djRiOpgtcOLNwdQHO2ThcY4RX0XzrB0y2U0XQCL/d6+kLfLqDTN11dc3bEoix6aL1MVabheGJfZagIyCJVT047exNkoUiwB2IIToakr38gYAQ=="}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"4"}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":49,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":39,"output_tokens_details":{"thinking_tokens":33}}       }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-11-17T21:57:31.886647+00:00
