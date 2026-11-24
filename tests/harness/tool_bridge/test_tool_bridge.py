@@ -605,10 +605,12 @@ class TestToolBridge:
 
         assert seen == [['run_code']]
 
-    async def test_a_bridged_tool_with_no_capability_keeps_its_content(self):
-        """A bridged tool no capability contributes returns its `ToolReturn.content` as the tool returned it.
+    @pytest.mark.parametrize('owned', [False, True], ids=['no-capability', 'operator-capability'])
+    async def test_a_bridged_tool_keeps_its_content_when_no_capability_lowers_it(self, owned: bool):
+        """A bridged tool no capability below `'operator'` contributes returns its `ToolReturn.content` as returned.
 
-        An `after_tool_execute` hook on `tool_call` and the tool result event both see the `str`.
+        An `after_tool_execute` hook on `tool_call` and the tool result event both see the `str`, whether no capability
+        contributes the tool or one at the default `'operator'` authority does.
         """
 
         def note(text: str) -> ToolReturn:
@@ -635,7 +637,8 @@ class TestToolBridge:
                 return result
 
         model = _scripted([_call('tool_call', name='note', args_json='{"text": "page text"}')])
-        agent = Agent(model, tools=[note], capabilities=[ToolBridge(), Record()])
+        owner: list[AbstractCapability[object]] = [Capability[object](id='notes', tools=[note])] if owned else []
+        agent = Agent(model, tools=[] if owned else [note], capabilities=[*owner, ToolBridge(), Record()])
         event_seen: list[object] = []
         async with agent.iter('Take a note') as agent_run:
             async for node in agent_run:

@@ -265,9 +265,11 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         # Pyright strict reads `isinstance` on the `Any` that `handle_call` can return as `ToolReturn[Unknown]`, so
         # both returns below, the `ToolReturn` with no content included, carry an unknown-type ignore.
         capability_id = target.tool_def.capability_id
-        if isinstance(result, ToolReturn) and result.content and capability_id is not None:
+        owner = None if capability_id is None else ctx.capabilities.get(capability_id)
+        lowers = owner is not None and owner._effective_authority != 'operator'  # pyright: ignore[reportPrivateUsage]
+        if isinstance(result, ToolReturn) and result.content and lowers:
             # Held to the bridged tool's capability's authority, as if the model had called the tool itself. Content
-            # from a tool no capability contributes stays as the tool returned it.
+            # from a tool no capability below `'operator'` contributes stays as the tool returned it.
             content = NestedCallContent([(capability_id, result.content)])
             return replace(result, content=content)  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
         return result  # pyright: ignore[reportUnknownVariableType]
