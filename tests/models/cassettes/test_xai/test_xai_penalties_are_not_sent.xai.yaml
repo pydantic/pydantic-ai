@@ -1,0 +1,42 @@
+version: 1
+interactions:
+- request_sample:
+    json:
+      messages:
+      - content:
+        - text: 'Reply with just: ok'
+        role: ROLE_USER
+      model: grok-4.3
+      temperature: 0.7
+    raw: !!binary |
+      ChkKFQoTUmVwbHkgd2l0aCBqdXN0OiBvaxABEghncm9rLTQuM3UzMzM/
+  response_sample:
+    json:
+      id: 4479f907-63e7-9411-a35f-58c6f1fcc37c
+      outputs:
+      - finish_reason: REASON_STOP
+        message:
+          content: ok
+          role: ROLE_ASSISTANT
+          reasoning_content: The user wants a simple "ok" response.
+      created: '2026-11-04T00:37:50.410037432Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
+      usage:
+        completion_tokens: 1
+        prompt_tokens: 197
+        total_tokens: 311
+        prompt_text_tokens: 197
+        reasoning_tokens: 113
+        cached_prompt_text_tokens: 128
+        cost_in_usd_ticks: '3968500'
+      settings:
+        parallel_tool_calls: true
+        reasoning_effort: EFFORT_LOW
+        temperature: 0.7
+        top_p: 0.95
+    raw: !!binary |
+      CiQ0NDc5ZjkwNy02M2U3LTk0MTEtYTM1Zi01OGM2ZjFmY2MzN2MSNAgDGjAKAm9rEAIiJlRoZSB1
+      c2VyIHdhbnRzIGEgc2ltcGxlICJvayIgcmVzcG9uc2UuOAEqDAje/KnXBhC42cLDATIIZ3Jvay00
+      LjM6E2ZwX2ViM2MwMDNmYzY2YzE0ZWRKHAgBEMUBGLcCIMUBMHE4gAFY9JvyAZABxQGYAXpaEhAB
+      IAEtMzMzP00zM3M/egIIAQ==

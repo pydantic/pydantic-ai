@@ -69,7 +69,7 @@ async def test_edit_and_retry_go_on_from_an_earlier_prompt(page: Page, rewind_ui
     await page.goto(f'{rewind_ui.url}/?token={TOKEN}')
     await page.locator('.sidebar').get_by_text('Browser Rewind', exact=True).click()
     await expect(page.locator('.session.opening')).to_have_count(0)
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     activity = page.locator('.topbar-status .activity')
     prompts = page.locator('.user-bubble')
     answers = page.locator('.markdown')

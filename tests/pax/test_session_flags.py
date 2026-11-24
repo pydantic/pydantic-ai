@@ -148,7 +148,7 @@ async def test_launch_options(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     with pytest.raises(ValueError, match="'not-a-uuid' is not a valid UUID"):
         await service.start(resume=None, session_id='not-a-uuid')
     assert session.conversation_id == saved
-    # A UUID in another case is saved as CLAI writes UUIDs.
+    # A UUID in another case is saved as Pax writes UUIDs.
     await service.start(resume=None, session_id=THIRD_ID.upper())
     assert session.conversation_id == THIRD_ID
 
@@ -345,7 +345,7 @@ def test_flags_reach_the_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 def test_continue_resumes_the_newest_session_here(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: list[str]
 ) -> None:
-    """`--continue` restores this directory's newest unarchived session, whichever way CLAI runs, or starts fresh."""
+    """`--continue` restores this directory's newest unarchived session, whichever way Pax runs, or starts fresh."""
     here, other, empty = tmp_path / 'here', tmp_path / 'other', tmp_path / 'empty'
     for directory in (here, other, empty):
         directory.mkdir()
