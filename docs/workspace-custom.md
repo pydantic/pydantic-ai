@@ -132,8 +132,8 @@ comes from `path`.
 - What a tool returns, such as a file `read_file` read, is tool output whatever the authority.
 - Built-in capabilities that load workspace files into instructions check `authority` as they adopt it. In
   Pydantic AI Harness, [`RepoContext`](harness/repo-context.md#trust) sends instruction files below `'operator'`
-  as something other than instructions, and [`Memory`](harness/memory.md) attributes a snapshot read from such a
-  file to its author.
+  as something other than instructions, [`Memory`](harness/memory.md) attributes a snapshot read from such a file
+  to its author, and [`Skills`](harness/skills.md) offers such skills through `list_skills` instead of the catalog.
 - Harness workspaces such as [`E2BSandbox`](harness/e2b-sandbox.md),
   [`DockerContainer`](harness/docker-container.md) and [`SSHWorkspace`](harness/ssh-workspace.md) take the
   same `authority` and `path_authority`. Their paths are on the sandbox, container or host, so `~` isn't
