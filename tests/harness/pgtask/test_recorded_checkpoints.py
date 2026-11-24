@@ -28,7 +28,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, ResolveModelId
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.mcp import MCPToolset
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.pgtask import PGTaskDurability
@@ -51,8 +51,9 @@ class Report(BaseModel):
 def _agent(retry_first: bool, executions: list[str]) -> Agent[object, Report]:
     def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         executions.append('model')
-        done = [p.tool_name for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
-        retried = any(isinstance(p, RetryPromptPart) for m in messages for p in m.parts)
+        returns = [p for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
+        done = [p.tool_name for p in returns if p.outcome != 'retried']
+        retried = any(p.outcome == 'retried' for p in returns)
         if not done and retry_first and not retried:
             return ModelResponse(
                 parts=[ToolCallPart('report_finding', {'title': 'p99 up', 'severity': 'bogus-high'}, 'c0')]

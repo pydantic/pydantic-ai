@@ -1,7 +1,7 @@
 # Runtime and Extension
 
-How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
-resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Absurd durable
+How a harness agent is routed, persisted, made durable, configured, extended, and served. This covers model-based
+selection (`ModelRouter`), saving and resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Absurd durable
 tasks (`AbsurdDurability`), pgtask durable tasks (`PGTaskDurability`), Render Workflows, harness capabilities under core durable execution, Logfire-managed
 instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), loading harness
 capabilities from YAML/JSON specs, serving an agent to editors over ACP, and running one as a GitHub
@@ -11,11 +11,13 @@ Agentic Workflow.
 
 | I want to ... | Use |
 |---|---|
+| Let another model choose the main agent's model from a named menu | `ModelRouter` |
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
 | Checkpoint every model/tool step in Postgres with pgtask | `PGTaskDurability` |
+| Run agent operations as activities in native Azure Durable Task orchestrators | `AzureDurableTaskDurability` and `run_durable` (`pydantic_ai_harness.azure_durable_task`, `[azure-durable-task]`) |
 | Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); retrying the entry task run restarts the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
@@ -23,12 +25,87 @@ Agentic Workflow.
 | Use the agent inside Zed or another ACP editor | `pydantic_ai_harness.experimental.acp` |
 | Run the agent headless on GitHub issues/PRs/schedules | the gh-aw `pydantic-ai` engine |
 
+A model error's `retry_after` (a provider's `Retry-After`) is waited durably before the engine's next attempt at
+the model request: on AWS Lambda as the step retry's timed suspension, on Azure Durable Task as a durable timer
+within the model `RetryPolicy`, on Absurd and pgtask as a recorded failed attempt and a `sleep_for` that suspends
+the task, at most as many times per model request as the task has attempts left. Render Workflows can't, so its
+task `Retry` applies. Set `model_settings={'max_retries': 0}` so the provider SDK doesn't also retry inside the
+durable unit.
+
+## ModelRouter
+
+`ModelRouter` asks a Pydantic AI model to choose from named `ModelChoice` entries, then uses the
+selected model for the main agent request. The default `'once'` mode pays for one routing request per
+run; `mode='per_step'` routes again before each logical model request.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import ModelChoice, ModelRouter
+
+agent = Agent(
+    capabilities=[
+        ModelRouter(
+            choices={
+                'fast': ModelChoice('openai:gpt-5.6-luna', 'Routine lookups and extraction.'),
+                'capable': ModelChoice('openai:gpt-5.6-sol', 'Complex or high-stakes work.'),
+            },
+            router_model='openai:gpt-5.6-luna',
+            default='capable',
+        )
+    ]
+)
+```
+
+The router receives the parent run's message history, including files, and its request counts toward
+the same usage limits. Keep it in the same trust boundary as the selectable models: model selection
+runs before input guardrails and request wrappers. Router failures and picks below
+`probability_threshold` use `default`; configuration errors and request-time `UserError`s propagate.
+Under core durable execution the routing call is durable, and every selectable model must also be
+registered in the durability capability's `models=` mapping. `ModelRouter` is Python-only and cannot
+be loaded from an agent spec.
+
+### ModelChoice
+
+Each `ModelChoice(model, description)` pairs a model name or configured `Model` instance with the
+criteria the router should use for that option. Choice keys and descriptions must be non-empty, and
+the configured `default` must name one of the keys.
+
+## AzureDurableTaskDurability
+
+Attach `AzureDurableTaskDurability()` to a named agent. Retrieve the bound copy with
+`AzureDurableTaskDurability.from_agent(agent)` and enter its `register(worker)` context
+before starting the native SDK worker; exit after the worker stops and drains.
+Register your own orchestrator and call
+`yield from run_durable(ctx, lambda: agent.run(prompt))`. Start, inspect and signal runs
+through the SDK client. Dependencies must be JSON-serializable and are reconstructed
+using `deps_type`.
+
+Handle `DeferredToolRequests` in your orchestrator: wait for an external event and resume
+with full message history, cumulative usage and `DeferredToolResults`. Publish a fresh event
+name per pause in the custom status, and send decisions to the event the reviewer saw, keyed by tool-call ID.
+Orchestrator-side code must be deterministic and I/O-free. Tool effects must be idempotent.
+Set native retry policies with `model_options`, `tool_options`, `event_options` and `capability_options`.
+`resolve_tool_options` returns a native policy, `None` to keep `tool_options`, or `False`
+to run a function tool inline. Function tools can also opt out with
+`metadata={'azure_durable_task': False}`, or async ones with the engine-neutral
+`durable=False`. Inline tools must be deterministic and I/O-free.
+See [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/).
+
 ## StepPersistence
 
 Records an append-only event log, full-history snapshots at settled tool-cycle boundaries, and a ledger
 of tool calls (`started`/`completed`/`failed`). It stores message history only: it does not restore
 capability state, graph-node state, or in-flight streams, and it does not replay anything by itself.
 You continue a run by passing a snapshot's messages to `Agent.run(message_history=...)`.
+
+It is not the recommended session store: to store conversations, use core's `ConversationStore`
+(`pydantic_ai.conversation_store`), which also keeps usage and deferred tool requests. To move sessions
+already stored with `StepPersistence`, save each `SqliteConversationStore` head, or else each session
+ID's newest `complete` snapshot, as a `Conversation`, skipping conversations the store already has.
+Settle a session whose newest run ends on unanswered tool calls (a pending approval or deferred result)
+first: its last `complete` snapshot leaves that turn out (see "Moving sessions to a `ConversationStore`"
+on the Step Persistence page).
 
 ```python
 import asyncio
@@ -69,15 +146,16 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
 - `InMemoryStepStore()`: process-local; tests.
 - `FileStepStore(directory)`: `<directory>/<run_id>/` with JSON/JSONL files.
 - `SqliteStepStore(database='runs.db')`, or `connection=` a `sqlite3.Connection` opened with
-  `check_same_thread=False`.
+  `check_same_thread=False`. Stores each message once rather than repeating the history in every
+  snapshot, and deletes stored messages along with the last snapshot that references them.
 - `MongoStepStore(client=AsyncMongoClient | db_url=..., database=...)`: needs `uv add
   "pydantic-ai-harness[mongodb]"`. Exactly one of `client`/`db_url`, and `database` is required. With
   `db_url` the store owns the client, so call `await store.aclose()`. It creates indexes on its first
   write, so the user needs index-creation privileges.
 - `PostgresStepStore(pool, *, table='step_persistence')`: `pool` is your own `asyncpg` pool (the
   driver-neutral `PostgresPool` protocol); no harness extra, and you own the pool lifecycle. `table`
-  is a prefix of at most 40 characters. It creates its tables on first use, so the role needs
-  `CREATE` on the schema.
+  is a prefix of at most 40 characters. It creates its tables on first use unless they all exist, so only that
+  first call needs `CREATE` on the schema.
 
 File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part of 64 KiB or more to a
 `MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
@@ -117,15 +195,19 @@ async def resume(run_id: str):
 Gotchas:
 
 - Shapes a test sees: when a streamed model request fails, the saved history (default read included)
-  ends with an empty or partial-text `ModelResponse`. With `Planning`, a scripted model receives a
-  plan-reminder `UserPromptPart` led by a `CachePoint` at the end of the last request (not stored).
+  ends with an empty or partial-text `ModelResponse`. With `Planning`, each plan tool's `ToolReturnPart`
+  ends with the plan in a `<plan_reminder>` tag and carries
+  `metadata={'origin': 'pydantic-ai-harness.planning.plan_reminder.v1', 'plan': ...}`; a `PlanReminderPart`
+  (from `pydantic_ai_harness.planning`) records the plan only when the latest plan isn't visible (after
+  compaction, say).
   Assert on the parts you need, not exact message shapes.
 - `run_id` is per `Agent.run`. Reusing one instance with the same explicit `run_id` raises `ValueError`.
   Group turns with `conversation_id=` on `Agent.run`.
 - A derived `run_id` longer than 200 characters raises `ValueError`, so keep `agent_name` short.
   `FileStepStore` only accepts ids matching `[A-Za-z0-9_.-]{1,200}`.
 - Events are never pruned. Snapshots are pruned only with `max_snapshots_per_run`, and pruning never
-  deletes media blobs.
+  deletes media blobs. `PostgresStepStore` and `MongoStepStore` store each message once too, but keep
+  stored messages when the snapshots referencing them are pruned.
 - Put `StepPersistence` before capabilities whose `after_run` rewrites history. After-hooks run in
   reverse order.
 - The default `id` is `'step_persistence'`, and store writes are durable operations, so it works
@@ -139,12 +221,13 @@ Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`,
 `PrefectDurability` (`pydantic_ai.durable_exec.*`), but support is per capability:
 
 - `Agent(...)` with `TemporalDurability` raises `UserError` ("Toolsets that are 'leaves' ... need to
-  have a unique id") for `AskUser`, `CapabilityCreation`, `ExaSearch`, `ExaAgent`, `YouSearch`,
+  have a unique id") for `AskUser`, `ExaSearch`, `ExaAgent`, `YouSearch`,
   `YouResearch`, `Researcher`, `PydanticAIDocs`, `LocalStack`, `Macroscope`, and `BrowserUse` (either
   `session_scope`): their toolsets carry
   no stable id, and passing `id=` to the capability does not reach the toolset.
-- `PlaywrightBrowser` raises `UserError` at `Agent(...)` with any durability capability (a live
-  browser cannot survive replay); `TrajectoryJudge` raises at run start inside a durable workflow.
+- `PlaywrightBrowser` and `CDPBrowser` raise `UserError` at `Agent(...)` with any durability capability (a live
+  browser cannot survive replay); a `TrajectoryJudge` without an `id` raises at run start inside a durable
+  workflow.
 - `CodeMode` runs but skips its `speculate=` early tool launches. `BackgroundTools`, guardrails,
   `SpendLimits`, `Memory`, `Planning`, `SubAgents`, the sandboxes, and the hosted integrations build
   under Temporal.
@@ -172,8 +255,9 @@ Rules that apply to every harness capability:
   derived ids; two instances of one class need distinct `id=`.
 - Per-run inputs (tokens, user ids) come from `deps`, never globals: tools and `auth` functions can
   execute on another worker.
-- Inside a durable workflow or flow, `agent.run(..., capabilities=...)` raises `UserError` for any
-  capability except a few core ones such as `Instrumentation`, and Temporal also refuses toolsets
+- Inside a Temporal or DBOS workflow, `agent.run(..., capabilities=...)` raises `UserError` for any
+  capability except a few core ones such as `Instrumentation`. A Prefect flow accepts per-run
+  capabilities that contribute no function, MCP, or dynamic toolset. Temporal also refuses toolsets
   added at run time (for example `SubAgents` with `agent_folders`). Load authored capabilities at
   construction; they take effect on the next worker start.
 - Removing or adding a capability changes the replay shape. Drain in-flight workflows first.
@@ -200,8 +284,8 @@ composing an agent. The setup and constraints that affect implementation are:
   capability's `@workflows.task` entry function; a plain `@app.task` leaves agent operations inline. The live
   app object requires Python construction rather than a JSON or YAML agent spec.
 - Give agents and registered leaf toolsets stable names and IDs, including capability-owned toolsets.
-  Task options are fixed per named toolset at registration. Use separate named toolsets for different policies; individual function tools can opt out, but cannot override their shared task settings. Return `False` from `resolve_tool_options` for `delegate_task`
-  and `read_tool_result` when using `SubAgents` and `ToolOutputLimits`, so those helpers retain the parent
+  Task options are fixed per named toolset at registration. Use separate named toolsets for different policies; individual function tools can opt out, but cannot override their shared task settings. Return `False` from `resolve_tool_options` for `delegate_task`,
+  `read_tool_result` and `grep_tool_result` when using `SubAgents` and `ToolOutputLimits`, so those helpers retain the parent
   task's live state. For a delegated agent's operations to run as chained task runs, attach its own
   `RenderWorkflows` instance using the same app. A chained task run retry can repeat that operation's side effects, so make external writes safe
   to repeat.
@@ -250,7 +334,27 @@ Parameters: `AWSLambdaDurability(*, models=None, event_stream_handler=None, name
 `models` maps ids to extra models for `agent.run(model='<id>')`. `step_config` sets the base
 `retry_strategy`/`step_semantics`/`serdes` for all steps. Per-tool `metadata={'aws_lambda': {...}}`
 overrides it key by key, and `metadata={'aws_lambda': False}` opts a function tool out (MCP tools cannot
-opt out).
+opt out). The engine-neutral `durable=False` opts an async function tool out on every
+engine; an engine's own key on the same tool wins.
+
+Approvals: add core `HandleDeferredToolCalls(ask, timeout=timedelta(...))` (`pydantic_ai.capabilities`), whose `ask` takes a resume token,
+next to `AWSLambdaDurability()` instead of ending the run with `DeferredToolRequests` output and starting
+a second run. A call that needs approval, an answer or external execution creates a Lambda callback and
+runs `ask(ctx, requests, callback_id)` once in a step (`{name}__external_event.deferred_tool_calls.ask`).
+If `ask` returns `DeferredToolResults`, the step records it and the run continues (the callback is left
+open, unused); if it returns `None`, the execution suspends. `AskUser` questions use the same mechanism
+(`{name}__external_event.ask_user_question`). The approver sends the
+JSON form of `DeferredToolResults` (`{"approvals": {"<tool_call_id>": true}}`, or
+`{"kind": "tool-denied", "message": ...}` / `{"kind": "tool-approved", "override_args": {...}}`) with
+`aws lambda send-durable-execution-callback-success --callback-id ... --cli-binary-format
+raw-in-base64-out --result '<json>'` (boto3 `send_durable_execution_callback_success`). On replay the
+model is not called again and `ask` does not rerun. A timeout or `send-durable-execution-callback-failure`
+denies every pending approval and fails every pending external call with a message, and the run
+continues; an invalid decision or a stale tool call ID raises `UserError`. Other deferred-call handlers
+(a token-less `HandleDeferredToolCalls`, `ApprovalReviewer`, `AskUser`) run first. An `ask` that returns `None` only
+delivers the question; the answer comes from your approval endpoint. Outside a durable handler (local development) the same agent
+waits in process and `pydantic_ai.external_events.resolve_external_event(token, decision)` resolves it;
+from inside a checkpointed tool, the wait raises `UserError`.
 
 Gotchas:
 
@@ -265,10 +369,17 @@ Gotchas:
   set both `StepSemantics.AT_MOST_ONCE_PER_RETRY` and `retry_strategy=RetryPresets.none()`. Step
   retries stack with Pydantic AI and provider-client retries, so disable one side.
 - Tool calls run sequentially inside a durable handler. Nested durable runs are rejected.
-- Changing the tools, MCP servers, model, or `event_stream_handler` breaks in-flight executions. Deploy
-  a new published version.
+- Await agent runs one after another in a handler, never concurrently with `asyncio.gather` or tasks:
+  replay matches checkpoints by position, so concurrent runs can be served each other's results.
+- Changing the number or order of steps (tools, MCP servers, `aws_lambda: False` opt-outs,
+  `event_stream_handler`) breaks in-flight executions, and so does renaming the agent, a toolset `id`,
+  a tool, or the id a non-default model runs under (a `models=` key or the `model=` passed to
+  `agent.run`), which is part of that model's step names. SDK 2.0+ fails those executions with
+  `NonDeterministicExecutionError`; SDK 1.x does not detect a mismatch. Deploy a new published
+  version.
+- Checkpoints hold model responses, tool results, and step error messages for the retention period.
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
-- Budget: 3,000 operations and 100 MB of checkpointed state. Return references, not blobs.
+- Budget: 30,000 operations and 100 MB of checkpointed state. Return references, not blobs.
 
 ## AbsurdDurability
 
@@ -364,36 +475,40 @@ uv add "pydantic-ai-harness[logfire]"
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import ModelRequest
+from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness import ManagedPrompt
 
-
-def echo_instructions(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[TextPart(info.instructions or '')])
-
-
 agent = Agent(
-    FunctionModel(echo_instructions),
+    TestModel(),
     capabilities=[
         ManagedPrompt('support_agent', default='You are support.', label='production')
     ],
 )
-print(agent.run_sync('hi').output)
+request = agent.run_sync('hi').all_messages()[0]
+assert isinstance(request, ModelRequest)
+print(request.instructions)
 #> You are support.
 ```
 
 Parameters: `name` (positional; declared as the variable `prompt__<name>`, with hyphens turned into
-underscores), or a prebuilt `logfire.variables.Variable`; `default` (required with a name); `label`;
+underscores; ASCII letters, digits, hyphens, and underscores only), or a prebuilt
+`logfire.variables.Variable` (not a `TemplateVariable`); `default` (required with a name); `label`;
 `targeting_key` and `attributes` (static or `ctx -> value`); `render_template=False` (Handlebars against
-`deps`; needs `pydantic-ai-slim[spec]`); `logfire_instance`. Call `logfire.configure()` in your app to
+`deps`); `logfire_instance`. Call `logfire.configure()` in your app to
 get remote values. Until then, and whenever no remote value is published, `default` is used.
 
 Gotchas: pin `label='production'` to keep the provider prompt cache warm, because rollouts across
-labels split it. A label change mid-run applies from the next run. The capability orders itself
-outermost, wrapping `Instrumentation`. `ManagedPrompt.resolved` exposes the current run's
-`ResolvedVariable`, and is `None` outside a run.
+labels split it; a pinned label that doesn't exist falls back to the rollout. A label change mid-run
+applies from the next run; in a conversation continued from `message_history`, a new version is
+appended as a change instead of rewriting the cached prefix. The `id` is derived from the name
+(`managed-prompt-support_agent`), so two of one name on an agent raise `UserError`. With
+`render_template=True`, anyone who can edit the prompt in Logfire can place any `deps` field in the
+system prompt, and a remote prompt that isn't a valid template falls back to `default` with a
+`RuntimeWarning` and a Logfire warning log. Logfire's `Resolve variable` span records the prompt text
+even with `include_content=False`. The capability orders itself outermost, wrapping `Instrumentation`.
+`ManagedPrompt.resolved` exposes the current run's `ResolvedVariable`, and is `None` outside a run.
 
 ## CapabilityCreation
 
@@ -406,29 +521,40 @@ active on the **next** run, and only if you pass it in:
 from pathlib import Path
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness import CapabilityCreation
 
+workspace = LocalWorkspaceBackend('.')
 creation = CapabilityCreation(directory=Path('.authored'))
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[LocalWorkspace('.'), creation])
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[creation])
 
 
 
 async def main():
     history = None
     for prompt in ['Add a capability that logs tool calls.', 'Now refactor utils.py.']:
-        result = await agent.run(
-            prompt, message_history=history, capabilities=creation.store.load_active()
-        )
+        extra = await creation.load_active(workspace)
+        result = await agent.run(prompt, message_history=history, capabilities=extra, workspace=workspace)
         history = result.all_messages()
 ```
 
 Gotchas: a run raises `UserError` unless its workspace is a writable `LocalWorkspace`, because
-authored code executes in your process and would bypass a sandbox. Only use it where you would run the
-model's code yourself. `load_active()` skips entries that fail to load. Under durable execution
-`capabilities=` on a run is refused, and `CapabilityCreation` itself does not build under
-`TemporalDurability` (see the durable execution section). `guidance=''` drops the
+authored code executes in your process and would bypass a sandbox. A run also raises `UserError` unless
+`ctx.workspace.authority_of(directory)` is `'operator'`, so point `directory` at code the operator controls, not
+a clone or an upload; a directory outside the working directory needs `path_authority={path: 'operator'}`.
+With `defer_loading=True` these checks refuse each authoring tool call instead. `creation.load_active(workspace)`
+makes them against `workspace` before loading, and only against it, so pass the same workspace as `agent.run(workspace=...)`
+instead of a `LocalWorkspace` capability (for a directory outside the working directory,
+`AuthorityWorkspace(Workspace(LocalWorkspaceBackend('.')), authority='operator', path_authority={'/abs/path': 'operator'})`); `creation.store.load_active()` has no workspace and skips them, so only
+use it where you would run the model's code yourself. Authored code runs during `author_capability` validation, in the current run.
+`load_active()` runs the same checks and skips entries that fail them. Inside a Temporal or DBOS
+workflow, `capabilities=` on a run is refused, so authored capabilities cannot be activated there;
+a Prefect flow accepts only authored capabilities that contribute no function, MCP, or dynamic
+toolset. The authoring tools still work. A failed re-author keeps the current version when its entry has
+no recorded error and its file still exists, and saves the rejected code as `<name>.rejected.py`. To have a person approve authored
+code before it runs, add `ToolGuardrail(guard=lambda call: GuardrailResult.approve(),
+tools=['author_capability'])` with `output_type=[str, DeferredToolRequests]`. `guidance=''` drops the
 built-in system-prompt guidance. `CapabilityCreation` is not spec-serializable.
 
 ## Harness capabilities in agent specs
@@ -459,7 +585,10 @@ or `{Name: {kwargs}}`, and each class's `from_spec` builds the instance. Opted o
 or live agents, and raise `ValueError` if listed): `AWSLambdaDurability`, `AbsurdDurability`,
 `PGTaskDurability`, `CapabilityCreation`, `DynamicWorkflow`, `InputGuardrail`, `OutputGuardrail`, `SubAgents`,
 `SystemReminders`, `ToolGuardrail`, `TrajectoryJudge`. `AskUser` has a spec name but needs an
-`answerer` callable, so in practice it is passed in code too. Pass those instances with the
+`answerer` callable, so in practice it is passed in code too. `CompactOnRequest`, `DeduplicateFileReads`,
+`FallbackCompaction` and `TieredCompaction` have spec names too, but each requires strategies or a
+`file_key` callable that JSON cannot express, so the spec schema leaves them out and they are
+Python-only. Pass those instances with the
 `capabilities=` keyword of `Agent.from_spec`/`Agent.from_file`, which adds them to the spec's list.
 Keep secrets out of spec files and let capabilities read their env vars.
 
@@ -486,19 +615,19 @@ from pydantic_ai import Agent
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 
 from pydantic_ai_harness.experimental.acp import (
-    AcpSession,
-    AcpSessionConfig,
+    ACPSession,
+    ACPSessionConfig,
     InMemorySessionStore,
     run_acp_stdio_sync,
 )
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 agent = Agent('anthropic:claude-opus-5-5')
 
 
-def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-    return AcpSessionConfig(
+def session_config(session: ACPSession) -> ACPSessionConfig[None]:
+    return ACPSessionConfig(
         deps=None,
         capabilities=[FileSystem[None](), Shell[None]()],
         workspace=LocalWorkspaceBackend(session.cwd),
@@ -511,7 +640,7 @@ if __name__ == '__main__':
     )
 ```
 
-`AcpSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
+`ACPSessionConfig` requires only `deps` (`None` for no deps); `capabilities`, `toolsets`, and
 `workspace` default to `None`, so an agent without file or shell tools needs no workspace.
 
 Gotchas: root tools at `session.cwd` through `session_config`, not a static `FileSystem`. Tools marked
@@ -530,16 +659,30 @@ In the workflow `.md`, import `pydantic/pydantic-ai/src/pydantic_ai_harness/gh-a
 set `engine: {id: pydantic-ai, model: openai/gpt-6.1-sol}` (`provider/model` is required), and point
 `engine.env.PAI_AGENT` at `module:variable` (for example `my_agent:agent`), at
 `pydantic_ai_harness.researcher:researcher_agent`, or at a `.yml`/`.json` spec. Omit `PAI_AGENT` to run
-`Coder`. Then run `gh aw compile` and commit the `.lock.yml` with it. Gotchas: leave the model off the
-`Agent`, because the engine's `-m` overrides it. Writes go through safe outputs (for example the
-`safeoutputs_add_comment` tool). Install extra dependencies with a workflow `steps:` `pip install --user`.
-The provider key is a repository secret, never `engine.env`. A spec agent **cannot** use harness
-capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
+`Coder`. Use gh-aw v1.0.1 or newer with AWF v0.29.0 or newer. Run `gh aw compile` and commit the
+regenerated `.lock.yml`, including for existing workflows. Upgrading the CLI alone leaves existing
+locks unchanged. Omit `evals`, which protected capture rejects. Treat `PAI_AGENT` modules and
+caller-supplied `PYTHONPATH` as trusted engine configuration. Point both settings only at code you trust.
+
+For authenticated terminal metadata, set `engine.env.PAI_RESULT_METADATA` to a trusted `MODULE:ATTRIBUTE` dictionary.
+Keep its keys as strings and its values JSON-serializable; update the same dictionary during the run.
+Read the signed value from verified `agent-session.jsonl` under `session.result.data.metadata`.
+OTLP endpoints and credentials stay on the host, so the launcher's direct OTLP export does not run under gh-aw.
+See the engine README's observability section.
+
+Gotchas: leave the model off the `Agent`, because the engine's `-m` overrides it. Writes go through safe
+outputs (for example the `safeoutputs_add_comment` tool). A step that appends `{"type":"noop","message":"..."}` to
+`$GH_AW_SAFE_OUTPUTS` makes the engine exit 0 before starting the agent; gh-aw rejects a `noop`
+without `message`. Install extra dependencies with a workflow `steps:` `pip install --user`.
+The provider key is a repository secret, never `engine.env`. Threat detection on safe outputs runs on
+`copilot` and reads `COPILOT_GITHUB_TOKEN` (or `github.token` under `copilot-requests: write`); without
+either, set `safe-outputs.threat-detection.engine` to `codex`, `claude`, or `false`. A spec agent
+**cannot** use harness capabilities, because the CLI passes no `custom_capability_types`. Use a Python module for those.
 
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/step-persistence/
-- https://pydantic.dev/docs/ai/harness/durable-execution/
+- https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution
 - https://pydantic.dev/docs/ai/harness/aws-lambda/
 - https://pydantic.dev/docs/ai/harness/absurd/
 - https://pydantic.dev/docs/ai/harness/pgtask/

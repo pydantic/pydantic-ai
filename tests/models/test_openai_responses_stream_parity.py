@@ -9,11 +9,13 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 import pytest
 
+from pydantic_ai._utils import is_str_dict
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.messages import (
     BaseToolCallPart,
     CompactionPart,
@@ -31,12 +33,13 @@ from ..cassette_utils import recorded_interactions
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import responses
 
     from pydantic_ai.models.bedrock_mantle import BedrockMantleResponsesModel
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.meta import MetaProvider
@@ -64,13 +67,18 @@ def _recorded_streams() -> dict[str, dict[str, Any]]:
 
 
 def _request_body(interaction: dict[str, Any]) -> dict[str, Any]:
-    return interaction['request'].get('parsed_body') or {}
+    request = interaction['request']
+    # Older cassettes keep the parsed body beside the raw one, newer ones keep it as the body's JSON content.
+    body: dict[str, Any] = request.get('body') or {}
+    content: object = request.get('parsed_body') or body.get('content')
+    return content if is_str_dict(content) else {}
 
 
 def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesModel:
     # A resumed background stream is a `GET` without a body; its model comes from the stream itself.
     model_name: str = _request_body(interaction).get('model', 'gpt-5')
-    host = httpx2.URL(interaction['request']['uri']).host
+    url = httpx2.URL(interaction['request']['uri'])
+    host = url.host
     if host == 'chatgpt.com':
         return OpenAICodexModel(model_name, provider=OpenAICodexProvider(openai_client=client))
     if host.startswith('bedrock-mantle.'):
@@ -79,6 +87,9 @@ def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesM
         return OpenAIResponsesModel(model_name, provider=DeepSeekProvider(openai_client=client))
     if host == 'api.meta.ai':
         return OpenAIResponsesModel(model_name, provider=MetaProvider(openai_client=client))
+    if host.endswith('.openai.azure.com') or (host == 'gateway.pydantic.info' and url.path.startswith('/proxy/azure/')):
+        # The replay client is a plain `AsyncOpenAI`; `AzureProvider` only reads its base URL and API key from it.
+        return OpenAIResponsesModel(model_name, provider=AzureProvider(openai_client=cast(AsyncAzureOpenAI, client)))
     assert host == 'api.openai.com', host
     return OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
 
@@ -87,11 +98,13 @@ def _model_request_parameters(interaction: dict[str, Any]) -> ModelRequestParame
     # The streamed parts manager types a client-executed tool search call from the `search_tools` definition the
     # request was built from, where the complete response is typed from the output item itself.
     tools: list[dict[str, Any]] = _request_body(interaction).get('tools') or []
+    function_tools: list[ToolDefinition] = []
     if any(tool['type'] == 'tool_search' and tool.get('execution') == 'client' for tool in tools):
-        return ModelRequestParameters(
-            function_tools=[ToolDefinition(name=TOOL_SEARCH_FUNCTION_TOOL_NAME, tool_kind='tool-search')]
-        )
-    return ModelRequestParameters()
+        function_tools.append(ToolDefinition(name=TOOL_SEARCH_FUNCTION_TOOL_NAME, tool_kind='tool-search'))
+    if any(tool['type'] == 'computer' for tool in tools):
+        # OpenAI sends a `computer_call` only for a request that sent its computer tool in place of a `computer` tool.
+        function_tools.append(ToolDefinition(name='computer', tool_kind=COMPUTER_KIND.id))
+    return ModelRequestParameters(function_tools=function_tools)
 
 
 def _comparable(response: ModelResponse) -> dict[str, Any]:

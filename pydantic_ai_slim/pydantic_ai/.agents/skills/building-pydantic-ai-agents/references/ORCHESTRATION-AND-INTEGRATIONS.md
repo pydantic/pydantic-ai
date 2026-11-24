@@ -59,6 +59,13 @@ result = graph.run_sync(inputs=3)
 
 Use `await graph.run(inputs=...)` from async code.
 
+For `BaseNode` workflows, use `g.add_reachable(RootNode)` to register reachable classes and infer missing outgoing edges.
+Configure bridge paths through steps, decisions and joins before discovery. Existing outgoing paths are preserved.
+Connect `g.start_node` explicitly. Node instances and constructor arguments still come from application code.
+For independent task functions, import the function and call `g.step(imported_function)` at the composition root.
+See [the graph guide](https://pydantic.dev/docs/ai/graph/graph/#registering-reachable-nodes) for recursive registration and module-qualified postponed annotations.
+
+
 ## Call the Model Without Using an Agent
 
 Use the direct API when the user wants a single model request without agent orchestration.
@@ -86,13 +93,57 @@ Temporal entry points:
 - `PydanticAIPlugin`
 - `AgentPlugin`
 
+To run an async function tool in the workflow code itself rather than in its activity, step or task, on any engine, pass `durable=False` to `@agent.tool`, `Tool(...)`, `@toolset.tool` or `FunctionToolset(...)`, or set `ToolDefinition.durable` in a `prepare` function or `PrepareTools` for tools you don't define. It then re-runs on every replay, so keep it deterministic and I/O-free. An engine's own metadata key (`'temporal'`, `'prefect'`, ...) wins when set; sync, MCP and dynamic-toolset tools raise a `UserError` where the engine wraps the tool (DBOS doesn't check function tools, which it runs in workflow code anyway). See [Running a tool outside the durable unit](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/#running-a-tool-outside-the-durable-unit).
+
+For human-in-the-loop approval inside the run, see a `HandleDeferredToolCalls` handler that takes a resume token in [Tools Advanced](./TOOLS-ADVANCED.md#require-tool-approval-human-in-the-loop): it waits in process by default and durably on AWS Lambda durable functions; on Temporal, DBOS and Prefect the engine refuses it with `UserError` (an unrecorded wait could diverge from the journal on replay), so end the run with `DeferredToolRequests` output there.
+
+For runs long enough to approach Temporal's history limit, pass `TemporalDurability(continue_as_new=...)`. Before each model request where Temporal suggests continuing as new, it calls your function with the `RunContext`. The function calls `workflow.continue_as_new()` with everything the workflow's run method needs to resume, typically `None` as the prompt plus `ctx.messages`, `ctx.usage`, and `ctx.usage_limits`, or returns to defer.
+
+To delegate to a nested durable agent under Temporal, run the delegating async function tool as a child workflow with `metadata={'temporal': {'child_workflow': ChildWorkflowConfig(...)}}` (or the same metadata through `SetToolMetadata`). The nested agent's model requests and tool calls then become activities in the child's own history instead of the parent's. List the nested agent in `__pydantic_ai_agents__` too, and register the worker through `PydanticAIPlugin` or `AgentPlugin`: `TemporalDurability.temporal_activities` raises when a tool uses a child workflow, because it would leave the child workflow definition unregistered. On a worker that only runs activities, use `AgentPlugin(agent, register_workflows=False)` so it doesn't also register the child workflow. The metadata must be in place when the worker is configured; tools added with `@agent.tool` count. An exception in the tool body fails the child workflow, like a failed activity. Child workflows aren't supported for sync, dynamic, or MCP tools.
+
+Under DBOS, use `metadata={'dbos': {'child_workflow': ChildWorkflowConfig(...)}}` (from `pydantic_ai.durable_exec.dbos`, or through `SetToolMetadata`) on an async tool in a `FunctionToolset` with a unique `id`, set before the agent is constructed (not with a later `@agent.tool`). The child's inputs (tool arguments, serialized run context, `deps`) must be serializable.
+
+When a durable engine owns model request retries, set `model_settings={'max_retries': 0}` so the provider SDK doesn't retry inside the durable unit. A model error's `retry_after` (a provider's `Retry-After`) is then waited durably before the engine's next attempt, capped: on Temporal by the retry policy's `maximum_interval`, on DBOS (with `model_step_config` retries) by the step's backoff or a minute, whichever is longer. Prefect applies `retry_delay_seconds` whatever the provider asked for.
+
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
+
+For latency-tolerant work at batch prices, add the `BatchModelRequests` capability from `pydantic_ai.capabilities`
+(Anthropic, OpenAI Responses and Gemini API models have batch APIs; not through Pydantic AI Gateway) and run the
+agent as usual; runs started together in one process share batches, and so do agents and runs given the same
+instance. Runs awaited one after another each wait `max_wait` (default 30 seconds) alone and get a batch each, so
+start them together, for example with `asyncio.gather`. Don't write a submission or polling loop: a waiting request
+suspends the turn through the agent graph's continuation loop, so it works in a plain `agent.run(...)`, and a run
+resumed from its message history picks up the same batch. Streamed runs and event stream handlers work, getting each
+response's events all at once when its batch result arrives, and each tool turn or output retry is another batch
+round trip. For a job that submits and exits, add `PendingModelResponse` to `output_type`: the run ends with it once
+the request is submitted, and running the agent again with `result.all_messages()` checks the batch once and
+continues or ends pending again; the collecting agent needs `BatchModelRequests` too, or resuming raises
+`UserError`, and a model chosen dynamically (e.g. by `SelectModel`) must be passed as `run(model=...)`. A
+submit-only script can lower `max_wait` so it doesn't wait for more requests to join the batch. The same works for
+OpenAI background mode.
+
+Under durable execution, put the capability on the agent. With Temporal, DBOS or Prefect, submitting and each check
+are durable steps and a recovered run continues with the same batch; the waits between checks are durable on
+Temporal and DBOS, and plain sleeps on Prefect. Under the Harness's Azure Durable Task engine, submitting and each
+check are activities and the waits between them are durable timers, so a recovered run continues with the same batch.
+The other Harness engines (AWS Lambda, Absurd, pgtask, Render Workflows) sleep in-process between checks, so the
+process must stay up for the whole batch. Restate and Airflow don't record
+batched requests, so recovery submits them again, in a new batch that's billed too. Where an engine can't wait out a long
+batch, use `PendingModelResponse` and schedule the next run from the stored history yourself. See
+https://pydantic.dev/docs/ai/core-concepts/batch/#durable-execution for each engine's details.
+
+Don't write resubmission logic either: requests a batch didn't run (expired or missing, not cancelled) or that failed
+with a rate limit or server error are submitted again automatically, up to `max_resubmissions` (default 2), a check
+that fails transiently is retried at the next poll, and a history whose batch the provider no longer has raises
+`SuspendedResponseExpired`.
 
 Capability hooks that must behave differently in deterministic workflow code check `ctx.in_durable_context`: `True` inside the durable workflow or flow, `False` in Temporal activities and DBOS steps (where tools run) and outside durable execution. Prefect tasks inherit their flow's context, so it is `True` there. Don't detect the engine by module or class name.
 
-Pass every executing toolset that needs durable wrapping to the agent constructor. In particular, construct a `DynamicToolset` with an explicit `id` and pass it to `Agent(toolsets=[...])`; the `@agent.toolset` decorator registers after the engine's durable units were created. Toolsets that arrive later — via the decorator, `run(toolsets=...)`, `override(toolsets=...)`, or a per-run capability — are never wrapped for durable execution. Inside a workflow or flow, Temporal and Prefect reject runtime `MCPToolset` and `DynamicToolset` leaves, plus `FunctionToolset` leaves unless every async tool opts out of durable wrapping with `metadata={'temporal': False}` or `metadata={'prefect': False}` respectively; DBOS accepts a `FunctionToolset`, whose tools it runs inline either way, but rejects `MCPToolset` and `DynamicToolset`. A custom executing `AbstractToolset` leaf is not recognized by this guard and runs unwrapped, so do not add one at run time. The deprecated wrapper agents don't run this check — inside a workflow or flow they run the toolset list frozen at wrap time, so a toolset registered that late is silently left out. A toolset added at run time also cannot reuse a construction-time toolset's `id`.
+Pass every executing toolset that needs durable wrapping to the agent constructor. In particular, construct a `DynamicToolset` with an explicit `id` and pass it to `Agent(toolsets=[...])`; the `@agent.toolset` decorator registers after the engine's durable units were created. Toolsets that arrive later — via the decorator, `run(toolsets=...)`, `override(toolsets=...)`, or a per-run capability — are never wrapped for durable execution. Inside a workflow or flow, Temporal and Prefect reject runtime `MCPToolset` and `DynamicToolset` leaves, plus `FunctionToolset` leaves unless every async tool opts out of durable wrapping with `durable=False` (or the engine's own `metadata={'temporal': False}` / `metadata={'prefect': False}`, which takes precedence when set on the tool); DBOS accepts a `FunctionToolset`, whose tools it runs inline either way, but rejects `MCPToolset` and `DynamicToolset`. A custom executing `AbstractToolset` leaf is not recognized by this guard and runs unwrapped, so do not add one at run time. The deprecated wrapper agents don't run this check — inside a workflow or flow they run the toolset list frozen at wrap time, so a toolset registered that late is silently left out. A toolset added at run time also cannot reuse a construction-time toolset's `id`.
 
 Temporal and DBOS register durable units before their workers start, so attach capabilities at agent construction time. Passing `run(capabilities=[...])` inside one of their workflows raises a `UserError` unless the capability is the observer-only `Instrumentation`; broader support for observer-only capabilities is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477), where users can share their use cases. Prefect creates tasks per call, so it has no such registration boundary and accepts a per-run capability that contributes no executing toolset; one that does is still rejected by the runtime-toolset guard.
+
+`override(capabilities=[...])` replaces the agent's capabilities, so build the list from `agent.root_capability.capabilities` to keep the bound durability capability: a list without it, or with it inside another capability, raises a `UserError`. Inside a workflow or flow, the capabilities the list adds follow the same rules as `run(capabilities=[...])`. The deprecated `TemporalAgent` refuses `override(capabilities=...)` inside a workflow.
 
 A run-time `model=` inside a workflow must be a model-name string or an instance registered in the durability capability's `models=`. An unregistered `Model` instance raises a `UserError`: it can't be serialized into the activity/step/task, and rebuilding it from its `model_id` would build a different model. To build a specific instance inside the durable unit (e.g. per-user credentials from `deps`), pass a string and use a `ResolveModelId` capability.
 
@@ -161,7 +212,7 @@ Common entry points:
 
 - `Case`
 - `Dataset`
-- evaluator classes from `pydantic_evals.evaluators`
+- evaluator classes from `pydantic_evals.evaluators`, or plain functions taking an `EvaluatorContext` for checks without parameters (saved to dataset files under the function's name, so pass them in `custom_evaluator_types` to load)
 
 ## Build Custom Toolsets, Models, or Agents
 
@@ -173,3 +224,5 @@ Extensibility entry points:
 - `AbstractCapability`
 
 Reach for these only when the built-in primitives are genuinely insufficient.
+
+For bulk model requests without an agent, use `pydantic_ai.direct.model_request_batch()`. To submit in one process and collect in another, use `model.batch_encode()`, `batch_create()`, `batch_status()`, `batch_results()`, `batch_cancel()` and `batch_decode()`, and store the returned `Batch` handle with the requests' settings and parameters.

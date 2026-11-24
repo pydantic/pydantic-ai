@@ -60,9 +60,15 @@ def http_server(responses: Sequence[HttpResponse], *, port: int | None = None) -
         thread.join(timeout=5.0)
 
 
-def unused_tcp_port() -> int:
+@contextmanager
+def refused_tcp_port() -> Generator[int]:
+    """Yield a localhost port that refuses connections until the block exits.
+
+    The socket stays bound but never listens: a released port could be bound by another test's server, which would
+    then answer the request.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(('localhost', 0))
         port = sock.getsockname()[1]
-    assert isinstance(port, int)
-    return port
+        assert isinstance(port, int)
+        yield port

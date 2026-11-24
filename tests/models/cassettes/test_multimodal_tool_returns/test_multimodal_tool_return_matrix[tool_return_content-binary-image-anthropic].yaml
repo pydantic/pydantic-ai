@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "368"
+      - "369"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -27,7 +27,7 @@ interactions:
               Use the get_file tool now to retrieve a image file, then describe what you
               received.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -49,10 +49,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=108
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f0cfdd5c0f464164a556e8d03d931ce8-4e1b34902e02e4ec-01
+      - 00-84a7101f0e92283dcc060018046e997c-b040e3226a378930-01
       transfer-encoding:
       - chunked
       vary:
@@ -61,42 +63,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3iPWhbXVmkaqu3Mvb2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":558,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}     }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHGYU3ndWhzskkvpL9E","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01Rs8MR5qtQ2xWTBCpFnrA5w","name":"get_file","input":{},"caller":{"type":"direct"}} }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I'll retrieve the file"}     }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for you now"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}            }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0           }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01Qff384CyDasWjktwPpe6aX","name":"get_file","input":{},"caller":{"type":"direct"}}          }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}       }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1  }
+        data: {"type":"content_block_stop","index":0               }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":558,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":46}       }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}}          }
 
         event: message_stop
-        data: {"type":"message_stop"            }
+        data: {"type":"message_stop"           }
 
-  recorded_at: 2026-09-29T16:29:26.775013+00:00
+  recorded_at: 2026-10-25T16:36:18.196250+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -104,11 +91,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "132227"
+      - "132167"
       content-type:
       - application/json
       host:
@@ -116,7 +103,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -126,15 +113,13 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: I'll retrieve the file for you now.
-            type: text
-          - id: toolu_01Qff384CyDasWjktwPpe6aX
+          - id: toolu_01Rs8MR5qtQ2xWTBCpFnrA5w
             type: tool_use
             name: get_file
             input: {}
         - role: user
           content:
-          - tool_use_id: toolu_01Qff384CyDasWjktwPpe6aX
+          - tool_use_id: toolu_01Rs8MR5qtQ2xWTBCpFnrA5w
             type: tool_result
             content:
             - text: File attached
@@ -146,7 +131,7 @@ interactions:
               media_type: image/jpeg
               type: base64
             type: image
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stream: true
         tool_choice:
           type: auto
@@ -168,10 +153,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=102
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-09e75663b0b9286eb08dc312e2ace39a-1089e3aeaba74a9c-01
+      - 00-6f50bd58e878d43c85854b86f46fdf6d-8600d126bb232857-01
       transfer-encoding:
       - chunked
       vary:
@@ -180,249 +167,210 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3iVB1yRBqGbyxVCDCJ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1088,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}        }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHGd3tK1ukKRfBD41LQ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":868,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":250,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}           }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I received"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The file I got is a close-"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" an"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"up photo of a k"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" image showing"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iwi"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a cross"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" fruit cut"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-section of a k"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in half. It s"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iwi fruit"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"its against"}    }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a pl"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" The image displays"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ain white"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" background.\n\n-"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n- **"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **Fl"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"esh:** The fl"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" perfectly"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"esh is bright green."}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" sl"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" It's"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iced kiwi half"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** showing"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" de"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" its"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"eper green"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" distinctive"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" near"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" internal"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the sk"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" structure\n- **"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"in and lighter to"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Vib"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ward the center.\n- **"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"rant green"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Center:** A"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" flesh** that radi"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pale c"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ates out"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ream-white"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ward from the center"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" core s"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **A pale"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"its in"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" yellow"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the middle. It"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ish-green core"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s slightly o"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** in"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"val."}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the center"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Seeds:"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Dark"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** Small black seeds form"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" black"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a ring around the core."}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" seeds** arranged"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Pattern:"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" in a beautiful"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** Light"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rad"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" green"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ial pattern around the core"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" streaks run"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" out"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" creating a st"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ward from the core"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"arburst or"} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" to"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" sunburst effect\n- **Fine"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ward the sk"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" brown"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"in, like r"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" fuz"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ays.\n- **Skin"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"zy skin** visible"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** A"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" around"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" thin brown ed"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the edges of"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ge with"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the fruit"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" fine"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **White"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", fuzzy hair"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" background"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"s runs around"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** that"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the outside"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" makes"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of the fruit."}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the bright"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Style"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" green"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":** The l"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" colors pop\n\nThe"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ighting is even"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" k"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and bright, and"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"iwi appears fresh"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the background is cl"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and ju"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ean."}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"icy, with excellent"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" This loo"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" detail"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ks like a st"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" showing"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ock or"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the texture"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" food photo.\n\nThe c"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of the flesh and"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ut sur"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the moisture"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"face loo"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" drop"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ks f"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lets visible"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" on"}            }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the surface. It"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a classic"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" food"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" photography shot that showc"}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ases the natural"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" geometric"}        }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" beauty"} }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of the fruit's"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" interior"}         }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" structure"}  }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"resh and juicy."}       }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0             }
+        data: {"type":"content_block_stop","index":0  }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1088,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":179}}
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":868,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":250,"output_tokens_details":{"thinking_tokens":0}}             }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"               }
 
-  recorded_at: 2026-09-29T16:29:32.299109+00:00
+  recorded_at: 2026-10-25T16:36:21.056343+00:00

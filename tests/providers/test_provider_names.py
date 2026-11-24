@@ -18,9 +18,11 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.bedrock import BedrockProvider
+    from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
     from pydantic_ai.providers.github import GitHubProvider  # pyright: ignore[reportDeprecated]
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
@@ -36,8 +38,10 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -47,6 +51,7 @@ with try_import() as imports_successful:
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
+        ('elevenlabs', ElevenLabsProvider, 'ELEVENLABS_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
@@ -69,17 +74,35 @@ with try_import() as imports_successful:
         ('vllm', VLLMProvider, 'VLLM_BASE_URL'),
         ('crusoe', CrusoeProvider, 'CRUSOE_API_KEY'),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
+        ('otari', OtariProvider, 'OTARI_API_KEY'),
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
         ('snowflake', SnowflakeProvider, 'SNOWFLAKE_ACCOUNT'),
+        ('stav', StavProvider, 'STAV_API_KEY'),
         ('gateway/chat', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/google', GoogleCloudProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/anthropic', AnthropicProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/converse', BedrockProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
     ]
+    default_url_providers = [
+        CerebrasProvider,
+        CrusoeProvider,
+        DeepSeekProvider,
+        FireworksProvider,
+        GitHubProvider,  # pyright: ignore[reportDeprecated]
+        MetaProvider,
+        NebiusProvider,
+        OpenRouterProvider,
+        OtariProvider,
+        OVHcloudProvider,
+        StavProvider,
+        TogetherProvider,
+        VercelProvider,
+    ]
 
 if not imports_successful():
     test_infer_provider_params = []  # pragma: lax no cover
+    default_url_providers = []  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='need to install all extra packages'),
@@ -124,6 +147,32 @@ def test_infer_provider_class(provider: str, provider_cls: type[Provider[Any]], 
         pytest.skip('Gateway providers are not supported for this test')
 
     assert infer_provider_class(provider) == provider_cls
+
+
+@pytest.mark.filterwarnings('ignore:`GitHubProvider` is deprecated:pydantic_ai._warnings.PydanticAIDeprecationWarning')
+@pytest.mark.parametrize('provider_cls', default_url_providers)
+def test_provider_base_url_replaces_the_default(
+    provider_cls: type[
+        CerebrasProvider
+        | CrusoeProvider
+        | DeepSeekProvider
+        | FireworksProvider
+        | GitHubProvider  # pyright: ignore[reportDeprecated]
+        | MetaProvider
+        | NebiusProvider
+        | OpenRouterProvider
+        | OtariProvider
+        | OVHcloudProvider
+        | StavProvider
+        | TogetherProvider
+        | VercelProvider
+    ],
+):
+    custom = provider_cls(api_key='api-key', base_url='https://gateway.example/v1')
+    assert custom.base_url == 'https://gateway.example/v1' != provider_cls(api_key='api-key').base_url
+    assert custom.client.base_url == 'https://gateway.example/v1/'
+    with pytest.raises(AssertionError, match='Cannot provide both `openai_client` and `base_url`'):
+        provider_cls(openai_client=custom.client, base_url='https://gateway.example/v1')  # pyright: ignore[reportCallIssue,reportArgumentType]
 
 
 @pytest.mark.parametrize('removed_prefix', ['google-gla', 'google-vertex', 'vertexai'])

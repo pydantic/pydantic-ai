@@ -22,20 +22,15 @@ from .result import GeneratedImage, ImageGenerationResult
 from .settings import ImageGenerationSettings
 
 try:
-    import grpc
     from xai_sdk import AsyncClient
     from xai_sdk.aio.image import ImageResponse
     from xai_sdk.proto import usage_pb2
     from xai_sdk.types import (
         ImageAspectRatio as XaiImageAspectRatio,
-        ImageGenerationModel as LatestXaiImageGenerationModelNames,
         ImageResolution,
     )
 
-    from pydantic_ai.models.xai import (
-        _GRPC_STATUS_TO_HTTP as _CHAT_GRPC_STATUS_TO_HTTP,  # pyright: ignore[reportPrivateUsage]
-        _map_api_errors,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.models.xai import _map_api_errors  # pyright: ignore[reportPrivateUsage]
 
     from ._xai_geometry import resolve_xai_geometry
 except ImportError as _import_error:
@@ -45,8 +40,16 @@ except ImportError as _import_error:
     ) from _import_error
 
 
+LatestXaiImageGenerationModelNames = Literal[
+    'grok-imagine-image-2.0', 'grok-imagine-image-quality', 'grok-imagine-image'
+]
+"""Latest xAI image generation models."""
+
 XaiImageGenerationModelName = str | LatestXaiImageGenerationModelNames
-"""Possible xAI image generation model names."""
+"""Possible xAI image generation model names.
+
+The `Literal` lists the models to pick from, for autocomplete. Any other model id the API accepts works too, as a `str`.
+"""
 
 
 class XaiImageGenerationSettings(ImageGenerationSettings, total=False):
@@ -183,7 +186,7 @@ class XaiImageGenerationModel(ImageGenerationModel):
         input_images = await self._map_input_images(images)
         n = xai_settings.get('xai_n') or 1
 
-        with _map_api_errors(self.model_name, status_map=_GRPC_STATUS_TO_HTTP):
+        with _map_api_errors(self.model_name):
             if n == 1:
                 response = await self._client.image.sample(
                     prompt,
@@ -224,23 +227,24 @@ class XaiImageGenerationModel(ImageGenerationModel):
         order_violated = False
 
         for image in images:
-            if isinstance(image, UploadedFile):
-                self._validate_uploaded_file_provider(image)
-                if seen_reference:
-                    order_violated = True
-                file_ids.append(image.file_id)
-            elif isinstance(image, BinaryImage):
-                image_references.append(image.data_uri)
-                seen_reference = True
-            elif isinstance(image, ImageUrl):
-                if image.force_download:
-                    downloaded_image = await download_item(image, data_format='base64_uri')
-                    image_references.append(downloaded_image['data'])
-                else:
-                    image_references.append(image.url)
-                seen_reference = True
-            else:
-                assert_never(image)
+            match image:
+                case UploadedFile():
+                    self._validate_uploaded_file_provider(image)
+                    if seen_reference:
+                        order_violated = True
+                    file_ids.append(image.file_id)
+                case BinaryImage():
+                    image_references.append(image.data_uri)
+                    seen_reference = True
+                case ImageUrl():
+                    if image.force_download:
+                        downloaded_image = await download_item(image, data_format='base64_uri')
+                        image_references.append(downloaded_image['data'])
+                    else:
+                        image_references.append(image.url)
+                    seen_reference = True
+                case _:
+                    assert_never(image)
 
         if len(images) == 1:
             if file_ids:
@@ -411,10 +415,3 @@ def _response_provider_details(response: ImageResponse) -> dict[str, object]:
     if (cost_usd := response.cost_usd) is not None:
         provider_details['cost_usd'] = cost_usd
     return provider_details
-
-
-# The image path additionally maps `INVALID_ARGUMENT` to 400, which the chat table leaves unmapped.
-_GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
-    **_CHAT_GRPC_STATUS_TO_HTTP,
-    grpc.StatusCode.INVALID_ARGUMENT: 400,
-}

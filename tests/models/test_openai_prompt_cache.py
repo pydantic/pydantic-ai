@@ -14,19 +14,28 @@ the real APIs.
 
 from __future__ import annotations as _annotations
 
+import json
+import os
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
+import httpx2
 import pytest
 from cassetter import Cassette
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
-from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput
+from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput, RunContext
+from pydantic_ai._framing import lookalike_note_announcement
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    AgentInstructionSource,
+    BinaryImage,
     CompactionPart,
+    InstructionId,
     InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -39,12 +48,14 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import request_json
+from ..computer_fakes import FAKE_DISPLAY_SIZE, FAKE_SCREENSHOT
 from ..conftest import IsStr, RequestCapture, try_import
 from .mock_openai import (
     MockOpenAI,
@@ -56,11 +67,12 @@ from .mock_openai import (
 )
 
 with try_import() as imports_successful:
-    from openai import AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI, omit
     from openai.types import chat, responses as resp
     from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+    from openai.types.responses.response_compaction_item import ResponseCompactionItem
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
@@ -72,8 +84,10 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
     )
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.native_tools import ComputerTool
     from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.openai import OpenAIModelProfile
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -293,7 +307,7 @@ def _history_ending_in(*tail: ModelMessage) -> list[ModelMessage]:
 async def test_openai_chat_leading_cache_point_attaches_to_previous_message(allow_model_requests: None):
     """A `CachePoint` opening a user message after a tool result marks the tool result instead of raising.
 
-    That is where a tail reminder (`SystemReminders`, `Planning`) puts its breakpoint once a tool loop
+    That is where a tail reminder (such as `Planning`'s) puts its breakpoint once a tool loop
     is underway; the request used to fail with `CachePoint cannot be the first content in a user message`.
     """
     mock_client = MockOpenAI.create_mock(chat_completion())
@@ -435,12 +449,24 @@ async def test_openrouter_unified_cache_adds_cache_control(allow_model_requests:
     mock_client.chat.completions.create = create
     model = OpenRouterModel('anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(openai_client=mock_client))
 
-    await Agent(model, instructions='Stable instructions.', model_settings={'cache': '1h'}).run('Hi')
+    await Agent(
+        model, instructions='Stable instructions.', model_settings={'cache': '1h', 'framing_announcement': 'always'}
+    ).run('Hi')
 
     request = create.call_args.kwargs
-    system_message = request['messages'][0]
-    assert system_message['role'] == 'system'
-    assert system_message['content'][-1]['cache_control'] == {'type': 'ephemeral', 'ttl': '1h'}
+    # Claude Sonnet 4.5 takes no mid-conversation system messages, so with `'always'` the instructions start with the
+    # announcement; it never changes, so the breakpoint after the instructions covers it too.
+    announcement, system_message = request['messages'][:2]
+    assert system_message == {
+        'role': 'system',
+        'content': [
+            {'type': 'text', 'text': 'Stable instructions.', 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}
+        ],
+    }
+    assert announcement == {
+        'role': 'system',
+        'content': lookalike_note_announcement(system_role=False),
+    }
 
 
 async def test_openrouter_chat_cache_point_dropped_for_openai_models(allow_model_requests: None):
@@ -803,6 +829,45 @@ async def test_openai_chat_cache_instructions_after_last_static(allow_model_requ
                 ],
             },
             {'role': 'system', 'content': 'Today is 2026-08-18.'},
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+async def test_openai_chat_cache_instructions_single_breakpoint_before_appending_blocks(allow_model_requests: None):
+    """An `on_change='append'` block gets no breakpoint of its own: only the one after the static instructions.
+
+    OpenAI keeps a request's last four breakpoints, so a second one would push out the static instructions' one
+    first, and that's the one a new conversation reads even when its append blocks differ.
+    """
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIChatModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    @agent.instructions(name='memory', on_change='append')
+    def memory() -> str:
+        return 'The customer prefers email.'
+
+    await agent.run('Where is order 1234?')
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {'type': 'text', 'text': 'Support policies.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+                ],
+            },
+            {
+                'role': 'system',
+                'content': """\
+<pyai:context id="agent:memory">
+The customer prefers email.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            },
             {'role': 'user', 'content': 'Where is order 1234?'},
         ]
     )
@@ -1635,7 +1700,7 @@ async def test_openai_responses_cache_instructions_relocated_once_per_request_in
                 {'role': 'user', 'content': 'Where is order 1234?'},
                 {
                     'name': 'get_order_status',
-                    'arguments': '{"order_id": "1234"}',
+                    'arguments': '{"order_id":"1234"}',
                     'call_id': 'call_1',
                     'type': 'function_call',
                     'id': 'fc_1',
@@ -1644,6 +1709,508 @@ async def test_openai_responses_cache_instructions_relocated_once_per_request_in
             ],
         ]
     )
+
+
+# ===== GPT-6.2: stable instructions as leading input messages =====
+
+
+def _support_agent(model: OpenAIResponsesModel, settings: OpenAIResponsesModelSettings | None = None) -> Agent[str]:
+    """Static instructions, an `on_change='append'` block and a dynamic instruction that rewrites the prefix."""
+    agent = Agent(model, instructions='Support policies.', deps_type=str, model_settings=settings)
+
+    @agent.instructions(name='queue', on_change='append')
+    def queue(ctx: RunContext[str]) -> str:
+        return f'Queue: {ctx.deps}.'
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    return agent
+
+
+@pytest.mark.parametrize(
+    'model_name, expected',
+    [
+        pytest.param(
+            'gpt-6.2-sol',
+            snapshot(
+                {
+                    'instructions': 'Today is 2026-08-18.',
+                    'input': [
+                        {'role': 'system', 'content': 'Support policies.'},
+                        {
+                            'role': 'system',
+                            'content': """\
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                        },
+                        {'role': 'user', 'content': 'Where is order 1234?'},
+                    ],
+                }
+            ),
+            id='gpt-6.2-sol',
+        ),
+        pytest.param(
+            'gpt-6.1-sol',
+            snapshot(
+                {
+                    'instructions': """\
+Support policies.
+
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+
+Today is 2026-08-18.\
+""",
+                    'input': [{'role': 'user', 'content': 'Where is order 1234?'}],
+                }
+            ),
+            id='gpt-6.1-sol',
+        ),
+    ],
+)
+async def test_openai_responses_stable_instructions_as_input(
+    allow_model_requests: None, model_name: str, expected: dict[str, Any]
+):
+    """GPT-6.2 puts the top-level `instructions` after `input` and never caches them, so the static instructions
+    and the append blocks lead the input instead, and the instruction that rewrites the prefix stays in the field.
+    Earlier models keep all of them in the field, ahead of the input."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+    await _support_agent(model).run('Where is order 1234?', deps='open')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert {'instructions': request.get('instructions'), 'input': request['input']} == expected
+
+
+async def test_openai_responses_stable_instructions_as_input_with_cache_instructions(allow_model_requests: None):
+    """With `openai_cache_instructions` on GPT-6.2, the breakpoint goes after the static instructions as usual, and
+    the instruction that rewrites the prefix still stays in the top-level field, where its changes leave the cached
+    conversation intact."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+
+    await _support_agent(model, settings).run('Where is order 1234?', deps='open')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert {'instructions': request.get('instructions'), 'input': request['input']} == snapshot(
+        {
+            'instructions': 'Today is 2026-08-18.',
+            'input': [
+                {
+                    'role': 'system',
+                    'content': [
+                        {
+                            'type': 'input_text',
+                            'text': 'Support policies.',
+                            'prompt_cache_breakpoint': {'mode': 'explicit'},
+                        }
+                    ],
+                },
+                {
+                    'role': 'system',
+                    'content': """\
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                },
+                {'role': 'user', 'content': 'Where is order 1234?'},
+            ],
+        }
+    )
+
+
+async def test_openai_responses_stable_instructions_as_input_without_stable_instructions(allow_model_requests: None):
+    """With only an instruction that rewrites the prefix, there's nothing to move, so it stays in the field."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+
+    @agent.instructions
+    def current_date() -> str:
+        return 'Today is 2026-08-18.'
+
+    await agent.run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['instructions'] == 'Today is 2026-08-18.'
+    assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
+
+
+async def test_openai_responses_stable_instructions_as_input_append_block_without_breakpoint(
+    allow_model_requests: None,
+):
+    """An append block moves on GPT-6.2 even when `openai_cache_instructions` has no static instruction or system
+    prompt to put its breakpoint on."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_cache_instructions=True)
+    agent = Agent(model, deps_type=str, model_settings=settings)
+
+    @agent.instructions(name='queue', on_change='append')
+    def queue(ctx: RunContext[str]) -> str:
+        return f'Queue: {ctx.deps}.'
+
+    await agent.run('Where is order 1234?', deps='open')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert 'instructions' not in request
+    assert request['input'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': """\
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            },
+            {'role': 'user', 'content': 'Where is order 1234?'},
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'settings',
+    [
+        pytest.param(OpenAIResponsesModelSettings(openai_previous_response_id='resp_seed'), id='previous_response_id'),
+        pytest.param(OpenAIResponsesModelSettings(openai_conversation_id='conv_123'), id='conversation_id'),
+    ],
+)
+async def test_openai_responses_stable_instructions_stay_top_level_with_server_side_state(
+    allow_model_requests: None, settings: OpenAIResponsesModelSettings
+):
+    """A stored response keeps its input and a continuing request inherits it, so with an explicit response id or a
+    conversation the instructions stay in the top-level field, which isn't carried over."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model, instructions='Support policies.', model_settings=settings)
+
+    first = await agent.run('Where is order 1234?')
+    await agent.run('And order 5678?', message_history=first.all_messages())
+
+    requests = get_mock_responses_kwargs(mock_client)
+    assert [request['instructions'] for request in requests] == ['Support policies.', 'Support policies.']
+    assert [item for request in requests for item in request['input'] if item.get('role') == 'system'] == []
+
+
+@pytest.mark.parametrize(
+    'instructions, expected_second_request',
+    [
+        pytest.param(
+            'Support policies.',
+            {'continues': True, 'roles': ['user'], 'system': []},
+            id='same-agent',
+        ),
+        pytest.param(
+            'Billing policies.',
+            {'continues': False, 'roles': ['system', 'user', 'assistant', 'user'], 'system': ['Billing policies.']},
+            id='handoff',
+        ),
+    ],
+)
+async def test_openai_responses_auto_chain_sends_stable_instructions_once(
+    allow_model_requests: None, instructions: str, expected_second_request: dict[str, Any]
+):
+    """An `'auto'` chain sends the static instructions as leading input when it starts, and leaves them out while it
+    continues, since the stored response holds them. Different ones fail the history digest, so a handoff resends the
+    history, and the model sees only the current instructions."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    await Agent(model, instructions=instructions, model_settings=settings).run(
+        'And order 5678?', message_history=first.all_messages()
+    )
+
+    first_request, second_request = get_mock_responses_kwargs(mock_client)
+    assert 'instructions' not in first_request
+    assert first_request['input'] == [
+        {'role': 'system', 'content': 'Support policies.'},
+        {'role': 'user', 'content': 'Where is order 1234?'},
+    ]
+    assert 'instructions' not in second_request
+    assert {
+        'continues': second_request.get('previous_response_id') == first.response.provider_response_id,
+        'roles': [item.get('role') for item in second_request['input']],
+        'system': [item['content'] for item in second_request['input'] if item.get('role') == 'system'],
+    } == expected_second_request
+
+
+async def test_openai_responses_auto_chain_with_cache_instructions(allow_model_requests: None):
+    """With `openai_cache_instructions`, the request that starts an `'auto'` chain puts the breakpoint after the static
+    instructions it sends as leading input, and a continuing request sends neither."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(
+        model,
+        instructions='Support policies.',
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto', openai_cache_instructions=True),
+    )
+
+    first = await agent.run('Where is order 1234?')
+    await agent.run('And order 5678?', message_history=first.all_messages())
+
+    first_request, second_request = get_mock_responses_kwargs(mock_client)
+    assert first_request['input'][0] == {
+        'role': 'system',
+        'content': [
+            {'type': 'input_text', 'text': 'Support policies.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+        ],
+    }
+    assert second_request['previous_response_id'] == first.response.provider_response_id
+    assert 'instructions' not in second_request
+    assert second_request['input'] == [{'role': 'user', 'content': 'And order 5678?'}]
+
+
+async def test_openai_responses_auto_chain_opted_out_keeps_instructions_top_level(allow_model_requests: None):
+    """With the profile flag off, an `'auto'` chain keeps every instruction in the top-level field and continues."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel(
+        'gpt-6.2-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=False),
+    )
+    agent = Agent(
+        model,
+        instructions='Support policies.',
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id='auto'),
+    )
+
+    first = await agent.run('Where is order 1234?')
+    await agent.run('And order 5678?', message_history=first.all_messages())
+
+    assert [
+        (
+            request.get('previous_response_id') == first.response.provider_response_id,
+            request['instructions'],
+            [item.get('role') for item in request['input']],
+        )
+        for request in get_mock_responses_kwargs(mock_client)
+    ] == [(False, 'Support policies.', ['user']), (True, 'Support policies.', ['user'])]
+
+
+async def test_openai_responses_auto_chain_continues_across_appended_change(allow_model_requests: None):
+    """An appended change and a dynamic instruction leave the chain's leading instructions as they were, so the
+    request continues: the change goes out after the stored conversation, and the dynamic instruction in the field."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = _support_agent(model, OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+
+    first = await agent.run('Where is order 1234?', deps='open')
+    await agent.run('And order 5678?', deps='closed', message_history=first.all_messages())
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert second_request['previous_response_id'] == first.response.provider_response_id
+    assert {'instructions': second_request['instructions'], 'input': second_request['input']} == snapshot(
+        {
+            'instructions': 'Today is 2026-08-18.',
+            'input': [
+                {'role': 'user', 'content': 'And order 5678?'},
+                {
+                    'role': 'system',
+                    'content': """\
+<pyai:context id="agent:queue">
+Queue: closed.
+</pyai:context>\
+""",
+                },
+            ],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    'as_input, expected_roles',
+    [
+        pytest.param((False, True), ['system', 'user', 'assistant', 'user'], id='turned-on'),
+        pytest.param((True, False), ['user', 'assistant', 'user'], id='turned-off'),
+    ],
+)
+async def test_openai_responses_auto_chain_resends_history_when_instruction_placement_changes(
+    allow_model_requests: None, as_input: tuple[bool, bool], expected_roles: list[str]
+):
+    """A response stored with its instructions in the top-level field doesn't hold them in its input, and one stored
+    with them as leading input does, so a request that would send them the other way resends the history."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    first_model, second_model = (
+        OpenAIResponsesModel(
+            'gpt-6.2-sol',
+            provider=OpenAIProvider(openai_client=mock_client),
+            profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=flag),
+        )
+        for flag in as_input
+    )
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(first_model, instructions='Support policies.', model_settings=settings).run(
+        'Where is order 1234?'
+    )
+
+    await Agent(second_model, instructions='Support policies.', model_settings=settings).run(
+        'And order 5678?', message_history=first.all_messages()
+    )
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert 'previous_response_id' not in second_request
+    assert [item.get('role') for item in second_request['input']] == expected_roles
+
+
+async def test_openai_responses_auto_chain_compaction_resends_the_window(allow_model_requests: None):
+    """A compaction item keeps the window's leading system items, so compacting an `'auto'` chain whose stored input
+    starts with its instructions resends the window, with them in the top-level field, instead of continuing it."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion('first'))
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+    compact_kwargs: dict[str, Any] = {}
+
+    async def fake_compact(**kwargs: Any) -> resp.CompactedResponse:
+        compact_kwargs.update(kwargs)
+        return resp.CompactedResponse(
+            id='resp-compact',
+            created_at=0,
+            object='response.compaction',
+            output=[ResponseCompactionItem(id='comp-1', encrypted_content='encrypted', type='compaction')],
+            usage=ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model.client.responses.compact = fake_compact
+    messages = [
+        *first.all_messages(),
+        ModelRequest(parts=[UserPromptPart('And order 5678?')], instructions='Support policies.'),
+    ]
+    await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=messages,
+            model_settings=settings,
+            model_request_parameters=ModelRequestParameters(),
+        )
+    )
+
+    assert compact_kwargs['previous_response_id'] is omit
+    assert compact_kwargs['instructions'] == 'Support policies.'
+    assert [item.get('role') for item in compact_kwargs['input']] == ['user', 'assistant', 'user']
+
+
+async def test_openai_responses_auto_chain_computer_call_fallback_resends_the_instructions(allow_model_requests: None):
+    """A result for a held computer call, sent without the native computer tool, makes the request resend the whole
+    history. That request starts the chain again with the static and append instructions in the input, so its digest
+    records them, and the next request continues from it."""
+    computer_call = response_message(
+        [
+            resp.ResponseComputerToolCall.model_validate(
+                {
+                    'id': 'cu_1',
+                    'call_id': 'call_1',
+                    'type': 'computer_call',
+                    'status': 'completed',
+                    'actions': [{'type': 'screenshot'}],
+                    'pending_safety_checks': [],
+                }
+            )
+        ]
+    )
+    computer_call.id = 'resp_1'
+    resent = responses_completion('resent')
+    resent.id = 'resp_2'
+    mock_client = MockOpenAIResponses.create_mock([computer_call, resent, responses_completion('continued')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    computer = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
+    instruction_parts = [
+        InstructionPart(content='Support policies.'),
+        InstructionPart(
+            content='Queue: open.', on_change='append', id=InstructionId(source=AgentInstructionSource(), name='queue')
+        ),
+    ]
+    with_native = ModelRequestParameters(
+        function_tools=[computer],
+        native_tools=[ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)],
+        allow_text_output=True,
+        instruction_parts=instruction_parts,
+    )
+    without_native = replace(with_native, native_tools=[])
+
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Look.')]
+    messages.append(await model.request(messages, settings, with_native))
+    messages.append(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'computer',
+                    ['Ran 1 action.', BinaryImage(data=FAKE_SCREENSHOT, media_type='image/png')],
+                    tool_call_id='call_1',
+                    metadata={'performed': 1},
+                    tool_kind=COMPUTER_KIND.id,
+                )
+            ]
+        )
+    )
+    messages.append(await model.request(messages, settings, without_native))
+    messages.append(ModelRequest.user_text_prompt('Again.'))
+    await model.request(messages, settings, without_native)
+
+    _, resend, continuation = get_mock_responses_kwargs(mock_client)
+    assert 'previous_response_id' not in resend
+    assert [(item.get('role'), item.get('content')) for item in resend['input'][:2]] == snapshot(
+        [
+            ('system', 'Support policies.'),
+            (
+                'system',
+                """\
+<pyai:context id="agent:queue">
+Queue: open.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            ),
+        ]
+    )
+    assert continuation['previous_response_id'] == 'resp_2'
+    assert continuation['input'] == [{'role': 'user', 'content': 'Again.'}]
+
+
+@pytest.mark.parametrize(
+    'seed_settings', [None, OpenAIResponsesModelSettings(openai_previous_response_id='auto')], ids=['default', 'auto']
+)
+@pytest.mark.parametrize('instructions', ['Support policies.', 'Billing policies.'], ids=['same-agent', 'handoff'])
+async def test_openai_responses_explicit_id_with_history_resends_it(
+    allow_model_requests: None, instructions: str, seed_settings: OpenAIResponsesModelSettings | None
+):
+    """A response from a full-history request stores its instructions in its input but has no history digest, and an
+    `'auto'` chain's records them as leading input, which an explicit id doesn't send. Either way, an explicit id
+    passed with that history resends the history, and the model sees only the current instructions."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    first = await Agent(model, instructions='Support policies.', model_settings=seed_settings).run(
+        'Where is order 1234?'
+    )
+    response_id = first.response.provider_response_id
+    assert response_id is not None
+
+    await Agent(model, instructions=instructions).run(
+        'And order 5678?',
+        message_history=first.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=response_id),
+    )
+
+    request = get_mock_responses_kwargs(mock_client)[1]
+    assert request.get('previous_response_id') is None
+    assert request['instructions'] == instructions
+    assert [item.get('role') for item in request['input']] == ['user', 'assistant', 'user']
 
 
 async def test_openai_chat_cache_instructions_with_cache_point(allow_model_requests: None):
@@ -1871,6 +2438,19 @@ _STABLE_PREFIX = 'Reference catalogue for the prompt cache test corpus.\n' + '\n
 )
 
 
+def _wire_shape(body: dict[str, Any]) -> dict[str, Any]:
+    """What a Responses request continues, where it puts its instructions, and its input, with `_STABLE_PREFIX` cut."""
+
+    def cut(content: Any) -> Any:
+        return content.replace(_STABLE_PREFIX, '<_STABLE_PREFIX>') if isinstance(content, str) else content
+
+    return {
+        'previous_response_id': body.get('previous_response_id'),
+        'instructions': cut(body.get('instructions')),
+        'input': [(item.get('role'), cut(item.get('content'))) for item in body['input']],
+    }
+
+
 def _request_body(cassette: Cassette, index: int) -> dict[str, Any]:
     return cast('dict[str, Any]', request_json(cassette.requests[index]))
 
@@ -1935,6 +2515,51 @@ async def test_openai_responses_prompt_cache_e2e(allow_model_requests: None, ope
 
 
 @pytest.mark.vcr
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+        'gpt-6-astra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6.1-sol',
+        'gpt-6.1-terra',
+    ],
+)
+async def test_openai_responses_unified_cache_12h_e2e(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette, model_name: str
+):
+    """`cache='12h'` sends the 12-hour TTL on Responses, which every GPT-5.6 and GPT-6 model accepts."""
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=_STABLE_PREFIX, model_settings=ModelSettings(cache='12h'))
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: OK')
+
+    for index in (0, 1):
+        body = _request_body(vcr, index)
+        assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '12h'}
+        assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    _assert_cache_usage(first.usage, second.usage)
+
+
+@pytest.mark.vcr
+async def test_openai_chat_unified_cache_12h_e2e(allow_model_requests: None, openai_api_key: str, vcr: Cassette):
+    """Chat Completions rejects a `'12h'` TTL, so `cache='12h'` sends `'30m'` there."""
+    model = OpenAIChatModel('gpt-5.6-luna', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model, instructions=_STABLE_PREFIX, model_settings=ModelSettings(cache='12h'))
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: OK')
+
+    for index in (0, 1):
+        assert _request_body(vcr, index)['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+    _assert_cache_usage(first.usage, second.usage)
+
+
+@pytest.mark.vcr
 async def test_openrouter_responses_prompt_cache_e2e(
     allow_model_requests: None, openrouter_api_key: str, vcr: Cassette
 ):
@@ -1961,6 +2586,192 @@ async def test_openrouter_responses_prompt_cache_e2e(
         assert body['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
         assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
     _assert_cache_usage(first.usage, second.usage)
+
+
+_UNCACHED_SUFFIX = (
+    '\n'.join(f'Margin note {i:03d}: this line follows the cache breakpoint.' for i in range(40))
+    + '\nReply with exactly: OK'
+)
+"""Hundreds of tokens after the `CachePoint`: a write that stops short of them shows the breakpoint was honored."""
+
+
+_AZURE_CACHE_MODELS = ['gpt-5.6-luna', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra']
+"""The models with explicit cache breakpoints that the Gateway's Azure route serves: all but `gpt-6.1-terra`."""
+
+
+def _azure_gateway_provider(gateway_api_key: str | None, request_capture: RequestCapture) -> AzureProvider:
+    """Azure OpenAI's v1 API, reached through the Pydantic AI Gateway's `azure` route.
+
+    Requests go through `request_capture`, so tests assert on the bodies the live code built rather than the
+    recorded ones, which replay would match on method and URI alone.
+    """
+    gateway_url = os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'https://gateway.pydantic.info/proxy')
+    return AzureProvider(
+        azure_endpoint=f'{gateway_url}/azure/openai/v1',
+        api_key=gateway_api_key or 'test-api-key',
+        http_client=request_capture.client,
+    )
+
+
+async def _run_twice(
+    agent: Agent[None, str], prompt: list[str | CachePoint], stream: bool
+) -> tuple[RunUsage, RunUsage]:
+    usages: list[RunUsage] = []
+    for _ in range(2):
+        if stream:
+            async with agent.run_stream(prompt) as streamed:
+                assert isinstance(await streamed.get_output(), str)
+            usages.append(streamed.usage)
+        else:
+            result = await agent.run(prompt)
+            assert isinstance(result.output, str)
+            usages.append(result.usage)
+    return usages[0], usages[1]
+
+
+def _assert_azure_breakpoint_cached(first: RunUsage, second: RunUsage) -> None:
+    """The first request writes the prefix up to the `CachePoint`, and the second reads exactly that back.
+
+    Recording again within the 30-minute TTL makes the first request read instead: change the
+    prompt's first line to re-record.
+    """
+    assert first.cache_read_tokens == 0
+    assert first.cache_write_tokens >= 1024
+    assert second.cache_write_tokens == 0
+    assert second.cache_read_tokens == first.cache_write_tokens
+    # `_UNCACHED_SUFFIX` after the breakpoint was neither written nor read.
+    assert second.input_tokens - second.cache_read_tokens > 300
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+@pytest.mark.parametrize('model_name', _AZURE_CACHE_MODELS)
+@pytest.mark.vcr
+async def test_azure_chat_prompt_cache_e2e(
+    allow_model_requests: None,
+    gateway_api_key: str | None,
+    request_capture: RequestCapture,
+    model_name: str,
+    stream: bool,
+):
+    """Azure OpenAI Chat honors the explicit cache fields on GPT-5.6 and later, and reports cache write and read usage.
+
+    With `mode='explicit'` only the prefix up to the `CachePoint` is written, so a write that stops
+    short of the whole prompt shows Azure honored the breakpoint rather than caching implicitly.
+    """
+    model = OpenAIChatModel(model_name, provider=_azure_gateway_provider(gateway_api_key, request_capture))
+    settings = OpenAIChatModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
+    agent = Agent(model, model_settings=settings)
+    prompt = [
+        f'Azure Chat cache e2e (take 2), {model_name}, stream={stream}.\n{_STABLE_PREFIX}',
+        CachePoint(),
+        _UNCACHED_SUFFIX,
+    ]
+
+    first, second = await _run_twice(agent, prompt, stream)
+
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/chat/completions'))
+    assert len(bodies) == 2
+    for body in bodies:
+        assert body['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+        assert body['messages'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    _assert_azure_breakpoint_cached(first, second)
+
+
+@pytest.mark.parametrize('stream', [False, True], ids=['request', 'stream'])
+@pytest.mark.parametrize('model_name', _AZURE_CACHE_MODELS)
+@pytest.mark.vcr
+async def test_azure_responses_prompt_cache_e2e(
+    allow_model_requests: None,
+    gateway_api_key: str | None,
+    request_capture: RequestCapture,
+    model_name: str,
+    stream: bool,
+):
+    """Azure OpenAI Responses honors the explicit cache fields on GPT-5.6 and later, and reports cache write and
+    read usage."""
+    model = OpenAIResponsesModel(model_name, provider=_azure_gateway_provider(gateway_api_key, request_capture))
+    settings = OpenAIResponsesModelSettings(openai_prompt_cache_options={'mode': 'explicit', 'ttl': '30m'})
+    agent = Agent(model, model_settings=settings)
+    prompt = [
+        f'Azure Responses cache e2e (take 2), {model_name}, stream={stream}.\n{_STABLE_PREFIX}',
+        CachePoint(),
+        _UNCACHED_SUFFIX,
+    ]
+
+    first, second = await _run_twice(agent, prompt, stream)
+
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert len(bodies) == 2
+    for body in bodies:
+        assert body['prompt_cache_options'] == {'mode': 'explicit', 'ttl': '30m'}
+        assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    _assert_azure_breakpoint_cached(first, second)
+
+
+@pytest.mark.parametrize('model_name', _AZURE_CACHE_MODELS)
+@pytest.mark.vcr
+async def test_azure_responses_cache_instructions_e2e(
+    allow_model_requests: None, gateway_api_key: str | None, request_capture: RequestCapture, model_name: str
+):
+    """Azure OpenAI Responses honors an instruction breakpoint with the implicit-mode options, the settings
+    `cache=True` maps to on the OpenAI API, and the second request reads the cache the first wrote."""
+    model = OpenAIResponsesModel(model_name, provider=_azure_gateway_provider(gateway_api_key, request_capture))
+    settings = OpenAIResponsesModelSettings(
+        openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}, openai_cache_instructions=True
+    )
+    # Change the instructions' last line to re-record within the 30-minute TTL.
+    agent = Agent(
+        model,
+        instructions=_STABLE_PREFIX + f'\n(Azure instruction breakpoint, take 2, {model_name})',
+        model_settings=settings,
+    )
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: OK')
+
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert len(bodies) == 2
+    for body in bodies:
+        assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+        assert body['input'][0]['role'] == 'system'
+        assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    assert first.usage.cache_read_tokens == 0
+    assert first.usage.cache_write_tokens >= 1024
+    assert second.usage.cache_write_tokens == 0
+    assert second.usage.cache_read_tokens == first.usage.cache_write_tokens
+
+
+@pytest.mark.parametrize('model_name', _AZURE_CACHE_MODELS)
+@pytest.mark.vcr
+async def test_azure_chat_cache_instructions_e2e(
+    allow_model_requests: None, gateway_api_key: str | None, request_capture: RequestCapture, model_name: str
+):
+    """Azure OpenAI Chat honors an instruction breakpoint on the system message with the implicit-mode options, the
+    settings `cache=True` maps to on the OpenAI API, and the second request reads the cache the first wrote."""
+    model = OpenAIChatModel(model_name, provider=_azure_gateway_provider(gateway_api_key, request_capture))
+    settings = OpenAIChatModelSettings(
+        openai_prompt_cache_options={'mode': 'implicit', 'ttl': '30m'}, openai_cache_instructions=True
+    )
+    # Change the instructions' last line to re-record within the 30-minute TTL.
+    agent = Agent(
+        model,
+        instructions=_STABLE_PREFIX + f'\n(Azure Chat instruction breakpoint, {model_name})',
+        model_settings=settings,
+    )
+
+    first = await agent.run('Reply with exactly: OK')
+    second = await agent.run('Reply with exactly: OK')
+
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/chat/completions'))
+    assert len(bodies) == 2
+    for body in bodies:
+        assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+        assert body['messages'][0]['role'] == 'system'
+        assert body['messages'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    assert first.usage.cache_read_tokens == 0
+    assert first.usage.cache_write_tokens >= 1024
+    assert second.usage.cache_write_tokens == 0
+    assert second.usage.cache_read_tokens == first.usage.cache_write_tokens
 
 
 def _assert_instruction_prefix_shared(first: RunUsage, second: RunUsage) -> None:
@@ -2022,6 +2833,237 @@ async def test_openai_responses_cache_instructions_e2e(
         assert body['input'][0]['role'] == system_prompt_role
         assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
     _assert_instruction_prefix_shared(first.usage, second.usage)
+
+
+@pytest.mark.vcr
+@pytest.mark.parametrize(
+    'stable_instructions_as_input, expected_requests',
+    [
+        pytest.param(
+            True,
+            snapshot(
+                [
+                    {
+                        'previous_response_id': None,
+                        'instructions': 'Queue position: 17.',
+                        'input': [
+                            ('system', '<_STABLE_PREFIX>'),
+                            ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                        ],
+                    },
+                    {
+                        'previous_response_id': None,
+                        'instructions': 'Queue position: 12.',
+                        'input': [
+                            ('system', '<_STABLE_PREFIX>'),
+                            ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                            ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                            ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                        ],
+                    },
+                ]
+            ),
+            id='leading-input',
+        ),
+        pytest.param(
+            False,
+            snapshot(
+                [
+                    {
+                        'previous_response_id': None,
+                        'instructions': """\
+<_STABLE_PREFIX>
+
+Queue position: 17.\
+""",
+                        'input': [('user', 'Which shelf holds entry 0042? Reply with just the number.')],
+                    },
+                    {
+                        'previous_response_id': None,
+                        'instructions': """\
+<_STABLE_PREFIX>
+
+Queue position: 12.\
+""",
+                        'input': [
+                            ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                            ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                            ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                        ],
+                    },
+                ]
+            ),
+            id='top-level',
+        ),
+    ],
+)
+async def test_openai_responses_stable_instructions_as_input_e2e(
+    allow_model_requests: None,
+    openai_api_key: str,
+    request_capture: RequestCapture,
+    stable_instructions_as_input: bool,
+    expected_requests: list[dict[str, Any]],
+):
+    """On GPT-6.2, static instructions leading the input are cached with the conversation, also while a dynamic
+    instruction in the top-level field changes. In the top-level field, OpenAI puts them after the input and the next
+    request reads none of them from the cache."""
+    model = OpenAIResponsesModel(
+        'gpt-6.2-sol',
+        provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client),
+        profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=stable_instructions_as_input),
+    )
+    agent = Agent(model, instructions=_STABLE_PREFIX)
+    positions = iter(['Queue position: 17.', 'Queue position: 12.'])
+
+    @agent.instructions
+    def queue_position() -> str:
+        return next(positions)
+
+    first = await agent.run('Which shelf holds entry 0042? Reply with just the number.')
+    second = await agent.run(
+        'Which aisle holds entry 0101? Reply with just the number.', message_history=first.all_messages()
+    )
+
+    first_body, second_body = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert [_wire_shape(first_body), _wire_shape(second_body)] == expected_requests
+    assert second_body['input'][: len(first_body['input'])] == first_body['input']
+    if stable_instructions_as_input:
+        # The second request reads back everything the first wrote: its whole input, ahead of the top-level field.
+        assert first.usage.cache_write_tokens + first.usage.cache_read_tokens > 0
+        assert second.usage.cache_read_tokens == first.usage.cache_write_tokens + first.usage.cache_read_tokens
+    else:
+        assert second.usage.cache_read_tokens == 0
+
+
+@pytest.mark.vcr
+async def test_openai_responses_explicit_id_with_history_e2e(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """An explicit id passed with the history of a default GPT-6.2 run resends that history once, then continues from
+    the new response. Those requests keep the instructions in the top-level field, which isn't cached."""
+    model = OpenAIResponsesModel(
+        'gpt-6.2-sol', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(model, instructions=_STABLE_PREFIX)
+
+    first = await agent.run('Which shelf holds entry 0042? Reply with just the number.')
+    first_id = first.response.provider_response_id
+    assert first_id is not None
+    second = await agent.run(
+        'Which aisle holds entry 0101? Reply with just the number.',
+        message_history=first.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=first_id),
+    )
+    second_id = second.response.provider_response_id
+    assert second_id is not None
+    third = await agent.run(
+        'Which shelf holds entry 0101? Reply with just the number.',
+        message_history=second.all_messages(),
+        model_settings=OpenAIResponsesModelSettings(openai_previous_response_id=second_id),
+    )
+
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert [_wire_shape(body) for body in bodies] == snapshot(
+        [
+            {
+                'previous_response_id': None,
+                'instructions': None,
+                'input': [
+                    ('system', '<_STABLE_PREFIX>'),
+                    ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ],
+            },
+            {
+                'previous_response_id': None,
+                'instructions': '<_STABLE_PREFIX>',
+                'input': [
+                    ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                    ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                    ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                ],
+            },
+            {
+                'previous_response_id': 'resp_017d0ab63852be68006b047b02859c87d29e24628d98e4d657',
+                'instructions': '<_STABLE_PREFIX>',
+                'input': [('user', 'Which shelf holds entry 0101? Reply with just the number.')],
+            },
+        ]
+    )
+    assert first.usage.cache_write_tokens > 0
+    assert (second.usage.cache_read_tokens, third.usage.cache_read_tokens) == (0, 0)
+
+
+@pytest.mark.vcr
+async def test_openai_responses_auto_chain_e2e(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """An `'auto'` chain on GPT-6.2 sends its instructions as leading input when it starts and leaves them out while it
+    continues, so the continuation reads them from the cache. A change resends the history, which the next request
+    continues from in turn."""
+    model = OpenAIResponsesModel(
+        'gpt-6.2-sol', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    changed = _STABLE_PREFIX + '\nAnswer with just the number.'
+
+    first = await Agent(model, instructions=_STABLE_PREFIX, model_settings=settings).run(
+        'Which shelf holds entry 0042? Reply with just the number.'
+    )
+    second = await Agent(model, instructions=_STABLE_PREFIX, model_settings=settings).run(
+        'Which aisle holds entry 0101? Reply with just the number.', message_history=first.all_messages()
+    )
+    third = await Agent(model, instructions=changed, model_settings=settings).run(
+        'Which volume is entry 0077?', message_history=second.all_messages()
+    )
+    fourth = await Agent(model, instructions=changed, model_settings=settings).run(
+        'Which shelf holds entry 0101?', message_history=third.all_messages()
+    )
+
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert [_wire_shape(body) for body in bodies] == snapshot(
+        [
+            {
+                'previous_response_id': None,
+                'instructions': None,
+                'input': [
+                    ('system', '<_STABLE_PREFIX>'),
+                    ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ],
+            },
+            {
+                'previous_response_id': 'resp_04a5bbea70ed9246006b05a27282f087d28291b1a50abd0ae2',
+                'instructions': None,
+                'input': [('user', 'Which aisle holds entry 0101? Reply with just the number.')],
+            },
+            {
+                'previous_response_id': None,
+                'instructions': None,
+                'input': [
+                    (
+                        'system',
+                        """\
+<_STABLE_PREFIX>
+Answer with just the number.\
+""",
+                    ),
+                    ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                    ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                    ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                    ('assistant', [{'text': '3', 'type': 'output_text', 'annotations': []}]),
+                    ('user', 'Which volume is entry 0077?'),
+                ],
+            },
+            {
+                'previous_response_id': 'resp_04a5bbea70ed9246006b05a275e61087d291bf29e58ba7ac94',
+                'instructions': None,
+                'input': [('user', 'Which shelf holds entry 0101?')],
+            },
+        ]
+    )
+    # Each continuation reads back everything the request before it cached, so the whole stored prefix stays cached.
+    assert first.usage.cache_write_tokens + first.usage.cache_read_tokens > 0
+    assert second.usage.cache_read_tokens == first.usage.cache_write_tokens + first.usage.cache_read_tokens
+    assert fourth.usage.cache_read_tokens == third.usage.cache_write_tokens + third.usage.cache_read_tokens
 
 
 # ===== Prompt cache diagnostics =====
@@ -2208,6 +3250,143 @@ async def test_openai_chat_unified_cache(allow_model_requests: None):
     )
 
 
+def _azure_wire_response(request: httpx2.Request) -> httpx2.Response:
+    """A minimal Chat Completions or Responses reply, so a real `AzureProvider` client can run end to end."""
+    if request.url.path.endswith('/chat/completions'):
+        message = {'role': 'assistant', 'content': 'OK'}
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'chatcmpl-test',
+                'object': 'chat.completion',
+                'created': 0,
+                'model': 'gpt-5.6-sol',
+                'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop'}],
+            },
+        )
+    text: dict[str, JsonValue] = {'type': 'output_text', 'text': 'OK', 'annotations': []}
+    return httpx2.Response(
+        200,
+        json={
+            'id': 'resp-test',
+            'object': 'response',
+            'created_at': 0,
+            'model': 'gpt-5.6-sol',
+            'status': 'completed',
+            'output': [
+                {'id': 'msg-test', 'type': 'message', 'role': 'assistant', 'status': 'completed', 'content': [text]}
+            ],
+        },
+    )
+
+
+_AzureSetup = Literal['v1_endpoint', 'v1_azure_client', 'api_version', 'serverless']
+
+
+def _azure_provider(setup: _AzureSetup, http_client: httpx2.AsyncClient) -> AzureProvider:
+    """An `AzureProvider` built the way users configure each Azure API."""
+    if setup == 'v1_endpoint':
+        return AzureProvider(
+            azure_endpoint='https://example.openai.azure.com/openai/v1/', api_key='test', http_client=http_client
+        )
+    if setup == 'v1_azure_client':
+        client = AsyncAzureOpenAI(
+            base_url='https://example.openai.azure.com/openai/v1/',
+            api_version='preview',
+            api_key='test',
+            http_client=http_client,
+        )
+        return AzureProvider(openai_client=client)
+    if setup == 'api_version':
+        return AzureProvider(
+            azure_endpoint='https://example.openai.azure.com',
+            api_version='2025-04-01-preview',
+            api_key='test',
+            http_client=http_client,
+        )
+    return AzureProvider(azure_endpoint='https://example.models.ai.azure.com', api_key='test', http_client=http_client)
+
+
+@pytest.mark.parametrize(
+    ('setup', 'cached'),
+    [('v1_endpoint', True), ('v1_azure_client', True), ('api_version', False), ('serverless', False)],
+)
+@pytest.mark.parametrize('api', ['chat', 'responses'])
+@pytest.mark.parametrize(
+    'model_name', ['gpt-5.6-sol', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra']
+)
+async def test_azure_unified_cache(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    setup: _AzureSetup,
+    cached: bool,
+    api: Literal['chat', 'responses'],
+    model_name: str,
+):
+    """With the Azure OpenAI v1 API, through either client class, `cache=True` maps onto the prompt cache options
+    of GPT-5.6 and later and an instruction breakpoint, as on OpenAI. Dated `api-version` deployments and serverless
+    endpoints aren't verified to accept them, so they get neither."""
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(_azure_wire_response),
+        event_hooks={'request': list(request_capture.client.event_hooks['request'])},
+    ) as http_client:
+        provider = _azure_provider(setup, http_client)
+        model = (OpenAIChatModel if api == 'chat' else OpenAIResponsesModel)(model_name, provider=provider)
+
+        await Agent(model, instructions='Support policies.', model_settings={'cache': True}).run('Where is order 1234?')
+
+    [body] = cast(
+        'list[dict[str, Any]]', request_capture.bodies('/chat/completions' if api == 'chat' else '/responses')
+    )
+    first = body['messages' if api == 'chat' else 'input'][0]
+    if cached:
+        assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+        assert first['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+        assert model.resolve_cache_retention({'cache': True}) == timedelta(minutes=30)
+        assert model.resolve_cache_retention({'cache': '1h'}) == timedelta(minutes=30)
+    else:
+        assert 'prompt_cache_options' not in body
+        assert 'prompt_cache_breakpoint' not in json.dumps(body)
+        assert model.resolve_cache_retention({'cache': True}) is None
+
+
+async def test_azure_unified_cache_custom_deployment_name(allow_model_requests: None, request_capture: RequestCapture):
+    """A deployment whose name isn't a model name opts in with a `profile=` that turns breakpoints and the unified
+    setting on, since the provider's profile is derived from the name."""
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(_azure_wire_response),
+        event_hooks={'request': list(request_capture.client.event_hooks['request'])},
+    ) as http_client:
+        provider = _azure_provider('v1_endpoint', http_client)
+        assert OpenAIResponsesModel('prod-chat', provider=provider).resolve_cache_retention({'cache': True}) is None
+        profile = OpenAIModelProfile(
+            openai_supports_prompt_cache_breakpoints=True, supports_cache=True, supported_cache_retentions=('30m',)
+        )
+        model = OpenAIResponsesModel('prod-chat', provider=provider, profile=profile)
+
+        await Agent(model, instructions='Support policies.', model_settings={'cache': True}).run('Where is order 1234?')
+
+    [body] = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert body['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
+    assert body['input'][0]['content'][0]['prompt_cache_breakpoint'] == {'mode': 'explicit'}
+    assert model.resolve_cache_retention({'cache': True}) == timedelta(minutes=30)
+
+
+async def test_azure_unified_cache_ignored_before_gpt_5_6(allow_model_requests: None, request_capture: RequestCapture):
+    """Earlier Azure deployments cache implicitly with nothing to configure, so the unified setting sends nothing."""
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(_azure_wire_response),
+        event_hooks={'request': list(request_capture.client.event_hooks['request'])},
+    ) as http_client:
+        model = OpenAIResponsesModel('gpt-5.2', provider=_azure_provider('v1_endpoint', http_client))
+
+        await Agent(model, instructions='Support policies.', model_settings={'cache': True}).run('Where is order 1234?')
+
+    [body] = request_capture.bodies('/responses')
+    assert 'prompt_cache_options' not in body
+    assert body['instructions'] == 'Support policies.'
+
+
 @pytest.mark.parametrize('cache', [True, '5m', '1h'])
 async def test_openai_responses_unified_cache_snaps_to_30m(
     allow_model_requests: None, cache: Literal[True, '5m', '1h']
@@ -2370,6 +3549,20 @@ async def test_openai_responses_unified_cache_stable_prefix_only_with_chaining(a
     assert request['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '30m'}
     assert request['instructions'] == 'Support policies.'
     assert request['input'] == [{'role': 'user', 'content': 'Where is order 1234?'}]
+
+
+async def test_openai_responses_unified_cache_stable_prefix_only_with_chaining_keeps_12h(allow_model_requests: None):
+    """Falling back to the implicit breakpoint keeps the requested 12-hour TTL."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(
+        openai_previous_response_id='auto', cache={'retention': '12h', 'messages': False}
+    )
+
+    await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    request = get_mock_responses_kwargs(mock_client)[0]
+    assert request['prompt_cache_options'] == {'mode': 'implicit', 'ttl': '12h'}
 
 
 async def test_openai_chat_unified_cache_stable_prefix_only_with_merged_system_messages(allow_model_requests: None):

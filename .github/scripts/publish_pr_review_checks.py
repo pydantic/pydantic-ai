@@ -1,0 +1,392 @@
+"""Gate and publish the `PR Review Checks` commit status from trusted default-branch code."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import sys
+from collections.abc import Mapping, Set
+from pathlib import Path
+from typing import Literal, Protocol
+
+from pr_gates import Commit, GateError, GhCli, Label
+from pydantic import BaseModel, Field, TypeAdapter
+
+CONTEXT = 'PR Review Checks'
+RUN_LABEL = 'pr-review-checks:run'
+ACCEPTED_LABEL = 'pr-review-checks:accepted'
+MARKER = re.compile(r'\n\n<!-- pr-review-checks run=([1-9][0-9]*) head=([a-f0-9]{40}) -->\Z')
+FINDING_KEY = re.compile(r'<!-- pr-review-checks finding=([0-9a-f]{64}) -->')
+# `.permission` maps maintain and custom roles onto these base levels.
+TRUSTED_PERMISSIONS = frozenset({'admin', 'write'})
+
+Severity = Literal['critical', 'high', 'medium']
+BLOCKING: frozenset[Severity] = frozenset({'critical', 'high'})
+CommitStatus = Literal['pending', 'success', 'failure']
+
+
+class ReviewFinding(BaseModel):
+    """One inline finding on a file its check reviews."""
+
+    path: str
+    line: int = Field(gt=0)
+    side: Literal['LEFT', 'RIGHT']
+    severity: Severity
+    body: str = Field(min_length=1)
+
+
+class CheckResult(BaseModel):
+    """What a review job hands the publisher; it never carries the private report."""
+
+    check: str
+    files: list[str]
+    outcome: Literal['COMPLETE', 'INCOMPLETE']
+    findings: list[ReviewFinding]
+    dropped: dict[Severity, int]
+    """How many findings of each severity the review job left out for sitting off the changed lines."""
+    coverage: str
+    steps: int
+    tokens: int
+    """Telemetry only: input, output, reasoning and cache tokens summed over every step."""
+    seconds: int
+
+
+class Actor(BaseModel):
+    """A GitHub account."""
+
+    login: str
+    type: str
+
+
+class LivePullRequest(BaseModel):
+    """The live state an event's payload can no longer vouch for."""
+
+    state: Literal['open', 'closed']
+    head: Commit
+    user: Actor
+    labels: list[Label]
+
+
+class _EventLabel(BaseModel):
+    name: str
+
+
+class _IssueEvent(BaseModel):
+    event: str
+    actor: Actor | None
+    label: _EventLabel | None = None
+
+
+class PullFile(BaseModel):
+    """One file of the pull request's diff. GitHub omits `patch` when the diff is too large to show."""
+
+    filename: str
+    patch: str = ''
+
+
+_HUNK = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
+
+
+def _changed_lines(patch: str) -> dict[tuple[str, int], str]:
+    """The text of each line a patch adds, as `RIGHT`, and removes, as `LEFT`."""
+    changed: dict[tuple[str, int], str] = {}
+    old = new = 0
+    # Git ends a line only at LF. `splitlines` would also split at CR and Unicode separators inside a line.
+    for line in patch.split('\n'):
+        if hunk := _HUNK.match(line):
+            old, new = int(hunk[1]), int(hunk[2])
+        elif line.startswith('+'):
+            changed['RIGHT', new] = line[1:]
+            new += 1
+        elif line.startswith('-'):
+            changed['LEFT', old] = line[1:]
+            old += 1
+        elif not line.startswith('\\'):
+            old += 1
+            new += 1
+    return changed
+
+
+def finding_key(check: str, finding: ReviewFinding, lines: Mapping[str, Mapping[tuple[str, int], str]]) -> str:
+    """Identify a finding by its line's text rather than its number, so a push that shifts the line keeps the key."""
+    text = lines[finding.path][finding.side, finding.line]
+    fields = [check, finding.path, finding.side, text, finding.severity, finding.body]
+    return hashlib.sha256(json.dumps(fields).encode()).hexdigest()
+
+
+class ReviewChecksGitHub(Protocol):
+    """The GitHub reads and writes the gate and the publisher need."""
+
+    def pull_request(self) -> LivePullRequest: ...
+    def pull_files(self) -> list[PullFile]: ...
+    def permission(self, login: str) -> str: ...
+    def labeler(self, label: str) -> Actor | None: ...
+    def remove_label(self, label: str) -> None: ...
+    def status(self, head: str, state: CommitStatus, description: str, url: str) -> None: ...
+    def post_review(self, payload: str) -> str | None: ...
+    def posted_finding_keys(self) -> set[str]: ...
+
+
+def gate(github: ReviewChecksGitHub, env: Mapping[str, str]) -> bool:
+    """Return whether this event reviews the head; every other outcome writes its own status."""
+    url = run_url(env)
+    if group := env.get('MERGE_GROUP_SHA'):
+        github.status(group, 'success', 'Admission-only: every pull request head is reviewed before the queue.', url)
+        return False
+    head = env['HEAD_SHA']
+    pull = github.pull_request()
+    if pull.state != 'open' or pull.head.sha != head:
+        print('PR closed or moved; the event for its new head decides.')
+        return False
+    labels = {label.name for label in pull.labels}
+    action, label, sender = env['EVENT_ACTION'], env.get('EVENT_LABEL', ''), env['EVENT_SENDER']
+    if action == 'labeled' and label == ACCEPTED_LABEL:
+        if ACCEPTED_LABEL not in labels:
+            raise GateError(f'`{ACCEPTED_LABEL}` is no longer present.')
+        if env['EVENT_SENDER_TYPE'] != 'User' or github.permission(sender) not in TRUSTED_PERMISSIONS:
+            raise GateError(f'Only a user with write access can apply `{ACCEPTED_LABEL}`.')
+        github.status(head, 'success', f'Findings accepted by @{sender} for this head.', url)
+        return False
+    author_trusted = pull.user.type == 'User' and github.permission(pull.user.login) in TRUSTED_PERMISSIONS
+    if action == 'labeled' and label == RUN_LABEL and author_trusted:
+        print(f'The author has write access, so `{RUN_LABEL}` changes nothing.')
+        return False
+    # An acceptance covers only the status it replaced, so every new status for the head ends it.
+    if ACCEPTED_LABEL in labels:
+        github.remove_label(ACCEPTED_LABEL)
+    if not author_trusted and not _run_label_trusted(github, labels):
+        github.status(head, 'failure', f'Awaiting maintainer: a user with write access adds `{RUN_LABEL}`.', url)
+        return False
+    github.status(head, 'pending', 'Reviewing this head.', url)
+    return True
+
+
+def _run_label_trusted(github: ReviewChecksGitHub, labels: set[str]) -> bool:
+    """The run label counts only when its latest application came from a user with write access."""
+    if RUN_LABEL not in labels:
+        return False
+    labeler = github.labeler(RUN_LABEL)
+    return labeler is not None and labeler.type == 'User' and github.permission(labeler.login) in TRUSTED_PERMISSIONS
+
+
+def load_results(directory: Path, checks: list[str]) -> dict[str, CheckResult]:
+    """Read each selected check's result, rejecting a finding outside the files that check reviewed."""
+    results: dict[str, CheckResult] = {}
+    for path in sorted(directory.glob('*.json')) if directory.is_dir() else []:
+        result = CheckResult.model_validate_json(path.read_text(encoding='utf-8'))
+        if result.check not in checks or path.stem != result.check:
+            raise GateError(f'Unexpected result file {path.name}')
+        if outside := sorted({finding.path for finding in result.findings} - set(result.files)):
+            raise GateError(f'{result.check} reported {len(outside)} findings outside its files')
+        results[result.check] = result
+    return results
+
+
+def verdict(checks: list[str], results: Mapping[str, CheckResult]) -> tuple[CommitStatus, str]:
+    """Fail on a blocking finding, an incomplete review, or a check that did not report."""
+    blocking = [
+        check for check in checks if check in results and any(f.severity in BLOCKING for f in results[check].findings)
+    ]
+    incomplete = [check for check in checks if check in results and results[check].outcome == 'INCOMPLETE']
+    missing = [check for check in checks if check not in results]
+    problems = [
+        f'{label}: {", ".join(names)}'
+        for label, names in (('Blocking findings', blocking), ('Incomplete', incomplete), ('No result', missing))
+        if names
+    ]
+    if problems:
+        return 'failure', '; '.join(problems)[:140]
+    if not checks:
+        return 'success', 'No file this review covers changed.'
+    advisory = sum(len(results[check].findings) for check in checks)
+    noted = f'; {advisory} non-blocking findings' if advisory else ''
+    return 'success', f'Reviewed by {", ".join(checks)}{noted}.'[:140]
+
+
+def review_payload(
+    results: list[CheckResult],
+    head: str,
+    run_id: int,
+    *,
+    inline: bool,
+    lines: Mapping[str, Mapping[tuple[str, int], str]],
+    posted: Set[str] = frozenset(),
+) -> str:
+    """One `COMMENT` review for every check's findings that no earlier run posted, bound to this run and head."""
+    comments: list[dict[str, object]] = []
+    sections = ''
+    repeated = 0
+    for result in results:
+        for finding in result.findings:
+            key = finding_key(result.check, finding, lines)
+            if key in posted:
+                repeated += 1
+                continue
+            text = f'**{finding.severity}** · `{result.check}` check\n\n{finding.body}\n\n<!-- pr-review-checks finding={key} -->'
+            if inline:
+                comments.append({'path': finding.path, 'line': finding.line, 'side': finding.side, 'body': text})
+            else:
+                sections += f'\n\n### `{finding.path}:{finding.line}` (`{finding.side}`)\n\n{text}'
+    body = '## PR Review Checks\n\n' + '\n'.join(
+        f'- `{result.check}` ({result.outcome.lower()}): {result.coverage}' for result in results
+    )
+    if repeated:
+        body += f'\n\n{repeated} more findings repeat comments an earlier run posted on the same lines.'
+    body += '\n\n<details><summary>Usage</summary>\n\n' + usage_table(results) + '\n\n</details>' + sections
+    body += f'\n\n<!-- pr-review-checks run={run_id} head={head} -->'
+    return json.dumps({'commit_id': head, 'event': 'COMMENT', 'body': body, 'comments': comments})
+
+
+def publish(github: ReviewChecksGitHub, env: Mapping[str, str]) -> None:
+    """Post the findings and the final status for the head this run reviewed."""
+    head = env['HEAD_SHA']
+    url = run_url(env)
+    checks: list[str] = _CHECKS.validate_json(env['REVIEW_CHECKS'] or '[]')
+    pull = github.pull_request()
+    if pull.state != 'open' or pull.head.sha != head:
+        print('PR closed or moved while it was reviewed; the event for its new head decides.')
+        return
+    if env['DETECT_RESULT'] != 'success':
+        github.status(head, 'failure', 'Could not select the checks for this head; rerun the workflow.', url)
+        return
+    results = load_results(Path(env['RESULTS_DIR']), checks)
+    # The review job already left out findings off git's changed lines. GitHub's patches are what an inline
+    # comment lands on, so a finding on a file whose patch GitHub omitted is dropped here too.
+    changed = {file.filename: _changed_lines(file.patch) for file in github.pull_files()}
+    for check, result in results.items():
+        outside = [f for f in result.findings if (f.side, f.line) not in changed.get(f.path, {})]
+        if dropped := len(outside) + sum(result.dropped.values()):
+            print(f'{check}: dropped {dropped} findings outside the changed lines.')
+        update: dict[str, object] = {'findings': [f for f in result.findings if f not in outside]}
+        # A blocking finding placed on an unchanged line, or on a file whose patch GitHub omitted, must not pass.
+        if any(f.severity in BLOCKING for f in outside) or not BLOCKING.isdisjoint(result.dropped):
+            update['outcome'] = 'INCOMPLETE'
+        results[check] = result.model_copy(update=update)
+    state, description = verdict(checks, results)
+    ordered = [results[check] for check in checks if check in results]
+    # A finding an earlier run already posted on the same line still counts toward the verdict, but is not posted again.
+    posted = github.posted_finding_keys() if any(result.findings for result in ordered) else set[str]()
+    if any(finding_key(r.check, f, changed) not in posted for r in ordered for f in r.findings):
+        run_id = int(env['GITHUB_RUN_ID'])
+        review = review_payload(ordered, head, run_id, inline=True, lines=changed, posted=posted)
+        review_url = github.post_review(review)
+        if review_url is None:
+            print('GitHub rejected the inline review; retrying with findings in the review body.')
+            review = review_payload(ordered, head, run_id, inline=False, lines=changed, posted=posted)
+            review_url = github.post_review(review)
+        if review_url is None:
+            raise GateError('GitHub rejected the review with its findings in the body.')
+        url = review_url
+    github.status(head, state, description, url)
+    summary = f'## {CONTEXT}: {state}\n\n{description}\n\n{usage_table(ordered)}'
+    print(summary)
+    if summary_path := env.get('GITHUB_STEP_SUMMARY'):
+        with open(summary_path, 'a', encoding='utf-8') as file:
+            file.write(summary + '\n')
+
+
+def usage_table(results: list[CheckResult]) -> str:
+    """Each check's steps, tokens and duration, for tuning its budget."""
+    rows = [
+        f'| `{r.check}` | {r.outcome} | {len(r.findings)} | {r.steps} | {r.tokens:,} | {r.seconds} |' for r in results
+    ]
+    return '\n'.join(['| check | outcome | findings | steps | tokens | seconds |', '|---|---|---|---|---|---|', *rows])
+
+
+def run_url(env: Mapping[str, str]) -> str:
+    """The workflow run that wrote a status."""
+    return f'{env["GITHUB_SERVER_URL"]}/{env["GITHUB_REPOSITORY"]}/actions/runs/{env["GITHUB_RUN_ID"]}'
+
+
+_CHECKS = TypeAdapter(list[str])
+_EVENT_PAGES = TypeAdapter(list[list[_IssueEvent]])
+_FILE_PAGES = TypeAdapter(list[list[PullFile]])
+_PERMISSION = TypeAdapter(dict[str, object])
+
+
+class _PostedReview(BaseModel):
+    html_url: str
+
+
+class _ReviewComment(BaseModel):
+    user: Actor
+    body: str
+
+
+_COMMENT_PAGES = TypeAdapter(list[list[_ReviewComment]])
+
+
+class ReviewChecksGhCli(GhCli):
+    """Pull request state, permissions, labels, reviews and statuses through `gh api`."""
+
+    def pull_request(self) -> LivePullRequest:
+        return LivePullRequest.model_validate_json(self._api(self._pull))
+
+    def pull_files(self) -> list[PullFile]:
+        pages = _FILE_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/files?per_page=100'))
+        return [file for page in pages for file in page]
+
+    def permission(self, login: str) -> str:
+        """Fail closed: an account the endpoint cannot resolve, such as an app, has no write access."""
+        try:
+            permission = _PERMISSION.validate_json(self._api(f'{self._repo}/collaborators/{login}/permission'))
+        except GateError as error:
+            print(f'No repository permission for @{login}: {error}')
+            return 'none'
+        value = permission.get('permission')
+        return value if isinstance(value, str) else 'none'
+
+    def labeler(self, label: str) -> Actor | None:
+        pages = _EVENT_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._issue}/events?per_page=100'))
+        applied = [
+            event.actor
+            for page in pages
+            for event in page
+            if event.event == 'labeled' and event.label is not None and event.label.name == label
+        ]
+        return applied[-1] if applied else None
+
+    def remove_label(self, label: str) -> None:
+        self._api('--method', 'DELETE', f'{self._issue}/labels/{label}')
+
+    def status(self, head: str, state: CommitStatus, description: str, url: str) -> None:
+        payload = {'context': CONTEXT, 'state': state, 'description': description, 'target_url': url}
+        self._api('--method', 'POST', '--input', '-', f'{self._repo}/statuses/{head}', input=json.dumps(payload))
+
+    def post_review(self, payload: str) -> str | None:
+        """Return the review's URL, or None when GitHub rejects an inline position (HTTP 422)."""
+        try:
+            posted = self._api('--method', 'POST', '--input', '-', f'{self._pull}/reviews', input=payload)
+        except GateError as error:
+            if '(HTTP 422)' in str(error):
+                return None
+            raise
+        return _PostedReview.model_validate_json(posted).html_url
+
+    def posted_finding_keys(self) -> set[str]:
+        """Keys only `GITHUB_TOKEN` wrote count: a key hides a repeat but never changes the verdict."""
+        pages = _COMMENT_PAGES.validate_json(self._api('--paginate', '--slurp', f'{self._pull}/comments?per_page=100'))
+        return {
+            key[1]
+            for page in pages
+            for comment in page
+            if comment.user.login == 'github-actions[bot]' and (key := FINDING_KEY.search(comment.body))
+        }
+
+
+def main() -> None:
+    """`gate` decides whether this event reviews its head; `publish` posts the result."""
+    env = os.environ
+    github = ReviewChecksGhCli(env['GITHUB_REPOSITORY'], int(env.get('PR_NUMBER') or '0'))
+    if sys.argv[1] == 'gate':
+        review = gate(github, env)
+        with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+            output.write(f'review={str(review).lower()}\n')
+    else:
+        publish(github, env)
+
+
+if __name__ == '__main__':
+    main()

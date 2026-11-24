@@ -27,16 +27,9 @@ live_run_history: ContextVar[tuple[list[ModelMessage], int] | None] = ContextVar
 )
 """Async-context-local `(live message list, run_step)` refreshed at each node boundary.
 
-The list is held by *reference*, not copied: `after_node_run` re-stashes
-`ctx.messages` at every boundary, and `on_run_error` reads the reference's
-current content to persist the at-failure history. The `RunContext` passed to
-`on_run_error` carries the start-of-run history (a stale reference the graph
-rebinds in `UserPromptNode.run`), not the live message list, so the hook cannot
-read the partial history from its own `ctx.messages`. See the stash site in
-`_capability.py` for the pydantic-ai invariant this leans on.
-
-`run_step` is the last completed boundary's step, so an error-path snapshot's
-`step_index` can lag the failing request by one.
+The list is held by reference so `on_run_error` can persist the at-failure
+history; `StepPersistence._stash_live_history` explains why and the core
+invariant this relies on.
 
 Reset to `None` in `wrap_run` so a run never inherits a prior run's tail.
 Task-isolated like `current_run_id`.

@@ -53,15 +53,22 @@ class CassettePrefixViolation:
     later_block: str
 
 
+def moves_cache_prefix(node: pytest.Item) -> bool:
+    """Whether `node` is marked `moves_cache_prefix`, failing the test if the marker gives no reason."""
+    if (marker := node.get_closest_marker('moves_cache_prefix')) is None:
+        return False
+    reason = marker.kwargs.get('reason')
+    if not (isinstance(reason, str) and reason.strip()):
+        pytest.fail(
+            '@pytest.mark.moves_cache_prefix requires reason=... (a non-empty string) explaining why '
+            'this test deliberately moves the cache prefix'
+        )
+    return True
+
+
 def check_cache_prefix_stability(node: pytest.Item, cassette: Path | Cassette) -> None:
     """Fail when a cassette moves its provider-cache wire prefix without an exemption."""
-    if (marker := node.get_closest_marker('moves_cache_prefix')) is not None:
-        reason = marker.kwargs.get('reason')
-        if not (isinstance(reason, str) and reason.strip()):
-            pytest.fail(
-                '@pytest.mark.moves_cache_prefix requires reason=... (a non-empty string) explaining why '
-                'this test deliberately moves the cache prefix'
-            )
+    if moves_cache_prefix(node):
         return
 
     violations = list(iter_cassette_prefix_violations(cassette))
@@ -121,7 +128,12 @@ def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[P
         # (`/responses/compact`, `/responses/input_tokens`, `/responses/{id}`) have unrelated bodies and
         # must not be pooled with it, so match the endpoint exactly rather than as a substring. The
         # trailing segment keeps every host's create endpoint (`api.openai.com`, Azure, OpenRouter).
-        add('system', body.get('instructions'))
+        # Imported here because the benchmarks load this module and must not depend on the OpenAI profile.
+        from pydantic_ai.profiles.openai import _GPT_6_2_MODEL_PREFIXES  # pyright: ignore[reportPrivateUsage]
+
+        # `gpt-6.2-sol` and `gpt-6.2-astra` put the top-level `instructions` after `input`, outside the cached prefix.
+        if not str(body.get('model', '')).startswith(_GPT_6_2_MODEL_PREFIXES):
+            add('system', body.get('instructions'))
         add('tools', body.get('tools'))
         input_ = body.get('input')
         add('messages', input_ if isinstance(input_, list) else [input_] if input_ is not None else None)
@@ -275,8 +287,8 @@ def recorded_interactions(*markers: str) -> Iterator[tuple[str, dict[str, Any]]]
                 yield f'{path.relative_to(TESTS_DIR)}#{index}', interaction
 
 
-def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any]]:
-    """Yield `(method, uri, body)` for each request in a cassette file on disk."""
+def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any, Any]]:
+    """Yield `(method, uri, body, response_body)` for each request in a cassette file on disk."""
     cassette = load_cassette_yaml(cassette_path.read_text(encoding='utf-8'))
     if not is_str_dict(cassette):
         return
@@ -285,15 +297,24 @@ def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any
         return
     for interaction in raw_interactions:
         if is_str_dict(interaction) and is_str_dict(request := interaction.get('request')):
-            yield request.get('method'), request.get('uri'), recorded_request_body(request)
+            response = interaction.get('response')
+            # Responses share the request body layout of both cassette formats.
+            response_body = recorded_request_body(response) if is_str_dict(response) else None
+            yield request.get('method'), request.get('uri'), recorded_request_body(request), response_body
 
 
-def _loaded_cassette_requests(cassette: Cassette) -> Iterator[tuple[Any, Any, Any]]:
-    """Yield `(method, uri, body)` for each request cassetter already parsed, so the file is not read again."""
+def _loaded_cassette_requests(cassette: Cassette) -> Iterator[tuple[Any, Any, Any, Any]]:
+    """Yield `(method, uri, body, response_body)` for each request cassetter already parsed, so the file is not read again."""
     for interaction in cassette.interactions:
         request = interaction.request
         body = request.body.content if request.body.body_type == 'json' else None
-        yield request.method, request.uri, body
+        response_body = interaction.response.body
+        yield (
+            request.method,
+            request.uri,
+            body,
+            response_body.content if response_body.body_type in ('json', 'text') else None,
+        )
 
 
 def iter_cassette_prefix_violations(cassette: Path | Cassette) -> Iterator[CassettePrefixViolation]:
@@ -308,18 +329,43 @@ def iter_cassette_prefix_violations(cassette: Path | Cassette) -> Iterator[Casse
     # model or deployment carried in the path, or any other sibling endpoint on the same host would be
     # pooled with generation requests and compared as if consecutive -- a spurious divergence.
     requests_by_endpoint: dict[tuple[str, str, str], list[tuple[list[PrefixBlock], list[str]]]] = defaultdict(list)
+    response_inputs: dict[tuple[str, str], list[PrefixBlock]] = {}
 
-    for method, uri, body in requests:
-        if not isinstance(method, str) or method.upper() != 'POST':
-            continue
-        if not is_str_dict(body):
-            continue
-        if not isinstance(uri, str):
-            continue
-        canonical = canonical_prefix_blocks(body, uri)
-        if canonical is None:
+    for method, uri, body, response_body in requests:
+        if not (
+            isinstance(method, str)
+            and method.upper() == 'POST'
+            and is_str_dict(body)
+            and isinstance(uri, str)
+            and (canonical := canonical_prefix_blocks(body, uri)) is not None
+        ):
             continue
         shape, blocks = canonical
+        if shape == 'openai-responses':
+            # Continuations append to server-stored input. Compare the reconstructed input prefix,
+            # while still checking the tools/instructions resent on this request. Server-generated
+            # output is immutable under its response id, so only the input blocks need reconstruction.
+            previous_id = body.get('previous_response_id')
+            if isinstance(previous_id, str) and (uri, previous_id) in response_inputs:
+                blocks = (
+                    [block for block in blocks if block[0] != 'messages']
+                    + response_inputs[(uri, previous_id)]
+                    + [block for block in blocks if block[0] == 'messages']
+                )
+            if is_str_dict(response_body) and isinstance(raw_stream := response_body.get('string'), str):
+                response_body = raw_stream
+            if isinstance(response_body, str):
+                events = [json.loads(line[6:]) for line in response_body.splitlines() if line.startswith('data: {')]
+                response_body = next(
+                    (
+                        event.get('response')
+                        for event in events
+                        if is_str_dict(event) and event.get('type') == 'response.completed'
+                    ),
+                    None,
+                )
+            if is_str_dict(response_body) and isinstance(response_id := response_body.get('id'), str):
+                response_inputs[(uri, response_id)] = [block for block in blocks if block[0] == 'messages']
         deferred_tools = anthropic_deferred_tool_blocks(body) if shape == 'anthropic' else []
         parsed_uri = urlparse(uri)
         requests_by_endpoint[(parsed_uri.hostname or '', parsed_uri.path, shape)].append((blocks, deferred_tools))
@@ -415,8 +461,8 @@ def get_bedrock_tool_names_from_cassette(cassette: Cassette) -> list[str]:
     return [tool['toolSpec']['name'] for tool in tools if 'toolSpec' in tool]
 
 
-def get_cohere_tool_names_from_cassette(cassette: Cassette) -> list[str]:
-    """Extract Cohere tool definition names from the first recorded POST request body."""
+def get_function_tool_names_from_cassette(cassette: Cassette) -> list[str]:
+    """Extract `tools[].function.name` values (Cohere, Mistral) from the first recorded POST request body."""
     tools: list[dict[str, Any]] = get_first_post_body(cassette).get('tools', [])
     return [tool['function']['name'] for tool in tools if 'function' in tool]
 

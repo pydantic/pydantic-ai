@@ -13,10 +13,20 @@ GrokReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
 
 _GROK_BASIC_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'high'))
 _GROK_43_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 'low', 'medium', 'high'))
+# Grok 3 Mini keeps its documented `low`/`high` set for the effort levels, plus `none` to turn reasoning off.
+_GROK_3_MINI_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('none', 'low', 'high'))
 # Grok 4.5 and 4.6 accept `low`/`medium`/`high` but reject `none` (unlike Grok 4.3), so they always
-# reason. Verified against the xAI API for both: `reasoning_effort='none'` returns 400 `This model does
-# not support 'reasoning_effort' value 'none'`. https://docs.x.ai/developers/models
+# reason. Grok 4.7 also supports `xhigh`; its mapping is tracked separately in issue #9744, so this
+# profile keeps the existing high fallback. https://docs.x.ai/developers/model-capabilities/text/reasoning
 _GROK_45_REASONING_EFFORTS: frozenset[GrokReasoningEffort] = frozenset(('low', 'medium', 'high'))
+_GROK_47_REASONING_MODELS = frozenset(('grok-4.7',))
+# Grok 4.3 through 4.7 follow the fallback's mid-conversation `<system>` blocks better when they carry the marker.
+# Measured with `OpenRouterModel` and `XaiModel`: a genuine change next to a user lookalike, steering after a tool
+# result and attribution (who said what) all improved sealed. Grok 4.20 is deliberately absent: it measured worse
+# sealed. The `-latest` aliases name the same models; the floating `grok-latest` and the retired slugs don't.
+_GROK_SEALED_SYSTEM_BLOCK_MODELS = frozenset(
+    ('grok-4.3', 'grok-4.3-latest', 'grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-4.7')
+)
 _GROK_43_REASONING_MODELS = frozenset(
     (
         'grok-4.3',
@@ -37,17 +47,25 @@ _GROK_43_REASONING_MODELS = frozenset(
         'grok-3',
     )
 )
-_GROK_45_REASONING_MODELS = frozenset(
-    (
-        'grok-4.5',
-        'grok-4.5-latest',
-        # Grok 4.6 takes the same `reasoning_effort` values as 4.5, so it shares the set rather than
-        # getting a branch of its own. `grok-4.6-latest` is deliberately absent: xAI doesn't serve one.
-        'grok-4.6',
-        # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
-        # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
-        'grok-build-latest',
+# Grok 3 Mini accepts `reasoning_effort='none'`, though xAI's retirement guide doesn't list it: verified live
+# 2026-10-22, `grok-3-mini` and `grok-3-mini-fast` return no reasoning tokens for `none`, so `thinking=False`
+# turns reasoning off. The other levels keep mapping onto its documented `low`/`high`. They stay out of
+# `_GROK_43_REASONING_MODELS`, which also grants builtin tools. Other `grok-3-mini` ids keep the `low`/`high` set.
+_GROK_3_MINI_DISABLEABLE_MODELS = frozenset(('grok-3-mini', 'grok-3-mini-fast'))
+_GROK_45_REASONING_MODELS = (
+    frozenset(
+        (
+            'grok-4.5',
+            'grok-4.5-latest',
+            # Grok 4.6 takes the same `reasoning_effort` values as 4.5, so it shares the set rather than
+            # getting a branch of its own. `grok-4.6-latest` is deliberately absent: xAI doesn't serve one.
+            'grok-4.6',
+            # `grok-build-latest` is xAI's floating alias for the newest Grok build model, currently Grok 4.5,
+            # so it accepts the same `reasoning_effort` values. https://docs.x.ai/developers/models
+            'grok-build-latest',
+        )
     )
+    | _GROK_47_REASONING_MODELS
 )
 
 
@@ -69,6 +87,15 @@ class GrokModelProfile(ModelProfile, total=False):
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     """Native `reasoning_effort` values supported by the Grok model. Default: empty (`frozenset()`)."""
 
+    grok_default_effort_omitted: bool
+    """Whether a default thinking request omits `reasoning_effort` so xAI applies its model default. Default: `False`."""
+
+    grok_supports_stop_sequences: bool
+    """Whether the model accepts `stop_sequences`. Default: `True`.
+
+    Only the Grok 4.20 non-reasoning models do: the others reject them with a 400.
+    """
+
 
 def grok_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Grok model."""
@@ -86,6 +113,8 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
     grok_reasoning_efforts: frozenset[GrokReasoningEffort]
     if model_name in _GROK_43_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_43_REASONING_EFFORTS
+    elif model_name in _GROK_3_MINI_DISABLEABLE_MODELS:
+        grok_reasoning_efforts = _GROK_3_MINI_REASONING_EFFORTS
     elif model_name in _GROK_45_REASONING_MODELS:
         grok_reasoning_efforts = _GROK_45_REASONING_EFFORTS
     elif model_name.startswith('grok-3-mini'):
@@ -97,18 +126,36 @@ def grok_model_profile(model_name: str) -> ModelProfile | None:
         SUPPORTED_NATIVE_TOOLS if grok_supports_builtin_tools else frozenset()
     )
 
-    return GrokModelProfile(
+    profile: GrokModelProfile = GrokModelProfile(
         supports_tools=True,
+        # The formats xAI's own 400 lists: 'Downloaded response does not contain a valid JPG, PNG, WebP, or ICO image',
+        # seen for a GIF on its API and through OpenRouter, whose raw error is xAI's (checked live with
+        # `grok-4-1-fast-non-reasoning` and `x-ai/grok-4.3`, 2026-11-04). Hosts that run Grok themselves weren't checked.
+        supported_image_media_types=frozenset(
+            {'image/jpeg', 'image/png', 'image/webp', 'image/x-icon', 'image/vnd.microsoft.icon'}
+        ),
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_thinking=bool(grok_reasoning_efforts),
-        # A reasoning model whose `reasoning_effort` set lacks `'none'` (e.g. grok-3-mini) reasons by
+        # A reasoning model whose `reasoning_effort` set lacks `'none'` (e.g. Grok 4.5) reasons by
         # default and can't be disabled, so it's always-on; Grok 4.3 supports `'none'`, so it's not.
         thinking_always_enabled=bool(grok_reasoning_efforts) and 'none' not in grok_reasoning_efforts,
         grok_supports_builtin_tools=grok_supports_builtin_tools,
         grok_reasoning_efforts=grok_reasoning_efforts,
+        # Verified live 2026-11-04 across the known Grok ids, including the retired slugs that redirect to a reasoning
+        # model, like `grok-4-1-fast-non-reasoning`. Deliberately `False` for an id this doesn't recognize, unlike the
+        # field's `True` default for a profile that doesn't set it: every Grok model but these rejects them.
+        grok_supports_stop_sequences=model_name.startswith('grok-4.20') and 'non-reasoning' in model_name,
         supported_native_tools=supported_native_tools,
     )
+    if model_name in _GROK_43_REASONING_MODELS or model_name in _GROK_47_REASONING_MODELS:
+        profile['grok_default_effort_omitted'] = True
+    if model_name in _GROK_3_MINI_DISABLEABLE_MODELS:
+        # Grok 3 Mini reasons unless told not to.
+        profile['thinking_enabled_by_default'] = True
+    if model_name in _GROK_SEALED_SYSTEM_BLOCK_MODELS:
+        profile['needs_sealed_system_blocks'] = True
+    return profile
 
 
 def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
@@ -120,6 +167,10 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # live), so an `output_modality='text'` session would silently come back as audio.
         'supports_text_output': False,
         'supports_session_seeding': True,
+        # xAI accepts a mid-session `system` message but doesn't answer it as instructions (checked live: asked to
+        # greet the newly verified caller by name, Grok did in none of six runs with a `system` message, and in all
+        # three runs with `<system>`-tagged user text).
+        'supports_system_messages': False,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
         # xAI puts `think` in the name of the voice models that take `reasoning.effort`, so match on
@@ -131,6 +182,8 @@ def grok_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         # answered right away. The protocol has no setting that makes it wait.
         'async_tool_call_mode': 'always',
         'emits_input_speech_events': True,
+        # Each transcript delta, of a few words to a sentence, says where it starts in its item's audio.
+        'output_speech_timestamp_granularity': 'segment',
         # A response's `input_tokens` counts only the input added since the previous response, not the
         # whole conversation, so it can't measure how full the context window is.
         'response_usage_covers_context': False,

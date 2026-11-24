@@ -12,14 +12,16 @@ from pydantic_ai.exceptions import UserError
 CapabilityT = TypeVar('CapabilityT', bound=AbstractCapability[Any])
 
 
-def one_per_id(capabilities: Sequence[CapabilityT]) -> CapabilityT:
+def one_per_id(
+    capabilities: Sequence[CapabilityT], *, remedy: str = 'Give each its own `id` and wrap them in `PrefixTools`'
+) -> CapabilityT:
     """Resolve capabilities that share an `id`: the same configuration stated twice is one, and two that disagree raise.
 
     For a capability whose configuration is an access boundary or a connection to one account, a
     field-by-field merge could widen what the agent reaches or send one account's credential to
     another's server, so this narrows rather than unions (see "Deciding What Two Of It Mean" in
     `agent_docs/capability-authoring.md`). The error names the fields that disagree but not their values,
-    which can be secrets.
+    which can be secrets. `remedy` tells the user how to keep both instead.
     """
     first = capabilities[0]
     for other in capabilities[1:]:
@@ -32,6 +34,6 @@ def one_per_id(capabilities: Sequence[CapabilityT]) -> CapabilityT:
             names = ', '.join(repr(name) for name in disagree)
             raise UserError(
                 f'Capability id {first.id!r} is used by multiple {type(first).__name__} capabilities that disagree '
-                f'on {names}. Give each its own `id` and wrap them in `PrefixTools`, or make them agree.'
+                f'on {names}. {remedy}, or make them agree.'
             )
     return first

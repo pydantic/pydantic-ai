@@ -45,12 +45,22 @@ class CohereProvider(Provider[AsyncClientV2]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile:
-        return merge_profile(cohere_model_profile(model_name), ModelProfile(supports_inline_system_prompts=True))
+        profile = merge_profile(cohere_model_profile(model_name), ModelProfile(supports_inline_system_prompts=True))
+        if profile.get('supports_thinking', False):
+            # Cohere's reasoning models think by default, but `CohereModel` can turn that off with
+            # `thinking={'type': 'disabled'}` (verified live 2026-10-22 on `command-a-reasoning-08-2025`). The shared
+            # `cohere_model_profile` keeps them always-on for routes that can't send that.
+            # https://docs.cohere.com/docs/reasoning
+            profile = merge_profile(
+                profile, ModelProfile(thinking_always_enabled=False, thinking_enabled_by_default=True)
+            )
+        return profile
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         cohere_client: AsyncClientV2 | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -59,14 +69,17 @@ class CohereProvider(Provider[AsyncClientV2]):
         Args:
             api_key: The API key to use for authentication, if not provided, the `CO_API_KEY` environment variable
                 will be used if available.
+            base_url: The base URL to use for requests, if not provided, the `CO_BASE_URL` environment variable
+                will be used if available.
             cohere_client: An existing
                 [AsyncClientV2](https://github.com/cohere-ai/cohere-python)
-                client to use. If provided, `api_key` and `http_client` must be `None`.
+                client to use. If provided, `api_key`, `base_url` and `http_client` must be `None`.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
         if cohere_client is not None:
             assert http_client is None, 'Cannot provide both `cohere_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `cohere_client` and `api_key`'
+            assert base_url is None, 'Cannot provide both `cohere_client` and `base_url`'
             self._client = cohere_client
             self._v1_client = None
         else:
@@ -77,7 +90,7 @@ class CohereProvider(Provider[AsyncClientV2]):
                     ' to use the Cohere provider.'
                 )
 
-            base_url = os.getenv('CO_BASE_URL')
+            base_url = base_url or os.getenv('CO_BASE_URL')
             if http_client is not None:
                 self._client = AsyncClientV2(api_key=api_key, httpx_client=http_client, base_url=base_url)
                 self._v1_client = AsyncClient(api_key=api_key, httpx_client=http_client, base_url=base_url)

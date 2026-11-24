@@ -26,6 +26,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -34,7 +35,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
-from pydantic_ai_harness.media import DiskMediaStore, PostgresMediaStore, media_uri_for
+from pydantic_ai_harness.media import FileMediaStore, PostgresMediaStore, media_uri_for
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     PostgresConnection,
@@ -48,6 +49,7 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectStatus,
 )
 from tests.harness._postgres_sqlite import SqlitePool
+from tests.harness.step_persistence._histories import growing_histories, history_with_unordered_keys
 
 
 class _UnusedPool:
@@ -88,7 +90,7 @@ class TestPostgresStepStoreConstruction:
         assert store._media_store is None  # pyright: ignore[reportPrivateUsage]
 
     def test_custom_media_store_is_kept(self, tmp_path: Path) -> None:
-        media_store = DiskMediaStore(tmp_path / 'media')
+        media_store = FileMediaStore(tmp_path / 'media')
         store = PostgresStepStore(_UnusedPool(), media_store=media_store)
         assert store._media_store is media_store  # pyright: ignore[reportPrivateUsage]
 
@@ -195,6 +197,25 @@ class TestPostgresStepStoreRuns:
 
         assert {r.run_id for r in await store.list_runs()} == {'first', 'second'}
         assert pool.statements.count('SELECT pg_advisory_xact_lock(hashtext($1))') == 1
+
+    async def test_a_store_on_existing_tables_issues_no_ddl(self, pool: SqlitePool) -> None:
+        """A role without `CREATE` on the schema can use tables that exist."""
+        await PostgresStepStore(pool, media_store=None).list_runs()
+        pool.statements.clear()
+
+        await PostgresStepStore(pool, media_store=None).register_run(RunRecord(run_id='r1'))
+
+        assert await PostgresStepStore(pool, media_store=None).get_run(run_id='r1') is not None
+        assert not any(statement.startswith(('CREATE', 'SELECT pg_advisory')) for statement in pool.statements)
+
+    async def test_a_missing_table_is_created_alongside_existing_ones(self, pool: SqlitePool) -> None:
+        await PostgresStepStore(pool, media_store=None).list_runs()
+        async with pool.acquire() as connection:
+            await connection.execute('DROP TABLE step_persistence_tool_effects')
+
+        await PostgresStepStore(pool, media_store=None).list_runs()
+
+        assert await pool.count_rows('step_persistence_tool_effects') == 0
 
 
 class TestPostgresStepStoreEvents:
@@ -476,3 +497,103 @@ class TestPostgresStepStoreMedia:
         prompt = request.parts[0]
         assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, list)
         assert [p.data for p in prompt.content if isinstance(p, BinaryContent)] == [big]
+
+
+class TestPostgresStepStoreStoresEachMessageOnce:
+    async def test_dict_key_order_round_trips(self, pool: SqlitePool) -> None:
+        """A reloaded history keeps its dict key order, so the next request sends the provider the same bytes."""
+        store = PostgresStepStore(pool, table='steps', media_store=None)
+        history = history_with_unordered_keys()
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert ModelMessagesTypeAdapter.dump_json(snap.messages) == ModelMessagesTypeAdapter.dump_json(history)
+
+    async def test_stores_each_message_once_and_restores_every_snapshot(self, pool: SqlitePool) -> None:
+        store = PostgresStepStore(pool, table='steps', media_store=None)
+        histories = growing_histories(4)
+        for turn, history in enumerate(histories):
+            for step in range(2):
+                await store.save_snapshot(ContinuableSnapshot(run_id=f'r{turn}', step_index=step, messages=history))
+
+        assert await pool.count_rows('steps_messages') == len(histories[-1])
+        for turn, history in enumerate(histories):
+            snap = await store.latest_snapshot(run_id=f'r{turn}')
+            assert snap is not None
+            assert snap.messages == history
+            assert [s.messages for s in await store.list_snapshots(run_id=f'r{turn}')] == [history, history]
+
+    async def test_an_empty_history_round_trips(self, pool: SqlitePool) -> None:
+        store = PostgresStepStore(pool, table='steps', media_store=None)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[]))
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert snap.messages == []
+
+    async def test_rows_written_with_inline_history_still_read(self, pool: SqlitePool) -> None:
+        store = PostgresStepStore(pool, table='steps', media_store=None)
+        first, second = growing_histories(2)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r0', step_index=0, messages=second))
+        async with pool.acquire() as connection:
+            # The row shape releases before messages were stored once wrote.
+            await connection.execute(
+                'INSERT INTO steps_snapshots (run_id, step_index, timestamp, state, messages) VALUES ($1, $2, $3, $4, $5)',
+                'r1',
+                0,
+                '2026-01-01T00:00:00+00:00',
+                'complete',
+                ModelMessagesTypeAdapter.dump_json(first).decode(),
+            )
+
+        for run_id, history in (('r0', second), ('r1', first)):
+            snap = await store.latest_snapshot(run_id=run_id)
+            assert snap is not None
+            assert snap.messages == history
+            assert [s.messages for s in await store.list_snapshots(run_id=run_id)] == [history]
+
+    async def test_missing_message_raises_on_latest_and_is_skipped_by_list(
+        self, pool: SqlitePool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store = PostgresStepStore(pool, table='steps', media_store=None)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=growing_histories(1)[0]))
+        async with pool.acquire() as connection:
+            await connection.execute("DELETE FROM steps_messages WHERE message LIKE '%question 0%'")
+
+        with pytest.raises(ValueError, match='snapshot references 1 stored message'):
+            await store.latest_snapshot(run_id='r1')
+        with caplog.at_level(logging.WARNING):
+            assert await store.list_snapshots(run_id='r1') == []
+        assert any('unparsable' in record.message for record in caplog.records)
+
+    async def test_pruned_snapshots_leave_their_messages(self, pool: SqlitePool) -> None:
+        store = PostgresStepStore(pool, table='steps', media_store=None, max_snapshots_per_run=1)
+        original = growing_histories(2)[-1]
+        compacted: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='summary')]), original[-1]]
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=original))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=compacted))
+
+        assert await pool.count_rows('steps_snapshots') == 1
+        assert await pool.count_rows('steps_messages') == len(original) + 1
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert snap.messages == compacted
+
+    async def test_idempotent_retry_does_not_store_its_messages(self, pool: SqlitePool) -> None:
+        store = PostgresStepStore(pool, table='steps', media_store=None)
+        first, second = growing_histories(2)
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=first, idempotency_key='k'))
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=1, messages=second, idempotency_key='k'))
+
+        assert await pool.count_rows('steps_snapshots') == 1
+        assert await pool.count_rows('steps_messages') == len(first)
+
+    async def test_a_long_history_is_stored_in_batches(self, pool: SqlitePool) -> None:
+        store = PostgresStepStore(pool, table='steps', media_store=None)
+        history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=f'm{i}')]) for i in range(1001)]
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=history))
+
+        assert await pool.count_rows('steps_messages') == 1001
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert snap.messages == history

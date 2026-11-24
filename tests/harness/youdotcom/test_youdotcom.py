@@ -34,6 +34,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.youdotcom import (
     ExtractionModeName,
     FinanceEffortName,
@@ -153,8 +154,15 @@ def _finance(
     )
 
 
+class _NoDomainFiltersModel(FunctionModel):
+    """A model whose native web search ignores domain filters, as Gemini's does."""
+
+    def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
+        return native_tool.restricting_settings
+
+
 async def _tools_sent(
-    capability: AbstractCapability[object], *, native_web_search: bool
+    capability: AbstractCapability[object], *, native_web_search: bool, applies_domain_filters: bool = True
 ) -> tuple[list[str], list[AbstractNativeTool]]:
     """The function and native tools one request carries, on a model with or without native web search."""
     sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
@@ -169,7 +177,8 @@ async def _tools_sent(
         return ModelResponse(parts=[TextPart('done')])
 
     supported = frozenset({WebSearchTool}) if native_web_search else frozenset[type[AbstractNativeTool]]()
-    model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=supported))
+    model_class = FunctionModel if applies_domain_filters else _NoDomainFiltersModel
+    model = model_class(respond, profile=ModelProfile(supported_native_tools=supported))
     await Agent(model, capabilities=[capability]).run('Search the web.')
     return sent[0]
 
@@ -290,7 +299,7 @@ class _FakeYouClient:
 def _search_toolset(
     client: _FakeYouClient,
     *,
-    num_results: int = 10,
+    max_results: int = 10,
     extraction_mode: ExtractionModeName = 'highlights',
     max_text_chars: int = 10_000,
     include_domains: list[str] | None = None,
@@ -301,7 +310,7 @@ def _search_toolset(
 ) -> YouSearchToolset[None]:
     return YouSearch[None](
         client=client,
-        num_results=num_results,
+        max_results=max_results,
         extraction_mode=extraction_mode,
         max_text_chars=max_text_chars,
         include_domains=include_domains or [],
@@ -362,7 +371,7 @@ class TestWebSearch:
 
     async def test_requests_highlights_count_and_domains(self) -> None:
         client = _FakeYouClient(search_response=_search(_web()))
-        await _search_toolset(client, num_results=3, include_domains=['a.dev']).web_search('q')
+        await _search_toolset(client, max_results=3, include_domains=['a.dev']).web_search('q')
         call = client.search_calls[0]
         assert call['count'] == 3
         assert call['include_domains'] == ['a.dev']
@@ -432,7 +441,7 @@ class TestWebSearch:
                 _web('https://c.dev', title='C'),
             )
         )
-        output = await _search_toolset(client, num_results=2).web_search('q')
+        output = await _search_toolset(client, max_results=2).web_search('q')
         assert output.metadata['sources'] == [
             {'url': 'https://a.dev', 'title': 'A'},
             {'url': 'https://b.dev', 'title': 'B'},
@@ -639,10 +648,32 @@ class TestYouSearchCapability:
         assert kwargs['api_key_auth'] is None
         assert kwargs['timeout_ms'] == 60_000
 
-    @pytest.mark.parametrize('num_results', [0, 21])
-    def test_num_results_out_of_bounds_rejected(self, num_results: int) -> None:
-        with pytest.raises(ValueError, match='num_results must be between 1 and 20'):
-            YouSearch[None](num_results=num_results)
+    @pytest.mark.parametrize('max_results', [0, 21])
+    def test_max_results_out_of_bounds_rejected(self, max_results: int) -> None:
+        with pytest.raises(ValueError, match='max_results must be between 1 and 20'):
+            YouSearch[None](max_results=max_results)
+
+    def test_num_results_is_a_deprecated_alias(self) -> None:
+        with pytest.warns(HarnessDeprecationWarning, match=r'`YouSearch\(num_results=\.\.\.\)` has been renamed'):
+            capability = YouSearch[None](num_results=3)
+        assert (capability.max_results, capability.num_results) == (3, None)
+        with pytest.warns(HarnessDeprecationWarning, match=r'`YouSearch\(num_results=\.\.\.\)` has been renamed'):
+            assert YouSearch[None].from_spec(num_results=3).max_results == 3
+        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
+            YouSearch[None](max_results=4, num_results=3)
+
+    async def test_toolset_num_results_is_a_deprecated_alias(self) -> None:
+        client = _FakeYouClient(search_response=_search())
+        with pytest.warns(HarnessDeprecationWarning, match=r'`YouSearchToolset\(num_results=\.\.\.\)`'):
+            toolset = YouSearchToolset[None](
+                client=client, num_results=2, extraction_mode='highlights', max_text_chars=10_000
+            )
+        await toolset.web_search('q')
+        assert client.search_calls[0]['count'] == 2
+        with pytest.raises(TypeError, match='`num_results` is its deprecated name'):
+            YouSearchToolset[None](
+                client=client, max_results=4, num_results=2, extraction_mode='highlights', max_text_chars=10_000
+            )
 
     def test_max_text_chars_floor(self) -> None:
         with pytest.raises(ValueError, match='max_text_chars must be at least 1'):
@@ -798,6 +829,12 @@ class TestAgentSpec:
         assert tools == ['web_search', 'get_page']
         assert natives == []
 
+    async def test_you_search_is_the_fallback_where_native_search_cannot_apply_the_domain_filters(self) -> None:
+        capability = YouSearch[object](native=True, exclude_domains=['b.dev'], client=_FakeYouClient())
+        tools, natives = await _tools_sent(capability, native_web_search=True, applies_domain_filters=False)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
     def test_native_search_gets_the_domain_filters(self) -> None:
         capability = YouSearch[None](native=True, include_domains=['a.dev'], client=_FakeYouClient())
         assert capability.get_native_tools() == [WebSearchTool(allowed_domains=['a.dev'])]
@@ -811,7 +848,7 @@ class TestAgentSpec:
 
     async def test_web_search_tool_is_a_core_web_search_fallback(self) -> None:
         client = _FakeYouClient(search_response=_search(_web('https://a.dev', title='A', highlights=['alpha'])))
-        you = YouSearch[object](num_results=3, client=client)
+        you = YouSearch[object](max_results=3, client=client)
 
         tools, _ = await _tools_sent(WebSearch[object](local=you.web_search_tool()), native_web_search=True)
         assert tools == []
@@ -838,10 +875,10 @@ class TestAgentSpec:
 
     def test_search_from_spec_builds_capability(self) -> None:
         capability = YouSearch[None].from_spec(
-            num_results=3, extraction_mode='full_page', include_domains=['a.dev'], native=True
+            max_results=3, extraction_mode='full_page', include_domains=['a.dev'], native=True
         )
         assert capability.native is True
-        assert capability.num_results == 3
+        assert capability.max_results == 3
         assert capability.extraction_mode == 'full_page'
         assert capability.include_domains == ['a.dev']
         assert capability.client is None
@@ -856,9 +893,20 @@ class TestAgentSpec:
         assert YouSearch[None].from_spec(include_domains=['sec.gov'], id='sec_search').id == 'sec_search'
         assert YouResearch[None].from_spec(research_effort='deep', id='deep_research').id == 'deep_research'
 
+    @pytest.mark.parametrize('capability_type', [YouSearch, YouResearch])
+    def test_from_spec_sets_the_base_capability_fields(
+        self, capability_type: type[YouSearch[None] | YouResearch[None]]
+    ) -> None:
+        """`id`, `description` and `defer_loading` live on `AbstractCapability`, so a spec must name them too."""
+        name = capability_type.get_serialization_name()
+        definitions = AgentSpec.model_json_schema_with_capabilities([capability_type])['$defs']
+        assert {'id', 'description', 'defer_loading'} <= definitions[f'spec_params_{name}']['properties'].keys()
+        capability = capability_type.from_spec(id='second', description='The second one.', defer_loading=True)
+        assert (capability.id, capability.description, capability.defer_loading) == ('second', 'The second one.', True)
+
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('YDC_API_KEY', 'test-key')
         spec = tmp_path / 'agent.yaml'
-        spec.write_text('model: test\ncapabilities:\n  - YouSearch:\n      num_results: 3\n')
+        spec.write_text('model: test\ncapabilities:\n  - YouSearch:\n      max_results: 3\n')
         agent = Agent.from_file(spec, custom_capability_types=[YouSearch, YouResearch])
         assert isinstance(agent, Agent)

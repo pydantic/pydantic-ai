@@ -2,27 +2,43 @@
 
 from __future__ import annotations
 
+import base64
+import codecs
 import logging
+import posixpath
+import re
+import sys
 import warnings
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections import deque
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
+from contextlib import aclosing
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, TypeGuard
+from typing import Any, Literal
 
-from pydantic_ai import FunctionToolset
+from pydantic_ai import FunctionToolset, Tool, ToolKind
+from pydantic_ai._framing import second_model_prompt
+from pydantic_ai._utils import replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    LoadCapabilityReturnPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnContent,
+    ToolSearchReturnPart,
     UserContent,
+    is_multi_modal_content,
 )
-from pydantic_ai.models import AbstractModel, Model
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
+from pydantic_ai_harness._models import is_request_response_model
+from pydantic_ai_harness._typeguards import is_mapping, is_object_list, is_object_list_or_tuple
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness._workspace import raise_tool_failure
+from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
+from pydantic_ai_harness.file_system import READ_FILE_KIND
+from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -32,6 +48,7 @@ from pydantic_ai_harness.tool_output_limits._bands import (
     Truncate,
 )
 from pydantic_ai_harness.tool_output_limits._payload import (
+    RERUN_NOTE,
     Serializer,
     is_binary,
     json_sketch,
@@ -41,14 +58,39 @@ from pydantic_ai_harness.tool_output_limits._payload import (
     to_text,
     truncate_text,
 )
-from pydantic_ai_harness.tool_output_limits._store import OverflowStore, WorkspaceStore
+from pydantic_ai_harness.tool_output_limits._store import SPILL_DIR, OverflowStore, WorkspaceOverflowStore, iter_payload
 
 logger = logging.getLogger(__name__)
 
 READ_TOOL_NAME = 'read_tool_result'
-"""Name of the registered read-back tool. Its own returns are exempt from reduction."""
+"""Default name of the registered read-back tool."""
 
-_READ_TOOL_HINT = f'Read it with {READ_TOOL_NAME}('
+READ_TOOL_RESULT_KIND = ToolKind('tool_output_limits', 'read_tool_result')
+"""The kind of the `read_tool_result` tool, whatever it is named. Its returns are exempt from reduction."""
+
+GREP_TOOL_NAME = 'grep_tool_result'
+"""Default name of the registered search tool."""
+
+GREP_TOOL_RESULT_KIND = ToolKind('tool_output_limits', 'grep_tool_result')
+"""The kind of the `grep_tool_result` tool, whatever it is named. Its returns are exempt from reduction."""
+
+_EXEMPT_KINDS = frozenset(
+    {
+        READ_TOOL_RESULT_KIND.id,
+        GREP_TOOL_RESULT_KIND.id,
+        LoadCapabilityReturnPart.tool_kind,
+        ToolSearchReturnPart.tool_kind,
+    }
+)
+"""Kinds whose returns are never reduced, whatever `tool_filter` says.
+
+Besides the spill query tools, these are core's `load_capability` and `search_tools`: core re-reads their
+structured content from history to decide which capabilities are loaded and which tools are revealed,
+so a reduced return would leave those locked.
+"""
+
+_ReadUnit = Literal['lines', 'bytes']
+"""What `read_tool_result`'s `offset` and `limit` count."""
 
 _DEFAULT_THRESHOLD = 10_000
 """Default band threshold (characters) -- below this, returns pass through untouched."""
@@ -69,12 +111,12 @@ def _spills(action: Action | None) -> bool:
     while action is not None:
         if isinstance(action, Spill):
             return True
-        action = None if isinstance(action, Passthrough) else action.then
+        action = _next_action(action)
     return False
 
 
 def _default_bands() -> list[Band]:
-    """Lossless spill with a bounded truncation fallback: zero LLM cost, no silent drop."""
+    """Spill to the store, falling back to truncation when the store write fails."""
     return [Band(over=_DEFAULT_THRESHOLD, action=Spill(then=Truncate()))]
 
 
@@ -104,8 +146,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     Three reduction modes, freely combined through an ordered list of size `bands`:
 
     - `Truncate`: clamp to a character budget. Lossy, zero-cost.
-    - `Spill`: persist the full payload, hand the model a `read_tool_result` handle plus a
-      preview. Lossless.
+    - `Spill`: persist the full payload, hand the model a handle plus a preview. Lossless.
+      The model reads it back with `read_tool_result`, or, when the spill is in the run's
+      workspace and `FileSystem` is on the agent, with its `read_file`.
     - `Summarize`: size-gated LLM summary. Inherits the run's model by default.
 
     The first band whose `over` threshold the measured size meets wins; smaller returns pass
@@ -121,7 +164,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         from pydantic_ai import Agent
         from pydantic_ai_harness.tool_output_limits import (
             Band,
-            LocalFileStore,
+            LocalFileOverflowStore,
             ToolOutputLimits,
             Spill,
             Summarize,
@@ -137,7 +180,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                         Band(over=20_000, action=Summarize()),
                         Band(over=5_000, action=Truncate()),
                     ],
-                    store=LocalFileStore(),
+                    store=LocalFileOverflowStore(),
                 )
             ],
         )
@@ -157,14 +200,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     """Measure band thresholds in estimated tokens instead of characters."""
 
     tokenizer: Callable[[str], int] | None = None
-    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to a ~4-char heuristic."""
+    """Optional `(str) -> int` tokenizer for `over_tokens`. Defaults to the compaction text estimate."""
 
-    store: OverflowStore | WorkspaceStore | None = None
+    store: OverflowStore | WorkspaceOverflowStore | None = None
     """Backend for spilled payloads.
 
-    Defaults to a `WorkspaceStore` in the run's workspace. When the bands can spill and no store
+    Defaults to a `WorkspaceOverflowStore` in the run's workspace. When the bands can spill and no store
     has a workspace to write to, the run fails at its start: attach a workspace, or pass
-    `store=LocalFileStore()` to keep spills on this machine.
+    `store=LocalFileOverflowStore()` to keep spills on this machine.
     """
 
     strip_ansi: bool = False
@@ -185,15 +228,44 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     _: KW_ONLY
     id: str | None = 'tool_output_limits'
 
-    _store: OverflowStore | WorkspaceStore = field(init=False, repr=False)
+    _store: OverflowStore | WorkspaceOverflowStore = field(init=False, repr=False)
     _bands: list[Band] = field(init=False, repr=False)
     _per_tool: dict[str, list[Band]] = field(init=False, repr=False)
     _toolset: AgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
+    _spilled_calls: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False, compare=False)
+    """Spill name -> the run step that first wrote it, on the per-run instance `for_run` returns.
+
+    A `tool_call_id` is only unique within one response, so a later response can reuse one. The step
+    of a name's first spill is what tells the two apart: the call that wrote it first keeps the
+    documented `run_id/tool_call_id.retry` handle, and a later call that would land on the same name
+    is parked one level down. Kept on the instance rather than read off the history, which a
+    capability such as a compaction may rewrite mid-run.
+    """
 
     def __post_init__(self) -> None:
-        self._store = self.store if self.store is not None else WorkspaceStore()
+        self._store = self.store if self.store is not None else WorkspaceOverflowStore()
         self._bands = self._prepare_bands(self.bands)
         self._per_tool = {name: self._prepare_bands(bands) for name, bands in self.per_tool.items()}
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the configuration, with the later band winning a shared threshold, then re-derive from it.
+
+        `_store`, `_bands`, and `_per_tool` are derived in `__post_init__`, which merging skips, so
+        they are rebuilt from the merged configuration: a merged band list keeps the largest-first
+        order a single instance has, and a stated `store` is the one spills go to.
+        """
+        limits = [capability for capability in capabilities if isinstance(capability, ToolOutputLimits)]
+        assert len(limits) == len(capabilities)
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        bands: list[Band] = []
+        for capability in limits:
+            thresholds = {band.over for band in capability.bands}
+            bands = [band for band in bands if band.over not in thresholds] + list(capability.bands)
+        merged = replace_no_init(merged, bands=bands)
+        merged.__post_init__()
+        return merged
 
     @staticmethod
     def _prepare_bands(bands: Sequence[Band]) -> list[Band]:
@@ -207,27 +279,46 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         """Fail the run at its start when a band can spill but no store has a workspace to write to."""
         store = self._store
         if (
-            isinstance(store, WorkspaceStore)
+            isinstance(store, WorkspaceOverflowStore)
             and store.workspace is None
             and not ctx.workspace.attached
             and any(_spills(band.action) for bands in (self._bands, *self._per_tool.values()) for band in bands)
         ):
             raise UserError(
                 "`ToolOutputLimits` spills oversized tool output to the run's workspace, but none is attached "
-                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileStore()` "
+                "to this run. Attach one, such as `LocalWorkspace('.')`, or pass `store=LocalFileOverflowStore()` "
                 'to keep spills on this machine.'
             )
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> ToolOutputLimits[AgentDepsT]:
+        """Return a copy with no spill names recorded, so runs don't share them.
+
+        A shallow copy rather than `replace`, which would rebuild the toolset that `get_toolset`
+        builds once for durable execution.
+        """
+        return replace_no_init(self, _spilled_calls={})
+
+    @property
+    def _spills_to_run_workspace(self) -> bool:
+        """Whether spills are files in the run's workspace, which the run's file tools can read.
+
+        Known from configuration: the default `WorkspaceOverflowStore` without a `workspace` of its own.
+        """
+        store = self._store
+        return isinstance(store, WorkspaceOverflowStore) and store.workspace is None
+
     def _store_for(self, ctx: RunContext[AgentDepsT]) -> OverflowStore:
         store = self._store
-        return store.bind(ctx.workspace) if isinstance(store, WorkspaceStore) else store
+        return store.bind(ctx.workspace) if isinstance(store, WorkspaceOverflowStore) else store
 
     # --- toolset ---
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        """Register the `read_tool_result` tool for reading spilled payloads on demand.
+        """Register the `read_tool_result` and `grep_tool_result` tools for querying spilled payloads on demand.
 
-        Built once, so durable execution sees the toolset it registered.
+        When spills are files in the run's workspace, `read_tool_result` steps aside for a tool of
+        `FileSystem`'s `READ_FILE_KIND`, which reads them too. Built once, so durable execution
+        sees the toolset it registered.
         """
         if self._toolset is None:
             self._toolset = self._make_toolset()
@@ -242,20 +333,52 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             limit: int = 200,
             from_end: bool = False,
             pattern: str | None = None,
+            unit: _ReadUnit = 'lines',
         ) -> str:
             """Read a slice of a spilled tool result.
 
             Args:
                 ctx: The run context (supplied by the agent).
                 handle: The handle from the overflowed tool return.
-                offset: Number of matching lines to skip from the start (or end). Must be >= 0.
-                limit: Maximum number of lines to return (>= 1; clamped to a built-in cap).
+                offset: Number of matching lines (or bytes) to skip from the start (or end). Must be >= 0.
+                limit: Maximum number of lines (or bytes) to return (>= 1; clamped to a built-in cap).
                 from_end: Count `offset`/`limit` from the end of the result.
                 pattern: Optional literal substring; only lines containing it are returned.
+                unit: `'bytes'` slices raw bytes, for output without useful line breaks such as minified JSON;
+                    `offset` and `limit` then count bytes, so pass a larger `limit` (up to 50,000).
             """
-            return await _read_slice(self._store_for(ctx).read, handle, offset, limit, from_end, pattern)
+            store = self._store_for(ctx)
+            return await _read_slice(store, handle, offset, limit, from_end, pattern, unit, _reader_name(ctx))
 
-        return FunctionToolset([read_tool_result], id=self.id or 'tool_output_limits')
+        async def grep_tool_result(
+            ctx: RunContext[AgentDepsT],
+            handle: str,
+            pattern: str,
+            context: int = 2,
+            max_matches: int = 20,
+            offset: int = 0,
+        ) -> str:
+            """Find the lines of a spilled tool result that contain a literal substring, with their line numbers.
+
+            Matching lines are prefixed `N:` and context lines `N-`; separate groups are divided by `--`.
+
+            Args:
+                ctx: The run context (supplied by the agent).
+                handle: The handle from the overflowed tool return.
+                pattern: Literal substring to find (not a regex).
+                context: Lines to show before and after each match (>= 0; clamped to a built-in cap).
+                max_matches: Maximum number of matches to return (>= 1; clamped to a built-in cap).
+                offset: Number of matches to skip, to continue a previous search. Must be >= 0.
+            """
+            store = self._store_for(ctx)
+            return await _grep(store, handle, pattern, context, max_matches, offset, _reader_name(ctx))
+
+        prepare = step_aside_for_read_file if self._spills_to_run_workspace else None
+        tools = [
+            Tool(read_tool_result, tool_kind=READ_TOOL_RESULT_KIND, prepare=prepare),
+            Tool(grep_tool_result, tool_kind=GREP_TOOL_RESULT_KIND, prepare=prepare),
+        ]
+        return FunctionToolset(tools, id=self.id or 'tool_output_limits')
 
     # --- reduction ---
 
@@ -270,7 +393,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Reduce the tool result -- both `return_value` and model-visible `content`."""
         original: object = result
-        if call.tool_name == READ_TOOL_NAME:
+        if tool_def.tool_kind in _EXEMPT_KINDS or await _reads_a_spill(ctx, tool_def, args):
             return original
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return original
@@ -289,13 +412,18 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
         if isinstance(return_value, BaseException):
             return original
-
         bands = self._per_tool.get(call.tool_name, self._bands)
-        value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
-        value_text, value_handle = await self._reduce(ctx, call, bands, value_unit)
+        new_value: object | None
+        items: list[object] = return_value if is_object_list(return_value) else [return_value]
+        if any(is_multi_modal_content(item) for item in items):
+            new_value, value_handle, value_bytes = await self._reduce_data_beside_files(ctx, call, bands, items)
+        else:
+            value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
+            new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
+            value_bytes = len(value_unit.data)
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
 
-        if value_text is None and content_text is None:
+        if new_value is None and content_text is None:
             return original
 
         return self._assemble(
@@ -303,12 +431,37 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return_value=return_value,
             content=content,
             metadata=metadata,
-            value_unit=value_unit,
-            value_text=value_text,
+            new_value=new_value,
             value_handle=value_handle,
+            value_bytes=value_bytes,
             content_text=content_text,
             content_handle=content_handle,
         )
+
+    async def _reduce_data_beside_files(
+        self,
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        bands: Sequence[Band],
+        items: list[object],
+    ) -> tuple[list[object] | None, str | None, int]:
+        """Reduce the data beside the files of a return value, which reach the model as files.
+
+        A lone data item is measured as itself and several as one JSON list. Core sends that data as text, so
+        a lone raw `bytes` item is measured as text too, not as a binary unit that `Truncate` would pass over.
+        When reduced, the result goes ahead of the files. Returns `(new_items, handle, data_bytes)`, with
+        `new_items` None when nothing was reduced.
+        """
+        files = [item for item in items if is_multi_modal_content(item)]
+        data = [item for item in items if not is_multi_modal_content(item)]
+        if not data:
+            return None, None, 0
+        value = data[0] if len(data) == 1 else data
+        unit = self._make_unit(to_text(value) if is_binary(value) else value, tool_name=call.tool_name, suffix='')
+        reduced, handle = await self._reduce(ctx, call, bands, unit)
+        if reduced is None:
+            return None, None, 0
+        return [reduced, *files], handle, len(unit.data)
 
     def _assemble(
         self,
@@ -317,9 +470,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return_value: ToolReturnContent,
         content: str | Sequence[UserContent] | None,
         metadata: object,
-        value_unit: _Unit,
-        value_text: str | None,
+        new_value: object | None,
         value_handle: str | None,
+        value_bytes: int,
         content_text: str | None,
         content_handle: str | None,
     ) -> object:
@@ -327,9 +480,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if wrapped:
             new_metadata = metadata
             if value_handle is not None or content_handle is not None:
-                new_metadata = _with_handles(metadata, value_handle, len(value_unit.data), content_handle)
+                new_metadata = _with_handles(metadata, value_handle, value_bytes, content_handle)
             wrapped_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text if value_text is not None else return_value,
+                return_value=new_value if new_value is not None else return_value,
                 content=content_text if content_text is not None else content,
                 metadata=new_metadata,
             )
@@ -338,10 +491,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         # A plain (non-`ToolReturn`) result has no separate content part.
         if value_handle is not None:
             spilled_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text, metadata=_with_handles(None, value_handle, len(value_unit.data))
+                return_value=new_value, metadata=_with_handles(None, value_handle, value_bytes)
             )
             return spilled_out
-        return value_text
+        return new_value
 
     def _make_unit(self, value: ToolReturnContent, *, tool_name: str, suffix: str) -> _Unit:
         """Pre-render a value into the text / bytes the reduction pipeline needs."""
@@ -450,6 +603,20 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return None, None
         return await self._apply(ctx, call, then, unit)
 
+    def _handle_key(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
+        """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
+
+        `suffix` keeps a return's `return_value` and `content` spills on distinct handles. A later
+        step reusing a name already spilled this run (see `_spilled_calls`) gets
+        `run_id/<step>/tool_call_id.retry` instead of the plain `run_id/tool_call_id.retry`.
+        """
+        run_id = ctx.run_id or 'run'
+        name = f'{call.tool_call_id or "call"}.{ctx.retry}{suffix}'
+        first_step = self._spilled_calls.setdefault(name, ctx.run_step)
+        if first_step == ctx.run_step:
+            return f'{run_id}/{name}'
+        return f'{run_id}/{ctx.run_step}/{name}'
+
     async def _spill(
         self,
         ctx: RunContext[AgentDepsT],
@@ -457,20 +624,49 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         action: Spill,
         unit: _Unit,
     ) -> tuple[str | None, str | None]:
-        key = _handle_key(ctx, call, unit.suffix)
+        key = self._handle_key(ctx, call, unit.suffix)
+        # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
+        if unit.binary:
+            payload = base64.b64encode(unit.data).decode('ascii')
+        else:
+            assert unit.text is not None
+            payload = unit.text
+        handle = await self._write_spill(ctx, call.tool_name, key, payload, unit.binary, _fallback_label(action.then))
+        if handle is None:
+            return await self._fallback(ctx, call, action.then, unit)
+
+        preview = _build_spill_preview(
+            handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
+        )
+        return preview, handle
+
+    # A durable operation, so a replay returns the recorded outcome instead of writing again: a
+    # second write could return a different handle, or succeed where the first failed.
+    @durable_operation('spill')
+    async def _write_spill(
+        self, ctx: RunContext[AgentDepsT], tool_name: str, key: str, payload: str, binary: bool, fallback: str
+    ) -> str | None:
+        """Write a spill and return its handle, or `None` when the store could not take it.
+
+        `payload` is the text, or base64 when `binary`: a durable engine may carry it to another worker as JSON.
+        """
+        data = base64.b64decode(payload) if binary else payload.encode('utf-8')
         try:
-            handle = await self._store_for(ctx).write(key, unit.data)
+            return await self._store_for(ctx).write(key, data)
         except (UserError, WorkspaceReadOnlyError) as error:
             # A read-only workspace, or none at all (a deferred-loaded capability skips `before_run`):
             # say so rather than degrading quietly.
-            warnings.warn(f'ToolOutputLimits: could not spill a {call.tool_name!r} result: {error}', stacklevel=2)
-            return await self._fallback(ctx, call, action.then, unit)
+            warnings.warn(f'ToolOutputLimits: could not spill a {tool_name!r} result: {error}', stacklevel=3)
         except Exception as exc:
-            _log_fallback('Spilling', call.tool_name, action.then, exc)
-            return await self._fallback(ctx, call, action.then, unit)
+            _log_fallback('Spilling', tool_name, fallback, exc)
+        return None
 
-        preview = _build_spill_preview(handle, unit, action.preview_chars, over_tokens=self.over_tokens)
-        return preview, handle
+    def _read_hint(self, ctx: RunContext[AgentDepsT], handle: str) -> str:
+        """How the model reads a spill back, naming the tools by the names they have in this run."""
+        if self._spills_to_run_workspace and (reader := ctx.tool_name_for_kind(READ_FILE_KIND)) is not None:
+            return f' Read it with {reader}(path={handle!r}).'
+        reader = ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND) or READ_TOOL_NAME
+        return f' Read it with {reader}(handle={handle!r}, offset=0, limit=200, from_end=False, pattern=None).'
 
     async def _summarize_action(
         self,
@@ -494,9 +690,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             # the user's to fix, not something to mask by silently truncating instead.
             raise
         except Exception as exc:
-            _log_fallback('Summarizing', call.tool_name, action.then, exc)
+            _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
             return await self._fallback(ctx, call, action.then, unit)
-        return summary, None
+        return f'[summary of {len(unit.text):,} chars of output{RERUN_NOTE}]\n{summary}', None
 
     @durable_operation('summarize')
     async def _summarize(
@@ -515,12 +711,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         agent: Agent[None, str] = Agent(
             model, name='tool_output_limits', instructions='You summarize oversized tool output.'
         )
-        run = await agent.run(
-            prompt,
-            conversation_id=ctx.conversation_id,
-            usage=ctx.usage,
-            usage_limits=reserved_usage_limits(ctx.usage_limits),
-        )
+        with second_model_prompt():
+            run = await agent.run(
+                prompt,
+                conversation_id=ctx.conversation_id,
+                usage=ctx.usage,
+                usage_limits=reserved_usage_limits(ctx.usage_limits),
+            )
         return run.output.strip()
 
     @staticmethod
@@ -529,7 +726,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         model = action.model if action.model is not None else ctx.model
         if isinstance(model, str):
             return model
-        if not _is_request_response_model(model):
+        if not is_request_response_model(model):
             raise UserError(
                 'Summarizing oversized tool output needs a request-response model, but the run '
                 f'uses {type(model).__name__}, which is not one. Set a `model=` on the '
@@ -567,6 +764,24 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         return action
 
 
+async def _reads_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: dict[str, Any]) -> bool:
+    """Whether this is a `READ_FILE_KIND` read of a file under the run workspace's spill directory.
+
+    Its result is the spill itself, or a page of it, so reducing it again would spill the spill.
+    Only the path is compared, so a spill written by an earlier run, or another configuration, counts too.
+    `read_file` bounds its own output; `FileSystem`'s searches bound only their match count, so their
+    results are reduced as usual.
+    """
+    if tool_def.tool_kind != READ_FILE_KIND.id or not isinstance(path := args.get('path'), str):
+        return False
+    # Ordinary reads are told apart without asking the workspace for its working directory.
+    workspace = ctx.workspace
+    if f'{METADATA_DIR}/{SPILL_DIR}/' not in posixpath.normpath(path) or not workspace.attached:
+        return False
+    spill_dir = posixpath.join(await workspace.working_dir(), METADATA_DIR, SPILL_DIR)
+    return (await workspace.resolve(path)).startswith(spill_dir + '/')
+
+
 def _next_action(action: Action) -> Action | None:
     if isinstance(action, (Truncate, Spill, Summarize)):
         return action.then
@@ -593,35 +808,15 @@ def _fallback_label(then: Action | None) -> str:
     return 'the unreduced output' if then is None else type(then).__name__
 
 
-def _log_fallback(operation: str, tool_name: str, then: Action | None, exc: Exception) -> None:
+def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception) -> None:
     logger.warning(
         '%s output of tool %r failed (%s); falling back to %s',
         operation,
         tool_name,
         type(exc).__name__,
-        _fallback_label(then),
+        fallback,
         exc_info=exc,
     )
-
-
-def _handle_key(ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
-    """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
-
-    `suffix` keeps a return's `return_value` and `content` spills on distinct handles.
-    """
-    run_id = ctx.run_id or 'run'
-    call_id = call.tool_call_id or 'call'
-    return f'{run_id}/{call_id}.{ctx.retry}{suffix}'
-
-
-def _is_mapping(value: object) -> TypeGuard[Mapping[object, object]]:
-    """`TypeGuard` so a mapping narrows to a known element type, not `Unknown`."""
-    return isinstance(value, Mapping)
-
-
-def _is_request_response_model(value: AbstractModel) -> TypeGuard[Model[Any]]:
-    """Narrow an abstract model without losing its provider client type."""
-    return isinstance(value, Model)
 
 
 def _with_handles(
@@ -629,44 +824,63 @@ def _with_handles(
     value_handle: str | None,
     value_bytes: int,
     content_handle: str | None = None,
-) -> dict[str, object]:
-    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
-    base: dict[str, object] = {}
-    if _is_mapping(existing):
-        base.update(_copy_mapping(existing))
-    elif existing is not None:
-        base['original_metadata'] = existing
+) -> object:
+    """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens).
+
+    A list or tuple stays a list, with the handles appended as one dict item: that is the
+    shape the AG-UI and Vercel AI adapters read UI events and chunks from, and both skip
+    items that are not events, so wrapping it in a dict would silently drop them. A single
+    event or chunk becomes a one item list for the same reason.
+    """
+    handles: dict[str, object] = {}
     if value_handle is not None:
-        base['overflow_handle'] = value_handle
-        base['overflow_bytes'] = value_bytes
+        handles['overflow_handle'] = value_handle
+        handles['overflow_bytes'] = value_bytes
     if content_handle is not None:
-        base['overflow_content_handle'] = content_handle
-    return base
+        handles['overflow_content_handle'] = content_handle
+
+    if is_mapping(existing):
+        return {**{str(key): existing[key] for key in existing}, **handles}
+    if is_object_list_or_tuple(existing):
+        return [*existing, handles]
+    if _is_ui_event(existing):
+        return [existing, handles]
+    if existing is not None:
+        return {'original_metadata': existing, **handles}
+    return handles
 
 
-def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
-    """Copy an arbitrary mapping with stringified keys (tool metadata is app-defined)."""
-    return {str(key): source[key] for key in source}
+def _is_ui_event(value: object) -> bool:
+    """Whether `value` is a single AG-UI event or Vercel AI data chunk the UI adapters pass through."""
+    try:
+        from ag_ui.core import BaseEvent
+    except ImportError:
+        pass
+    else:
+        if isinstance(value, BaseEvent):
+            return True
+    try:
+        from pydantic_ai.ui.vercel_ai._utils import DATA_CHUNK_TYPES
+    except ImportError:  # pragma: no cover
+        return False
+    return isinstance(value, DATA_CHUNK_TYPES)
 
 
-def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool) -> str:
+def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, read_hint: str) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
-        size_desc = f'{len(unit.data):,} bytes (binary)'
+        size_description = f'{len(unit.data):,} bytes (binary)'
         body = f'<{len(unit.data):,} bytes of binary data>'
         sketch = ''
     else:
         text = unit.text or ''
         size_unit = 'tokens' if over_tokens else 'chars'
         amount = measure(text, over_tokens=over_tokens, tokenizer=None) if over_tokens else len(text)
-        size_desc = f'{amount:,} {size_unit}'
+        size_description = f'{amount:,} {size_unit}'
         body = _head_tail_preview(text, preview_chars)
         sketch = json_sketch(unit.value)
 
-    header = (
-        f'[Tool output too large ({size_desc}); stored to handle {handle!r}. '
-        f'{_READ_TOOL_HINT}handle={handle!r}, offset=0, limit=200, from_end=False, pattern=None).]'
-    )
+    header = f'[Tool output too large ({size_description}); stored to handle {handle!r}.{read_hint}]'
     parts = [header]
     if sketch:
         parts.append(f'shape: {sketch}')
@@ -688,31 +902,19 @@ _MAX_READ_LINES = 1_000
 """Hard cap on lines returned by one `read_tool_result` call."""
 
 _MAX_READ_CHARS = 50_000
-"""Hard cap on characters returned by one `read_tool_result` call."""
+"""Hard cap on characters (or bytes, with `unit='bytes'`) returned by one spill query."""
+
+_MAX_GREP_MATCHES = 200
+"""Hard cap on matches returned by one `grep_tool_result` call."""
+
+_MAX_GREP_CONTEXT = 10
+"""Hard cap on context lines shown on each side of a `grep_tool_result` match."""
 
 
-async def _read_slice(
-    read: Callable[[str], Awaitable[bytes]],
-    handle: str,
-    offset: int,
-    limit: int,
-    from_end: bool,
-    pattern: str | None,
-) -> str:
-    """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes.
-
-    `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
-    the host with catastrophic backtracking. `limit` is clamped and the joined output is
-    capped, so one call can never return an unbounded amount of text.
-    """
-    if offset < 0:
-        raise ModelRetry('`offset` must be >= 0.')
-    if limit < 1:
-        raise ModelRetry('`limit` must be >= 1.')
-    limit = min(limit, _MAX_READ_LINES)
-
+async def _guarded(handle: str, query: Awaitable[str]) -> str:
+    """Run a spill query, or return the message that guides the model to a valid handle."""
     try:
-        data = await read(handle)
+        return await query
     except WorkspaceError as error:
         raise_tool_failure(error)
     except (OSError, UserError):
@@ -728,21 +930,403 @@ async def _read_slice(
             'available, re-run the original tool.]'
         )
 
-    lines = data.decode('utf-8', errors='replace').splitlines()
-    if pattern is not None:
-        lines = [line for line in lines if pattern in line]
 
-    total = len(lines)
+@dataclass(frozen=True)
+class _Entry:
+    """A line to render for a spill query."""
+
+    prefix: str
+    text: str
+    index: int
+    """The line's index in the spill."""
+    match: bool
+
+
+_GroupedEntry = _Entry | None
+"""An entry, or `None` for a separator between grep groups."""
+
+
+def _byte_len(text: str) -> int:
+    return len(text.encode('utf-8', 'surrogateescape'))
+
+
+def _display(text: str) -> str:
+    """Render a line of `_payload_texts` text for the model, with undecodable bytes as U+FFFD."""
+    return text.encode('utf-8', 'surrogateescape').decode('utf-8', errors='replace')
+
+
+@dataclass
+class _Page:
+    """What `_fill` rendered within the output cap, and what it left out."""
+
+    lines: list[str] = field(default_factory=list[str])
+    shown: int = 0
+    """How many matches the page shows."""
+    cut: tuple[int, int] | None = None
+    """A match cut by the cap: its line index and how many of its bytes were shown."""
+    omitted: list[tuple[int, int]] = field(default_factory=list[tuple[int, int]])
+    """Ranges of context line indices left out to stay within the cap."""
+    size: int = 0
+    first: int | None = None
+    """The index of the first line offered, to report leading context that was dropped."""
+    kept: int | None = None
+    """The index of the first line kept."""
+
+    def add(self, text: str, match: bool) -> None:
+        self.lines.append(text)
+        self.size += len(text) + 1
+        self.shown += match
+
+
+@dataclass(frozen=True)
+class _Stop:
+    """Why `_place` filled the page: whether context from `start` (or the next entry) is left out."""
+
+    omit: bool
+    start: int | None = None
+
+
+async def _fill(entries: AsyncIterator[_GroupedEntry]) -> _Page:
+    """Render `entries` up to the output cap.
+
+    Stops before a line that would cross the cap, so the match count stays true to the body. Until
+    the first match is in, leading context is dropped instead, so every page makes progress. A match
+    longer than the cap on its own is cut. Context left out either way is recorded in `omitted`.
+    """
+    page = _Page()
+    separate = False
+    async for entry in entries:
+        if entry is None:
+            separate = True
+        elif (stop := _place(page, entry, separate)) is None:
+            separate = False
+        else:
+            if stop.omit:
+                await _omit(page, entries, stop.start)
+            break
+    if page.first is not None and page.kept is not None and page.kept > page.first:
+        page.omitted.insert(0, (page.first, page.kept - 1))
+    return page
+
+
+def _place(page: _Page, entry: _Entry, separate: bool) -> _Stop | None:
+    """Add one line to `page`, returning why it stopped once it is full."""
+    if page.first is None:
+        page.first = page.kept = entry.index
+    text = ('--\n' if separate else '') + entry.prefix + _display(entry.text)
+    if page.size + len(text) <= _MAX_READ_CHARS:
+        page.add(text, entry.match)
+        return None
+    if page.shown:
+        # A line opening the next group belongs to a match the next page shows.
+        return _Stop(omit=not (entry.match or separate), start=entry.index)
+    page.lines.clear()
+    page.size = 0
+    page.kept = entry.index if entry.match else entry.index + 1
+    if not entry.match:
+        return None
+    if len(text) <= _MAX_READ_CHARS:
+        page.add(text, entry.match)
+        return None
+    kept = entry.text[: _MAX_READ_CHARS - len(entry.prefix)]
+    page.add(entry.prefix + _display(kept), entry.match)
+    page.cut = (entry.index, _byte_len(kept))
+    return _Stop(omit=True)
+
+
+async def _omit(page: _Page, entries: AsyncIterator[_GroupedEntry], start: int | None) -> None:
+    """Record the context lines from `start` (or the next entry) up to the next match or group separator."""
+    end = start
+    async for entry in entries:
+        if entry is None or entry.match:
+            break
+        start = entry.index if start is None else start
+        end = entry.index
+    if start is not None and end is not None:
+        page.omitted.append((start, end))
+
+
+@dataclass(frozen=True)
+class _Reader:
+    """The `read_tool_result` call a capped page points the model to, named as the tool is called in the run."""
+
+    handle: str
+    name: str
+
+    def call(self, args: str) -> str:
+        return f'{self.name}(handle={self.handle!r}, {args})'
+
+    def omitted(self, start: int, end: int) -> str:
+        return f'context lines {start + 1}-{end + 1} omitted ({self.call(f"offset={start}, limit={end - start + 1}")})'
+
+    def cut(self, offset: int) -> str:
+        args = f"unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}"
+        return f'the cut line continues at {self.call(args)}'
+
+
+def _reader_name(ctx: RunContext[Any]) -> str:
+    """`read_tool_result` as it is called in this run step, for the hints that point to it."""
+    return ctx.tool_name_for_kind(READ_TOOL_RESULT_KIND) or READ_TOOL_NAME
+
+
+async def _capped(store: OverflowStore, page: _Page, more: str, reader: _Reader) -> str:
+    """The header note for output stopped at the cap, saying what was left out and where it continues."""
+    notes = [reader.omitted(start, end) for start, end in page.omitted]
+    if page.cut is not None:
+        index, shown_bytes = page.cut
+        notes.append(reader.cut(await _line_start(store, reader.handle, index) + shown_bytes))
+    if more:
+        notes.append(more)
+    return f', output capped at {_MAX_READ_CHARS:,} chars; {"; ".join(notes)}' if notes else ''
+
+
+async def _read_slice(
+    store: OverflowStore,
+    handle: str,
+    offset: int,
+    limit: int,
+    from_end: bool,
+    pattern: str | None,
+    unit: _ReadUnit,
+    reader_name: str,
+) -> str:
+    """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes.
+
+    `pattern` is a literal substring (not a regex), so a model-supplied value cannot hang
+    the host with catastrophic backtracking. `limit` is clamped and the joined output is
+    capped, so one call can never return an unbounded amount of text. Every matching line is
+    counted, but only the lines the window needs are kept.
+    """
+    if offset < 0:
+        raise ModelRetry('`offset` must be >= 0.')
+    if limit < 1:
+        raise ModelRetry('`limit` must be >= 1.')
+    if unit == 'bytes' and pattern is not None:
+        raise ModelRetry("`pattern` filters lines, so it cannot be combined with `unit='bytes'`.")
+    if unit == 'bytes':
+        return await _guarded(handle, _byte_slice(store, handle, offset, min(limit, _MAX_READ_CHARS), from_end))
+    limit = min(limit, _MAX_READ_LINES)
+    reader = _Reader(handle, reader_name)
+    return await _guarded(handle, _line_slice(store, handle, offset, limit, from_end, pattern, reader))
+
+
+async def _line_slice(
+    store: OverflowStore, handle: str, offset: int, limit: int, from_end: bool, pattern: str | None, reader: _Reader
+) -> str:
+    total, window = await _matching_window(store, handle, pattern, offset, limit, from_end=from_end)
+    first = max(0, max(0, total - offset) - limit) if from_end else offset
+    page = await _fill(_aiter(_Entry('', line, index, True) for index, line in window))
+    filtered = '' if pattern is None else f', pattern={pattern!r}'
+    next_lines = reader.call(f'offset={first + page.shown}{filtered}')
+    more = f'the next lines are at {next_lines}' if page.shown < len(window) else ''
+    capped = await _capped(store, page, more, reader)
+    return '\n'.join([f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{capped}]', *page.lines])
+
+
+async def _aiter(entries: Iterable[_Entry]) -> AsyncIterator[_GroupedEntry]:
+    for entry in entries:
+        yield entry
+
+
+async def _byte_slice(store: OverflowStore, handle: str, offset: int, limit: int, from_end: bool) -> str:
+    """Slice raw stored bytes, decoding a multi-byte UTF-8 sequence cut at either edge as U+FFFD.
+
+    A forward read keeps only the slice; a read from the end keeps the last `offset + limit` bytes.
+    """
+    total = 0
+    kept = bytearray()
+    async with aclosing(iter_payload(store, handle)) as chunks:
+        async for chunk in chunks:
+            if from_end:
+                kept += chunk
+                del kept[: max(0, len(kept) - (offset + limit))]
+            else:
+                kept += chunk[max(0, offset - total) : max(0, offset + limit - total)]
+            total += len(chunk)
     if from_end:
         end = max(0, total - offset)
-        window = lines[max(0, end - limit) : end]
+        start = max(0, end - limit)
+        kept = kept[len(kept) - (total - start) : len(kept) - (total - end)]
     else:
-        window = lines[offset : offset + limit]
+        start = min(offset, total)
+        end = start + len(kept)
+    header = f'[handle {handle!r}: bytes {start}-{end} of {total} (end exclusive)]'
+    return '\n'.join([header, kept.decode('utf-8', errors='replace')]) if kept else header
 
-    body = '\n'.join(window)
-    capped = ''
-    if len(body) > _MAX_READ_CHARS:
-        body = body[:_MAX_READ_CHARS]
-        capped = ', output capped'
-    header = f'[handle {handle!r}: {total:,} matching line(s); showing {len(window)}{capped}]'
-    return f'{header}\n{body}' if body else header
+
+@dataclass
+class _Grep:
+    """Turns a payload's lines, in order, into the entries of one page of matches.
+
+    The matches whose ordinal is in `page` are shown with `context` lines around each. Windows that
+    overlap or touch merge into one group, with a separator entry between groups. Only matches in
+    `page` are marked as matches. Every match is counted in `matches`.
+    """
+
+    pattern: str
+    context: int
+    page: range
+    matches: int = 0
+    end: int = 0
+    """The index after the last line shown."""
+    after: int = 0
+    """How many trailing context lines are still to show."""
+    before: deque[tuple[int, str]] = field(default_factory=deque[tuple[int, str]])
+
+    def entries(self, index: int, line: str) -> list[_GroupedEntry]:
+        match = self.pattern in line
+        entries = self._match(index, line) if match and self.matches in self.page else self._context(index, line)
+        self.matches += match
+        self.before.append((index, line))
+        if len(self.before) > self.context:
+            self.before.popleft()
+        return entries
+
+    def _match(self, index: int, line: str) -> list[_GroupedEntry]:
+        leading = [(n, text) for n, text in self.before if n >= self.end]
+        separate = self.end and (leading[0][0] if leading else index) > self.end
+        entries: list[_GroupedEntry] = [None] if separate else []
+        entries += [_Entry(f'{n + 1}-', text, n, False) for n, text in leading]
+        entries.append(_Entry(f'{index + 1}:', line, index, True))
+        self.end, self.after = index + 1, self.context
+        return entries
+
+    def _context(self, index: int, line: str) -> list[_GroupedEntry]:
+        if not self.after:
+            return []
+        self.end, self.after = index + 1, self.after - 1
+        return [_Entry(f'{index + 1}-', line, index, False)]
+
+
+async def _grep_entries(store: OverflowStore, handle: str, grep: _Grep) -> AsyncGenerator[_GroupedEntry]:
+    index = 0
+    async with aclosing(_payload_lines(store, handle)) as batches:
+        async for batch in batches:
+            for line in batch:
+                for entry in grep.entries(index, line):
+                    yield entry
+                index += 1
+
+
+async def _grep(
+    store: OverflowStore,
+    handle: str,
+    pattern: str,
+    context: int,
+    max_matches: int,
+    offset: int,
+    reader_name: str,
+) -> str:
+    """Find literal `pattern` in a spilled payload for `grep_tool_result`, with 1-based line numbers.
+
+    Context windows that overlap or touch merge into one group. Matches, context, and the joined
+    output are all capped, so one call can never return an unbounded amount of text. What the cap
+    leaves out is described as a call to the `read_tool_result` named `reader_name`.
+    """
+    if not pattern:
+        raise ModelRetry('`pattern` must not be empty.')
+    if context < 0:
+        raise ModelRetry('`context` must be >= 0.')
+    if max_matches < 1:
+        raise ModelRetry('`max_matches` must be >= 1.')
+    if offset < 0:
+        raise ModelRetry('`offset` must be >= 0.')
+    page = range(offset, offset + min(max_matches, _MAX_GREP_MATCHES))
+    reader = _Reader(handle, reader_name)
+    return await _guarded(handle, _grep_page(store, handle, pattern, min(context, _MAX_GREP_CONTEXT), page, reader))
+
+
+async def _grep_page(
+    store: OverflowStore, handle: str, pattern: str, context: int, page: range, reader: _Reader
+) -> str:
+    grep = _Grep(pattern, context, page)
+    async with aclosing(_grep_entries(store, handle, grep)) as entries:
+        filled = await _fill(entries)
+        async for _ in entries:
+            pass
+    more = grep.matches - page.start - filled.shown
+    remaining = f', {more:,} more; continue with offset={page.start + filled.shown}' if more > 0 else ''
+    capped = await _capped(store, filled, '', reader)
+    header = f'[handle {handle!r}: {grep.matches:,} matching line(s); showing {filled.shown}{remaining}{capped}]'
+    return '\n'.join([header, *filled.lines])
+
+
+async def _matching_window(
+    store: OverflowStore, handle: str, pattern: str | None, offset: int, limit: int, *, from_end: bool
+) -> tuple[int, list[tuple[int, str]]]:
+    """Count the lines containing `pattern` and return the count with the window `offset` and `limit` select.
+
+    The window holds each line with its index in the spill. A forward read keeps only the window. A read
+    from the end keeps the last `offset + limit` lines, since where its window starts is known only once
+    the payload ends.
+    """
+    total = index = 0
+    kept: deque[tuple[int, str]] = deque(maxlen=min(offset + limit, sys.maxsize) if from_end else limit)
+    async with aclosing(_payload_lines(store, handle)) as batches:
+        async for batch in batches:
+            matching = [(index + n, line) for n, line in enumerate(batch) if pattern is None or pattern in line]
+            index += len(batch)
+            kept.extend(matching if from_end else matching[max(0, offset - total) : max(0, offset + limit - total)])
+            total += len(matching)
+    window = list(kept)
+    return total, window[: max(0, len(window) - offset)] if from_end else window
+
+
+_LINE_BREAK = re.compile('\r\n|[\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]')
+"""The line boundaries `str.splitlines` uses."""
+
+
+async def _line_start(store: OverflowStore, handle: str, index: int) -> int:
+    """The byte offset line `index` of a stored payload starts at, counting lines as `str.splitlines` does."""
+    if index == 0:
+        return 0
+    position = breaks = 0
+    async with aclosing(_payload_texts(store, handle)) as texts:
+        async for text in texts:
+            for line_break in _LINE_BREAK.finditer(text):
+                breaks += 1
+                if breaks == index:
+                    return position + _byte_len(text[: line_break.end()])
+            position += _byte_len(text)
+    # The caller only asks for a line it just read from this payload.
+    raise AssertionError(f'line {index} not found in {handle!r}')  # pragma: no cover
+
+
+async def _payload_texts(store: OverflowStore, handle: str) -> AsyncGenerator[str]:
+    """Yield a stored payload's text one decoded chunk at a time.
+
+    `surrogateescape` keeps every stored byte recoverable, so byte offsets stay exact for any payload;
+    `_display` renders undecodable bytes as U+FFFD. A trailing CR waits for the next chunk, which may
+    start with the LF of a CRLF.
+    """
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='surrogateescape')
+    cr = ''
+    async with aclosing(iter_payload(store, handle)) as chunks:
+        async for chunk in chunks:
+            text = cr + decoder.decode(chunk)
+            cr = '\r' if text.endswith('\r') else ''
+            yield text.removesuffix(cr)
+    yield cr + decoder.decode(b'', final=True)
+
+
+async def _payload_lines(store: OverflowStore, handle: str) -> AsyncGenerator[list[str]]:
+    """Yield a stored payload's lines as `str.splitlines` splits its text, one decoded chunk's lines at a time."""
+    pieces: list[str] = []
+    async with aclosing(_payload_texts(store, handle)) as texts:
+        async for text in texts:
+            yield _complete_lines(text, pieces)
+    if pieces:
+        yield [''.join(pieces)]
+
+
+def _complete_lines(text: str, pieces: list[str]) -> list[str]:
+    """Return the lines `text` completes, keeping its unterminated end in `pieces`."""
+    lines = text.splitlines()
+    # The last line is unterminated when `text` ends with it: `splitlines` yields an empty line only before a break.
+    end = lines.pop() if lines and lines[-1] and text.endswith(lines[-1]) else None
+    if pieces and lines:
+        lines[0] = ''.join(pieces) + lines[0]
+        pieces.clear()
+    if end is not None:
+        pieces.append(end)
+    return lines

@@ -1,90 +1,121 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a image file, then describe
-      what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file",
-      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto":
-      {}}}}'
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        Yzk3YzJlYjEtYzlmMy00Nzg1LTlmOTMtOWM5YmM4YzcyNmVh
+      - f63c9cac-ac37-408a-b126-2ff4b8fa9f00
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
-      - '365'
-      content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '493'
+      - "383"
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 1916
-      output:
-        message:
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
           content:
-          - text: I'll retrieve the file for you now.
-          - toolUse:
-              input: {}
+          - text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+        system: []
+        inferenceConfig:
+          maxTokens: 64000
+        toolConfig:
+          tools:
+          - toolSpec:
               name: get_file
-              toolUseId: tooluse_sjghko585zqWhg7iljaRn1
-              type: tool_use
-          role: assistant
-      stopReason: tool_use
-      usage:
-        cacheReadInputTokenCount: 0
-        cacheReadInputTokens: 0
-        cacheWriteInputTokenCount: 0
-        cacheWriteInputTokens: 0
-        inputTokens: 558
-        outputTokens: 46
-        serverToolUsage: {}
-        totalTokens: 604
-    status:
-      code: 200
-      message: OK
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+          toolChoice:
+            auto: {}
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/vnd.amazon.eventstream
+      transfer-encoding:
+      - chunked
+    body:
+      type: binary
+      content: >-
+        00000085000000529941d0530b3a6576656e742d7479706507000c6d65737361676553746172740d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768222c22726f6c65223a22617373697374616e74227d3d593ac6000000d00000005719d864670b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2249276c6c207265747269657665207468652066696c65227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a41424344454647227d37aa4c6a000000b00000005780ea132a0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a2220666f7220796f7520616e64227d2c2270223a226162636465666768696a6b227d54e3a602000000ca000000573388eb440b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22207468656e227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152227d27efb166000000d80000005729a82fa60b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a22206465736372696265207768617420492072656365697665227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d227d99ef1887000000af00000057625a13790b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2264656c7461223a7b2274657874223a222e227d2c2270223a226162636465666768696a6b6c6d6e6f707172737475227d35133359000000bc00000056321dcebd0b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a302c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30313233227d5760a59000000109000000575661aaea0b3a6576656e742d74797065070011636f6e74656e74426c6f636b53746172740d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a312c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a414243222c227374617274223a7b22746f6f6c557365223a7b226e616d65223a226765745f66696c65222c22746f6f6c5573654964223a22746f6f6c7573655f763268796a3543506255325a46784959577265354d56222c2274797065223a22746f6f6c5f757365227d7d7d6355b539000000b70000005732cacf3a0b3a6576656e742d74797065070011636f6e74656e74426c6f636b44656c74610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a312c2264656c7461223a7b22746f6f6c557365223a7b22696e707574223a22227d7d2c2270223a226162636465666768696a6b6c6d6e6f7071227d86224317000000c0000000560e3fc3730b3a6576656e742d74797065070010636f6e74656e74426c6f636b53746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b22636f6e74656e74426c6f636b496e646578223a312c2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031323334353637227dc5f1aebd0000009b00000051df98a80a0b3a6576656e742d7479706507000b6d65737361676553746f700d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b2270223a226162636465666768696a6b6c6d6e6f707172737475767778797a222c2273746f70526561736f6e223a22746f6f6c5f757365227dc6f5a1de000000ef0000004e5ec2e3f00b3a6576656e742d747970650700086d657461646174610d3a636f6e74656e742d747970650700106170706c69636174696f6e2f6a736f6e0d3a6d6573736167652d747970650700056576656e747b226d657472696373223a7b226c6174656e63794d73223a313739347d2c2270223a226162636465666768696a6b6c6d6e6f7071727374757677222c227573616765223a7b22696e707574546f6b656e73223a3535382c226f7574707574546f6b656e73223a35312c22736572766572546f6f6c5573616765223a7b7d2c22746f74616c546f6b656e73223a3630397d7d9abe99c4
+  recorded_at: 2026-10-20T23:07:25.996908+00:00
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a image file, then describe
-      what you received."}]}, {"role": "assistant", "content": [{"text": "I''ll retrieve the file for you now."}, {"toolUse":
-      {"toolUseId": "tooluse_sjghko585zqWhg7iljaRn1", "name": "get_file", "input": {}}}]}, {"role": "user", "content": [{"toolResult":
-      {"toolUseId": "tooluse_sjghko585zqWhg7iljaRn1", "content": [{"text": "File attached"}], "status": "success"}}, {"image":
-      {"format": "jpeg", "source": {"s3Location": {"uri": "s3://pydantic-ai-test-files/test-files/kiwi.jpg"}}}}]}], "system":
-      [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file", "inputSchema": {"json": {"additionalProperties":
-      false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto": {}}}}'
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse-stream
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        NDhjMzY3MzItN2VlZS00ODAxLWIzZjQtY2EwN2RiNTE0YTMx
+      - 8e6e8e7c-7ae3-44a4-9be0-cbb5d6800714
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
-      - '819'
+      - "866"
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use the get_file tool now to retrieve a image file, then describe what you
+              received.
+        - role: assistant
+          content:
+          - text: I'll retrieve the file for you and then describe what I receive.
+          - toolUse:
+              toolUseId: tooluse_v2hyj5CPbU2ZFxIYWre5MV
+              name: get_file
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: tooluse_v2hyj5CPbU2ZFxIYWre5MV
+              content:
+              - text: File attached
+              status: success
+          - image:
+              format: jpeg
+              source:
+                s3Location:
+                  uri: s3://pydantic-ai-test-files/test-files/kiwi.jpg
+        system: []
+        inferenceConfig:
+          maxTokens: 64000
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_file
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+          toolChoice:
+            auto: {}
   response:
+    status: 400
     headers:
       connection:
       - keep-alive
       content-length:
-      - '86'
+      - "86"
       content-type:
       - application/json
-    parsed_body:
-      message: This model doesn't support the s3Uri field. Remove s3Uri and try again.
-    status:
-      code: 400
-      message: Bad Request
-version: 1
+    body:
+      type: json
+      content:
+        message: This model doesn't support the s3Uri field. Remove s3Uri and try again.
+  recorded_at: 2026-10-20T23:07:26.301839+00:00

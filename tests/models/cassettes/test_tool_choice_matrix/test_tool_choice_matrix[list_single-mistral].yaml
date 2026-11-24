@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
     headers:
       accept:
       - application/json
@@ -8,74 +11,95 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '360'
+      - "647"
       content-type:
       - application/json
       host:
       - api.mistral.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: What's the weather in Paris?
-        role: user
-      model: mistral-large-latest
-      n: 1
-      stream: false
-      tool_choice: any
-      tools:
-      - function:
-          description: Get weather for a city
-          name: get_weather
-          parameters:
-            properties:
-              city:
-                type: string
-            required:
-            - city
-            type: object
-      top_p: 1.0
-    uri: https://api.mistral.ai/v1/chat/completions
+    body:
+      type: json
+      content:
+        model: mistral-large-latest
+        messages:
+        - content: What's the weather in Paris?
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        tools:
+        - function:
+            name: get_weather
+            parameters:
+              type: object
+              properties:
+                city:
+                  type: string
+              required:
+              - city
+            description: Get weather for a city
+          type: function
+        - function:
+            name: get_time
+            parameters:
+              type: object
+              properties:
+                timezone:
+                  type: string
+              required:
+              - timezone
+            description: Get time in a timezone
+          type: function
+        tool_choice:
+          function:
+            name: get_weather
+          type: function
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
   response:
+    status: 200
     headers:
       access-control-allow-origin:
-      - '*'
+      - "*"
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '460'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019c0b9c-5d95-7ee5-add3-f950404c1336
+      - 01a141fa-af5b-7612-9d06-80050f7a271e
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        message:
-          content: ''
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{"city": "Paris"}'
-              name: get_weather
-            id: 7QjFNcS8z
-            index: 0
-      created: 1769721322
-      id: 2eb7463840b647eaafba7976e88d4c1d
-      model: mistral-large-latest
-      object: chat.completion
-      usage:
-        completion_tokens: 12
-        num_cached_tokens: 69
-        prompt_tokens: 70
-        total_tokens: 82
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        id: 88d84ac7b1f64097a4910cf75db483e6
+        created: 1792108310
+        model: mistral-large-latest
+        usage:
+          prompt_tokens: 75
+          total_tokens: 87
+          completion_tokens: 12
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: tool_calls
+          message:
+            role: assistant
+            tool_calls:
+            - id: GWMSIKouE
+              type: function
+              function:
+                name: get_weather
+                arguments: "{\"city\": \"Paris\"}"
+              index: 0
+            content: ""
+  recorded_at: 2026-10-15T23:51:50.872574+00:00

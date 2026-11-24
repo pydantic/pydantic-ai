@@ -170,13 +170,12 @@ def _add_context_span_exporter() -> _ContextInMemorySpanExporter | SpanTreeRecor
                 f' evaluation.'
                 f' For more information, refer to the documentation at https://pydantic.dev/docs/ai/evals/evaluators/span-based/.'
             )
-        else:
-            # Custom TracerProvider (e.g. ddtrace) without add_span_processor - degrade gracefully.
-            return SpanTreeRecordingError(
-                f'The current TracerProvider ({type(provider).__qualname__}) does not support'
-                f' `add_span_processor`, so span tree recording is not available.'
-                f' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
-            )
+        # Custom TracerProvider (e.g. ddtrace) without add_span_processor - degrade gracefully.
+        return SpanTreeRecordingError(
+            f'The current TracerProvider ({type(provider).__qualname__}) does not support'
+            f' `add_span_processor`, so span tree recording is not available.'
+            f' Evaluation will still work, but `span_tree` will not be populated in evaluator results.'
+        )
 
     cache_id = id(provider)
 

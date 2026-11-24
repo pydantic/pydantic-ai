@@ -13,10 +13,11 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | TypeScript | Python |
 | License | Apache-2.0 | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Middleware, tools | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Middleware, tools | [Capabilities and toolsets](../extensibility.md); [100+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | [Eve](https://eve.dev), a separate package; adapters drive external harnesses | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
-| Durable execution | Yes | [Seven integrations](../durable_execution/overview.md) |
+| Enterprise support | None documented for the AI SDK; [Vercel Enterprise](https://vercel.com/enterprise) for the platform | [For the framework itself](../enterprise-support.md), no platform required |
+| Durable execution | Yes | [Nine integrations](../durable_execution/overview.md) |
 | Interfaces | React chat UI, stream protocol, GitHub Action | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Yes (experimental) | [Realtime](../realtime/overview.md) |
 | Evals | No | [Pydantic Evals](../evals.md) |
@@ -32,9 +33,17 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | No | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes (Eve); `pruneMessages` in the SDK | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes (experimental) | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Code sandboxes | Yes (experimental) | [Workspaces](../workspace.md#supported-workspaces) |
 | Browser use | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 ## Using them together
 
 These are not exclusive. Keep your Vercel AI SDK frontend and run a Pydantic AI backend behind it: [`VercelAIAdapter`](../ui/vercel-ai.md) speaks the Vercel AI Data Stream Protocol, so `useChat` and AI Elements render a Python agent's runs without frontend changes. [AG-UI](../ui/ag-ui.md) is the same deal for any AG-UI frontend.
+
+*Last checked: 2026-09-24*
+
+## Sources
+
+- [Vercel AI SDK introduction](https://ai-sdk.dev/docs/introduction)
+- [Vercel AI SDK agents documentation](https://ai-sdk.dev/docs/agents/overview)
+- [Eve](https://eve.dev)

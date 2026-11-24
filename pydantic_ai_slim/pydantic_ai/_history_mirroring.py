@@ -14,7 +14,8 @@ if TYPE_CHECKING:
 
 _WARNING = (
     'Appending to `request_context.messages` in `before_model_request` to add messages to the history is deprecated. '
-    'Use `request_context.messages = [*request_context.messages, msg]` plus `ctx.messages.append(msg)` instead.'
+    'Use `ctx.enqueue(...)`, which adds it to this request and to the history, or '
+    '`request_context.messages = [*request_context.messages, msg]` plus `ctx.messages.append(msg)` instead.'
 )
 
 

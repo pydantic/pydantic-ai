@@ -358,3 +358,114 @@ def test_flash_image_thinking_levels_follow_the_client_transport(case: FlashImag
         for thinking in ('low', 'medium')
     ]
     assert sent == [{'include_thoughts': True, 'thinking_level': level} for level in case.expected]
+
+
+@pytest.mark.parametrize(
+    ('make_provider', 'profile', 'expected'),
+    [
+        pytest.param(lambda: GoogleProvider(api_key='mock-api-key'), None, ('LOW', 'XHIGH'), id='gemini_api'),
+        pytest.param(lambda: GoogleCloudProvider(api_key='mock-api-key'), None, ('MINIMAL', 'HIGH'), id='google_cloud'),
+        pytest.param(
+            lambda: GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1')),
+            None,
+            ('MINIMAL', 'HIGH'),
+            id='google_cloud_client_in_google_provider',
+        ),
+        pytest.param(
+            lambda: GoogleProvider(api_key='mock-api-key'),
+            GoogleModelProfile(google_thinking_levels=frozenset(('LOW', 'MEDIUM', 'HIGH'))),
+            ('LOW', 'HIGH'),
+            id='gemini_api_user_levels_win',
+        ),
+    ],
+)
+def test_neon_thinking_levels_follow_the_client_transport(
+    make_provider: Callable[[], Provider[Client]],
+    profile: GoogleModelProfile | None,
+    expected: tuple[GoogleThinkingLevel, GoogleThinkingLevel],
+) -> None:
+    """`gemini-4-neon` takes `LOW` to `XHIGH` only when requests go to the Gemini API.
+
+    The Gemini API rejects `MINIMAL` on this model; Vertex isn't probed, so it keeps the default levels, where
+    `thinking=False` sends `MINIMAL` and `'xhigh'` snaps to `HIGH`. Not a VCR test: the level is decided before
+    the request is built. The body-matched `google-gemini-4-neon-xhigh` cassette in
+    `tests/test_thinking_wire_contract.py` pins the Gemini API side.
+    """
+    m = GoogleModel('gemini-4-neon', provider=make_provider(), profile=profile)
+    sent = [
+        m._translate_thinking(GoogleModelSettings(), ModelRequestParameters(thinking=thinking))  # pyright: ignore[reportPrivateUsage]
+        for thinking in (False, 'xhigh')
+    ]
+    assert sent == [{'thinking_level': expected[0]}, {'include_thoughts': True, 'thinking_level': expected[1]}]
+    if profile is None:
+        # The transport branch sets the level set, so the flag derived from it must agree.
+        assert m.profile.get('google_supports_minimal_thinking_level') is (expected[0] == 'MINIMAL')
+
+
+@pytest.mark.parametrize(
+    ('make_provider', 'profile', 'expected'),
+    [
+        pytest.param(lambda: GoogleProvider(api_key='mock-api-key'), None, 512, id='gemini_api'),
+        pytest.param(lambda: GoogleCloudProvider(api_key='mock-api-key'), None, 128, id='google_cloud'),
+        pytest.param(
+            lambda: GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1')),
+            None,
+            128,
+            id='google_cloud_client_in_google_provider',
+        ),
+        pytest.param(
+            lambda: GoogleProvider(api_key='mock-api-key'),
+            GoogleModelProfile(google_minimal_thinking_budget=1024),
+            1024,
+            id='gemini_api_user_budget_wins',
+        ),
+    ],
+)
+def test_flash_lite_minimal_thinking_budget_follows_the_client_transport(
+    make_provider: Callable[[], Provider[Client]], profile: GoogleModelProfile | None, expected: int
+) -> None:
+    """`thinking='minimal'` sends 512 on `gemini-2.5-flash-lite` only when requests go to the Gemini API.
+
+    The Gemini API rejects a budget below 512 on this model; Vertex isn't probed, so it keeps 128. Not a VCR test:
+    the budget is decided before the request is built. The body-matched `google-gemini-25-flash-lite-minimal-budget`
+    cassette in `tests/test_thinking_wire_contract.py` pins the Gemini API side.
+    """
+    m = GoogleModel('gemini-2.5-flash-lite', provider=make_provider(), profile=profile)
+    sent = m._translate_thinking(GoogleModelSettings(), ModelRequestParameters(thinking='minimal'))  # pyright: ignore[reportPrivateUsage]
+    assert sent == {'include_thoughts': True, 'thinking_budget': expected}
+
+
+@pytest.mark.parametrize(
+    ('make_provider', 'profile', 'expected'),
+    [
+        pytest.param(
+            lambda: GoogleCloudProvider(api_key='mock-api-key'), None, {'thinking_budget': 0}, id='google_cloud'
+        ),
+        pytest.param(
+            lambda: GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1')),
+            None,
+            {'thinking_budget': 0},
+            id='google_cloud_client_in_google_provider',
+        ),
+        pytest.param(lambda: GoogleProvider(api_key='mock-api-key'), None, {'thinking_level': 'LOW'}, id='gemini_api'),
+        pytest.param(
+            lambda: GoogleCloudProvider(api_key='mock-api-key'),
+            GoogleModelProfile(google_disables_thinking_with_zero_budget=False),
+            {'thinking_level': 'LOW'},
+            id='google_cloud_user_flag_wins',
+        ),
+    ],
+)
+def test_gemini_3_1_pro_thinking_false_follows_the_client_transport(
+    make_provider: Callable[[], Provider[Client]], profile: GoogleModelProfile | None, expected: dict[str, object]
+) -> None:
+    """`thinking=False` turns thinking off on `gemini-3.1-pro-preview` only when requests go to Vertex.
+
+    Vertex accepts `thinking_budget=0` for this model and returns no thoughts, while the Gemini API rejects it, so
+    the Gemini API gets the lowest level the model accepts. Not a VCR test: the config is decided before the
+    request is built; `test_google_vertex_gemini_3_1_pro_thinking_false_turns_thinking_off` records the Vertex side.
+    """
+    m = GoogleModel('gemini-3.1-pro-preview', provider=make_provider(), profile=profile)
+    sent = m._translate_thinking(GoogleModelSettings(), ModelRequestParameters(thinking=False))  # pyright: ignore[reportPrivateUsage]
+    assert sent == expected
+    assert m.profile.get('thinking_always_enabled') is ('thinking_level' in expected)

@@ -22,7 +22,7 @@ pip install 'pydantic-evals[logfire]'
 
 ## Basic Setup
 
-Configure Logfire before running evaluations:
+Run `uvx logfire-cli wizard --task pydantic-ai` once from your project to sign in and pick or create a project. Then [configure Logfire](../../logfire.md#using-logfire) before running evaluations:
 
 ```python {title="basic_logfire_setup.py"}
 import logfire
@@ -69,6 +69,11 @@ When you run an evaluation, Logfire receives:
     1. All OpenTelemetry spans from your task function
     1. Tool calls (for Pydantic AI agents)
     1. API calls, database queries, etc.
+5. **[CI provenance](#ci-provenance)**
+    1. Commit, branch or tag, and pull request
+    1. Repository and CI run URLs
+
+For the exact spans and attributes, see the [span reference](#span-reference).
 
 ## Viewing Results in Logfire
 
@@ -134,6 +139,46 @@ report2 = dataset.evaluate_sync(improved_task)
 # Compare in Logfire by filtering by timestamp or attributes
 ```
 
+### CI Provenance
+
+To let a run be compared with an earlier run of the same experiment, such as the latest run on a pull request's base branch, [`Dataset.evaluate`][pydantic_evals.dataset.Dataset.evaluate] records where the run came from. When it runs in GitHub Actions or GitLab CI, the experiment span (`evaluate {name}`) gets these [OpenTelemetry VCS and CI/CD attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/vcs/), each only when its value is known:
+
+| Attribute | Value |
+|---|---|
+| `vcs.ref.head.revision` | The commit under test. For a pull request or merge request, the head commit of its source branch |
+| `vcs.ref.head.name` | The branch or tag under test |
+| `vcs.ref.head.type` | `branch` or `tag` |
+| `vcs.ref.base.name` | The target branch of the pull request or merge request |
+| `vcs.ref.base.revision` | The target branch's commit when the run started. On GitLab, only in merged results and merge train pipelines |
+| `vcs.change.id` | The pull request number or merge request IID |
+| `vcs.provider.name` | `github` or `gitlab` |
+| `vcs.repository.url.full` | The repository URL |
+| `cicd.pipeline.run.url.full` | The URL of the CI run (on GitHub Actions, of the run attempt) |
+
+Detection reads the CI's environment variables and, for GitHub Actions pull request events, the event payload file at `GITHUB_EVENT_PATH`. If the payload can't be read, the commit is left out rather than reported as the merge commit that the workflow builds. Detection runs only when the experiment span is recording, and it never fails the evaluation.
+
+On GitHub Actions, the commit and branch are recorded for `push`, `schedule`, `workflow_dispatch`, `release`, and pull request events. Other events, such as `issue_comment`, `workflow_run`, and `pull_request_target`, point `GITHUB_SHA` at the default branch (for `pull_request_target` on older GitHub Enterprise Server versions, at the pull request's base branch), while the workflow usually checks out a pull request, so their commit and branch are left out. If your workflow checks out the pull request head on such an event, set the commit and branch yourself. On `pull_request_target`, take them from the event payload:
+
+```yaml
+env:
+  PYDANTIC_EVALS_GIT_COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+  PYDANTIC_EVALS_GIT_BRANCH: ${{ github.event.pull_request.head.ref }}
+```
+
+On other events, the payload has no `pull_request` object. Set the commit from the checkout in a step after `actions/checkout`, and set `PYDANTIC_EVALS_GIT_BRANCH` the same way if your workflow knows the branch:
+
+```yaml
+- run: echo "PYDANTIC_EVALS_GIT_COMMIT_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+```
+
+These environment variables control the provenance attributes:
+
+| Environment variable | Effect |
+|---|---|
+| `PYDANTIC_EVALS_CI_PROVENANCE=false` (or `0`, `no`, `off`) | Disables the provenance attributes, including the two overrides below |
+| `PYDANTIC_EVALS_GIT_COMMIT_SHA` | Sets `vcs.ref.head.revision`, overriding what was detected. It also works on other CI systems |
+| `PYDANTIC_EVALS_GIT_BRANCH` | Sets `vcs.ref.head.name`, overriding what was detected, and sets `vcs.ref.head.type` to `branch`. It also works on other CI systems |
+
 ### Debugging Failed Cases
 
 Find failed cases quickly:
@@ -179,6 +224,99 @@ The span tree is available in both:
 
 - Your evaluator code (via `ctx.span_tree`)
 - Logfire UI (visual trace view)
+
+## Span Reference {#span-reference}
+
+This section lists the OpenTelemetry spans and attributes that [`Dataset.evaluate`][pydantic_evals.dataset.Dataset.evaluate] emits, for building queries, dashboards, or other tools that read or produce these spans.
+
+!!! note
+    As the [version policy](../../version-policy.md) allows, these span attributes may change in minor releases as Evals support in Logfire evolves.
+
+The spans listed here use the instrumentation scope `pydantic-evals`; spans from your task keep their own scopes. Each span's OpenTelemetry name is its message template, such as `case: {case_name}`, except the evaluator span, which is named `evaluator: {evaluator_name}` with the message template `Calling evaluator: {evaluator_name}`. The message template is in the `logfire.msg_template` attribute and the rendered message, such as `case: my_case`, in `logfire.msg`. Attribute values that are not strings, numbers, or booleans are JSON-encoded strings, and `logfire.json_schema` describes them.
+
+A run produces this span tree:
+
+```text
+evaluate {name}
+├── case: {case_name}                 (one per case, or per case and run with `repeat`)
+│   ├── execute {task}
+│   │   └── spans from your task
+│   └── evaluator: {evaluator_name}   (one per evaluator)
+└── report_evaluator: {evaluator_name} (one per report evaluator)
+```
+
+### Experiment span
+
+Name `evaluate {name}`. Set when the span starts:
+
+| Attribute | Value |
+|---|---|
+| `name` | The `name` argument, defaulting to `task_name` |
+| `task_name` | The `task_name` argument, defaulting to the task function's name |
+| `dataset_name` | The dataset's `name` |
+| `n_cases` | The number of cases in the dataset, not multiplied by `repeat` |
+| `gen_ai.operation.name` | Always `'experiment'` |
+| `metadata` | The `metadata` argument; only set when given |
+| `logfire.experiment.repeat` | The `repeat` argument; only set when greater than 1 |
+
+Set when all cases and report evaluators have finished:
+
+| Attribute | Value |
+|---|---|
+| `assertion_pass_rate` | The fraction of passing assertions across successful cases, the same value as `averages.assertions` below (with `repeat`, the mean of each case's pass rate across its runs); only set when there are assertions |
+| `logfire.experiment.metadata` | `{"n_cases": ..., "repeat": ..., "metadata": ..., "averages": ...}`, where `repeat` and `metadata` are only present when they are on the experiment span, and `averages` is a [`ReportCaseAggregate`][pydantic_evals.reporting.ReportCaseAggregate] that is only present when there is a successful case |
+| `logfire.experiment.analyses` | The list of [report evaluator](../evaluators/report-evaluators.md) analyses; only set when there are any |
+| `logfire.experiment.report_evaluator_failures` | A list of `{"name", "error_message", "error_stacktrace", "source"}` objects for report evaluators that raised; only set when there are any |
+
+### Case span
+
+Name `case: {case_name}`. Set when the span starts:
+
+| Attribute | Value |
+|---|---|
+| `task_name` | The task function's name |
+| `case_name` | The case name; with `repeat`, the run-indexed name such as `my_case [1/3]` |
+| `inputs` | The case's `inputs` |
+| `metadata` | The case's `metadata` |
+| `expected_output` | The case's `expected_output` |
+| `logfire.experiment.source_case_name` | The original case name; only set when `repeat` is greater than 1 |
+
+Set after the task succeeds:
+
+| Attribute | Value |
+|---|---|
+| `output` | The task's output |
+| `task_duration` | The task's duration in seconds |
+| `metrics` | Metrics recorded with [`increment_eval_metric`][pydantic_evals.dataset.increment_eval_metric], plus metrics extracted from the task's spans |
+| `attributes` | Attributes recorded with [`set_eval_attribute`][pydantic_evals.dataset.set_eval_attribute] |
+
+Set after all evaluators have finished:
+
+| Attribute | Value |
+|---|---|
+| `assertions` | Results with `bool` values |
+| `scores` | Results with `int` or `float` values |
+| `labels` | Results with `str` values |
+
+Each of `assertions`, `scores`, and `labels` maps a result name to an [`EvaluationResult`][pydantic_evals.evaluators.EvaluationResult] object:
+
+```json
+{"accuracy": {"name": "accuracy", "value": 0.87, "reason": null, "source": {"name": "MyEvaluator", "arguments": null}, "evaluator_version": "v2"}}
+```
+
+`source` is the evaluator's [`EvaluatorSpec`][pydantic_evals.evaluators.evaluator.EvaluatorSpec], and `evaluator_version` comes from [`get_evaluator_version`][pydantic_evals.evaluators.Evaluator.get_evaluator_version]. When two results in a case share a name, the later ones get the keys `name_2`, `name_3`, and so on, while the `name` field keeps the original name.
+
+If the task raises, the exception is recorded on its `execute {task}` span and on the case span, and the attributes set after the task are absent. With `retry_task`, each failed attempt's `execute {task}` span records that attempt's exception. An exception from a case lifecycle hook is also recorded on the case span.
+
+### Task and evaluator spans
+
+| Span | Message | Attribute |
+|---|---|---|
+| `execute {task}` | `execute {task}` | `task`: the task function's name. With `retry_task`, each attempt gets its own span. |
+| `evaluator: {evaluator_name}` | `Calling evaluator: {evaluator_name}` | `evaluator_name`: the evaluator's [`get_default_evaluation_name`][pydantic_evals.evaluators.Evaluator.get_default_evaluation_name]. An exception raised by the evaluator is recorded on this span, not on the case span. |
+| `report_evaluator: {evaluator_name}` | `report_evaluator: {evaluator_name}` | `evaluator_name`: the report evaluator's serialization name. |
+
+[Online evaluation](../online-evaluation.md#default-otel-event-emission) emits `gen_ai.evaluation.result` log events instead of these spans.
 
 ## Troubleshooting
 

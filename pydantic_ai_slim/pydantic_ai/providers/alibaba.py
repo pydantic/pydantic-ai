@@ -19,11 +19,11 @@ except ImportError as _import_error:
 else:
     from ._openai_compatible import (
         AsyncHTTPClient as _OpenAIHTTPClient,
-        OpenAICompatibleProvider as _OpenAICompatibleProvider,
+        _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
 
 
-class AlibabaProvider(_OpenAICompatibleProvider):
+class AlibabaProvider(_OpenAISDKProvider):
     """Provider for Alibaba Cloud Model Studio (DashScope) OpenAI-compatible API."""
 
     @property

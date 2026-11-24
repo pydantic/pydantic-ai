@@ -2,34 +2,27 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from math import isfinite
-from typing import Annotated, ClassVar, Literal, assert_never, cast
+from typing import Annotated, ClassVar, Literal, cast
 
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
 
+from .. import _model_errors
 from .._http import to_httpx2_timeout
-from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from ..exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..providers.system_one import SystemOneProvider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from .decision import (
-    ChoiceAnswer,
-    ChoiceQuestion,
     DecisionAnswer,
     DecisionModel,
     DecisionModelSettings,
     DecisionQuestion,
     DecisionRequest,
     DecisionResponse,
-    NoulAnswer,
-    NoulQuestion,
-    ScoreAnswer,
-    ScoreQuestion,
-    _probability_bounds,  # pyright: ignore[reportPrivateUsage]
-    _score_fits,  # pyright: ignore[reportPrivateUsage]
+    _answer_fits,  # pyright: ignore[reportPrivateUsage]
     _wire,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -84,6 +77,9 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
     # The API's schema requires `instructions` on every question, even one whose options say what it asks.
     requires_instructions: ClassVar[bool] = True
 
+    # The API takes a `temperature`, but no retry count: the provider's client makes a single attempt.
+    unsupported_settings = DecisionModel.unsupported_settings - {'temperature'} | {'max_retries'}
+
     _model_name: SystemOneModelName = field(repr=False)
     _provider: Provider[httpx2.AsyncClient] = field(repr=False)
     _api_key: str | None = field(repr=False)
@@ -129,10 +125,53 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         """The system / model provider."""
         return self._provider.name
 
-    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:  # noqa: C901
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
         """Send one request to the `/v1/systemone` endpoint."""
         if request.images:
             raise UserError('System One does not support image input.')
+        body, questions = self._request_body(request, model_settings)
+        http_request = self._build_request(body, model_settings)
+        try:
+            response = await self.client.send(http_request)
+        except httpx2.TransportError as e:
+            raise _model_errors.connection_error(
+                self._model_name, f'{type(e).__name__}: {e}', e, timeout=isinstance(e, httpx2.TimeoutException)
+            ) from e
+
+        if response.is_error:
+            error_body = _error_body(response)
+            raise ModelHTTPError.for_category(
+                _model_errors.http_status_category(response.status_code, str(error_body)),
+                status_code=response.status_code,
+                model_name=self._model_name,
+                body=error_body,
+                headers=dict(response.headers),
+            )
+        try:
+            parsed = _response_adapter.validate_json(response.content)
+        except ValidationError as e:
+            raise UnexpectedModelBehavior(f'Invalid response from the System One API: {e}', response.text) from e
+        if parsed.answers.keys() != questions.keys():
+            raise UnexpectedModelBehavior(
+                'Invalid response from the System One API: answer names do not match the questions', response.text
+            )
+        for name, question in questions.items():
+            answer = parsed.answers[name]
+            if not _answer_fits(question, answer):
+                raise UnexpectedModelBehavior(
+                    f'Invalid response from the System One API: answer {name!r} does not match its question: {answer!r}',
+                    response.text,
+                )
+        return DecisionResponse(
+            answers=parsed.answers,
+            model_name=parsed.model,
+            usage=RequestUsage(input_tokens=parsed.usage.input_tokens, output_tokens=parsed.usage.output_tokens),
+        )
+
+    def _request_body(
+        self, request: DecisionRequest, model_settings: DecisionModelSettings
+    ) -> tuple[dict[str, object], dict[str, DecisionQuestion]]:
+        """The JSON body to send, and the questions it asks, which an `extra_body` can override."""
         body: dict[str, object] = {
             'state': request.state,
             'model': self._model_name,
@@ -150,14 +189,16 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
                 questions = _questions_adapter.validate_python(body['questions'])
             except ValidationError as e:
                 raise UserError(f'Cannot validate the `extra_body.questions` override: {e}') from e
+        return body, questions
 
+    def _build_request(self, body: dict[str, object], model_settings: DecisionModelSettings) -> httpx2.Request:
         timeout = model_settings.get('timeout')
         url = f'{self.base_url}/systemone' if self.base_url.endswith('/v1') else f'{self.base_url}/v1/systemone'
         try:
             headers = httpx2.Headers(model_settings.get('extra_headers') or {})
             if self._api_key is not None and 'Authorization' not in headers:
                 headers['Authorization'] = f'Bearer {self._api_key}'
-            http_request = self.client.build_request(
+            return self.client.build_request(
                 'POST',
                 url,
                 json=body,
@@ -167,75 +208,6 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         except (TypeError, ValueError) as e:
             # An `extra_body` that will not encode as JSON is the caller's to fix, not the model's.
             raise UserError(f'Could not send this request to the System One API: {e}') from e
-        try:
-            response = await self.client.send(http_request)
-        except httpx2.TransportError as e:
-            raise ModelAPIError(model_name=self._model_name, message=f'{type(e).__name__}: {e}') from e
-
-        if response.is_error:
-            raise ModelHTTPError(
-                status_code=response.status_code,
-                model_name=self._model_name,
-                body=_error_body(response),
-                headers=dict(response.headers),
-            )
-        try:
-            parsed = _response_adapter.validate_json(response.content)
-        except ValidationError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from the System One API: {e}', response.text) from e
-        if parsed.answers.keys() != questions.keys():
-            raise UnexpectedModelBehavior(
-                'Invalid response from the System One API: answer names do not match the questions', response.text
-            )
-        for name, question in questions.items():
-            answer = parsed.answers[name]
-            if isinstance(question, NoulQuestion):
-                valid = isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
-            elif isinstance(question, ChoiceQuestion):
-                valid = (
-                    isinstance(answer, ChoiceAnswer)
-                    and answer.choice in question.criteria
-                    and answer.probabilities.keys() == question.criteria.keys()
-                )
-            elif isinstance(question, ScoreQuestion):
-                levels = set(range(len(question.criteria)))
-                valid = (
-                    isinstance(answer, ScoreAnswer)
-                    and answer.probabilities.keys() == levels
-                    and (not answer.legend or answer.legend.keys() == levels)
-                    and isfinite(answer.score)
-                    and 0 <= answer.score <= len(question.criteria) - 1
-                )
-            else:
-                assert_never(question)
-            if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
-                probabilities = answer.probabilities.values()
-                # Jev displays probabilities to two decimal places, so each may differ by half a unit.
-                valid = (
-                    valid
-                    and isfinite(answer.confidence)
-                    and 0 <= answer.confidence <= 1
-                    and all(isfinite(p) and 0 <= p <= 1 for p in probabilities)
-                    and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
-                )
-                if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
-                    # A displayed score and its probabilities may each be rounded. Check whether any distribution
-                    # within their rounding intervals could produce that score, using at least Jev's two decimals.
-                    probabilities_by_level: list[float] = [
-                        answer.probabilities[level] for level in range(len(question.criteria))
-                    ]
-                    lower, upper = _probability_bounds(probabilities_by_level)
-                    valid = _score_fits(lower, upper, answer.score)
-            if not valid:
-                raise UnexpectedModelBehavior(
-                    f'Invalid response from the System One API: answer {name!r} does not match its question: {answer!r}',
-                    response.text,
-                )
-        return DecisionResponse(
-            answers=parsed.answers,
-            model_name=parsed.model,
-            usage=RequestUsage(input_tokens=parsed.usage.input_tokens, output_tokens=parsed.usage.output_tokens),
-        )
 
 
 @dataclass(kw_only=True)

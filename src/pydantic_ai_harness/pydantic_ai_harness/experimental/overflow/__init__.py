@@ -9,7 +9,7 @@ from pydantic_ai_harness.tool_output_limits import (
     READ_TOOL_NAME,
     Action,
     Band,
-    LocalFileStore,
+    LocalFileOverflowStore as LocalFileStore,
     OverflowStore,
     Passthrough,
     Spill,

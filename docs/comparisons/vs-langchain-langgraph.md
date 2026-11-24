@@ -13,10 +13,11 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python | Python |
 | License | MIT | MIT |
 | Model providers | Many | [Many](../models/overview.md) |
-| Extensibility | Middleware, callbacks | [Capabilities and toolsets](../extensibility.md); [50+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Middleware, callbacks | [Capabilities and toolsets](../extensibility.md); [100+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | `deepagents`, or your own on LangGraph | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry via LangSmith | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
-| Durable execution | Yes | [Seven integrations](../durable_execution/overview.md) |
+| Enterprise support | With [LangSmith Enterprise](https://www.langchain.com/enterprise) | [For the framework itself](../enterprise-support.md), no platform required |
+| Durable execution | Yes | [Nine integrations](../durable_execution/overview.md) |
 | Interfaces | LangSmith Agent Server, Fleet | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
@@ -32,7 +33,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Code sandboxes | Yes | [Workspaces](../workspace.md#supported-workspaces) |
 | Browser use | Provider-hosted tools only | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 ## FAQ
@@ -40,3 +41,10 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 **Do you have a graph library?** Yes. [`pydantic-graph`](../graph.md): typed nodes, edges from return
 types, and persistence for pausing and resuming. Reach for it when the control flow is a real state
 machine; plain Python and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) cover the rest.
+
+*Last checked: 2026-09-24*
+
+## Sources
+
+- [LangGraph overview](https://docs.langchain.com/oss/python/langgraph/overview)
+- [LangGraph durable execution](https://docs.langchain.com/oss/python/langgraph/durable-execution)

@@ -31,6 +31,94 @@ class ExactMatch(Evaluator):
 - Implement `evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput`
 - Return `bool`, `int`, `float`, `str`, [`EvaluationReason`][pydantic_evals.evaluators.EvaluationReason], or `dict` of these
 
+## Function Evaluators
+
+For a check that doesn't need parameters, a plain sync or async function that takes an [`EvaluatorContext`][pydantic_evals.evaluators.EvaluatorContext] works anywhere a list of evaluators is accepted, including [online evaluation](../online-evaluation.md#onlineevaluator):
+
+```python
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EvaluatorContext
+
+
+def exact_match(ctx: EvaluatorContext[str, str]) -> bool:
+    return ctx.output == ctx.expected_output
+
+
+async def word_count(ctx: EvaluatorContext[str, str]) -> int:
+    return len(ctx.output.split())
+
+
+def shout(text: str) -> str:
+    return text.upper()
+
+
+dataset = Dataset(
+    name='shouting',
+    cases=[Case(name='greeting', inputs='hello world', expected_output='HELLO WORLD')],
+    evaluators=[exact_match, word_count],
+)
+report = dataset.evaluate_sync(shout, progress=False)
+print(report.cases[0].assertions['exact_match'].value)
+#> True
+print(report.cases[0].scores['word_count'].value)
+#> 2
+```
+
+Results are named after the function, and it can return anything an `evaluate` method can. To set a different name or a [version](../online-evaluation.md#evaluator-versioning), wrap the function in a [`FunctionEvaluator`][pydantic_evals.evaluators.FunctionEvaluator] yourself, as in `FunctionEvaluator(exact_match, evaluation_name='matches', version='v2')`.
+
+Use an `Evaluator` subclass for evaluators that take parameters.
+
+### Saving Function Evaluators
+
+When a dataset is [saved to a file](../how-to/dataset-serialization.md), a function evaluator is written under the function's name, along with any `evaluation_name` or `version`. To load the dataset, pass the functions in `custom_evaluator_types`, alongside any custom evaluator classes:
+
+```python
+from pathlib import Path
+from typing import Any
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import EvaluatorContext, FunctionEvaluator
+
+
+def exact_match(ctx: EvaluatorContext[str, str]) -> bool:
+    return ctx.output == ctx.expected_output
+
+
+async def word_count(ctx: EvaluatorContext[str, str]) -> int:
+    return len(ctx.output.split())
+
+
+dataset = Dataset[str, str, Any](
+    name='shouting',
+    cases=[Case(name='greeting', inputs='hello world', evaluators=[word_count])],
+    evaluators=[FunctionEvaluator(exact_match, evaluation_name='matches', version='v2')],
+)
+dataset.to_file('shouting.yaml', custom_evaluator_types=[exact_match, word_count])
+print(Path('shouting.yaml').read_text(encoding='utf-8'))
+"""
+# yaml-language-server: $schema=shouting_schema.json
+name: shouting
+cases:
+- name: greeting
+  inputs: hello world
+  metadata: null
+  expected_output: null
+  evaluators:
+  - word_count
+evaluators:
+- exact_match:
+    evaluation_name: matches
+    version: v2
+report_evaluators: []
+"""
+
+loaded = Dataset[str, str, Any].from_file('shouting.yaml', custom_evaluator_types=[exact_match, word_count])
+print(loaded.evaluators)
+#> [FunctionEvaluator(matches)]
+```
+
+Only the function's name is saved, not any state it closes over, so a dataset is loaded with whichever functions of those names you pass, and their names must be different from each other and from the other evaluators in `custom_evaluator_types`. That includes functions returned by a factory or a decorator that doesn't use `functools.wraps`, which may all share a name like `wrapper`. Saving fails if two different functions in the dataset share a name. Only a plain function defined with `def` has a name that identifies it: a dataset that uses a lambda, bound method, `functools.partial` or other callable as an evaluator can't be saved.
+
 ## EvaluatorContext
 
 The context provides all information about the case execution:

@@ -97,6 +97,13 @@ class Shell(AbstractCapability[AgentDepsT]):
     `shell` tool are rejected.
     """
 
+    max_log_bytes: int | None = field(default=100_000_000, kw_only=True)
+    """Size past which a background or `shell` command's log is emptied, leaving a notice. Must be positive.
+
+    Checked once a second while the command runs, which keeps running, and once more when it ends. Bounds the disk a
+    chatty or runaway command (such as one reading its own log) can fill. `None` disables it.
+    """
+
     persist_cwd: bool = False
     """If True, track cd commands and adjust the working directory for subsequent calls."""
 
@@ -120,6 +127,16 @@ class Shell(AbstractCapability[AgentDepsT]):
     filter `env` only; the workspace's own environment is its provider's to
     configure. See `LLM_API_KEY_ENV_PATTERNS` for a ready-made
     provider-credential denylist.
+    """
+
+    secret_env: Mapping[str, str] | None = field(default=None, kw_only=True, repr=False)
+    """Secrets added to every command's environment, like `env`, and masked in what the tools return.
+
+    Exact occurrences of each value are replaced with `[REDACTED:<name>]` in tool results and retry or failure
+    messages before the model sees them. This guards against a secret printed by accident, not against a command
+    that transforms or splits it, and a short or common value is masked everywhere it appears.
+    `denied_env_patterns` does not filter these. Log files, which the model can read with other tools, and the
+    persistent `shell` tool's events hold the raw output.
     """
 
     tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES
@@ -171,10 +188,12 @@ class Shell(AbstractCapability[AgentDepsT]):
             default_timeout=self.default_timeout,
             max_output_chars=self.max_output_chars,
             max_file_bytes=self.max_file_bytes,
+            max_log_bytes=self.max_log_bytes,
             persist_cwd=self.persist_cwd,
             allow_interactive=self.allow_interactive,
             env=self.env,
             denied_env_patterns=self.denied_env_patterns,
+            secret_env=self.secret_env,
             tools=self.tools,
             id=self.id or 'shell',
         )

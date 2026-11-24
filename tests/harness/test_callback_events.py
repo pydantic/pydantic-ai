@@ -19,21 +19,22 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness.compaction import ContextUsageEvent, ReportContextUsage
+from pydantic_ai_harness.compaction import ContextUsage, ContextUsageMeasuredEvent, ReportContextUsage
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanCreatedEvent,
+    PlanEvent,
     PlanEventEmitter,
     PlanItem,
     Planning,
 )
-from pydantic_ai_harness.spend import SpendLimits, SpendRecordedEvent
+from pydantic_ai_harness.spend_limits import SpendLimits, SpendRecordedEvent, SpendSnapshot
 from pydantic_ai_harness.system_reminders import Reminder, ReminderFiredEvent, SystemReminders
 
 
 async def test_spend_event_and_legacy_callback() -> None:
     events: list[SpendRecordedEvent] = []
-    legacy: list[Any] = []
+    legacy: list[SpendSnapshot] = []
     hooks = Hooks[Any]()
 
     @hooks.on.event(SpendRecordedEvent)
@@ -42,40 +43,43 @@ async def test_spend_event_and_legacy_callback() -> None:
 
     with pytest.warns(HarnessDeprecationWarning, match=r'SpendLimits\.on_spend.*SpendRecordedEvent.*on_event'):
         capability = SpendLimits[Any](on_spend=legacy.append, price=lambda response: Decimal('1.25'))
-    await Agent(TestModel(), capabilities=[capability, hooks]).run('go')
+    result = await Agent(TestModel(), capabilities=[capability, hooks]).run('go')
 
     assert len(legacy) == 1
     assert len(events) == 1
     assert events[0].usd == Decimal('1.25')
-    assert events[0].usage == legacy[0].usage
+    assert events[0].usage == result.response.usage
+    assert legacy[0].usage == result.response.usage
 
 
 async def test_context_usage_event_and_legacy_callback() -> None:
-    events: list[ContextUsageEvent] = []
-    legacy: list[Any] = []
+    events: list[ContextUsageMeasuredEvent] = []
+    legacy: list[ContextUsage] = []
     hooks = Hooks[Any]()
 
-    @hooks.on.event(ContextUsageEvent)
-    async def record(ctx: RunContext[Any], event: ContextUsageEvent) -> None:
+    @hooks.on.event(ContextUsageMeasuredEvent)
+    async def record(ctx: RunContext[Any], event: ContextUsageMeasuredEvent) -> None:
         events.append(event)
 
-    with pytest.warns(HarnessDeprecationWarning, match=r'ReportContextUsage\.on_usage.*ContextUsageEvent.*on_event'):
+    with pytest.warns(
+        HarnessDeprecationWarning, match=r'ReportContextUsage\.on_usage.*ContextUsageMeasuredEvent.*on_event'
+    ):
         capability = ReportContextUsage(on_usage=legacy.append, context_window=1_000)
     # pydantic-ai 2.41 derives a run-local synthetic id for anonymous capabilities, so pin one
     # rather than asserting on whichever derivation policy the installed core uses.
     capability.id = 'report_context_usage'
-    await Agent(TestModel(), capabilities=[capability, hooks]).run('go')
+    await Agent(TestModel(), capabilities=[capability, hooks]).run(
+        'Summarize the open pull requests for this repository.'
+    )
 
-    assert len(legacy) == 1
-    assert events == [
-        ContextUsageEvent(
-            used_tokens=legacy[0].used_tokens,
-            window_tokens=1_000,
-            resolved=True,
-            fraction=legacy[0].fraction,
-            capability_id='report_context_usage',
-        )
-    ]
+    assert [(usage.used_tokens, usage.fraction) for usage in legacy] == snapshot([(13, 0.013)])
+    assert events == snapshot(
+        [
+            ContextUsageMeasuredEvent(
+                used_tokens=13, window_tokens=1_000, resolved=True, fraction=0.013, capability_id='report_context_usage'
+            )
+        ]
+    )
 
 
 async def test_reminder_event_and_legacy_callback() -> None:
@@ -108,7 +112,7 @@ async def _add_then_text(messages: list[ModelMessage], info: AgentInfo) -> Async
 
 async def test_plan_event_and_legacy_emitter() -> None:
     events: list[PlanCreatedEvent] = []
-    legacy: list[Any] = []
+    legacy: list[PlanEvent] = []
     hooks = Hooks[Any]()
 
     @hooks.on.event(PlanCreatedEvent)
@@ -132,7 +136,7 @@ def test_new_construction_paths_do_not_warn() -> None:
         warnings.simplefilter('error', HarnessDeprecationWarning)
         SpendLimits()
         ReportContextUsage()
-        SystemReminders(reminders=[Reminder('focus')])
+        SystemReminders(reminders=[Reminder('focus', tag=None)])
         InMemoryPlanStore()
 
 
@@ -145,7 +149,7 @@ def test_callback_replacement_events_serialize() -> None:
             priced=True,
             budgets=(),
         ),
-        ContextUsageEvent(used_tokens=25, window_tokens=100, resolved=True, fraction=0.25),
+        ContextUsageMeasuredEvent(used_tokens=25, window_tokens=100, resolved=True, fraction=0.25),
         ReminderFiredEvent(text='focus'),
         PlanCreatedEvent(item=PlanItem(id='step-1', content='ship')),
     ]

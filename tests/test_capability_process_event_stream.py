@@ -33,6 +33,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings as _ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -43,7 +44,6 @@ from .capability_models import (
 )
 
 pytestmark = []
-READINESS_WAIT_TIMEOUT = 10
 
 
 class _RequestOnlyModel(Model):
@@ -1277,6 +1277,69 @@ class TestProcessEventStream:
                     with scope:
                         async with agent.run_stream('hello') as result:
                             async for _ in result.stream_text(debounce_by=None):  # pragma: no branch
+                                pass
+                    assert source_cleanup_complete.is_set(), 'Model source cleanup was interrupted during teardown'
+
+            assert scope.cancelled_caught
+        finally:
+            cleanup_permitted.set()
+            for iterator in sources:
+                await iterator.aclose()
+
+    async def test_source_cleanup_finishes_when_cancelled_during_debounced_pull(self):
+        """A cancel landing on a debounced pull, while the observer is still reading, lets the source's cleanup finish.
+
+        The debouncer runs the wrapped stream in its own pull task. The outer scope keeps re-cancelling the consumer
+        while the debouncer's teardown waits for that pull, so a plain `await` on it would forward each of those
+        cancels natively into the observer teardown's drain, and from there into the source.
+        """
+        source_waiting = anyio.Event()
+        cleanup_started = anyio.Event()
+        cleanup_permitted = anyio.Event()
+        source_cleanup_complete = anyio.Event()
+        sources: list[AsyncGenerator[str, None]] = []
+
+        async def tokens(messages: list[ModelMessage], info: AgentInfo) -> AsyncGenerator[str, None]:
+            try:
+                yield 'first'
+                source_waiting.set()
+                await anyio.Event().wait()
+            finally:
+                cleanup_started.set()
+                with anyio.CancelScope(shield=True):
+                    await cleanup_permitted.wait()
+                    source_cleanup_complete.set()
+
+        def source(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            iterator = tokens(messages, info)
+            sources.append(iterator)
+            return iterator
+
+        async def observer(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in stream:
+                pass
+
+        scope = anyio.CancelScope()
+
+        async def cancel_during_pull() -> None:
+            await source_waiting.wait()
+            scope.cancel()
+            await cleanup_started.wait()
+            await anyio.lowlevel.checkpoint()
+            cleanup_permitted.set()
+
+        agent = Agent(
+            FunctionModel(stream_function=source),
+            deps_type=type(None),
+            capabilities=[ProcessEventStream(observer)],
+        )
+        try:
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(cancel_during_pull)
+                    with scope:
+                        async with agent.run_stream('hello') as result:
+                            async for _ in result.stream_text():  # pragma: no branch
                                 pass
                     assert source_cleanup_complete.is_set(), 'Model source cleanup was interrupted during teardown'
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-import httpx
+from typing import get_args
+
+import httpx2
 import pytest
 from fastmcp.client.transports import StreamableHttpTransport
 
@@ -14,14 +16,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.google_workspace import GoogleWorkspace
-
-# MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = [
-    pytest.mark.filterwarnings(
-        "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-    ),
-]
+from pydantic_ai_harness.google_workspace import GoogleWorkspace, GoogleWorkspaceService
 
 
 async def connections_for(capability: GoogleWorkspace[str | None], deps: str | None) -> list[MCPToolset[str | None]]:
@@ -50,7 +45,7 @@ def user_token(ctx: RunContext[str]) -> str:
 def bearer(connection: MCPToolset[str | None]) -> str:
     transport = connection.client.transport
     assert isinstance(transport, StreamableHttpTransport) and transport.auth is not None
-    request = next(transport.auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(transport.auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 
@@ -67,6 +62,42 @@ class TestGoogleWorkspace:
     def test_invalid_services_raise(self, services: list[str], message: str) -> None:
         with pytest.raises(UserError, match=message):
             GoogleWorkspace(services=services)  # pyright: ignore[reportArgumentType]
+
+    def test_each_service_connects_to_its_endpoint(self, connections: list[tuple[str, str | None]]) -> None:
+        services: tuple[GoogleWorkspaceService, ...] = get_args(GoogleWorkspaceService)
+        GoogleWorkspace(services, auth='token').get_toolset()
+        assert dict(zip(services, [url for url, _ in connections], strict=True)) == {
+            'gmail': 'https://gmailmcp.googleapis.com/mcp/v1',
+            'drive': 'https://drivemcp.googleapis.com/mcp/v1',
+            'docs': 'https://docsmcp.googleapis.com/mcp/v1',
+            'sheets': 'https://sheetsmcp.googleapis.com/mcp/v1',
+            'slides': 'https://slidesmcp.googleapis.com/mcp/v1',
+            'calendar': 'https://calendarmcp.googleapis.com/mcp/v1',
+            'chat': 'https://chatmcp.googleapis.com/mcp/v1',
+            'people': 'https://people.googleapis.com/mcp/v1',
+        }
+
+    def test_connections_are_identified_by_the_capability_id(self, connections: list[tuple[str, str | None]]) -> None:
+        ids: list[str | None] = []
+
+        def collect(leaf: AbstractToolset[None]) -> None:
+            ids.append(leaf.id)
+
+        GoogleWorkspace[None](['gmail', 'calendar'], auth='token', id='mail').get_toolset().apply(collect)
+        assert ids == ['mail-gmail', 'mail-calendar']
+
+    @pytest.mark.parametrize('via', ['auth', 'env'])
+    def test_fixed_oauth_raises(self, via: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv('GOOGLE_ACCESS_TOKEN', 'oauth')
+        with pytest.raises(UserError, match="needs an access token, not 'oauth'"):
+            GoogleWorkspace('gmail', auth='oauth' if via == 'auth' else None).get_toolset()
+
+    def test_default_description_names_the_services(self) -> None:
+        assert GoogleWorkspace(['people', 'gmail']).get_description() == (
+            'Use these Google Workspace products: People, Gmail.'
+        )
+        assert GoogleWorkspace('gmail', description='Read mail.').get_description() == 'Read mail.'
+        assert GoogleWorkspace('gmail', description=None).get_description() is None
 
     def test_missing_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv('GOOGLE_ACCESS_TOKEN', raising=False)
@@ -138,7 +169,7 @@ class TestPerRunAuth:
 
     async def test_provider_returning_oauth_raises(self) -> None:
         capability = GoogleWorkspace[str | None]('gmail', auth=per_user_token)
-        with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
+        with pytest.raises(UserError, match="must return an access token, not 'oauth'"):
             await connections_for(capability, 'oauth')
 
     def test_provider_does_not_need_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:

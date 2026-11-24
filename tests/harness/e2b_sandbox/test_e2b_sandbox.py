@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import os
 import re
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +16,8 @@ import pytest
 from e2b.exceptions import AuthenticationException, SandboxException
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -22,6 +27,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
     Workspace,
+    WorkspaceBackend,
     WorkspaceError,
     WorkspaceReadOnlyError,
     WorkspaceRef,
@@ -32,6 +38,8 @@ from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
 from .._tool_calls import call_tools
 from .fake_e2b import FakeE2B
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 def test_env_is_not_shown_in_repr() -> None:
@@ -72,11 +80,89 @@ async def test_destroy_is_idempotent_and_maps_rejected_credentials(fake_e2b: Fak
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await provider.destroy(ref)
     assert str(exc.value) == (
-        'Credentials rejected. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+        'Credentials rejected. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
     )
     fake_e2b.kill_error = AuthenticationException('API key is required, please visit the API Keys tab')
     with pytest.raises(WorkspaceUnavailableError, match=r'^No E2B API key found\. Set E2B_API_KEY'):
         await provider.destroy(ref)
+
+
+async def test_client_reaches_create_attach_and_destroy(fake_e2b: FakeE2B) -> None:
+    capability = E2BSandbox(client=fake_e2b.client('a'))
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+    new = capability.get_workspace(ctx, ref=None)
+    assert isinstance(new, E2BSandboxBackend)
+    await new.get_sandbox()
+
+    ref = WorkspaceRef(provider='e2b', id='sbx-1')
+    for backend in (capability.get_workspace(ctx, ref=ref), capability.backend(ref)):
+        assert isinstance(backend, E2BSandboxBackend)
+        await backend.get_sandbox()
+    await capability.destroy(ref)
+    assert fake_e2b.clients == ['a', 'a', 'a', 'a']
+
+
+async def test_no_client_leaves_it_to_the_environment(fake_e2b: FakeE2B) -> None:
+    capability = E2BSandbox()
+    await E2BSandboxBackend().get_sandbox()
+    ref = WorkspaceRef(provider='e2b', id='sbx-1')
+    await capability.backend(ref).get_sandbox()
+    await capability.destroy(ref)
+    assert fake_e2b.clients == [None, None, None]
+
+
+async def test_a_capability_can_use_each_users_client_from_deps(fake_e2b: FakeE2B) -> None:
+    @dataclass
+    class EachUsersClient(AbstractCapability[str]):
+        def get_workspace(self, ctx: RunContext[str], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            return E2BSandboxBackend(client=fake_e2b.client(ctx.deps), ref=ref)
+
+    agent = Agent(TestModel(call_tools=['run_command']), deps_type=str, capabilities=[EachUsersClient()])
+
+    @agent.tool
+    async def run_command(ctx: RunContext[str]) -> str:
+        return (await ctx.workspace.run(['echo', 'ok'])).stdout
+
+    await agent.run('run', deps='a')
+    await agent.run('run', deps='b')
+    assert fake_e2b.clients == ['a', 'b']
+
+
+def test_agent_spec_schema_publishes_every_field_but_the_client_and_network() -> None:
+    """`from_spec` lists its fields by hand, so each new field must be added there too. `network` is code-only."""
+    definitions = AgentSpec.model_json_schema_with_capabilities([E2BSandbox])['$defs']
+    assert sorted(definitions['spec_params_E2BSandbox']['properties']) == [
+        'allow_internet_access',
+        'authority',
+        'defer_loading',
+        'description',
+        'desktop',
+        'env',
+        'id',
+        'idle_timeout',
+        'path_authority',
+        'sandbox_timeout',
+        'template',
+        'working_dir',
+    ]
+    published = set(definitions['spec_params_E2BSandbox']['properties'])
+    # Fields set outside `__init__`, such as the `_authority_ceiling` every capability has, aren't spec fields.
+    assert published == {field.name for field in fields(E2BSandbox) if field.init} - {'client', 'network'}
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'e2b',
+        'description': 'a sandbox',
+        'template': 'base',
+        'allow_internet_access': False,
+        'sandbox_timeout': 120,
+        'idle_timeout': 60,
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+        'desktop': (1280, 800),
+    }
+    assert E2BSandbox[None].from_spec(**spec_fields) == E2BSandbox[None](**spec_fields)
 
 
 def test_capability_uses_workspace_contract() -> None:
@@ -103,6 +189,14 @@ async def test_foreign_reference_is_rejected(fake_e2b: FakeE2B) -> None:
 def test_non_string_env_fails_at_construction(env: dict[object, object]) -> None:
     with pytest.raises(TypeError, match='env keys and values must be strings'):
         E2BSandboxBackend(env=env)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(UserError, match=r'^`env` keys and values must be strings\.$'):
+        E2BSandbox(env=env)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize('sandbox_timeout', [0, -1, 1.5, True])
+def test_backend_rejects_an_invalid_sandbox_timeout(sandbox_timeout: object) -> None:
+    with pytest.raises(ValueError, match='sandbox_timeout must be an integer of at least 1'):
+        E2BSandboxBackend(sandbox_timeout=sandbox_timeout)  # pyright: ignore[reportArgumentType]
 
 
 @pytest.mark.parametrize(
@@ -111,6 +205,7 @@ def test_non_string_env_fails_at_construction(env: dict[object, object]) -> None
         ({'working_dir': 'repo'}, "working_dir must be an absolute POSIX path or None, got 'repo'"),
         ({'sandbox_timeout': 0}, 'sandbox_timeout must be an integer of at least 1, got 0'),
         ({'sandbox_timeout': 1.5}, 'sandbox_timeout must be an integer of at least 1, got 1.5'),
+        ({'idle_timeout': 0}, 'idle_timeout must be an integer of at least 1 or None, got 0'),
         (
             {'defer_loading': True, 'id': 'e2b'},
             (
@@ -142,6 +237,35 @@ async def test_native_handle_is_exposed_without_creation(fake_e2b: FakeE2B) -> N
         E2BSandboxBackend(sandbox=native, ref=WorkspaceRef(provider='e2b', id='other'))
 
 
+@pytest.mark.parametrize('anyio_backend', ['trio'])
+@pytest.mark.parametrize(
+    'operation', ['run', 'read_bytes', 'write_bytes', 'stat', 'list_dir', 'make_dir', 'remove', 'exists', 'working_dir']
+)
+async def test_a_passed_in_sandbox_is_returned_on_trio_but_not_used(
+    fake_e2b: FakeE2B, anyio_backend: str, operation: str
+) -> None:
+    # Handing back a sandbox the caller already has makes no E2B request, so `get_sandbox()` is not
+    # refused on Trio; the backend's own operations make requests, so they are.
+    native = fake_e2b.new_sandbox('sbx-1', None)
+    backend = E2BSandboxBackend(sandbox=native)  # pyright: ignore[reportArgumentType]
+    assert await backend.get_sandbox() is native
+    operations: dict[str, Callable[[], Awaitable[object]]] = {
+        'run': lambda: backend.run(['true']),
+        'read_bytes': lambda: backend.read_bytes('/file'),
+        'write_bytes': lambda: backend.write_bytes('/file', b'data'),
+        'stat': lambda: backend.stat('/file'),
+        'list_dir': lambda: backend.list_dir('/'),
+        'make_dir': lambda: backend.make_dir('/dir'),
+        'remove': lambda: backend.remove('/file'),
+        'exists': lambda: backend.exists('/file'),
+        'working_dir': backend.working_dir,
+    }
+    with pytest.raises(UserError, match='E2B needs the asyncio event loop'):
+        await operations[operation]()
+    assert not native.files.users
+    assert not native.commands.calls
+
+
 async def test_agent_without_workspace_use_does_not_create(fake_e2b: FakeE2B) -> None:
     agent = Agent(TestModel(custom_output_text='done'), capabilities=[E2BSandbox()])
     result = await agent.run('hello')
@@ -168,10 +292,13 @@ async def test_capability_forwards_creation_options_and_run_does_not_kill(fake_e
     capability = E2BSandbox(
         template='base',
         sandbox_timeout=120,
+        idle_timeout=60,
         working_dir='/work',
         env={'FOO': 'bar'},
         allow_internet_access=False,
+        network={'rules': {'github.com': [{'transform': {'headers': {'Authorization': 'Basic secret'}}}]}},
     )
+    assert 'secret' not in repr(capability)
     agent = Agent(TestModel(call_tools=['run_command']), capabilities=[capability])
 
     @agent.tool
@@ -181,8 +308,12 @@ async def test_capability_forwards_creation_options_and_run_does_not_kill(fake_e
     result = await agent.run('run', deps=None)
     assert 'ok' in result.output
     call = fake_e2b.create_calls[0]
-    assert (call.template, call.timeout, call.envs, call.allow_internet_access) == ('base', 120, {'FOO': 'bar'}, False)
+    assert (call.template, call.timeout, call.envs, call.allow_internet_access) == ('base', 60, {'FOO': 'bar'}, False)
+    assert call.network == {'rules': {'github.com': [{'transform': {'headers': {'Authorization': 'Basic secret'}}}]}}
     assert fake_e2b.sandboxes[0].commands.calls[-1].cwd == '/work'
+    assert result.workspace is not None and result.workspace.ref is not None
+    await capability.backend(result.workspace.ref).get_sandbox()
+    assert fake_e2b.connect_calls == [('sbx-1', 60)]
     assert fake_e2b.sandboxes[0].killed is False
     assert isinstance(result.workspace, Workspace)
     backend = result.workspace.backend
@@ -249,8 +380,7 @@ async def test_failed_acquisition_can_retry(fake_e2b: FakeE2B) -> None:
     assert len(fake_e2b.create_calls) == 2
 
 
-@pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
-async def test_cancelled_creation_keeps_the_sandbox_it_made(fake_e2b: FakeE2B, anyio_backend: str) -> None:
+async def test_cancelled_creation_keeps_the_sandbox_it_made(fake_e2b: FakeE2B) -> None:
     # E2B can make the sandbox before its response arrives. A caller cancelled in between still
     # records it, so `ref` names it and a retry reuses it instead of creating a second one.
     fake_e2b.create_response_held = held = anyio.Event()
@@ -364,6 +494,7 @@ async def test_agent_history_attaches_same_workspace(fake_e2b: FakeE2B) -> None:
     assert fake_e2b.connect_calls == [('sbx-1', 3_600)]
 
 
+@posix_only
 async def test_coder_works_in_the_sandbox(fake_e2b: FakeE2B, tmp_path: Path) -> None:
     # Host mode: the fake sandbox runs commands and file calls under `tmp_path`, so the model's
     # shell and file tools are observable end to end.
@@ -379,8 +510,46 @@ async def test_coder_works_in_the_sandbox(fake_e2b: FakeE2B, tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize('anyio_backend', ['trio'])
-async def test_commands_need_asyncio(fake_e2b: FakeE2B, anyio_backend: str) -> None:
-    # The E2B SDK starts each command's output reader on an asyncio task, so Trio gets a clear error, not a crash.
-    with pytest.raises(UserError, match='need the asyncio event loop'):
-        await E2BSandboxBackend().run(['true'])
-    assert not fake_e2b.sandboxes
+@pytest.mark.parametrize(
+    'operation',
+    [
+        'run',
+        'read_bytes',
+        'write_bytes',
+        'stat',
+        'list_dir',
+        'make_dir',
+        'remove',
+        'exists',
+        'working_dir',
+        'relative_path',
+        'get_sandbox',
+        'attach',
+        'destroy',
+    ],
+)
+async def test_every_operation_needs_asyncio(fake_e2b: FakeE2B, anyio_backend: str, operation: str) -> None:
+    # Every E2B SDK request runs under `asyncio.wait_for`, which fails on Trio with 'no running event loop',
+    # so Trio gets a clear error before anything reaches E2B, and no sandbox is created.
+    backend = E2BSandboxBackend()
+    ref = WorkspaceRef(provider='e2b', id='sbx-1')
+    # A lookup, not an if/else chain: an id that matches no entry fails instead of reusing another case.
+    operations: dict[str, Callable[[], Awaitable[object]]] = {
+        'run': lambda: backend.run(['true']),
+        'read_bytes': lambda: backend.read_bytes('/file'),
+        'write_bytes': lambda: backend.write_bytes('/file', b'data'),
+        'stat': lambda: backend.stat('/file'),
+        'list_dir': lambda: backend.list_dir('/'),
+        'make_dir': lambda: backend.make_dir('/dir'),
+        'remove': lambda: backend.remove('/file'),
+        'exists': lambda: backend.exists('/file'),
+        'working_dir': backend.working_dir,
+        'relative_path': lambda: Workspace(backend).read_text('file'),
+        'get_sandbox': backend.get_sandbox,
+        'attach': E2BSandboxBackend(ref=ref).get_sandbox,
+        'destroy': lambda: E2BSandbox().destroy(ref),
+    }
+    with pytest.raises(UserError, match='E2B needs the asyncio event loop'):
+        await operations[operation]()
+    assert not fake_e2b.create_calls
+    assert not fake_e2b.connect_calls

@@ -1,6 +1,6 @@
-"""Regressions for speculation under run cancellation and malformed stream arguments.
+"""Regressions for speculation under run cancellation, malformed stream arguments, and scan cost.
 
-These pin two failure classes the suite's behavioral tests do not reach:
+These pin three failure classes the suite's behavioral tests do not reach:
 
 1. A run cancelled through an anyio scope leaked speculative launches. The scope's
    level-triggered re-cancellation interrupted `close()` at its first cleanup await,
@@ -10,6 +10,8 @@ These pin two failure classes the suite's behavioral tests do not reach:
 2. Raw surrogate code points in streamed `run_code` arguments made pydantic-core's JSON
    decoder raise `TypeError` inside the speculative watcher. The watcher is a robustness
    feature: an undecodable prefix must mean no speculation, never a crashed run.
+3. The text scan for launchable calls sliced and counted the whole prefix before every match,
+   so one scan of the streamed code was quadratic in its length, run on the event loop.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ import json
 import threading
 import warnings
 from collections.abc import AsyncIterator
+from typing import SupportsIndex
 
 import anyio
 import pytest
@@ -39,7 +42,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai_harness.code_mode import CodeMode, SpeculativeCallLaunchedEvent
 from pydantic_ai_harness.code_mode._streaming import closed_statements, decode_partial_args, parse_code
 
-from .test_speculation import observe, prepared_toolset
+from .test_speculation import emitted, observe, prepared_toolset
 
 
 def _branch_code(taken: str, other: str) -> str:
@@ -188,6 +191,9 @@ async def test_streamed_backslashes_do_not_warn(eager: bool, literal: str) -> No
     )
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
+        # What the suite already ignores: a socket or coroutine another test leaked can warn here when collected.
+        warnings.filterwarnings('ignore', category=ResourceWarning)
+        warnings.filterwarnings('ignore', "coroutine '.*' was never awaited", RuntimeWarning)
         result = await agent.run('go')
     assert not caught
     assert result.output == 'done'
@@ -223,11 +229,18 @@ def test_analysis_does_not_hide_other_threads_warnings(monkeypatch: pytest.Monke
     def warn_elsewhere() -> None:
         warnings.warn_explicit('invalid escape sequence', SyntaxWarning, filename='user_code.py', lineno=1)
 
-    def concurrent_parse(code: str, *, filename: str = '<unknown>', mode: str) -> ast.Module:
+    real_parse = ast.parse
+
+    def concurrent_parse(source: str, filename: str = '<unknown>', mode: str = 'exec') -> ast.AST:
+        # Coverage's 3.14 `sysmon` core also calls `ast.parse(source)`, without a filename, the first time it
+        # sees a branch in a file -- before `parse_code` installs its filter. Only the analysis parse, which
+        # always passes a filename, may emit the other thread's warning.
+        if filename == '<unknown>':  # pragma: lax no cover
+            return real_parse(source, filename=filename, mode=mode)
         thread = threading.Thread(target=warn_elsewhere)
         thread.start()
         thread.join()
-        return ast.Module(body=[], type_ignores=[])
+        return real_parse(source, filename=filename, mode=mode)
 
     with pytest.warns(SyntaxWarning, match='invalid escape sequence') as caught:
         with monkeypatch.context() as patch:
@@ -255,3 +268,92 @@ class TestPartialArgsDecoding:
         # JSON text carries escaped newlines, exactly as a provider would stream them.
         assert decode_partial_args('{"code": "a = 1\\nb = 2"') == {'code': 'a = 1\nb = 2'}
         assert decode_partial_args('{"code": "a\\ud83d\\udc36b"}') == {'code': 'a\U0001f436b'}
+
+
+class _CountingCode(str):
+    """Streamed code that tallies the characters host-side scanning slices or counts out of it.
+
+    Dict-shaped argument deltas reach the scanner without a JSON round-trip, so the scanner reads
+    this very instance; C-level readers (`re`, `ast`) are not counted, Python-level ones are.
+    """
+
+    touched: int = 0
+
+    def __getitem__(self, key: SupportsIndex | slice, /) -> str:
+        piece = super().__getitem__(key)
+        self.touched += len(piece)
+        return piece
+
+    def count(self, sub: str, start: SupportsIndex | None = None, end: SupportsIndex | None = None, /) -> int:
+        self.touched += len(range(*slice(start, end).indices(len(self))))
+        return super().count(sub, start, end)
+
+
+_BLOCK = (
+    "a = await lookup(key='k{i:02}')\n"
+    "obj.lookup(key='attribute')\n"
+    "def lookup(key='definition'): ...\n"
+    'b = await lookup(\n'
+    "    key='m{i:02}',\n"
+    ')\n'
+)
+"""Six lines with one call on one line, one spanning three, and the two shapes the scan skips."""
+
+
+async def _stream_whole(code: str) -> list[SpeculativeCallLaunchedEvent]:
+    """Stream `code` as one dict-shaped delta and return the launches the text scan made."""
+
+    async def lookup(key: str) -> str:
+        """Return a canned result."""
+        return key  # pragma: no cover - the launches are evicted before they run
+
+    async with prepared_toolset([Tool(lookup)], CodeMode[None](speculate=['lookup'])) as (
+        run_capability,
+        _toolset,
+        ctx,
+        _run_code,
+    ):
+        part = ToolCallPart(tool_name='run_code', args={}, tool_call_id='scan_part')
+        await observe(
+            run_capability,
+            ctx,
+            [
+                PartStartEvent(index=0, part=part),
+                PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': code})),
+                PartEndEvent(index=0, part=part),
+            ],
+        )
+        return [event for event in emitted(ctx) if isinstance(event, SpeculativeCallLaunchedEvent)]
+
+
+class TestTextScanCost:
+    async def test_repeated_calls_launch_with_their_own_line_spans(self):
+        """Every repetition launches its two calls with their own lines; the skipped shapes stay skipped."""
+        launches = await _stream_whole(''.join(_BLOCK.format(i=i) for i in range(8)))
+
+        assert [(event.arguments, event.line_start, event.line_end) for event in launches] == [
+            launch
+            for i in range(8)
+            for launch in (({'key': f'k{i:02}'}, 6 * i + 1, 6 * i + 1), ({'key': f'm{i:02}'}, 6 * i + 4, 6 * i + 6))
+        ]
+
+    async def test_scan_work_grows_linearly_with_the_code(self):
+        """Each extra batch of repetitions adds the same scan work, however much code precedes it."""
+        touched: list[int] = []
+        for blocks in (4, 8, 12):
+            code = _CountingCode(''.join(_BLOCK.format(i=i) for i in range(blocks)))
+            launches = await _stream_whole(code)
+            assert len(launches) == 2 * blocks
+            touched.append(code.touched)
+
+        assert touched[2] - touched[1] == touched[1] - touched[0]
+
+    async def test_nested_call_walks_stop_at_the_scan_budget(self, monkeypatch: pytest.MonkeyPatch):
+        """Overlapping paren walks of nested calls stop at the budget instead of finishing first."""
+        budget = 10_000
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._speculation.MAX_SCAN_WORK_CHARS', budget)
+        for depth in (200, 400, 800):
+            code = _CountingCode('x = ' + 'lookup(' * depth + "key='k'" + ')' * depth)
+            assert not await _stream_whole(code)
+            # Unbounded, the walks alone cover about `4 * depth ** 2` characters.
+            assert code.touched <= 2 * budget

@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "Harness 0.x: `Planning.cache_ttl` is deprecated and has no effect, because the plan reminder no longer places a cache breakpoint of its own, so its default is `None`. An explicit `'5m'` or `'1h'` warns that it's ignored; the loss of the default breakpoint is in the docs and release note, and caching on the model replaces it.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11521"
+}

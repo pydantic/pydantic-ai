@@ -1,0 +1,52 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/qwen.qwen3-32b-v1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - a5ba505d-240d-4ccf-937b-32339d018375
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "188"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: "Reply with the single word: ok"
+        system: []
+        inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning_config: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "223"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 372
+        output:
+          message:
+            content:
+            - text: ok
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 19
+          outputTokens: 2
+          serverToolUsage: {}
+          totalTokens: 21
+  recorded_at: 2026-10-22T17:02:33.152458+00:00

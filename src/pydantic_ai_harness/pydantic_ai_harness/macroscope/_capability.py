@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass
 from pathlib import Path
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.macroscope._toolset import MacroscopeToolset
@@ -51,10 +53,14 @@ class Macroscope(AbstractCapability[AgentDepsT]):
 
     base: str | None = None
     """Git ref to diff against. When `None`, `--base` is omitted and the CLI
-    auto-detects the base branch itself (and creates its own review worktree)."""
+    auto-detects the base branch itself (and creates its own review worktree).
+    Must not start with `-`."""
 
     command: str = 'macroscope'
-    """Name or path of the CLI binary. Override for a non-default install location."""
+    """Name or path of the CLI binary. Override for a non-default install location.
+
+    Cannot start with `-` or contain `=`; put the CLI on the workspace's PATH instead.
+    """
 
     cwd: str | Path | None = None
     """Deprecated and ignored: the review runs in the workspace's working directory.
@@ -72,9 +78,23 @@ class Macroscope(AbstractCapability[AgentDepsT]):
     Leave as `None` for the default validate-then-fix guidance, or set `''` to
     contribute no instructions at all."""
 
+    _: KW_ONLY
+    id: str | None = 'macroscope'
+    """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
+
+    An agent has one `run_macroscope_review` tool, so two `Macroscope` sharing this `id` are one review
+    configuration stated twice when they agree, and an error when they differ. To keep two, give each its
+    own `id` and wrap them in `PrefixTools`, since their tool names are the same.
+    """
+
     def __post_init__(self) -> None:
         if self.cwd is not None:
             warn_argument_ignored('Macroscope', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE)
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one review configuration stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when it has no workspace to review."""
@@ -86,6 +106,7 @@ class Macroscope(AbstractCapability[AgentDepsT]):
             command=self.command,
             base=self.base,
             timeout=self.timeout,
+            id=self.id or 'macroscope',
         )
 
     def get_instructions(self) -> str | None:

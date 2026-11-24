@@ -2,7 +2,14 @@
 emoji: "🌊"
 name: "Pydantic AI Streaming Resilience Sweep"
 description: "Audit the streaming state machine for ordering/lifecycle bugs and file a reproducible report. Runs on the Pydantic AI gh-aw shim; the prompt is iterable from a Logfire managed variable."
-on: weekly on saturday
+on:
+  schedule: weekly on saturday
+  workflow_dispatch:
+    inputs:
+      recovery_issue:
+        type: string
+        required: false
+        description: 'Open workflow incident to verify with this run'
 permissions:
   contents: read
   issues: read
@@ -18,6 +25,7 @@ safe-outputs:
   footer: false
   activation-comments: false
   report-failure-as-issue: false
+  report-failed-jobs: false
   noop:
     report-as-issue: false
   missing-tool:
@@ -29,7 +37,7 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[streaming-resilience-sweep] "
-    labels: [streaming]
+    labels: [area:streaming]
     close-older-key: "[streaming-resilience-sweep]"
     close-older-issues: false
     expires: 7d
@@ -42,6 +50,10 @@ env:
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
+engine:
+  model: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
+# Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
+max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -52,7 +64,6 @@ imports:
   - shared/checkout.md
   - shared/engine-zai.md
   - shared/provider-health.md
-  - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/issue-filing-context.md
   - shared/security-findings.md

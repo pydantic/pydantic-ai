@@ -3,8 +3,8 @@
 `before_record_request` / `before_record_response` run on live traffic before it is written to a cassette:
 they drop noisy headers, scrub credentials the built-in filters don't know about, and normalize the smart
 quotes LLM APIs return so cassettes and the snapshots built from them stay ASCII. `normalize_uri` runs on
-both recorded and incoming URIs at match time, so a cassette recorded against one AWS account or GCP
-project replays for another.
+both recorded and incoming URIs at match time, so a cassette recorded against one AWS account, GCP
+project or Anthropic SDK version replays for another.
 """
 
 from __future__ import annotations
@@ -74,6 +74,7 @@ FILTERED_HEADERS = {
     'via',
     'set-cookie',
     'api-key',
+    'xi-api-key',
 }
 ALLOWED_HEADER_PREFIXES = {
     # required by huggingface_hub.file_download used by test_embeddings.py::TestSentenceTransformers
@@ -94,6 +95,11 @@ ALLOWED_HEADERS = {
 }
 
 SCRUBBED_JSON_FIELDS = ('access_token', 'id_token', 'refresh_token', 'safety_identifier')
+# OpenRouter error responses echo the id of the account whose key made the request. Requests keep `user_id`: Z.AI
+# takes the caller's own end-user id there.
+SCRUBBED_RESPONSE_JSON_FIELDS = ('user_id',)
+# ElevenLabs `GET /v1/convai/agents/{id}` bodies carry the workspace owner's identity in `access_info`.
+SCRUBBED_NESTED_JSON_FIELDS = ('creator_email', 'creator_name')
 SCRUBBED_FORM_FIELDS = (
     'assertion',
     'client_id',
@@ -117,7 +123,13 @@ _BEDROCK_HOST = re.compile(r'bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com')
 _VERTEX_HOST = re.compile(r'[a-z0-9-]+-aiplatform\.googleapis\.com')
 _VERTEX_LOCATION = re.compile(r'/locations/[a-z0-9-]+/')
 _VERTEX_PROJECT = re.compile(r'/projects/[a-z0-9-]+/')
+# Anthropic SDKs before 2.3.0 hardcode `?beta=true` into beta endpoint paths; 2.3.0 stopped sending it,
+# since the `anthropic-beta` header alone selects the beta API.
+_ANTHROPIC_BETA_QUERY = re.compile(r'\?beta=true(&|$)')
 _SAFETY_IDENTIFIER = re.compile(r'("safety_identifier"\s*:\s*)"(?:\\.|[^"\\])*"')
+# ElevenLabs `GET /v1/convai/conversation/get-signed-url` bodies carry a short-lived conversation
+# token in the query string of `signed_url`.
+_SIGNED_URL_TOKEN = re.compile(r'(conversation_signature|token)=[^&]+')
 
 
 def scrub_aws_account_id(uri: str) -> str:
@@ -125,16 +137,18 @@ def scrub_aws_account_id(uri: str) -> str:
 
 
 def normalize_uri(uri: str) -> str:
-    """Erase the region, project and account a cassette was recorded against before matching.
+    """Erase the region, project, account and SDK version a cassette was recorded with before matching.
 
     Bedrock cassettes are recorded in whatever region the recording developer's credentials use, and
-    Vertex AI cassettes against their GCP project; neither is what the test asserts on.
+    Vertex AI cassettes against their GCP project; neither is what the test asserts on. Anthropic
+    cassettes recorded on an SDK that sends the `beta=true` query replay for one that doesn't.
     """
     uri = scrub_aws_account_id(uri)
     uri = _BEDROCK_HOST.sub('bedrock-runtime.REGION.amazonaws.com', uri)
     uri = _VERTEX_HOST.sub('aiplatform.googleapis.com', uri)
     uri = _VERTEX_LOCATION.sub('/locations/REGION/', uri)
-    return _VERTEX_PROJECT.sub('/projects/PROJECT/', uri)
+    uri = _VERTEX_PROJECT.sub('/projects/PROJECT/', uri)
+    return _ANTHROPIC_BETA_QUERY.sub(lambda m: '?' if m[1] else '', uri)
 
 
 def filter_headers(headers: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -175,7 +189,20 @@ def _decompress(body: bytes, headers: dict[str, list[str]]) -> bytes:
     return body
 
 
-def scrub_json_body(body: bytes) -> bytes:
+def _scrub_nested_fields(obj: Any) -> None:
+    """Blank the `SCRUBBED_NESTED_JSON_FIELDS` strings wherever they sit in a parsed JSON body."""
+    if isinstance(obj, dict):
+        for key, value in cast('dict[Any, Any]', obj).items():
+            if key in SCRUBBED_NESTED_JSON_FIELDS and isinstance(value, str):
+                obj[key] = 'scrubbed'
+            else:
+                _scrub_nested_fields(value)
+    elif isinstance(obj, list):
+        for item in cast('list[Any]', obj):
+            _scrub_nested_fields(item)
+
+
+def scrub_json_body(body: bytes, fields: tuple[str, ...] = SCRUBBED_JSON_FIELDS) -> bytes:
     """Normalize smart characters and blank the credentials a JSON body may carry.
 
     Some endpoints (e.g. resumable file uploads) send a non-JSON body under an `application/json`
@@ -187,9 +214,46 @@ def scrub_json_body(body: bytes) -> bytes:
         return body
     parsed = normalize_body(parsed)
     if is_str_dict(parsed):
-        for field in SCRUBBED_JSON_FIELDS:
+        for field in fields:
             if parsed.get(field) is not None:
                 parsed[field] = 'scrubbed'
+        if isinstance(signed_url := parsed.get('signed_url'), str):
+            parsed['signed_url'] = _SIGNED_URL_TOKEN.sub(r'\1=scrubbed', signed_url)
+    _scrub_nested_fields(parsed)
+    return json.dumps(parsed).encode('utf-8')
+
+
+def clear_access_programs(body: bytes | None, headers: dict[str, list[str]]) -> bytes | None:
+    """Clear the recording account's `access_programs` from an OpenAI Responses body.
+
+    The field sits at the top of a JSON response, and inside `response` in a streamed event. It becomes null, not a
+    string, because the SDK expects an object there. A body that doesn't parse is kept as it came.
+    """
+    if not body or b'"access_programs"' not in body:
+        return body
+    if _content_type(headers).startswith('text/event-stream') or body.startswith((b'event:', b'data:')):
+        return b'\n'.join(_clear_event_line(line) for line in body.split(b'\n'))
+    if _content_type(headers).startswith('application/json'):
+        return _clear_access_programs(body, None)
+    return body
+
+
+def _clear_event_line(line: bytes) -> bytes:
+    if not line.startswith(b'data:'):
+        return line
+    cleared = _clear_access_programs(line[5:], 'response')
+    return line if cleared == line[5:] else b'data: ' + cleared
+
+
+def _clear_access_programs(text: bytes, inside: str | None) -> bytes:
+    try:
+        parsed: Any = json.loads(text)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return text
+    target = parsed.get(inside) if inside and is_str_dict(parsed) else parsed
+    if not is_str_dict(target) or target.get('access_programs') is None:
+        return text
+    target['access_programs'] = None
     return json.dumps(parsed).encode('utf-8')
 
 
@@ -216,13 +280,15 @@ def scrub_xml_credentials(body: bytes) -> bytes:
     return text.encode('utf-8')
 
 
-def scrub_body(body: bytes | None, headers: dict[str, list[str]]) -> bytes | None:
+def scrub_body(
+    body: bytes | None, headers: dict[str, list[str]], json_fields: tuple[str, ...] = SCRUBBED_JSON_FIELDS
+) -> bytes | None:
     if not body:
         return body
     body = _decompress(body, headers)
     content_type = _content_type(headers)
     if content_type.startswith('application/json'):
-        return scrub_json_body(body)
+        return scrub_json_body(body, json_fields)
     if content_type.startswith('application/x-www-form-urlencoded'):
         return scrub_form_credentials(body)
     if content_type == 'text/xml':
@@ -245,5 +311,8 @@ def before_record_request(request: RawRequest) -> RawRequest:
 
 def before_record_response(response: RawResponse) -> RawResponse:
     response.headers = filter_headers(response.headers)
-    response.body = scrub_body(response.body, response.headers)
+    response.body = clear_access_programs(
+        scrub_body(response.body, response.headers, SCRUBBED_JSON_FIELDS + SCRUBBED_RESPONSE_JSON_FIELDS),
+        response.headers,
+    )
     return response

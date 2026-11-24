@@ -5,6 +5,7 @@ These tests start a local Temporal dev server via `WorkflowEnvironment.start_loc
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -26,7 +27,15 @@ except ImportError:  # pragma: lax no cover
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.messages import LoadCapabilityReturnPart, ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.skills import Skills
 from tests.temporal_utils import temporal_dev_server_cache_dir
@@ -47,11 +56,16 @@ _RESTRICTIONS = SandboxRestrictions.default.with_passthrough_modules('coverage',
 WORK = Path(__file__).parent / 'temporal_workspace'
 
 
+_STATEMENT = re.compile(r'<pyai:context id="capability:reviewer">\n(.*)\n</pyai:context>', re.DOTALL)
+
+
 def _load_reviewer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Load the `reviewer` skill, then answer with the instructions `load_capability` returned."""
-    loaded = [part for message in messages for part in message.parts if isinstance(part, LoadCapabilityReturnPart)]
-    if loaded:
-        return ModelResponse(parts=[TextPart(loaded[0].content.get('instructions', ''))])
+    """Load the `reviewer` skill, then answer with the instructions stated after the load."""
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, SystemPromptPart | UserPromptPart) and isinstance(part.content, str):
+                if statement := _STATEMENT.search(part.content):
+                    return ModelResponse(parts=[TextPart(statement.group(1))])
     return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'reviewer'})])
 
 
@@ -72,6 +86,37 @@ class SkillsWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await skills_agent.run(prompt)).output
+
+
+def _read_checklist(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Load the `reviewer` skill, read its checklist, then answer with what the read returned."""
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'reviewer'})])
+    for part in messages[-1].parts:
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'read_skill_file':
+            return ModelResponse(parts=[TextPart(str(part.content))])
+    return ModelResponse(
+        parts=[ToolCallPart('read_skill_file', {'skill': 'reviewer', 'path': 'references/checklist.md'})]
+    )
+
+
+files_agent = Agent(
+    FunctionModel(_read_checklist),
+    name='skill_files_agent',
+    deps_type=type(None),
+    capabilities=[
+        LocalWorkspace[None](WORK),
+        Skills[None]('skills', read_files=True),
+        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class SkillFilesWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await files_agent.run(prompt)).output
 
 
 @pytest.fixture(scope='module')
@@ -111,3 +156,22 @@ async def test_skills_are_read_through_the_durable_workspace(client: Client) -> 
         f'# Skill: reviewer\n\nSkill directory: `{directory}`. Relative paths in this skill resolve against it.'
         '\n\nCheck the tests.'
     )
+
+
+async def test_skill_files_are_read_in_an_activity(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SkillFilesWorkflow],
+        plugins=[AgentPlugin(files_agent)],
+        workflow_runner=SandboxedWorkflowRunner(restrictions=_RESTRICTIONS),
+    ):
+        output = await client.execute_workflow(
+            SkillFilesWorkflow.run,
+            'review this',
+            id='test_skill_files_temporal',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=25),
+        )
+
+    assert output == 'Run the full suite.\n'

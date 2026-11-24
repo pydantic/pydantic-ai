@@ -1,38 +1,49 @@
 from __future__ import annotations as _annotations
 
+import ast
 import asyncio
 import dataclasses
-import gc
 import importlib.util
-import logging
 import os
 import re
 import secrets
 import sys
 import warnings
-from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Coroutine, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from functools import cache
 from pathlib import Path
+from time import monotonic
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
 
 import httpx
 import httpx2
+import pydantic_core
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from cassetter import Cassette, RecordMode
+from coverage import Coverage
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    BinaryImage,
+    DeferredToolRequests,
+    DeprecatedModelWarning,
+    Embedder,
+    ImageGenerator,
+)
 from pydantic_ai._cache_health import ConversationCacheMarkStore
 from pydantic_ai.capabilities import instrumentation as instrumentation_capability
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -42,7 +53,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolCallPart,
     NativeToolReturnPart,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -52,11 +64,18 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from . import cassette_hooks, cost_guards
+from . import cassette_hooks, cost_guards, gc_isolation, span_schema
 from ._inline_snapshot import Builder, Custom, customize
+from ._ports import reserve_loopback_port
+from ._timeouts import READINESS_WAIT_TIMEOUT
 from .cassette_utils import check_cache_prefix_stability
+from .function_model_prefix import RequestRecorder, check_function_model_prefix_stability, patch_models
 
 # `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
 # (`logfire/_internal/json_schema.py`), and importing pandas reads timezone data from disk. When
@@ -68,13 +87,19 @@ from .cassette_utils import check_cache_prefix_stability
 with suppress(ImportError):
     import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
 
+# `openai` reads `aiohttp` package metadata at import (`openai/_vendor/httpx_aiohttp/transport.py`), a disk
+# read the detector reports when the first import happens inside an async test:
+# https://github.com/pydantic/pydantic-ai/issues/7660.
+with suppress(ImportError):
+    import openai  # pyright: ignore[reportUnusedImport] # noqa: F401
+
 T = TypeVar('T')
 
 # Like `try_import` for a whole directory: these suites need their workspace member installed, which
 # the `--package` matrix cells for other members do not do.
 collect_ignore = [
     directory
-    for directory, package in (('harness', 'pydantic_ai_harness'), ('clai2', 'pydantic_clai2'))
+    for directory, package in (('harness', 'pydantic_ai_harness'), ('pax', 'pydantic_ai_pax'))
     if importlib.util.find_spec(package) is None
 ]
 
@@ -99,11 +124,23 @@ __all__ = (
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
+_test_started_at = monotonic()
+"""When the running test's setup began, as a `monotonic()` reading. `IsNow` allows for the time since then."""
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup() -> None:
+    global _test_started_at
+    _test_started_at = monotonic()
+
+
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
 
 
 def pytest_configure(config: pytest.Config) -> None:
     config.pluginmanager.register(cost_guards, cost_guards.PLUGIN_NAME)
+    config.pluginmanager.register(gc_isolation, gc_isolation.PLUGIN_NAME)
+    config.pluginmanager.register(span_schema, span_schema.PLUGIN_NAME)
     config.addinivalue_line(
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
@@ -112,6 +149,25 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
     )
+    config.addinivalue_line(
+        'markers',
+        'realtime_ws_unsent_heartbeat(reason): a replay may end before its final recorded `pong` or idle-audio frame '
+        'goes out; reason required',
+    )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Save an `xdist` worker's coverage before the controller starts tearing the workers down.
+
+    Coverage saves at interpreter exit, but the worker first runs pytest's unconfigure cleanup, whose
+    repeated full `gc.collect()` takes seconds on a large heap. `pytest-xdist` kills a worker still
+    alive 10 seconds after it reports finishing, so a slow cleanup lost the worker's whole coverage
+    data. This hook runs before the worker reports finishing; the exit-time save still adds whatever
+    runs after it.
+    """
+    if hasattr(session.config, 'workerinput') and (coverage := Coverage.current()) is not None:
+        coverage.save()
 
 
 if TYPE_CHECKING:
@@ -131,6 +187,7 @@ if TYPE_CHECKING:
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
     def IsList(*args: T, **kwargs: Any) -> list[T]: ...
+
 else:
     from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsNumeric, IsStr
 
@@ -138,9 +195,9 @@ else:
         allowed_types = Decimal
 
     def IsNow(*args: Any, **kwargs: Any):
-        # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
-        if 'delta' not in kwargs:  # pragma: no branch
-            kwargs['delta'] = 10
+        # This allows for the time since the test began, so a runner that stalls between making a timestamp and building
+        # this comparison can't fail the test. One older than the test by more than `delta` still fails.
+        kwargs['delta'] = kwargs.get('delta', 10) + (monotonic() - _test_started_at)
         return _IsNow(*args, **kwargs)
 
     class IsSameStr(IsStr):
@@ -217,6 +274,19 @@ def strip_logfire_metrics(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for span in spans:
         span.get('attributes', {}).pop('logfire.metrics', None)
     return spans
+
+
+_GOOGLE_GENAI_USER_AGENT_LABEL = re.compile(r'google-genai-sdk/\S+ gl-python/\S+')
+
+
+def google_user_agents(request: httpx2.Request) -> list[str]:
+    """The request's user-agent lines, with google-genai's version label as `google-genai` and ours as `pydantic-ai`."""
+    return [
+        _GOOGLE_GENAI_USER_AGENT_LABEL.sub('google-genai', value).replace(
+            pydantic_ai.models.get_user_agent(), 'pydantic-ai'
+        )
+        for value in request.headers.get_list('user-agent')
+    ]
 
 
 SNAPSHOT_BYTES_COLLAPSE_THRESHOLD = 50
@@ -356,6 +426,27 @@ class TestEnv:
 
 
 @pytest.fixture
+def transport_limits(monkeypatch: pytest.MonkeyPatch) -> list[httpx.Limits | httpx2.Limits]:
+    """Record the `limits` every HTTPX transport (either family, sync or async) is constructed with.
+
+    HTTPX keeps the limits on its transport without a public accessor, so tests of connection pool
+    defaults record what each transport is handed instead.
+    """
+    recorded: list[httpx.Limits | httpx2.Limits] = []
+
+    for transport_class in (httpx2.HTTPTransport, httpx2.AsyncHTTPTransport, httpx.AsyncHTTPTransport):
+        original_init = transport_class.__init__
+
+        def recording_init(self: Any, *args: Any, _original_init: Any = original_init, **kwargs: Any) -> None:
+            recorded.append(kwargs['limits'])
+            _original_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(transport_class, '__init__', recording_init)
+
+    return recorded
+
+
+@pytest.fixture
 def env() -> Iterator[TestEnv]:
     test_env = TestEnv()
 
@@ -375,11 +466,16 @@ def anyio_backend(pytestconfig: pytest.Config) -> str:
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
-    # example printing from inside a running event loop trips the detector on the harness's own
-    # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
-    # code detectable.
+    # pytest-examples finds the caller of a captured `print()` with `inspect.stack()`, which resolves
+    # each frame's file with `os.path.abspath`, and matches it to the example with `Path.samefile`,
+    # which calls `os.stat`. An example printing from inside a running event loop trips the detector
+    # on the harness's own calls. Exempting the capture entry point leaves these calls from example
+    # and library code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
+    ('os.path.abspath', 'pytest_examples/run_code.py', '__call__'),
+    # On Windows, `ntpath.relpath` makes each path absolute with `GetFullPathNameW`, which reads no disk for
+    # the absolute paths the file tools pass it.
+    ('os.path.abspath', 'pydantic_ai_harness/file_system/_toolset.py', '_relative'),
     # The first-run banner asks whether the harness is installed and what version it is, to name it
     # in the banner. That happens once per process, before the first request.
     ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
@@ -426,7 +522,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     # A local workspace built with a relative `working_dir` resolves it against the current directory
     # once, at construction, which may happen in async code.
-    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
+    ('os.getcwd', 'pydantic_ai/workspaces/_host.py', '__init__'),
     # Prefect's `Task` reads its function's source for display when core builds a task, which the
     # durable workspace tests do while constructing an agent inside a running test.
     ('os.stat', 'prefect/tasks.py', '__init__'),
@@ -439,7 +535,256 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('io.TextIOWrapper.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedReader.read', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
     ('io.BufferedWriter.write', 'pydantic_evals/dataset.py', ('to_file', 'from_file', '_save_schema')),
+    # Prefect's async `LocalFileSystem.aread_path`/`awrite_path` still touch the disk synchronously; the
+    # durable capability operations persist their results through them. Its `_resolve_path` builds each result's
+    # storage path with `Path(basepath).resolve()`. Before Python 3.13 that calls `os.path.abspath` and stats the
+    # result; on Windows, `ntpath.realpath` also reads the current directory, even for an absolute path.
+    ('os.stat', 'prefect/filesystems.py', ('aread_path', 'awrite_path', '_resolve_path')),
+    ('os.mkdir', 'prefect/filesystems.py', 'awrite_path'),
+    ('os.path.abspath', 'prefect/filesystems.py', '_resolve_path'),
+    ('os.getcwd', 'prefect/filesystems.py', '_resolve_path'),
+    # `posixpath.relpath` calls `abspath`, which BlockBuster flags although it only reads the current directory
+    # for a relative path. The harness relativizes absolute workspace paths with it.
+    ('os.path.abspath', '<frozen posixpath>', 'relpath'),
+    ('os.path.abspath', 'posixpath.py', 'relpath'),
+    # Spawning a Monty worker pool locates the worker binary, once per pool.
+    ('os.stat', 'pydantic_monty/_binary.py', 'find_monty_binary'),
+    # Inside a Temporal workflow, Code Mode reaches Monty through a blocking portal, the only way to reach it
+    # there, so starting and stopping the portal and each call through it wait on the portal thread.
+    (
+        'threading.Lock.acquire',
+        'pydantic_ai_harness/_monty_exec.py',
+        ('get_session', 'call_monty', '_enter_monty', '_release_monty'),
+    ),
+    # `/sandbox local smol` looks for the `smolvm` CLI in the `PATH` directories, a few stats, to say what to install when
+    # the user runs `/sandbox local` or `/sandbox local smol`, or a run reopens its VM.
+    *((func, 'pydantic_ai_harness/_smolvm_cli.py', 'find_cli') for func in ('os.stat', 'os.access')),
+    # Capabilities resolve their executables, and clients their package versions, once when they're built.
+    *(
+        (func, f'pydantic_ai_harness/docker_container/{module}', constructor)
+        for func in ('os.stat', 'os.access', 'os.path.abspath')
+        for module, constructor in (('_capability.py', '__post_init__'), ('_backend.py', '__init__'))
+    ),
+    *(
+        (func, 'exa_py/utils.py', '_get_package_version')
+        for func in ('os.stat', 'os.listdir', 'os.path.abspath', 'io.TextIOWrapper.read')
+    ),
+    # Each Sprites exec opens a websocket with no `ssl` argument, and its SDK has no way to pass one, so asyncio builds
+    # the default TLS context on the event loop, about 0.2 ms on the CI runners. Only the live tier reaches this code.
+    ('os.stat', 'sprites/websocket.py', 'start'),
+    # Render's SDK touches its local file on the event loop while downloading, with no public API that avoids it.
+    # Only the live tier reaches this code; the deterministic tier replaces `copy_from`.
+    ('os.stat', 'render/experimental/sandbox/files.py', 'resolve_file_dest'),
+    ('os.path.abspath', 'render/experimental/sandbox/files.py', ('parent_dir', '__init__')),
+    ('io.BufferedWriter.write', 'render/experimental/sandbox/files.py', 'write'),
+    ('os.remove', 'render/experimental/sandbox/files.py', '__exit__'),
+    # The harness reads its own package metadata once per process (the lookup is cached) to name its version in
+    # client attribution metadata: the You.com `X-Client-Info` header and the MongoDB connection handshake.
+    ('os.stat', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('os.listdir', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/_version.py', 'harness_version'),
+    # PyMongo checks for `/.dockerenv` with a sync `Path.exists` whenever it builds pool options, including when an
+    # `AsyncMongoClient` opens its topology on the event loop, and offers no way to skip the check.
+    ('os.stat', 'pymongo/pool_options.py', 'get_container_env_info'),
+    # Each `browse_web` call builds browser-use's `Agent`, which imports its LLM adapters, reads its prompt
+    # templates, and sets up a scratch file system and screenshot directory. The build stays on the event loop
+    # because it goes through `BrowserAgentFactory`, which users can replace and which may need the running loop.
+    *(
+        (func, 'browser_use/agent/service.py', '__init__')
+        for func in (
+            'os.stat',
+            'os.mkdir',
+            'os.listdir',
+            'os.unlink',
+            'os.rmdir',
+            'io.TextIOWrapper.read',
+            'io.TextIOWrapper.write',
+            'io.BufferedReader.read',
+        )
+    ),
+    # browser-use creates its config directories the first time it reads one, and its PostHog telemetry client
+    # resolves the current directory when it's built; both happen once per process.
+    ('os.stat', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.mkdir', 'browser_use/config.py', '_ensure_dirs'),
+    ('os.getcwd', 'posthog/client.py', '__init__'),
+    # Starting a LocalStack container checks that the Docker socket it mounts exists, once per container.
+    ('os.stat', 'pydantic_ai_harness/localstack/_container.py', '_run_argv'),
+    # MCP clients' `pydantic-settings` read `.env` files when they're constructed, once per connection.
+    ('os.stat', 'pydantic_settings/sources/providers/dotenv.py', '_read_env_files'),
+    # An in-process MCP server reads its package version when a session initializes.
+    ('os.stat', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('os.listdir', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    ('io.TextIOWrapper.read', 'mcp/server/lowlevel/server.py', 'pkg_version'),
+    # jupyter-client starts and shuts down an IPython kernel with synchronous file I/O: it locates the
+    # kernelspec, reads config, and writes and removes the connection file, once per kernel.
+    *(
+        (func, 'jupyter_client/manager.py', ('_async_start_kernel', '_async_shutdown_kernel'))
+        for func in (
+            'os.stat',
+            'os.access',
+            'os.listdir',
+            'os.getcwd',
+            'os.path.abspath',
+            'os.readlink',
+            'os.read',
+            'os.remove',
+            'os.unlink',
+            'io.TextIOWrapper.read',
+            'io.TextIOWrapper.write',
+            'io.BufferedWriter.write',
+        )
+    ),
+    # The test blocks the agent loop on purpose, to check a run that never starts.
+    ('threading.Lock.acquire', 'tests/harness/aws_lambda/test_aws_lambda.py', 'block_loop'),
+    # pydantic-ai-pax reads keys once the event loop reports the terminal readable, and writes output straight to it.
+    ('os.read', 'prompt_toolkit/input/posix_utils.py', 'read'),
+    ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', '_key'),
+    ('os.read', 'pydantic_ai_pax/cli/shell_terminal.py', 'key'),
+    ('os.write', 'pydantic_ai_pax/cli/shell_terminal.py', 'pass_through'),
+    ('os.write', 'pydantic_ai_pax/cli/self_update.py', '_print_line'),
+    # On Windows, the socket pair that lets Ctrl+C wake the loop connects over loopback, once per turn.
+    ('socket.socket.accept', 'pydantic_ai_pax/ui/prompt/interrupts.py', '_wake'),
+    # Rich writes each render to its console's file: the terminal, `os.devnull` for a background agent, or a test's file.
+    ('io.TextIOWrapper.write', 'rich/console.py', '_write_buffer'),
+    ('io.BufferedWriter.write', 'rich/console.py', '_write_buffer'),
+    # `logging` handlers write each record synchronously, to a stream or to Pax's telemetry log file.
+    ('io.TextIOWrapper.write', 'logging/__init__.py', 'emit'),
+    ('io.BufferedWriter.write', 'logging/__init__.py', 'emit'),
+    # prompt-toolkit's `FileHistory` reads the input history when a prompt opens, and appends each entry it accepts.
+    *(
+        (func, 'prompt_toolkit/history.py', ('load_history_strings', 'store_string'))
+        for func in ('os.stat', 'io.BufferedReader.read', 'io.BufferedWriter.write')
+    ),
+    # Pygments looks plugin lexers up in installed packages' metadata when a code block names a language it doesn't ship.
+    *((func, 'pygments/plugin.py', 'iter_entry_points') for func in ('os.stat', 'os.listdir', 'io.TextIOWrapper.read')),
+    # FastAPI finds an endpoint's source file the first time it serves the route, and caches it.
+    ('os.stat', 'fastapi/routing.py', '_extract_endpoint_context'),
+    # beartype's import hook writes a module's bytecode cache the first time it imports it.
+    ('io.BufferedWriter.write', 'beartype/claw/_importlib/_clawimpfileloader.py', 'get_code'),
+    # Whether a process still runs is read from `/proc`, which the kernel serves from memory.
+    ('io.TextIOWrapper.read', 'pydantic_ai_harness/step_persistence/conversations.py', '_process_started'),
+    # Configuring logfire at session start waits for the instance it replaces to shut down.
+    ('threading.Lock.acquire', 'pydantic_ai_pax/builtin_plugins/logfire.py', '__init__'),
+    # A module's first import runs its top-level code, which can read files such as its package's metadata, and waits
+    # for the module's lock while another thread, such as Pax's import warm-up, imports it. The frames belong to
+    # importlib rather than the importing module, so these exemptions apply to every suite, not only `tests/pax`.
+    ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
+    ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
+    ('threading.Lock.acquire', '<frozen importlib._bootstrap>', ('_find_and_load', '_lock_unlock_module')),
+    # Under `coverage run`, the tracer takes coverage's own data lock when a call enters a measured file, on every such
+    # call with the C tracer. Another measured thread may hold it, but only for a dict lookup or insert.
+    ('threading.Lock.acquire', 'coverage/collector.py', 'lock_data'),
+    # A session, and a plugin host built outside the shell, work in the current directory unless given one.
+    ('os.getcwd', 'pydantic_ai_pax/runtime/session.py', '__init__'),
+    ('os.getcwd', 'pydantic_ai_pax/plugins/__init__.py', 'workspace'),
+    # The test's model holds another writer's lock on the session database open on purpose, on its own connection.
+    ('sqlite3.Connection.execute', 'tests/pax/test_sessions.py', 'model'),
 ]
+
+
+# pydantic-ai-pax keeps its settings, credentials, plugins, and logs in small local files and SQLite databases, which its
+# commands, menus, and startup read and write synchronously. These modules hold nothing but such stores. Every file and
+# database call beneath one of their functions is exempt, so list only synchronous code that does its own I/O. They are
+# exempt even where async code calls them on the event loop, as making the stores async is a separate redesign.
+BLOCKBUSTER_LOCAL_STORES: tuple[str, ...] = (
+    'src/pydantic_ai_pax/pydantic_ai_pax/config/credential_store.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/config/settings_store.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/mcp/store.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/workspaces/registry.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/ui/prompt/input_history.py',
+    'src/pydantic_ai_pax/pydantic_ai_pax/ui/telemetry_log.py',
+)
+
+
+# Synchronous functions elsewhere that do file and database I/O of their own, as (file, functions). Every file and
+# database call beneath them is exempt too, so never list an async function, nor a function an async function calls on
+# the event loop: offload that call instead. Most listed here have synchronous callers, such as menus that run in a
+# thread and tests that set up state. The deliberate exceptions, which async code still calls on the event loop, are
+# shell construction and plugin loading at startup and in `/plugins`, with the welcome banner and version they show,
+# since making them async is the same separate redesign as for the stores, and the status row's `spinners.json` read.
+BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
+    # pydantic-ai-pax's commands, menus, and sign-ins check and update its own small files in the user's folders.
+    ('pydantic_ai_pax/config/api_keys.py', ('save_key', 'load_keys')),
+    ('pydantic_ai_pax/config/project_settings.py', ('_present', 'load_project_settings')),
+    ('pydantic_ai_pax/ui/menus/key_menu.py', 'storage'),
+    ('pydantic_ai_pax/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
+    ('pydantic_ai_pax/builtin_plugins/logfire.py', 'credentials'),
+    ('pydantic_ai_pax/builtin_plugins/logfire_destination.py', ('remember', 'remembered')),
+    # The status row reads `spinners.json` on each repaint, so an edit shows on the next frame.
+    ('pydantic_ai_pax/ui/rendering/spinners.py', '_user_text'),
+    # A pasted path is checked to be an image file, which is then read and decoded, once per paste.
+    ('pydantic_ai_pax/ui/prompt/image_input.py', ('pasted_paths', '<genexpr>', 'read_image')),
+    # Plugins load from local files: their folder is created and listed, and each module read and imported, at load.
+    (
+        'pydantic_ai_pax/plugins/process_plugins.py',
+        ('_discover', 'project_files', 'import_module'),
+    ),
+    ('pydantic_ai_pax/plugins/factories.py', 'import_file'),
+    ('pydantic_ai_pax/plugins/describe.py', ('describe', '_source')),
+    # Installed packages' metadata, logfire's configuration, and the banner's font are read once per process or session,
+    # and logfire records a plugin that fails to load with its traceback, which reads the source files it quotes.
+    ('pydantic_ai_pax/cli/self_update.py', 'installed'),
+    ('pydantic_ai_pax/models/model_catalog.py', 'check_installed'),
+    ('pydantic_ai_pax/builtin_plugins/logfire.py', '__init__'),
+    ('pydantic_ai_pax/ui/telemetry.py', 'log_error'),
+    ('pydantic_ai_pax/ui/rendering/branding.py', 'print_banner'),
+    # Tests' stand-ins, and the plugins tests write, set up or record what happened in small files.
+    ('tests/pax/test_live_runtimes.py', 'folder'),
+    ('tests/pax/test_shell_passthrough.py', 'hold'),
+    ('tests/pax/test_plugin_git_cleanup.py', 'readonly_pack'),
+    ('/lifecycle_probe.py', 'record'),
+    ('/cwd_probe.py', 'get_capabilities'),
+]
+
+
+# Test doubles that serve a remote service from local files, processes or SQLite, synchronously. Any blocking call
+# made in one of their functions is the stand-in's own work; the harness code calling them stays checked.
+BLOCKBUSTER_TEST_DOUBLES: tuple[str, ...] = (
+    'tests/harness/_postgres_sqlite.py',
+    'tests/harness/boxd_sandbox/fake_boxd.py',
+    'tests/harness/boxlite_sandbox/fake_boxlite.py',
+    'tests/harness/daytona_sandbox/fake_daytona.py',
+    'tests/harness/e2b_sandbox/fake_e2b.py',
+    'tests/harness/kubernetes_sandbox/fake_sandboxd.py',
+    'tests/harness/opensandbox_sandbox/fake_opensandbox.py',
+    'tests/harness/render_sandbox/workspace_helpers.py',
+    'tests/harness/smol_sandbox/fake_smolvm.py',
+)
+
+
+# Third-party functions that do only blocking setup, as (file, function): any blocking call below one
+# is allowed. Exempted whole rather than call by call, so a dependency changing which file call it
+# makes inside does not fail the suite.
+BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
+    # The agent-sandbox SDK loads the in-cluster or kubeconfig credentials once per client, on first
+    # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
+    # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
+    ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
+    # Render's SDK reads its own package metadata for the User-Agent of each client it builds. Pax's
+    # `/sandbox render` builds one in its synchronous `reopen`, which cannot offload it, so that the key
+    # can come from `/keys`.
+    ('render/version.py', 'get_version'),
+    # MCP SDK v2 imports `jsonschema` on its first tool-result validation, which happens inside a call
+    # on the event loop; the import loads `jsonschema_specifications`' bundled schema files from disk once.
+    ('jsonschema_specifications/_core.py', '_schemas'),
+)
+
+
+def _function_names(path: str) -> tuple[str, ...]:
+    """Every function name a frame running code in `path` can have."""
+    tree = ast.parse((Path(__file__).parent.parent / path).read_text(encoding='utf-8'))
+    defined = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)}
+    return tuple(sorted(defined | {'<lambda>', '<genexpr>'}))
+
+
+def _blockbuster_packages() -> list[str]:
+    """The shipped packages the detector scans. The harness and Pax aren't installed in every CI lane (`pydantic-evals`)."""
+    optional = [
+        package
+        for package in ('pydantic_ai_harness', 'pydantic_ai_pax')
+        if importlib.util.find_spec(package) is not None
+    ]
+    return ['pydantic_ai', *optional, 'pydantic_graph', 'pydantic_evals', 'clai']
 
 
 def _configure_blockbuster(
@@ -450,14 +795,21 @@ def _configure_blockbuster(
     # must remain unaffected by that instrumentation.
     from blockbuster import BlockBuster
 
-    # The harness isn't installed in every CI lane (the `pydantic-evals` one, say).
-    harness = ['pydantic_ai_harness'] if importlib.util.find_spec('pydantic_ai_harness') is not None else []
-    bb = BlockBuster(
-        ['pydantic_ai', *harness, 'pydantic_graph', 'pydantic_evals', 'clai'],
-        excluded_modules=excluded_modules or None,
-    )
+    bb = BlockBuster(_blockbuster_packages(), excluded_modules=excluded_modules or None)
     for func, filename, functions in exemptions:
         bb.functions[func].can_block_in(filename, functions)
+    for path in BLOCKBUSTER_TEST_DOUBLES:
+        functions = _function_names(path)
+        for function in bb.functions.values():
+            function.can_block_in(path, functions)
+    for path, setup_function in BLOCKBUSTER_LIBRARY_SETUP:
+        for function in bb.functions.values():
+            function.can_block_in(path, setup_function)
+    local_io = [function for name, function in bb.functions.items() if name.startswith(('os.', 'io.', 'sqlite3.'))]
+    local_files = [*BLOCKBUSTER_LOCAL_FILES, *((path, _function_names(path)) for path in BLOCKBUSTER_LOCAL_STORES)]
+    for filename, functions in local_files:
+        for function in local_io:
+            function.can_block_in(filename, functions)
     return bb
 
 
@@ -505,33 +857,6 @@ def blockbuster(
     bb = _configured_blockbuster(blockbuster_excluded_modules)
     with _activated_blockbuster(bb):
         yield bb
-
-
-def detach_dbos_logging() -> None:
-    """Detach the OTel `LoggingHandler` and `DBOSLogTransformer` filter `DBOS.destroy()` leaves behind.
-
-    DBOS attaches them to the root logger and every registered logger (the filter always, the handler
-    with `enable_otlp=True`) and does not detach them on destroy. Their emit path imports
-    `dbos._context`, which imports `http.server`: fatal inside the Temporal workflow sandbox when a
-    later test in the same process runs a Temporal workflow.
-    TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
-    https://github.com/dbos-inc/dbos-transact-py/issues/871
-    """
-    from dbos import _logger as dbos_logger_module
-    from opentelemetry.sdk._logs import LoggingHandler
-
-    handler_types: tuple[type[logging.Handler], ...] = (LoggingHandler,)
-    # DBOS 2.31+ builds this one instead of the deprecated SDK handler.
-    with suppress(ImportError):
-        from opentelemetry.instrumentation.logging.handler import LoggingHandler as InstrumentationLoggingHandler
-
-        handler_types += (InstrumentationLoggingHandler,)
-
-    for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
-        for handler in [h for h in logger.handlers if isinstance(h, handler_types)]:
-            logger.removeHandler(handler)
-        for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
-            logger.removeFilter(log_filter)
 
 
 @pytest.fixture
@@ -586,6 +911,16 @@ def create_module(tmp_path: Path, request: pytest.FixtureRequest) -> Callable[[s
     return run
 
 
+def with_native_system_role(profile: ModelProfile) -> ModelProfile:
+    """A `profile=` that gives a model the native mid-conversation `system` role its default profile leaves off.
+
+    Claude Haiku 5.5 honors the role but defaults to the sealed `<system>` rendering
+    (`needs_sealed_system_blocks`), which measured better. Tests of the native machinery that were recorded on
+    it keep it this way, as an application that opts back into the role would.
+    """
+    return {**profile, 'supports_inline_system_prompts': True, 'needs_sealed_system_blocks': False}
+
+
 @contextmanager
 def try_import() -> Generator[Callable[[], bool]]:
     import_success = False
@@ -615,6 +950,25 @@ class UndrivableEventLoop(asyncio.AbstractEventLoop):
     This is how Temporal's workflow event loop behaves: it subclasses `asyncio.AbstractEventLoop` and never
     implements `run_until_complete()`, so calling that raises a bare `NotImplementedError` from CPython.
     """
+
+
+@pytest.fixture
+def fresh_event_loop_policy() -> Iterator[None]:
+    """A policy with no current loop, as in a fresh interpreter's main thread, restoring the previous one after.
+
+    Policies are deprecated from Python 3.14, where the tests using this are skipped.
+    """
+    previous = asyncio.get_event_loop_policy()  # pyright: ignore[reportDeprecated]
+    policy = asyncio.DefaultEventLoopPolicy()
+    asyncio.set_event_loop_policy(policy)  # pyright: ignore[reportDeprecated]
+    try:
+        yield
+    finally:
+        # The loop the run set on the policy; asyncio keeps it in a private thread-local.
+        loop: asyncio.AbstractEventLoop | None = getattr(getattr(policy, '_local'), '_loop')
+        if loop is not None:  # pragma: no branch
+            loop.close()
+        asyncio.set_event_loop_policy(previous)  # pyright: ignore[reportDeprecated]
 
 
 @contextmanager
@@ -656,20 +1010,42 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
         asyncio.set_event_loop(original_loop)
 
 
-@pytest.fixture
-def young_gc() -> Iterator[None]:
-    """Limit the test's `gc.collect()` calls to the objects it creates.
+@contextmanager
+def no_leaked_tasks(loop: asyncio.AbstractEventLoop | None = None) -> Generator[None]:
+    """Fail if a task started inside the block is still running at its end.
 
-    A full collection walks every object the worker has accumulated, which takes seconds per call
-    late in a CI run. Freezing everything that exists before the test keeps it out of the collector's
-    reach until teardown, so collections stay cheap, and garbage leaked by an earlier test can't be
-    finalized (and raise an unraisable exception or `ResourceWarning`) in the middle of this one.
+    Tasks already running at entry are ignored. Pass `loop` when the test drives that loop itself instead of running
+    on it.
     """
-    gc.freeze()
-    try:
-        yield
-    finally:
-        gc.unfreeze()
+    before = asyncio.all_tasks(loop)
+    yield
+    assert asyncio.all_tasks(loop) - before == set()
+
+
+async def assert_cancellation_leaks_no_tasks(
+    start: Callable[[], Coroutine[Any, Any, object]], *, max_ticks: int = 500
+) -> None:
+    """Cancel `start()` after 0, 1, 2, ... event loop ticks, failing if a cancelled run leaves a task it started pending.
+
+    Stops at the first run that completes before its cancellation arrives, by which point every tick of it has been
+    covered.
+    """
+    for ticks in range(max_ticks):  # pragma: no branch
+        with no_leaked_tasks():
+            task = asyncio.create_task(start())
+            for _ in range(ticks):
+                await asyncio.sleep(0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                completed = False
+            else:
+                completed = True
+            await asyncio.sleep(0)
+        if completed:
+            return
+    pytest.fail(f'run never completed within {max_ticks} ticks')  # pragma: no cover
 
 
 @pytest.fixture(autouse=True)
@@ -684,6 +1060,90 @@ def fresh_cache_mark_store(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prompt-cache marks are kept process-wide per conversation; tests that reuse a fixed conversation
     id (or pin the clock) must not see each other's."""
     monkeypatch.setattr(instrumentation_capability, '_conversation_cache_marks', ConversationCacheMarkStore())
+
+
+DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
+    # Anthropic, retires 2026-06-15: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-sonnet-4-20250514',
+    # Anthropic, retires 2026-08-05: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-1-20250805',
+    # Anthropic, retires 2026-11-30: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-sonnet-4-5',
+    'claude-sonnet-4-5-20250929',
+    # Anthropic, retires 2027-01-22: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-5',
+    'claude-opus-4-5-20251101',
+    # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-mythos-preview',
+    # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4.5-preview',
+    # OpenAI, retires 2025-10-27: https://github.com/pydantic/pydantic-ai/issues/14037
+    'o1-mini',
+    # OpenAI, retires 2026-05-07: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4o-audio-preview',
+    # OpenAI, retires 2026-07-23: https://github.com/pydantic/pydantic-ai/issues/14037
+    'computer-use-preview',
+    # OpenAI, retires 2026-10-23: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-4.1-nano',
+    'o3-mini',
+    'o4-mini',
+    # OpenAI, retires 2026-12-11: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-5-pro',
+    'o3',
+    # OpenAI, retires 2027-01-20: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-audio-mini',
+    # OpenAI, retires 2027-04-01: https://github.com/pydantic/pydantic-ai/issues/14037
+    'gpt-5.4-nano',
+)
+"""Models the suite's recordings and mocks use, which their providers have since deprecated.
+
+Grouped by the provider's announcement, each group with its retirement date and the issue tracking the move of its
+tests to a current model. See `ignore_deprecated_models_in_recordings`.
+"""
+
+
+def ignore_deprecated_models_in_recordings(record_mode: str | None) -> None:
+    """Ignore the deprecation warnings for `DEPRECATED_MODELS_IN_RECORDINGS`, unless the run records cassettes.
+
+    Replaying an existing recording against one of these models is fine, but recording a new one must fail, so a test
+    moves to a current model before it's re-recorded. That covers Pydantic AI's `DeprecatedModelWarning` and the
+    `anthropic` SDK's own `DeprecationWarning` for the models in its table, which pytest shows.
+    """
+    if record_mode not in (None, 'none'):
+        return
+    model_ids = '|'.join(map(re.escape, DEPRECATED_MODELS_IN_RECORDINGS))
+    warnings.filterwarnings('ignore', f"Model '[^']*:(?:{model_ids})' is deprecated", DeprecatedModelWarning)
+    warnings.filterwarnings('ignore', f"The model '(?:{model_ids})' is deprecated", DeprecationWarning)
+
+
+@pytest.fixture(autouse=True)
+def replay_deprecated_models(request: pytest.FixtureRequest) -> None:
+    ignore_deprecated_models_in_recordings(request.config.getoption('record_mode'))
+
+
+@pytest.fixture
+def restore_native_tool_types() -> Iterator[None]:
+    """Restore `NATIVE_TOOL_TYPES` after the test, which defines native tool types that register for the process."""
+    registered = dict(NATIVE_TOOL_TYPES)
+    yield
+    NATIVE_TOOL_TYPES.clear()
+    NATIVE_TOOL_TYPES.update(registered)
+
+
+class _NoSchema:
+    """A type pydantic can't build a schema for."""
+
+
+@pytest.fixture
+def native_tool_type_without_schema(restore_native_tool_types: None) -> None:
+    """Register a native tool type with a field pydantic can't build a schema for, which fails the native tool union."""
+
+    @dataclass(kw_only=True)
+    class NoSchemaTool(AbstractNativeTool):
+        kind: str = 'no_schema'
+        value: _NoSchema = field(default_factory=_NoSchema)
 
 
 try:
@@ -731,7 +1191,12 @@ def prefect_test_server() -> Iterator[None]:
     short connect timeout that flakes on slow runners.
     """
     pytest.importorskip('prefect')
-    from prefect.settings import PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED, temporary_settings
+    import prefect.testing.utilities
+    from prefect.settings import (
+        PREFECT_API_REQUEST_TIMEOUT,
+        PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED,
+        temporary_settings,
+    )
     from prefect.testing.utilities import prefect_test_harness
 
     # The task-run recorder is a background writer against the same sqlite file the flows write to.
@@ -739,15 +1204,26 @@ def prefect_test_server() -> Iterator[None]:
     # recorder's bulk inserts exhaust it, failing the flow whose state it was recording. Nothing
     # here reads what it records: task run states reach the API through the task engine.
     with (
-        temporary_settings({PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False}),
-        prefect_test_harness(server_startup_timeout=120),
+        pytest.MonkeyPatch.context() as monkeypatch,
+        temporary_settings(
+            {
+                PREFECT_SERVER_SERVICES_TASK_RUN_RECORDER_ENABLED: False,
+                # The client's default request timeout is that same 60s, but a state change the server has read
+                # can wait that long for the write lock, and longer on a stalled runner. It then commits after the
+                # client gave up, and the client resends it: a resent `Failed` replaces the `AwaitingRetry` the
+                # server just stored, so a `@flow(retries=...)` run ends instead of retrying. A client that
+                # outwaits the server gets every reply: the committed state, or a 503 it can safely retry when
+                # the lock wait runs out.
+                PREFECT_API_REQUEST_TIMEOUT: READINESS_WAIT_TIMEOUT,
+            }
+        ),
     ):
-        yield
-    # Prefect's test server leaves client sockets for GC on Python 3.14; collect them here, where the
-    # warning is expected, rather than in whichever test the collector happens to run in.
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='unclosed.*socket', category=ResourceWarning)
-        gc.collect()
+        # The harness picks its port by binding port 0 and closing the socket, which leaves the port free
+        # for the 15-25s uvicorn takes to bind it. A server another worker starts meanwhile, such as a
+        # Temporal dev server, can be handed it and answer the harness's health check, failing its setup.
+        monkeypatch.setattr(prefect.testing.utilities, '_find_available_port', reserve_loopback_port)
+        with prefect_test_harness(server_startup_timeout=120):
+            yield
 
 
 def raise_if_exception(e: Any) -> None:
@@ -849,8 +1325,77 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
     check_cache_prefix_stability(request.node, vcr)
 
 
+@pytest.fixture(autouse=True)
+def fail_function_model_prefix_violations(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
+    """Check the prompt-cache prefix of `FunctionModel` and `TestModel` conversations, which no cassette records."""
+    if request.node.get_closest_marker('benchmark') is not None:
+        # Recording copies every request inside the code a benchmark measures.
+        yield
+        return
+    recorder = RequestRecorder()
+    patch_models(monkeypatch, recorder)
+    yield
+    setup_report = getattr(request.node, 'rep_setup', None)
+    call_report = getattr(request.node, 'rep_call', None)
+    if any(
+        getattr(report, 'skipped', False) or getattr(report, 'failed', False) for report in (setup_report, call_report)
+    ):
+        return
+    check_function_model_prefix_stability(request.node, recorder.requests)
+
+
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
 _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
+
+
+def gave_up_on(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+) -> Callable[[httpx2.Request], httpx2.Response]:
+    """A mock transport handler raising what a retrying transport raises once it gave up on `handler`'s response.
+
+    That's the `HTTPStatusError` its `validate_response` raised for the error status, carrying the response, which
+    the provider SDK then never sees.
+    """
+
+    def gave_up(request: httpx2.Request) -> httpx2.Response:
+        response = handler(request)
+        raise httpx2.HTTPStatusError(f'Error status {response.status_code}', request=request, response=response)
+
+    return gave_up
+
+
+def retrying_client(handler: Callable[[httpx2.Request], httpx2.Response]) -> httpx2.AsyncClient:
+    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status.
+
+    Once it gives up, it raises the transport's `HTTPStatusError` rather than return the status to the provider SDK.
+    """
+    # Imported here rather than at module scope: `tenacity` is an optional dependency.
+    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
+
+    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
+
+    def validate_response(response: httpx2.Response) -> None:
+        response.raise_for_status()
+
+    transport = AsyncHTTPX2TenacityTransport(
+        config=RetryConfig(
+            retry=retry_if_exception_type(httpx2.HTTPStatusError),
+            wait=wait_none(),
+            stop=stop_after_attempt(3),
+            reraise=True,
+        ),
+        wrapped=httpx2.MockTransport(handler),
+        validate_response=validate_response,
+    )
+    return httpx2.AsyncClient(transport=transport)
+
+
+def decode_request_body(content: bytes, headers: httpx2.Headers) -> bytes:
+    """Decode a wire request using HTTPX's content-encoding support."""
+    return httpx2.Response(200, content=content, headers=headers).content
+
 
 # What `httpx2.AsyncClient()` uses when no timeout is passed.
 _HTTPX_DEFAULT_TIMEOUT = 5.0
@@ -900,8 +1445,8 @@ class RequestCapture:
     def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
         """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
         return [
-            _REQUEST_BODY_ADAPTER.validate_json(raw)
-            for path, raw in zip(self.paths, self.raw_bodies)
+            _REQUEST_BODY_ADAPTER.validate_json(decode_request_body(raw, headers))
+            for path, raw, headers in zip(self.paths, self.raw_bodies, self.headers)
             if path.endswith(path_suffix)
         ]
 
@@ -1112,6 +1657,11 @@ def openai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def moonshotai_api_key() -> str:
+    return os.getenv('MOONSHOTAI_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def azure_api_key() -> str:
     return os.getenv('AZURE_OPENAI_API_KEY', 'mock-api-key')
 
@@ -1189,6 +1739,7 @@ def _patch_hf_provider_mappings():
         ('together', 'meta-llama/Llama-4-Scout-17B-16E-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-VL-72B-Instruct', 'conversational'),
         ('nebius', 'Qwen/Qwen2.5-72B-Instruct', 'conversational'),
+        ('groq', 'openai/gpt-oss-120b', 'conversational'),
     ]
 
     for provider, model_id, task in models:
@@ -1217,6 +1768,11 @@ def xai_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def elevenlabs_api_key() -> str:
+    return os.getenv('ELEVENLABS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def tavily_api_key() -> str:
     return os.getenv('TAVILY_API_KEY', 'mock-api-key')
 
@@ -1229,6 +1785,16 @@ def zai_api_key() -> str:
 @pytest.fixture(scope='session')
 def crusoe_api_key() -> str:
     return os.getenv('CRUSOE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def fireworks_api_key() -> str:
+    return os.getenv('FIREWORKS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def deepinfra_api_key() -> str:
+    return os.getenv('DEEPINFRA_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
@@ -1360,9 +1926,9 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
-    # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):
+def vertex_provider(request: pytest.FixtureRequest, vertex_provider_auth: None):  # pragma: lax no cover
+    record_mode = cast(Any, request.config).getoption('record_mode')
+    if not os.getenv('CI', False) and record_mode not in {'all', 'new_episodes', 'rewrite'}:
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
@@ -1402,7 +1968,7 @@ def model(
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
 
-            return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+            return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
         elif request.param == 'mistral':
             from pydantic_ai.models.mistral import MistralModel
             from pydantic_ai.providers.mistral import MistralProvider
@@ -1465,7 +2031,37 @@ def disable_ssrf_protection_for_vcr():
         yield
 
 
-_RequestPartT = TypeVar('_RequestPartT', bound=SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart)
+def legacy_retry_prompt_part(
+    content: list[pydantic_core.ErrorDetails] | str,
+    *,
+    tool_name: str | None = None,
+    tool_call_id: str | None = None,
+    timestamp: datetime | None = None,
+) -> RetryPromptPart:  # pyright: ignore[reportDeprecated]
+    """Build the deprecated `RetryPromptPart` for a test that exercises how a legacy part is handled.
+
+    `filterwarnings = ["error"]` turns the deprecation into a failure, and every one of these tests
+    wants the part, not the warning — `test_retry_feedback.py` owns proving that it fires.
+    """
+    # TODO(v3): remove `legacy_retry_prompt_part` along with `RetryPromptPart`
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+        part = RetryPromptPart(content=content, tool_name=tool_name)  # pyright: ignore[reportDeprecated]
+    if tool_call_id is not None:
+        part.tool_call_id = tool_call_id
+    if timestamp is not None:
+        part.timestamp = timestamp
+    return part
+
+
+_RequestPartT = TypeVar(
+    '_RequestPartT',
+    bound=SystemPromptPart
+    | UserPromptPart
+    | ToolReturnPart
+    | RetryPromptPart  # pyright: ignore[reportDeprecated]
+    | RetryFeedbackPart,
+)
 _ResponsePartT = TypeVar(
     '_ResponsePartT',
     bound=TextPart | ToolCallPart | NativeToolCallPart | NativeToolReturnPart | ThinkingPart | FilePart,
@@ -1516,6 +2112,56 @@ def message_part(
     part = msg.parts[part_index]
     assert isinstance(part, part_type)
     return part
+
+
+def conversation_view(messages: Sequence[ModelMessage]) -> list[str]:
+    """One line per prompt, text, tool call and tool return part in `messages`, as the model is shown them."""
+    view: list[str] = []
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolCallPart):
+                view.append(f'call {part.tool_call_id}')
+            elif isinstance(part, ToolReturnPart):
+                view.append(f'return {part.tool_call_id}: {part.content}')
+            elif isinstance(part, (UserPromptPart, SystemPromptPart, TextPart)):  # pragma: no branch
+                view.append(f'{part.part_kind}: {part.content}')
+    return view
+
+
+def server_history_agent(
+    toolsets: Sequence[AbstractToolset[None]] = (),
+) -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
+    """An agent for the UI adapters' server-held history tests, with the model requests and tool runs it records.
+
+    It calls `get_location` for "where am I?" and the approval-gated `delete_file` for "delete a.txt", and answers
+    `ok` otherwise. Pass the frontend `get_location` tool as `toolsets` for a protocol that doesn't send it.
+    """
+    requests: list[list[ModelMessage]] = []
+    deleted: list[str] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        last = messages[-1].parts[-1]
+        if isinstance(last, UserPromptPart) and last.content == 'where am I?':
+            yield {0: DeltaToolCall(name='get_location', json_args='{}', tool_call_id='loc-1')}
+        elif isinstance(last, UserPromptPart) and last.content == 'delete a.txt':
+            yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='del-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        toolsets=toolsets,
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        deleted.append(path)
+        return f'Deleted {path}'
+
+    return agent, requests, deleted
 
 
 # endregion

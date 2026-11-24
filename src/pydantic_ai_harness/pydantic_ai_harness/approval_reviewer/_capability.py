@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Literal
@@ -31,8 +30,9 @@ from pydantic_ai.tools import (
 from .._judge import (
     JudgeAnswer,
     SerializableToolSelector,
+    ask_claimed,
     claim_offset_limits,
-    claim_request,
+    judge_span,
     reported_confidence,
     tool_call_prompt,
 )
@@ -81,10 +81,11 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
     [`ToolCallJudge`][pydantic_ai_harness.tool_call_judge.ToolCallJudge] when calls should also
     be blocked.
 
-    `tools` is a
-    [`ToolSelector`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.ToolSelector):
-    `'all'` (the default), a list of tool names, a metadata match, or a predicate. Approval
-    requests for other tools go to the person unreviewed.
+    `tools` is a [`ToolSelector`][pydantic_ai.tools.ToolSelector]: `'all'` (the default), a list
+    of tool names, a metadata match, or a predicate. Approval requests for other tools go to the
+    person unreviewed. `'all'` also covers approval requests raised by a `ToolGuardrail` or a
+    `ToolCallJudge`, and by any approval-required tool added later, all under the one `question`,
+    so name the tools the question was written for.
 
     By default the reviewer is shown only the tool name and the arguments the person would be
     shown. Set `include_conversation=True` when the question cannot be answered from the call
@@ -104,10 +105,11 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
 
     reviewer = ApprovalReviewer(
         'anthropic:claude-haiku-5-5',
+        tools=['run_shell'],
         question='Could this destroy data, spend money, or leak secrets?',
     )
     agent = Agent(
-        'anthropic:claude-fable-5-1',
+        'anthropic:claude-fable-5-2',
         capabilities=[reviewer],
         output_type=[str, DeferredToolRequests],
     )
@@ -132,14 +134,17 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
     """Token budget for the conversation, when `include_conversation` is set.
 
     The rendered transcript is clamped to its most recent tokens (estimated at ~4 characters
-    per token), so the reviewer sees the latest turns and per-review cost stays bounded.
+    per token), so the reviewer sees the latest turns. The call's own arguments are always sent
+    in full.
     """
 
     on_review: Callable[[ApprovalReview], None] | None = field(default=None, repr=False)
     """Optional callback invoked with each review, for application code and tests.
 
-    Under durable execution it runs again on every replay, with the recorded review, so a callback
-    that writes to an external sink should deduplicate on `tool_call_id`.
+    An exception it raises is not caught: it ends the run, and approvals already made in the same
+    batch are not applied. Under durable execution it runs again on every replay, with the
+    recorded review, so a callback that writes to an external sink should deduplicate on
+    `tool_call_id`.
     """
 
     _reviewer: Agent[None, JudgeAnswer] = field(init=False, repr=False, compare=False)
@@ -155,7 +160,7 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
             name='approval_reviewer',
             deps_type=type(None),
             instructions=_REVIEWER_INSTRUCTIONS.format(question=self.question),
-            output_type=Literal['yes', 'no', 'unsure'],
+            output_type=JudgeAnswer,
         )
         # The reviewer's prompt carries the call's arguments, so it must not inherit global
         # instrumentation that could ignore the host agent's content or opt-out settings.
@@ -231,13 +236,6 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
         does not receive happens here, in orchestration context. Only the prompt crosses into `_ask`.
         """
         args = call.args_as_dict()
-        attributes: dict[str, str | bool | float] = {
-            'approval_reviewer.tool': call.tool_name,
-            'approval_reviewer.tool_call_id': call.tool_call_id,
-        }
-        if ctx.trace_include_content:
-            attributes['approval_reviewer.arguments'] = json.dumps(args, default=str)
-
         prompt = tool_call_prompt(
             ctx.messages,
             call.tool_name,
@@ -245,23 +243,8 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
             include_conversation=self.include_conversation,
             conversation_window=self.conversation_window,
         )
-        with ctx.tracer.start_as_current_span('review tool approval', attributes=attributes) as span:
-            answer: JudgeAnswer | None = None
-            confidence: float | None = None
-            try:
-                claim_request(ctx)
-                try:
-                    answer, confidence = await self._ask(ctx, prompt)
-                finally:
-                    ctx.usage.requests -= 1
-            except Exception as error:
-                if span.is_recording():
-                    span.set_attribute('approval_reviewer.model_result', 'error')
-                    span.set_attribute('approval_reviewer.error.type', type(error).__name__)
-            else:
-                if span.is_recording():
-                    span.set_attribute('approval_reviewer.model_result', answer)
-
+        with judge_span(ctx, 'review tool approval', 'approval_reviewer', call, args) as span:
+            answer, confidence = await ask_claimed(ctx, span, 'approval_reviewer', lambda: self._ask(ctx, prompt))
             review = ApprovalReview(
                 tool_name=call.tool_name,
                 tool_call_id=call.tool_call_id,

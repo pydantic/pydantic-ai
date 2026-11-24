@@ -105,6 +105,7 @@ class WorkspaceCall:
     shell: bool = False
     env: dict[str, str] | None = None
     timeout: float | None = None
+    cwd: str | None = None
 
     async def execute(self, workspace: Workspace) -> WorkspaceCallResult:
         match self.method:
@@ -121,7 +122,9 @@ class WorkspaceCall:
                 return WorkspaceCallResult(text=working_dir, ref=workspace.ref)
             case 'run':
                 return WorkspaceCallResult(
-                    command=await workspace.run(self.command, shell=self.shell, env=self.env, timeout=self.timeout)
+                    command=await workspace.run(
+                        self.command, shell=self.shell, env=self.env, timeout=self.timeout, cwd=self.cwd
+                    )
                 )
             case 'read_bytes':
                 return WorkspaceCallResult(data=await workspace.read_bytes(self.path))
@@ -156,7 +159,9 @@ class WorkspaceCallParams:
 
 class WorkspaceCallCacheIdentity(CacheIdentity[WorkspaceCallParams]):
     def project(self, params: WorkspaceCallParams) -> tuple[object, ...]:
-        return (params.call, params.ref)
+        # Keep run_id last: PrefectOperationBackend reads the tail for its per-run counter.
+        # _bind_workspace_operation binds this projection with the WORKSPACE_OPERATION_ID singleton.
+        return (params.call, params.ref, params.run_context.run_id)
 
 
 _EXPECTED_ERRORS: tuple[type[Exception], ...] = (
@@ -296,11 +301,12 @@ class DurableWorkspace(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> CommandResult:
         if not self._in_container():
-            return await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
+            return await self.wrapped.run(command, shell=shell, env=env, timeout=timeout, cwd=cwd)
         call = WorkspaceCall(
-            method='run', command=command, shell=shell, env=dict(env) if env else None, timeout=timeout
+            method='run', command=command, shell=shell, env=dict(env) if env else None, timeout=timeout, cwd=cwd
         )
         result = (await self._call(call)).command
         assert result is not None

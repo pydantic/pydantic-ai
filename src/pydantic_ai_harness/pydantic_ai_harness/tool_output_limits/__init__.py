@@ -5,11 +5,13 @@ truncating, spilling to a queryable file, or summarizing -- so an oversized payl
 not persist in history and get re-sent on every later model request. Combine the three
 modes through an ordered list of size `bands`.
 
-Spilled payloads are written to the run's workspace by default (`WorkspaceStore`) and read
-back on demand through the registered `read_tool_result` tool; the `OverflowStore` protocol
-is the seam for any other backend.
+Spilled payloads are written to the run's workspace by default (`WorkspaceOverflowStore`) and read
+back on demand through the registered `read_tool_result` and `grep_tool_result` tools. For spills in
+the run's workspace, `FileSystem`'s tools replace them. The `OverflowStore`
+protocol is the seam for any other backend.
 """
 
+from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -19,20 +21,29 @@ from pydantic_ai_harness.tool_output_limits._bands import (
     SummarizeFunc,
     Truncate,
 )
-from pydantic_ai_harness.tool_output_limits._capability import READ_TOOL_NAME, ToolOutputLimits
+from pydantic_ai_harness.tool_output_limits._capability import (
+    GREP_TOOL_NAME,
+    GREP_TOOL_RESULT_KIND,
+    READ_TOOL_NAME,
+    READ_TOOL_RESULT_KIND,
+    ToolOutputLimits,
+)
 from pydantic_ai_harness.tool_output_limits._payload import (
     Serializer,
     TruncationStrategy,
     indented_json,
     json_lines,
 )
-from pydantic_ai_harness.tool_output_limits._store import LocalFileStore, OverflowStore, WorkspaceStore
+from pydantic_ai_harness.tool_output_limits._store import LocalFileOverflowStore, OverflowStore, WorkspaceOverflowStore
 
 __all__ = [
+    'GREP_TOOL_NAME',
+    'GREP_TOOL_RESULT_KIND',
     'READ_TOOL_NAME',
+    'READ_TOOL_RESULT_KIND',
     'Action',
     'Band',
-    'LocalFileStore',
+    'LocalFileOverflowStore',
     'OverflowStore',
     'Serializer',
     'ToolOutputLimits',
@@ -42,7 +53,17 @@ __all__ = [
     'SummarizeFunc',
     'Truncate',
     'TruncationStrategy',
-    'WorkspaceStore',
+    'WorkspaceOverflowStore',
     'indented_json',
     'json_lines',
 ]
+
+_RENAMED = {'LocalFileStore': LocalFileOverflowStore, 'WorkspaceStore': WorkspaceOverflowStore}
+
+
+def __getattr__(name: str) -> object:
+    renamed = _RENAMED.get(name)
+    if renamed is not None:
+        warn_class_renamed(name, renamed.__name__, __name__)
+        return renamed
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

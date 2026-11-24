@@ -5,12 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-import httpx
+import httpx2
 import pytest
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from mcp.server.fastmcp.server import FastMCP, Settings
-from mcp.types import ToolAnnotations
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -21,16 +19,15 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.posthog import PostHog
+from tests.harness._hosted_mcp import mcp_connection, only_leaf
 
-# The MCP SDK leaves a settings annotation unresolved in some supported dependency
-# combinations. Rebuild it before warnings are escalated by the test suite.
-Settings.model_rebuild()
+from .._mcp_server import NOT_READ_ONLY, READ_ONLY, MCPServer
 
 DepsT = TypeVar('DepsT')
 
 
 def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
-    assert isinstance(toolset, MCPToolset)
+    toolset = mcp_connection(toolset)
     transport = toolset.client.transport
     assert isinstance(transport, StreamableHttpTransport)
     return transport
@@ -39,7 +36,7 @@ def _http_transport(toolset: AbstractToolset[DepsT]) -> StreamableHttpTransport:
 def bearer(toolset: AbstractToolset[DepsT]) -> str:
     auth = _http_transport(toolset).auth
     assert auth is not None
-    request = next(auth.auth_flow(httpx.Request('POST', 'https://example.com/mcp')))
+    request = next(auth.auth_flow(httpx2.Request('POST', 'https://example.com/mcp')))
     return request.headers['Authorization']
 
 
@@ -64,20 +61,20 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 class TestPostHog:
     async def test_agent_runs_with_posthog_tools(self) -> None:
-        server = FastMCP('posthog-fake')
+        server = MCPServer('posthog-fake')
 
         @server.tool()
         def insight_query() -> dict[str, str]:
             """Query PostHog insights."""
             return {'name': 'Weekly signups'}
 
-        agent = Agent(TestModel(call_tools=['insight_query']), capabilities=[PostHog(client=server)])
+        agent = Agent(TestModel(call_tools=['posthog_insight_query']), capabilities=[PostHog(client=server)])
         result = await agent.run('Show weekly signups')
         assert 'Weekly signups' in result.output
 
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
-        server = FastMCP('posthog-fake', instructions='PostHog instructions.')
+        server = MCPServer('posthog-fake', instructions='PostHog instructions.')
         agent = Agent(TestModel(call_tools=[]), capabilities=[PostHog(client=server, include_instructions=include)])
         request = (await agent.run('Hello')).all_messages()[0]
         assert isinstance(request, ModelRequest)
@@ -98,8 +95,7 @@ class TestPostHog:
     )
     def test_hosted_connection_forwards_include_instructions(self, capability: PostHog[None], include: bool) -> None:
         # `MCPToolset` defaults to False, so this proves the capability passes its own setting on.
-        toolset = capability.get_toolset()
-        assert isinstance(toolset, MCPToolset)
+        toolset = mcp_connection(capability.get_toolset())
         assert toolset.include_instructions is include
 
     def test_environment_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,6 +125,11 @@ class TestPostHog:
         with pytest.raises(UserError, match='`client` owns the connection'):
             PostHog[str | None](client='https://example.com/mcp', auth=auth, features=features)
 
+    def test_client_accepts_empty_auth(self) -> None:
+        # The `auth` table documents `''` as unset, so it does not conflict with `client`.
+        toolset = PostHog[None](client='https://example.com/mcp', auth='').get_toolset()
+        assert _http_transport(toolset).url == 'https://example.com/mcp'
+
     @pytest.mark.parametrize(
         'capability',
         [
@@ -139,7 +140,7 @@ class TestPostHog:
         ids=['token', 'function', 'client'],
     )
     def test_custom_id_is_forwarded(self, capability: PostHog[str | None]) -> None:
-        assert capability.get_toolset().id == 'tenant-posthog'
+        assert only_leaf(capability.get_toolset()).id == 'tenant-posthog'
 
     def test_defer_loading_needs_no_id(self) -> None:
         Agent(TestModel(), capabilities=[PostHog(auth='posthog-key', defer_loading=True)])
@@ -177,18 +178,18 @@ class TestServerSettings:
         assert _http_transport(PostHog(auth='posthog-key', read_only=read_only).get_toolset()).headers == headers
 
     async def test_read_only_with_a_client_keeps_only_read_only_tools(self) -> None:
-        server = FastMCP('posthog-fake')
+        server = MCPServer('posthog-fake')
 
-        @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+        @server.tool(annotations=READ_ONLY)
         def insight_query() -> str:
             return 'queried'
 
-        @server.tool(annotations=ToolAnnotations(readOnlyHint=False))
+        @server.tool(annotations=NOT_READ_ONLY)
         def feature_flag_create() -> str:
             return 'created'  # pragma: no cover
 
         agent = Agent(TestModel(), capabilities=[PostHog(client=server, read_only=True)])
-        assert (await agent.run('Use the tools')).output == '{"insight_query":"queried"}'
+        assert (await agent.run('Use the tools')).output == '{"posthog_insight_query":"queried"}'
 
     @pytest.mark.parametrize(
         ('features', 'query'), [('flags', 'flags'), (['flags', 'error_tracking'], 'flags%2Cerror_tracking')]

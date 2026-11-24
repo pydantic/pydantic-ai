@@ -1,0 +1,41 @@
+version: 1
+interactions:
+- request:
+    method: GET
+    uri: https://generativelanguage.googleapis.com/v1beta/batches/does-not-exist
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 400
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=67
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        error:
+          code: 400
+          message: Could not parse the batch name
+          status: INVALID_ARGUMENT
+  recorded_at: 2026-10-15T22:32:42.764031+00:00

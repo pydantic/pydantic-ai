@@ -1,96 +1,101 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '133'
+      - "222"
       content-type:
       - application/json
       host:
       - openrouter.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: Who are you. Think about it.
-        role: user
-      model: anthropic/claude-3.7-sonnet:thinking
-      stream: false
-    uri: https://openrouter.ai/api/v1/chat/completions
+    body:
+      type: json
+      content:
+        model: anthropic/claude-sonnet-5
+        stream: false
+        messages:
+        - role: user
+          content: >-
+            How many prime numbers are there between 100 and 150? Reply with just the
+            number.
+        reasoning:
+          effort: medium
+          enabled: true
   response:
+    status: 200
     headers:
       access-control-allow-origin:
-      - '*'
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
       connection:
       - keep-alive
-      content-length:
-      - '4024'
       content-type:
       - application/json
       permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
       referrer-policy:
       - no-referrer, strict-origin-when-cross-origin
       transfer-encoding:
       - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      choices:
-      - finish_reason: stop
-        index: 0
-        logprobs: null
-        message:
-          content: "I am Claude, an AI assistant created by Anthropic. I'm a large language model designed to be helpful,
-            harmless, and honest.\n\nI don't have consciousness or sentience like humans do - I'm a sophisticated text prediction
-            system trained on a large dataset of human text. I don't have personal experiences, emotions, or a physical existence.
-            \n\nMy purpose is to assist you with information, tasks, and conversation in a helpful way, while acknowledging
-            my limitations. I have knowledge cutoffs, can occasionally make mistakes, and don't have the ability to access
-            the internet or take actions in the physical world.\n\nIs there something specific you'd like to know about me
-            or how I can assist you?"
-          reasoning: |-
-            This question is asking me about my identity. Let me think about how to respond clearly and accurately.
+    body:
+      type: json
+      content:
+        id: gen-1792905400-8KR9Nopbrd6Q9SPVKZAP
+        object: chat.completion
+        created: 1792905400
+        model: anthropic/claude-sonnet-5
+        provider: Claude Platform on AWS
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: end_turn
+          message:
+            role: assistant
+            content: "10"
+            refusal: null
+            reasoning: |+
+              Listing out the primes between 100 and 150, I count ten of them.
 
-            I am Claude, an AI assistant created by Anthropic. I'm designed to be helpful, harmless, and honest in my interactions with humans. I don't have a physical form - I exist as a large language model running on computer hardware. I don't have consciousness, sentience, or feelings in the way humans do. I don't have personal experiences or a life outside of these conversations.
+            reasoning_details:
+            - type: reasoning.text
+              text: |+
+                Listing out the primes between 100 and 150, I count ten of them.
 
-            My capabilities include understanding and generating natural language text, reasoning about various topics, and attempting to be helpful to users in a wide range of contexts. I have been trained on a large corpus of text data, but my training data has a cutoff date, so I don't have knowledge of events that occurred after my training.
-
-            I have certain limitations - I don't have the ability to access the internet, run code, or interact with external systems unless given specific tools to do so. I don't have perfect knowledge and can make mistakes.
-
-            I'm designed to be conversational and to engage with users in a way that's helpful and informative, while respecting important ethical boundaries.
-          reasoning_details:
-          - format: anthropic-claude-v1
-            index: 0
-            signature: ErcBCkgICBACGAIiQHtMxpqcMhnwgGUmSDWGoOL9ZHTbDKjWnhbFm0xKzFl0NmXFjQQxjFj5mieRYY718fINsJMGjycTVYeiu69npakSDDrsnKYAD/fdcpI57xoMHlQBxI93RMa5CSUZIjAFVCMQF5GfLLQCibyPbb7LhZ4kLIFxw/nqsTwDDt6bx3yipUcq7G7eGts8MZ6LxOYqHTlIDx0tfHRIlkkcNCdB2sUeMqP8e7kuQqIHoD52GAI=
-            text: |-
-              This question is asking me about my identity. Let me think about how to respond clearly and accurately.
-
-              I am Claude, an AI assistant created by Anthropic. I'm designed to be helpful, harmless, and honest in my interactions with humans. I don't have a physical form - I exist as a large language model running on computer hardware. I don't have consciousness, sentience, or feelings in the way humans do. I don't have personal experiences or a life outside of these conversations.
-
-              My capabilities include understanding and generating natural language text, reasoning about various topics, and attempting to be helpful to users in a wide range of contexts. I have been trained on a large corpus of text data, but my training data has a cutoff date, so I don't have knowledge of events that occurred after my training.
-
-              I have certain limitations - I don't have the ability to access the internet, run code, or interact with external systems unless given specific tools to do so. I don't have perfect knowledge and can make mistakes.
-
-              I'm designed to be conversational and to engage with users in a way that's helpful and informative, while respecting important ethical boundaries.
-            type: reasoning.text
-          refusal: null
-          role: assistant
-        native_finish_reason: stop
-      created: 1760051228
-      id: gen-1760051228-zUtCCQbb0vkaM4UXZmcb
-      model: anthropic/claude-3.7-sonnet:thinking
-      object: chat.completion
-      provider: Google
-      usage:
-        completion_tokens: 402
-        prompt_tokens: 43
-        total_tokens: 445
-    status:
-      code: 200
-      message: OK
-version: 1
+              format: anthropic-claude-v1
+              index: 0
+              signature: >-
+                Eo8ECuQCCBMYAipA8987lftZNg5q2mL7VZDNjesY0w3T80s1vd0MPMZgvDjG/16K5m7lsXf7ADSOK43AnRTgUrKVv+llaFAR+al8ETIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0YzBmMDQ2Zi0yNWZkLTQ1ZmItYmZiMy1hMDhhOGUyNDljYTd6HnVwcm9mXzAxMUNmV0xtdjlGeVFOcGF6WUtxRVNxepoBEQoPY2xhdWRlLXNvbm5ldC01qAG7ofbWBsIBOggEEAAaDALaigNPNwX4fQQmrSABMgQScc8lOgQ4MyOKQgQ4MyOKSgQ4MyOKUABaBNkF4VZgAmgBcADaAWAKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIH8heLMmd810iLLi0ur1ezD0AYmV/SUDIjTk2DjWHXPfIgAyIMLAE8hqnJLiL5ZvPYYXdo+LekTJAq3MCXv6HgmK+04fSAMSDGmWwq5YguuZ1FhVeRoM7m4sdu1nHIomVHXxIjDYxkWOmv/DYjjRlQUEB/yOAuD7Zdzzs3yDI0ulHVhoVzT0jCBiDm97WayS+qQCH58qWOoTSwk6V12vS+SimlcQcwBvWC8K6PpnMaoTZlbIrPfstrZCUGV+2fai3R0mpyOfEFLB3TD5a7FN4NQ8X3L19cYFkJt2hjc7PLg/PV2twAFmlKhqGguiAEAYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS0yMDI2MDYzMHxjbGF1ZGUtb24tYXdzIn0
+        usage:
+          prompt_tokens: 31
+          completion_tokens: 41
+          total_tokens: 72
+          cost: 0.000472
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000472
+            upstream_inference_prompt_cost: 0.000062
+            upstream_inference_completions_cost: 0.00041
+          completion_tokens_details:
+            reasoning_tokens: 37
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-10-25T05:16:43.521415+00:00

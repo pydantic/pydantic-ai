@@ -11,7 +11,7 @@ provider, against a simulated server over a fake socket:
 - `_wire.py`: the fake WebSocket and network shared by the OpenAI-protocol and GPT-Live servers, with
   send latency, send faults (lost, or delivered but reported failed), drops, and refused re-dials.
   Server frames stay in flight until the trace delivers them.
-- `_openai_server.py` (OpenAI Realtime, and the Azure OpenAI and xAI dialects), `_gemini.py` (Gemini
+- `_openai_server.py` (OpenAI Realtime, and the Azure OpenAI, xAI, and ElevenLabs dialects), `_gemini.py` (Gemini
   Live), `_live.py` (GPT-Live): small models of each provider's server, built from the recorded
   cassettes and the live stress runs. Each keeps `_truth.py`'s `GroundTruth`: what the provider
   received, generated, billed, and when the client read it, independent of anything the session says.

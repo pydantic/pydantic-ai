@@ -4,16 +4,19 @@ description: "Choose how to persist Pydantic AI conversations: store a `Conversa
 
 # Persistence
 
+A production agent serves each conversation across many requests, processes and restarts, so its state has to live somewhere other than the process.
+
 "Persistence", "memory", "sessions": several different problems go by those names, and they have different answers. Start here:
 
 | You want to… | Use | Where it lives |
 |---|---|---|
 | Save a conversation and pick it up later — a chat thread, a support ticket, an assistant that remembers yesterday | [Store its `Conversation`](#storing-a-conversation-yourself) in a column of your own database | Core |
-| Not write the save-and-load code yourself, and get continue-and-fork for free | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
+| The same, with each message stored once, conflicting saves caught, and forking built in | A [`ConversationStore`](#using-a-conversation-store) on your own database | Core |
+| A log of what each run did, a ledger of its tool side effects, and snapshots to recover a run from; not for storing sessions | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
 | The agent to remember what it learned about someone *across* conversations, not just within one | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) |
-| A run to survive the process dying mid-tool-call, and resume exactly where it stopped | [Durable execution](durable_execution/overview.md) | Core |
+| A run to survive the process dying mid-tool-call, replaying its completed steps and retrying the one in flight | [Durable execution](durable_execution/overview.md) | Core |
 
-For checkpoint-style persistence, [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) saves a checkpoint after every step of a run, so you can continue the run later or fork it from any step; to resume a run that crashed partway through a step, use [durable execution](durable_execution/overview.md).
+For checkpoint-style persistence, [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) saves a message-history snapshot at each settled tool-call boundary of a run, so you can continue the run later or fork it from a saved snapshot; to resume a run that crashed partway through a step, use [durable execution](durable_execution/overview.md).
 
 The first two rows are also the answer to "how do I give my agent memory?" for most of what people mean by it: an agent's memory of the conversation it is having *is* its message history. There is no separate memory system to add for that — storing the history and passing it back is the whole mechanism. Memory becomes [its own thing](#remembering-across-conversations) only once it has to outlive the thread.
 
@@ -40,11 +43,11 @@ print(result.usage.requests)  # (2)!
 ```
 
 1. JSON bytes for a `jsonb` column or equivalent, keyed by `result.conversation_id`.
-2. The second run counts on from the first, so a [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget covers the whole conversation rather than each run.
+2. The second run counts on from the first, so a [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget covers the whole conversation rather than each run. Each run adds only what the provider billed during it, so this stays the conversation's true total when a run resumes a turn an earlier run left suspended.
 
 It round-trips with the same fidelity as the message history's own [`ModelMessagesTypeAdapter`](message-history.md#storing-and-loading-messages-to-json), including fields that are never sent to the model, like a part's application-only `metadata`. Because that field is typed `Any`, values with no JSON form are normalized on the way through: a `tuple` reloads as a `list`, a `datetime` as its ISO string, and raw `bytes` as their base64 string. The ["What survives a round-trip"](message-history.md#storing-and-loading-messages-to-json) note covers the edges. No schema migration is needed when Pydantic AI adds a message part, because a conversation serialized by an older version still deserializes.
 
-Rewriting the whole conversation on every turn keeps the code simple, but makes each write as large as the conversation so far. To keep writes proportional to the turn, store the messages in a table of their own, appending each run's [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] with `ModelMessagesTypeAdapter`, and keep the rest of the conversation beside them: its `usage`, its `conversation_id`, and its `deferred_tool_requests`, which a paused conversation can't be resumed without. Reassemble it as `Conversation(messages=..., usage=..., conversation_id=..., deferred_tool_requests=...)` to continue. [Persisting sessions](message-history.md#persisting-sessions) walks through both.
+Rewriting the whole conversation on every turn keeps the code simple, but makes each write as large as the conversation so far. To keep writes proportional to the turn, store the messages in a table of their own, appending each run's [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] with `ModelMessagesTypeAdapter`, and keep the rest of the conversation beside them: its `usage`, its `conversation_id`, and its `deferred_tool_requests`, which a paused conversation can't be resumed without. Reassemble it as `Conversation(messages=..., usage=..., conversation_id=..., deferred_tool_requests=...)` to continue. [Persisting sessions](message-history.md#persisting-sessions) walks through both. A [`ConversationStore`](#using-a-conversation-store) does this for you.
 
 To keep a finished run's output alongside its conversation, store the [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] itself: see [Storing complete run results](message-history.md#storing-complete-run-results).
 
@@ -80,11 +83,63 @@ What they can't carry is why the [`Conversation`][pydantic_ai.conversation.Conve
 
 Nor does a history reach past its own conversation. Replaying yesterday's threads to give an agent that continuity works until it doesn't: the prompt grows without bound, every request pays for it, and [compaction](capabilities/compaction.md) drops the parts you were counting on. [Remembering across conversations](#remembering-across-conversations) is a different mechanism.
 
-## Not writing that code yourself
+## Using a conversation store
 
-[`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) packages the pattern as a capability you add to an agent, so the load and save calls are not yours to write. It ships in-memory, file, SQLite and MongoDB backends, and its store is a protocol you can implement against your own database.
+A [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] keeps conversations for you, as a log in which each message is stored once: saving a continued conversation appends only its new messages, and a [`fork`][pydantic_ai.conversation_store.ConversationStore.fork] shares the history it keeps instead of copying it. [`load`][pydantic_ai.conversation_store.ConversationStore.load] and [`save`][pydantic_ai.conversation_store.ConversationStore.save] around each run:
 
-It records more than the messages: an append-only event log of what the agent did at each boundary, continuable snapshots you can resume or fork a conversation from, and a tool-effect ledger that tells you, after a crash, whether a side effect actually happened.
+```python {title="conversation_store.py"}
+from pydantic_ai import Agent, Conversation
+from pydantic_ai.conversation_store import ConversationStore, InMemoryConversationStore
+
+agent = Agent('{{ openai:medium }}', instructions='Be a helpful assistant.')
+
+
+async def chat(store: ConversationStore, conversation_id: str, prompt: str) -> str:
+    conversation = await store.load(conversation_id) or Conversation(conversation_id=conversation_id)
+    result = await agent.run(prompt, conversation=conversation)
+    await store.save(result)
+    return result.output
+
+
+async def main():
+    store = InMemoryConversationStore()
+    await chat(store, 'support-42', 'Tell me a joke.')
+    print(await chat(store, 'support-42', 'Explain?'))
+    #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
+```
+
+Each save is checked against the conversation's [`revision`][pydantic_ai.conversation.Conversation.revision], which `load` sets and a run carries through to its result. If someone else saved the conversation in between, or a new conversation reuses a stored one's ID, `save` raises [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict] instead of overwriting it. Load the conversation again and decide what to do: the conflict doesn't undo the model requests or tool calls the run already made, so run the turn again only if repeating them is safe. For a run whose tool calls must happen exactly once, see [durable execution](durable_execution/overview.md). `save` takes a run's result, as above, or a [`Conversation`][pydantic_ai.conversation.Conversation], and advances its revision, so `result.conversation` can be continued or saved again afterwards.
+
+A run that fails can still be stored, so the user can see what it did before it stopped. An [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], like [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] or a model API error, carries the run's conversation as far as it got as its [`conversation`][pydantic_ai.exceptions.AgentRunError.conversation], including a response cut short with `state='interrupted'`, so `await store.save(error.conversation)` appends the failed turn. It's set once the error leaves the `run`, `iter` or `run_stream` call or block, so catch it outside the `async with`. For any other exception, including one a tool's own code raises and the [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] raised when every fallback model fails, wrap the run in [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation]. In a [Temporal](durable_execution/temporal.md) workflow, the error a client gets from the workflow keeps only the error's type and message, without its `conversation`: catch the error inside the workflow and save `error.conversation` through an activity, as you would a successful run's.
+
+Pass `scope=` to `save` to record whose conversation it is, such as a user ID, and [`list_conversations`][pydantic_ai.conversation_store.ConversationStore.list_conversations] by it, most recently saved first, with `limit=` for the newest few. Pass the same `scope=` to `load` and the other methods that read or change a conversation, to keep it to its owner: one saved with another scope is treated as one the store doesn't have, so a guessed `conversation_id` doesn't reach it.
+
+A conversation's record also has a [`title`][pydantic_ai.conversation_store.ConversationRecord.title], for a list of conversations to show, and [`metadata`][pydantic_ai.conversation_store.ConversationRecord.metadata] for anything else the app keeps about it. Set them with [`update`][pydantic_ai.conversation_store.ConversationStore.update]. An update doesn't change the conversation's revision, so it never makes the next save conflict, and a save never undoes it. `metadata` is replaced whole, and of two updates at once the last one written wins, so keep a value that several writers change at once in a field of its own.
+
+An agent that titles a conversation after its first turn passes `expected_title=None`, so the title is written only while the conversation has none, and a title the user set is never replaced:
+
+```python {test="skip" lint="skip"}
+try:
+    await store.update(conversation_id, title=title, expected_title=None)
+except ConversationConflict:
+    pass  # It has a title already, so keep it.
+```
+
+The stored conversation only ever grows. `load` records where the stored messages end, as the conversation's [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index], and a run carries it to its result, so `save` appends just the messages the run added. That holds when a capability trims or rewrites the history a run is sent, like [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] keeping the last few turns: the model sees the trimmed history, and the store keeps the whole one. So does a run that only needs the recent turns: `load(conversation_id, limit=20)` loads the last 20 messages, and saving the result appends to the whole conversation. A message you add to the end of a loaded conversation before a run, like a user's new turn, is saved with what the run added.
+
+To regenerate a reply or edit an earlier turn, [`branch`][pydantic_ai.conversation_store.ConversationStore.branch] the conversation from the message before it, then run and save as usual: the new turn goes on the branch. The history it left stays stored, listed in its record's [`branches`][pydantic_ai.conversation_store.ConversationRecord.branches], so the conversation can branch back to it with `from_entry=`. To explore from a point without moving the conversation, say to try several approaches side by side, [`fork`][pydantic_ai.conversation_store.ConversationStore.fork] a new conversation from it for each, sharing the history instead of copying it.
+
+Each stored message is a [`ConversationEntry`][pydantic_ai.conversation_store.ConversationEntry] with an [`id`][pydantic_ai.conversation_store.ConversationEntry.id] of its own, which is what to tie a rating or a billing row to. `save` returns the entries it stored, and [`load_entries`][pydantic_ai.conversation_store.ConversationStore.load_entries] loads a conversation's history with them.
+
+[`InMemoryConversationStore`][pydantic_ai.conversation_store.InMemoryConversationStore] is for tests and examples. For a real database, subclass `ConversationStore`: it implements the loading, saving and forking on five storage primitives, so a backend only reads and writes records and entries. To support [`update`][pydantic_ai.conversation_store.ConversationStore.update], a backend also implements [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details], writing only the keys in the [`ConversationDetails`][pydantic_ai.conversation_store.ConversationDetails] it is passed, and only while the stored record has the `expected` values, in one step. It also keeps the stored `title` and `metadata` when `write_record` replaces a record.
+
+To have a [UI adapter](ui/overview.md#saving-to-a-conversation-store) load and save each chat request's conversation through a store, pass it as `conversation_store`. The client is sent a [`UserError`][pydantic_ai.exceptions.UserError] your store raises as is, so keep queries, hostnames and credentials out of it: for any other exception, the adapter warns on the server and sends a generic message.
+
+## Recording what each run did
+
+To store sessions, use a [`ConversationStore`](#using-a-conversation-store), or [store the `Conversation`](#storing-a-conversation-yourself) yourself. [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) from Pydantic AI Harness remains supported, but it is for recovering runs rather than storing sessions: its snapshots hold the messages only, not the usage and pending deferred tool requests a `Conversation` carries. If you stored sessions with it, [Moving sessions to a `ConversationStore`](https://pydantic.dev/docs/ai/harness/step-persistence/#moving-sessions-to-a-conversationstore) copies each conversation into a store.
+
+What it adds is a record of each run: an append-only event log of what the agent did at each boundary, continuable snapshots you can resume or fork a run from, and a tool-effect ledger that records whether each tool call started, returned or raised. After a crash, a call that never finished has an unknown outcome, and one that raised may still have had its effect, so check the external system before running it again.
 
 [`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) builds on that without storing anything of its own: it ranks the history `StepPersistence` already wrote and gives the model a tool to pull earlier turns back into context on demand, including turns [compaction](capabilities/compaction.md) dropped. Pair the two on one store instance and recall needs no extra write path.
 
@@ -109,4 +164,4 @@ Weigh it against a store of your own: it is one provider's feature, OpenAI docum
 
 ## What isn't here
 
-Nothing here snapshots state in the middle of a step, so there is no "rewind to step 4 of a half-finished run and replay from there" inside a single run. Snapshots are taken at settled boundaries between runs, not mid-node. For a run that must survive a crash *while it is executing*, that is what [durable execution](durable_execution/overview.md) is for.
+Nothing here snapshots state in the middle of a step, so there is no "rewind to step 4 of a half-finished run and replay from there" inside a single run. Snapshots are taken at settled tool-call boundaries within a run, not mid-node. For a run that must survive a crash *while it is executing*, that is what [durable execution](durable_execution/overview.md) is for.

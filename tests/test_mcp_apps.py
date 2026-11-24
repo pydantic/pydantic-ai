@@ -11,6 +11,8 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any, Literal, cast
 
+import httpx
+import httpx2
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -32,10 +34,15 @@ with try_import() as imports_successful:
     from mcp import types as mcp_types
     from mcp.types import BlobResourceContents, EmbeddedResource, ImageContent, TextContent
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai import _mcp_compat
     from pydantic_ai.mcp import CallToolFunc, MCPError, MCPToolset, ToolResult
     from pydantic_ai.ui.ag_ui import AGUIAdapter
-    from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, detect_ag_ui_version, parse_ag_ui_version
+    from pydantic_ai.ui.ag_ui._utils import (
+        ACTIVITY_EVENTS_VERSION,
+        DEFAULT_AG_UI_VERSION,
+        detect_ag_ui_version,
+        parse_ag_ui_version,
+    )
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 with try_import() as logfire_imports_successful:
@@ -45,7 +52,7 @@ with try_import() as logfire_imports_successful:
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='fastmcp, ag-ui-protocol or starlette not installed')
 
-MCP_SDK_V2 = imports_successful() and is_mcp_sdk_v2()
+MCP_SDK_V2 = imports_successful() and _mcp_compat.MCP_SDK_V2
 
 # FastMCP 4 servers stamp every result's `_meta` with their identity, which the app data passes through.
 SERVER_INFO: dict[str, Any] = (
@@ -152,6 +159,37 @@ def model_view(messages: list[ModelMessage]) -> Any:
         return value
 
     return drop_timestamps(ModelMessagesTypeAdapter.dump_python(messages, mode='json'))
+
+
+@pytest.fixture
+def weather_over_http() -> Any:
+    """`weather_server`'s HTTP app, built in a sync fixture like `weather`."""
+    return weather_server().http_app(stateless_http=True, json_response=True)
+
+
+async def test_a_hostname_derived_id_doesnt_identify_the_server_to_an_app(weather_over_http: Any):
+    """An app result names its server only by an `id` chosen for it, so a URL toolset without one names none, as before."""
+    client: httpx.AsyncClient | httpx2.AsyncClient
+    if MCP_SDK_V2:
+        client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=weather_over_http))
+    else:
+        client = httpx.AsyncClient(transport=httpx.ASGITransport(app=weather_over_http))
+    toolset = MCPToolset('http://testserver/mcp', http_client=client)
+    assert toolset.id == 'testserver'
+    agent = Agent(TestModel(call_tools=['get_forecast']), toolsets=[toolset])
+    try:
+        async with weather_over_http.router.lifespan_context(weather_over_http):
+            result = await agent.run('Forecast?')
+    finally:
+        await client.aclose()
+
+    (forecast,) = [
+        part
+        for part in iter_message_parts(result.all_messages(), ModelRequest, ToolReturnPart)
+        if part.tool_name == 'get_forecast'
+    ]
+    assert forecast.metadata is not None
+    assert forecast.metadata['mcp_app']['toolset_id'] is None
 
 
 async def test_server_declares_mcp_apps_extension(weather: MCPToolset[Any]):
@@ -346,7 +384,7 @@ async def test_tool_span_omits_app_binary_without_binary_content(capfire: Captur
         return FastMCPToolResult(
             content=[
                 TextContent(type='text', text='A chart'),
-                ImageContent(type='image', data='aGk=', mimeType='image/png'),
+                ImageContent.model_validate({'type': 'image', 'data': 'aGk=', 'mimeType': 'image/png'}),
                 EmbeddedResource(
                     type='resource',
                     resource=BlobResourceContents.model_validate(
@@ -528,12 +566,15 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
     ]
 
     activities = [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT']
+    # 1.0 leaves `replace` out, which the spec defines as replacing, like 0.x's default `True`.
+    replace = {} if parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= (1, 0) else {'replace': True}
     assert activities == snapshot(
         [
             {
                 'type': 'ACTIVITY_SNAPSHOT',
                 'timestamp': IsInt(),
                 'messageId': IsStr(),
+                **replace,
                 'activityType': 'mcp-apps',
                 'content': {
                     'resourceUri': 'ui://weather/forecast',
@@ -542,7 +583,6 @@ async def test_ag_ui_frontend_receives_app_activity_after_tool_result(agent: Age
                     'serverId': 'weather',
                     'serverHash': 'weather',
                 },
-                'replace': True,
             }
         ]
     )
@@ -645,11 +685,11 @@ async def test_call_tool_for_app_raises_protocol_errors(weather: MCPToolset[Any]
 
     The error is injected because in-process FastMCP servers turn every tool failure into an `isError` result.
     """
-    # SDK v1 wraps an `ErrorData`; v2 takes the fields directly, and CI type-checks against v1.
+    # SDK v2 takes the fields directly; v1 wraps an `ErrorData`. Pyright checks against v2, the locked generation.
     error = (
-        cast(Any, McpError)(code=-32001, message='call refused')
+        McpError(code=-32001, message='call refused')
         if MCP_SDK_V2
-        else McpError(mcp_types.ErrorData(code=-32001, message='call refused'))
+        else cast(Any, McpError)(mcp_types.ErrorData(code=-32001, message='call refused'))
     )
 
     async def refuse(*args: Any, **kwargs: Any) -> Any:

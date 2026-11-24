@@ -346,6 +346,33 @@ def test_run_usage_subtraction():
     assert (RunUsage() - before).details['custom_units'] == -2
 
 
+def test_run_usage_subtraction_keeps_every_counter():
+    """Subtraction keeps every numeric counter, declared or extracted by genai-prices, the same as `incr` does."""
+    before = RunUsage(cache_write_tokens=4, cache_write_1h_tokens=3, output_reasoning_tokens=1, web_searches=1)
+    after = RunUsage(
+        cache_write_tokens=15,
+        cache_write_1h_tokens=11,
+        output_reasoning_tokens=5,
+        web_searches=3,
+        provider_note='kept',
+    )
+
+    delta = after - before
+
+    assert delta == RunUsage(
+        cache_write_tokens=11,
+        cache_write_1h_tokens=8,
+        output_reasoning_tokens=4,
+        web_searches=2,
+        provider_note='kept',
+    )
+    # A counter only the baseline has comes out negative, like a declared one would.
+    assert getattr(RunUsage() - before, 'web_searches', 0) == -1
+    # The operands are left as they were.
+    assert after.cache_write_1h_tokens == 11
+    assert before.details == {}
+
+
 def test_model_response_cost_requires_model_name():
     """`ModelResponse.cost()` is the public entry point, so it owns the "can this be priced at all?" guard.
 

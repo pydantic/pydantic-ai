@@ -10,12 +10,15 @@ import shlex
 import shutil
 import sys
 import tempfile
+import types
+from functools import partial
 from pathlib import Path
 from typing import IO, Any
 
 import anyio
 import anyio.lowlevel
 import pytest
+from e2b import SandboxNetworkOpts
 from e2b.exceptions import (
     AuthenticationException,
     InvalidArgumentException,
@@ -28,6 +31,7 @@ from e2b.exceptions import (
 )
 
 from pydantic_ai.workspaces import (
+    CommandResult,
     Workspace,
     WorkspaceError,
     WorkspaceOutputLimitError,
@@ -39,11 +43,25 @@ from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
 from .fake_e2b import FakeCommandHandle, FakeE2B, _HostCommandHandle  # pyright: ignore[reportPrivateUsage]
 
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
+
 
 def _user_line(launch: str) -> str:
     args = shlex.split(launch)
     assert args[:3] == ['setsid', 'sh', '-c']
     return args[3].split('; exec ', 1)[1]
+
+
+async def _wait_for_exit(pid: int) -> None:
+    """Wait for a killed host process to be gone."""
+    # An orphaned child is reaped by init after the signal; the bound only guards a hang.
+    with anyio.fail_after(5):
+        while True:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            await anyio.sleep(0.01)  # pragma: lax no cover - the child is often already reaped on the first check
 
 
 async def started(**settings: Any) -> E2BSandboxBackend:
@@ -120,6 +138,16 @@ class TestCreate:
         # The most E2B's Hobby plan allows, pausing rather than killing at the end of it.
         assert (call.template, call.timeout, call.envs, call.lifecycle) == (None, 3_600, None, {'on_timeout': 'pause'})
         assert call.allow_internet_access is True
+        assert call.network is None
+
+    async def test_network_options_pass_through(self, fake_e2b: FakeE2B) -> None:
+        network: SandboxNetworkOpts = {
+            'rules': {'api.github.com': [{'transform': {'headers': {'Authorization': 'token secret'}}}]}
+        }
+        await started(network=network)
+        assert fake_e2b.create_calls[-1].network == network
+        # The value never reaches the sandbox's environment.
+        assert fake_e2b.create_calls[-1].envs is None
 
     @pytest.mark.parametrize(
         ('error', 'message'),
@@ -169,7 +197,8 @@ class TestCreate:
             f'Could not start E2B sandbox: {message}'
             + (' Hobby plans allow at most 3600 seconds; pass `E2BSandbox(sandbox_timeout=3600)`.' if advice else '')
         )
-        # Only the lifetime refusal ends the run; a 400 wrapping an i/o timeout stays retryable.
+        # Only the lifetime refusal ends the run as unavailable; a 400 wrapping an i/o timeout is an
+        # operation failure, which a tool reports to the model.
         assert type(exc.value) is (WorkspaceUnavailableError if advice else WorkspaceError)
         assert exc.value.__cause__ is error
 
@@ -285,6 +314,7 @@ class TestRun:
         assert 'kill -KILL -' in commands.group_stops[0]
         assert 'pydantic-e2b-pgid-' in launch
 
+    @posix_only
     async def test_host_fake_reaps_unfinished_commands_and_closes_output(
         self, fake_e2b: FakeE2B, tmp_path: Path
     ) -> None:
@@ -298,6 +328,7 @@ class TestRun:
         assert process.poll() is not None
         assert handle._out.closed and handle._err.closed  # pyright: ignore[reportPrivateUsage]
 
+    @posix_only
     async def test_host_fake_close_ends_background_children_of_a_finished_launcher(
         self, fake_e2b: FakeE2B, tmp_path: Path
     ) -> None:
@@ -313,14 +344,7 @@ class TestRun:
         child = int(pid_file.read_text())
         os.kill(child, 0)
         fake_e2b.close()
-        # The orphaned child is reaped by init after the signal; the bound only guards a hang.
-        with anyio.fail_after(5):
-            while True:
-                try:
-                    os.kill(child, 0)
-                except ProcessLookupError:
-                    break
-                await anyio.sleep(0.01)  # pragma: lax no cover - the child is often already reaped on the first check
+        await _wait_for_exit(child)
 
     async def test_host_fake_closes_output_when_spawn_fails(
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -342,35 +366,44 @@ class TestRun:
         assert all(stream.closed for stream in opened)
 
     @pytest.mark.parametrize('delay_ack', [False, True])
-    async def test_group_stop_prevents_a_real_child_from_writing(
+    @posix_only
+    async def test_group_stop_ends_a_real_child(
         self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delay_ack: bool
     ) -> None:
         fake_e2b.host_root = tmp_path
         backend = await started()
         commands = fake_e2b.sandboxes[0].commands
-        if delay_ack:
-            original = commands.run
+        original = commands.run
+        pid_file = tmp_path / 'child.pid'
 
-            async def delayed(*args: Any, **kwargs: Any) -> Any:
-                handle = await original(*args, **kwargs)
-                if not str(args[0]).startswith('sh -c '):
-                    await anyio.sleep(0.3)
-                return handle
+        async def child_started(cmd: str, **kwargs: Any) -> Any:
+            handle = await original(cmd, **kwargs)
+            if cmd.startswith('setsid '):
+                # Hold the deadline until the child runs, so the stop has to end it rather than
+                # merely beat it: a stop that lands late on a loaded runner must not flake the test.
+                with anyio.CancelScope(shield=True), anyio.fail_after(5):
+                    pid = anyio.Path(pid_file)
+                    while not (await pid.exists() and (await pid.read_text()).endswith('\n')):
+                        await anyio.sleep(0.01)
+                if delay_ack:
+                    # The start ACK is lost: the deadline passed, so this is where it cancels.
+                    await anyio.sleep_forever()
+            return handle
 
-            monkeypatch.setattr(commands, 'run', delayed)
-        marker = tmp_path / 'child-marker'
+        monkeypatch.setattr(commands, 'run', child_started)
         try:
             with anyio.fail_after(5):
                 with pytest.raises(WorkspaceTimeoutError):
                     await backend.run(
-                        f'(sleep 0.6; touch {shlex.quote(str(marker))}) & sleep 20', shell=True, timeout=0.1
+                        f'sleep 20 & echo $! > {shlex.quote(str(pid_file))}; sleep 20', shell=True, timeout=0.1
                     )
-            await anyio.sleep(0.7)
-            assert not marker.exists()
+            # The leader-only stop a group stop replaces would leave the background `sleep` running.
+            await _wait_for_exit(int(pid_file.read_text()))
         finally:
             for handle in fake_e2b.sandboxes[0].commands.handles:
                 handle.close()
 
+    @posix_only
     async def test_timed_out_command_leaves_no_registration_files(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         fake_e2b.host_root = tmp_path
         backend = await started()
@@ -381,6 +414,7 @@ class TestRun:
         assert match is not None
         assert not Path(match.group()).exists()
 
+    @posix_only
     async def test_cancel_before_remote_start_fences_late_start_and_retry(
         self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -575,9 +609,10 @@ class TestRun:
         backend = await started()
         with pytest.raises(WorkspaceTimeoutError):
             await backend.run(['sleep', '99'], timeout=0.05)
-        assert [record.getMessage() for record in caplog.records if record.levelname == 'WARNING'] == [
-            'Could not stop E2B command in sandbox sbx-1'
-        ]
+        warnings = [record for record in caplog.records if record.levelname == 'WARNING']
+        assert [record.getMessage() for record in warnings] == ['Could not stop E2B command in sandbox sbx-1']
+        # The cause is logged with the warning, so a stop that keeps failing can be diagnosed.
+        assert all(record.exc_info is not None for record in warnings)
 
     async def test_a_failed_operation_names_what_failed(self, fake_e2b: FakeE2B) -> None:
         fake_e2b.run_error = SandboxException('no such user')
@@ -599,7 +634,10 @@ class TestRun:
         fake_e2b.run_error = TimeoutException('unavailable')
         fake_e2b.sandbox_is_running = False
         backend = await started()
-        with pytest.raises(WorkspaceUnavailableError, match=r"'sbx-1' is no longer running: .*`sandbox_timeout`"):
+        with pytest.raises(WorkspaceUnavailableError, match=r"'sbx-1' is no longer running: .*`sandbox_timeout` ran"):
+            await backend.run(['x'])
+        backend = await started(idle_timeout=600)
+        with pytest.raises(WorkspaceUnavailableError, match=r'`sandbox_timeout` or `idle_timeout` ran out'):
             await backend.run(['x'])
 
     async def test_an_attached_sandbox_names_itself_when_gone(self, fake_e2b: FakeE2B) -> None:
@@ -621,6 +659,73 @@ class TestRun:
         assert 'the command may still be running' in str(exc.value)
         # The command may still be running, so it is killed on the way out.
         assert len(fake_e2b.sandboxes[0].commands.group_stops) == 1
+
+
+class TestIdleTimeout:
+    @pytest.mark.parametrize('idle_timeout', [0, 1.5, True])
+    def test_rejects_an_invalid_idle_timeout(self, idle_timeout: object) -> None:
+        with pytest.raises(ValueError, match='idle_timeout must be an integer of at least 1 or None'):
+            E2BSandboxBackend(idle_timeout=idle_timeout)  # pyright: ignore[reportArgumentType]
+
+    async def test_create_and_attach_ask_for_the_shorter_timeout(self, fake_e2b: FakeE2B) -> None:
+        await started(sandbox_timeout=600, idle_timeout=60)
+        await started(ref=WorkspaceRef(provider='e2b', id='sbx-keep'), sandbox_timeout=30, idle_timeout=60)
+        assert fake_e2b.create_calls[-1].timeout == 60
+        assert fake_e2b.connect_calls == [('sbx-keep', 30)]
+
+    @pytest.fixture
+    def clock(self, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        """The backend's monotonic clock, which a test advances by hand; the event loop keeps the real one."""
+        now = [1_000.0]
+        monkeypatch.setattr(
+            'pydantic_ai_harness.e2b_sandbox._backend.time', types.SimpleNamespace(monotonic=lambda: now[0])
+        )
+        return now
+
+    async def test_operations_extend_the_timeout_once_a_tenth_is_used(
+        self, fake_e2b: FakeE2B, clock: list[float]
+    ) -> None:
+        backend = await started(idle_timeout=60)
+        clock[0] += 5
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == []
+        clock[0] += 2
+        await backend.run(['true'])
+        await backend.write_bytes('/tmp/file', b'data')
+        assert fake_e2b.set_timeout_calls == [('sbx-1', 60)]
+
+    async def test_extension_stops_at_the_sandbox_timeout(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
+        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'), sandbox_timeout=100, idle_timeout=60)  # pyright: ignore[reportArgumentType]
+        # A sandbox passed in has an unknown lifetime: its first use extends it and starts the deadline,
+        # however long after construction that is.
+        clock[0] += 500
+        await backend.run(['true'])
+        clock[0] += 50
+        await backend.run(['true'])
+        clock[0] += 20
+        await backend.run(['true'])
+        # The second extension already reaches the deadline, 100 seconds after the first use.
+        assert fake_e2b.set_timeout_calls == [('sbx-own', 60), ('sbx-own', 50)]
+
+    async def test_no_extension_under_a_second_before_the_deadline(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
+        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'), sandbox_timeout=100, idle_timeout=60)  # pyright: ignore[reportArgumentType]
+        fake_e2b.set_timeout_error = SandboxException('500: busy')
+        await backend.run(['true'])
+        fake_e2b.set_timeout_error = None
+        clock[0] += 99.5
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == []
+
+    async def test_a_one_second_idle_timeout_is_extended(self, fake_e2b: FakeE2B, clock: list[float]) -> None:
+        backend = await started(idle_timeout=1)
+        clock[0] += 0.5
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == [('sbx-1', 1)]
+
+    async def test_without_idle_timeout_nothing_is_extended(self, fake_e2b: FakeE2B) -> None:
+        backend = E2BSandboxBackend(sandbox=fake_e2b.new_sandbox('sbx-own'))  # pyright: ignore[reportArgumentType]
+        await backend.run(['true'])
+        assert fake_e2b.set_timeout_calls == []
 
 
 class TestKilledSandbox:
@@ -679,11 +784,12 @@ class TestWorkingDir:
     async def test_the_probe_carries_a_deadline(self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch) -> None:
         # The probe is a command like any other, so it is bounded and killed rather than left
         # to hang a run that only wanted to resolve a path.
+        # The error names what timed out, not a command the caller never ran.
         monkeypatch.setattr('pydantic_ai_harness.e2b_sandbox._backend._INTERNAL_EXEC_TIMEOUT', 0.05)
         fake_e2b.command_hangs = True
         backend = await started()
         with anyio.fail_after(5):
-            with pytest.raises(WorkspaceTimeoutError):
+            with pytest.raises(WorkspaceTimeoutError, match='Could not determine the working directory'):
                 await backend.working_dir()
 
     @pytest.mark.parametrize(
@@ -712,6 +818,7 @@ class TestWorkingDir:
 
 
 class TestFilesystem:
+    @posix_only
     async def test_files_and_commands_share_user(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         fake_e2b.host_root = tmp_path
         backend = await started()
@@ -776,6 +883,7 @@ class TestFilesystem:
             ('pkg', '/srv/pkg', True, None),
         ]
 
+    @posix_only
     async def test_symlinks_report_their_target(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         fake_e2b.host_root = tmp_path
         (tmp_path / 'data.txt').write_bytes(b'12345')
@@ -792,6 +900,7 @@ class TestFilesystem:
             'to-file': (False, 5),
         }
 
+    @posix_only
     async def test_list_dir_resolves_symlinks_concurrently_in_order(
         self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -860,6 +969,7 @@ class TestFilesystem:
         entry = await backend.stat('/srv/link')
         assert (entry.is_dir, entry.size) == (False, None)
 
+    @posix_only
     async def test_remove_refuses_the_working_dir_and_its_ancestors(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         # envd's remove is recursive, so `.` would take the whole working directory.
         root = tmp_path.resolve() / 'work'
@@ -874,12 +984,44 @@ class TestFilesystem:
         await workspace.remove('child')
         assert sorted(root.iterdir()) == []
 
+    @posix_only
     async def test_remove_deletes_a_dangling_symlink(self, fake_e2b: FakeE2B, tmp_path: Path) -> None:
         # envd's stat follows the link and reports it missing; the link itself must still go.
         fake_e2b.host_root = tmp_path.resolve()
         (tmp_path / 'dangling').symlink_to('missing')
         await E2BSandboxBackend().remove(str(tmp_path.resolve() / 'dangling'))
         assert not (tmp_path / 'dangling').is_symlink()
+
+    async def test_a_stalled_remove_probe_names_the_remove(
+        self, fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A missing path is checked for a dangling link with `test -L`; its deadline is internal.
+        monkeypatch.setattr('pydantic_ai_harness.e2b_sandbox._backend._INTERNAL_EXEC_TIMEOUT', 0.05)
+        backend = await started()
+        fake_e2b.command_hangs = True
+        with anyio.fail_after(5):
+            with pytest.raises(WorkspaceTimeoutError, match="Could not remove '/tmp/missing': the E2B sandbox"):
+                await backend.remove('/tmp/missing')
+
+    @posix_only
+    async def test_a_failed_remove_names_the_path(
+        self, fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_e2b.host_root = tmp_path.resolve()
+        target = tmp_path.resolve() / 'busy'
+        target.write_bytes(b'data')
+        backend = E2BSandboxBackend()
+        await backend.get_sandbox()
+        error = SandboxException(f'500: remove {target}: device or resource busy')
+
+        async def refuse(path: str, user: str | None = None, request_timeout: float | None = None) -> None:
+            raise error
+
+        monkeypatch.setattr(fake_e2b.sandboxes[0].files, 'remove', refuse)
+        with pytest.raises(WorkspaceError, match=f'Could not remove {re.escape(repr(str(target)))}') as exc:
+            await backend.remove(str(target))
+        assert exc.value.__cause__ is error
+        assert target.exists()
 
     @pytest.mark.parametrize('operation', ['read_bytes', 'stat', 'list_dir', 'remove'])
     async def test_a_missing_path_raises_the_builtin_error(self, fake_e2b: FakeE2B, operation: str) -> None:
@@ -1004,7 +1146,7 @@ async def test_auth_error_classifies_expired_key_without_leaking_it(fake_e2b: Fa
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await E2BSandboxBackend().get_sandbox()
     assert str(exc.value) == (
-        'Credential expired. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
+        'Credential expired. E2B rejected the credentials. Set a valid E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
     )
     assert 'sensitive-credential-value' not in str(exc.value)
 
@@ -1016,7 +1158,10 @@ async def test_missing_key_is_reported_as_not_found(fake_e2b: FakeE2B) -> None:
     )
     with pytest.raises(WorkspaceUnavailableError) as exc:
         await E2BSandboxBackend().get_sandbox()
-    assert str(exc.value) == 'No E2B API key found. Set E2B_API_KEY in the environment.'
+    assert (
+        str(exc.value)
+        == 'No E2B API key found. Set E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
+    )
 
 
 def test_missing_e2b_extra_has_an_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1061,11 +1206,14 @@ async def test_filesystem_first_use_preserves_auth_error(fake_e2b: FakeE2B) -> N
         await E2BSandboxBackend().read_bytes('/file')
 
 
+@pytest.mark.skipif(os.path.exists('/proc/self/stat'), reason='the `ps` fallback runs only without Linux `/proc`')
+@posix_only
 async def test_timeout_stops_a_command_run_with_a_different_locale(
     fake_e2b: FakeE2B, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A `ps` whose start-time format follows the locale, as it does with LC_ALL=de_DE.UTF-8: the launcher
-    # has the user's env and the stopper does not, so the recorded and checked times would differ.
+    # A `ps` whose start-time format follows the locale, as it does with LC_ALL=de_DE.UTF-8. A per-command
+    # env reaches only the launcher, so the recorded and checked times would differ unless both use LC_ALL=C.
+    # The backend's own `env` would not show this: a created sandbox passes it to every process, the stop included.
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
     fake_ps = bin_dir / 'ps'
@@ -1077,12 +1225,17 @@ async def test_timeout_stops_a_command_run_with_a_different_locale(
     fake_ps.chmod(0o755)
     monkeypatch.setenv('PATH', f'{bin_dir}{os.pathsep}{os.environ["PATH"]}')
     fake_e2b.host_root = tmp_path
-    backend = await started(env={'LC_ALL': 'de_DE.UTF-8'})
+    backend = await started()
     marker = tmp_path / 'child-marker'
     try:
         with anyio.fail_after(5):
             with pytest.raises(WorkspaceTimeoutError):
-                await backend.run(f'(sleep 0.6; touch {shlex.quote(str(marker))}) & sleep 20', shell=True, timeout=0.1)
+                await backend.run(
+                    f'(sleep 0.6; touch {shlex.quote(str(marker))}) & sleep 20',
+                    shell=True,
+                    timeout=0.1,
+                    env={'LC_ALL': 'de_DE.UTF-8'},
+                )
         await anyio.sleep(0.7)
         assert not marker.exists()
     finally:
@@ -1120,3 +1273,145 @@ async def test_created_sandbox_id_is_logged_and_attached_one_is_not(
     assert [record.getMessage() for record in caplog.records if record.levelname == 'INFO'] == [
         f'Created E2B sandbox {created_ref.id}'
     ]
+
+
+async def test_a_stalled_fifo_probe_names_the_read(fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The probe's deadline is internal: a bare 'Command timed out' would describe a command the caller never ran.
+    monkeypatch.setattr('pydantic_ai_harness.e2b_sandbox._backend._INTERNAL_EXEC_TIMEOUT', 0.05)
+    backend = await started()
+    await backend.write_bytes('/file', b'data')
+    fake_e2b.command_hangs = True
+    with anyio.fail_after(5):
+        with pytest.raises(WorkspaceTimeoutError, match="Could not read '/file': the E2B sandbox did not answer"):
+            await backend.read_bytes('/file')
+
+
+async def test_a_probe_timeout_keeps_the_partial_output(fake_e2b: FakeE2B, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `WorkspaceTimeoutError` carries partial output, and durable engines serialize it; renaming the
+    # operation must not drop it.
+    backend = await started()
+
+    async def stalled(*args: object, **kwargs: object) -> CommandResult:
+        raise WorkspaceTimeoutError('Command timed out after 10 seconds', stdout='partial out', stderr='partial err')
+
+    monkeypatch.setattr(backend, 'run', stalled)
+    with pytest.raises(WorkspaceTimeoutError, match='Could not determine the working directory') as exc:
+        await backend.working_dir()
+    assert (exc.value.stdout, exc.value.stderr) == ('partial out', 'partial err')
+
+
+def _path_without_ps(tmp_path: Path) -> str:
+    """A `PATH` with what the launcher, the stop and a test command need, but no `ps`, like a Debian `-slim` template."""
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    for tool in ('sh', 'mkdir', 'sleep', 'touch', 'cat', 'rm'):
+        source = shutil.which(tool)
+        assert source is not None
+        (bin_dir / tool).symlink_to(source)
+    return str(bin_dir)
+
+
+@posix_only
+async def test_a_template_without_ps_keeps_stderr_clean(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    fake_e2b.host_root = tmp_path
+    backend = await started(env={'PATH': _path_without_ps(tmp_path)})
+    result = await backend.run(['sh', '-c', 'echo hi'])
+    assert (result.exit_code, result.stdout, result.stderr) == (0, 'hi\n', '')
+
+
+async def _exited(pid: int) -> None:
+    """Wait until `pid` has exited; a zombie no init has reaped yet has exited too, though `kill -0` finds it."""
+    stat = Path(f'/proc/{pid}/stat')
+    has_proc = os.path.exists('/proc/self/stat')
+    while True:
+        try:
+            os.kill(pid, 0)
+            # Reached only while the process still runs.
+            state = stat.read_bytes().rsplit(b') ', 1)[1].split()[0] if has_proc else b''  # pragma: lax no cover
+        except (ProcessLookupError, FileNotFoundError):
+            return
+        # Only where nothing reaps orphans.
+        if state == b'Z':  # pragma: lax no cover
+            return
+        # The process is often already gone.
+        await anyio.sleep(0.01)  # pragma: lax no cover
+
+
+@pytest.mark.skipif(not os.path.exists('/proc/self/stat'), reason='identifies processes through Linux `/proc`')
+async def test_timeout_stops_a_command_on_a_template_without_ps(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    fake_e2b.host_root = tmp_path
+    backend = await started(env={'PATH': _path_without_ps(tmp_path)})
+    pid_file = tmp_path / 'child.pid'
+    try:
+        with anyio.fail_after(5):
+            with pytest.raises(WorkspaceTimeoutError):
+                await backend.run(f'sleep 20 & echo $! > {shlex.quote(str(pid_file))}; wait', shell=True, timeout=0.1)
+            # The group stop reaches the background child; the bound only guards a hang.
+            await _exited(int(pid_file.read_text()))
+    finally:
+        for handle in fake_e2b.sandboxes[0].commands.handles:
+            handle.close()
+
+
+@pytest.mark.skipif(shutil.which('perl') is None, reason="leaves its process group with Perl's `setpgrp`")
+@posix_only
+async def test_a_leader_stop_reaches_a_command_that_left_its_group(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    # Without `setsid` only the leader is stopped; one that later moves to its own group is still that leader.
+    fake_e2b.host_root = tmp_path
+    path = _path_without_ps(tmp_path)
+    for tool in ('perl', 'ps'):
+        source = shutil.which(tool)
+        assert source is not None
+        (Path(path) / tool).symlink_to(source)
+    # A custom template is probed for `setsid`, which this `PATH` lacks.
+    backend = await started(template='minimal', env={'PATH': path})
+    pid_file = tmp_path / 'pid'
+    leaver = ['perl', '-e', 'setpgrp(0, 0); open(F, ">", $ARGV[0]); print F $$; close(F); sleep 30', str(pid_file)]
+    try:
+        with anyio.fail_after(10):
+            async with anyio.create_task_group() as group:
+                group.start_soon(backend.run, leaver)
+                while not pid_file.exists() or not pid_file.read_text():
+                    await anyio.sleep(0.01)
+                group.cancel_scope.cancel()
+            assert not any(call.command.startswith('setsid ') for call in fake_e2b.sandboxes[0].commands.calls)
+            await _exited(int(pid_file.read_text()))
+    finally:
+        for handle in fake_e2b.sandboxes[0].commands.handles:
+            handle.close()
+
+
+@pytest.mark.skipif(not os.path.exists('/proc/self/stat'), reason='identifies processes through Linux `/proc`')
+async def test_a_stop_reaches_a_command_whose_name_holds_a_newline(fake_e2b: FakeE2B, tmp_path: Path) -> None:
+    # Linux names a process after its executable, and a file name may hold a newline, which a
+    # line-wise read of `/proc/PID/stat` would cut short.
+    fake_e2b.host_root = tmp_path
+    # A script rather than a link to `sleep`: a multicall `sleep`, such as uutils coreutils on
+    # Ubuntu 26.04, refuses to run under another name. The kernel names a script after its file.
+    odd = tmp_path / 'odd\nname'
+    odd.write_text('#!/bin/sh\nsleep 30 & wait\n')
+    odd.chmod(0o755)
+    pid_file = tmp_path / 'pid'
+    backend = await started()
+    try:
+        with anyio.fail_after(10):
+            async with anyio.create_task_group() as group:
+                group.start_soon(
+                    partial(
+                        backend.run,
+                        f'echo $$ > {shlex.quote(str(pid_file))}; exec {shlex.quote(str(odd))}',
+                        shell=True,
+                    )
+                )
+                # Stop it only once it carries the name, so the stop reads that name.
+                while (
+                    not pid_file.exists()
+                    or not pid_file.read_text()
+                    or (Path(f'/proc/{pid_file.read_text().strip()}/comm').read_bytes() != b'odd\nname\n')
+                ):
+                    await anyio.sleep(0.01)
+                group.cancel_scope.cancel()
+            await _exited(int(pid_file.read_text()))
+    finally:
+        for handle in fake_e2b.sandboxes[0].commands.handles:
+            handle.close()

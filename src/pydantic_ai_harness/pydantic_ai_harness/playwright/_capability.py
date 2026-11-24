@@ -7,7 +7,8 @@ recorded in the `_toolset` module docstring.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from collections.abc import Sequence
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import AgentRunResult, RunContext
@@ -15,17 +16,19 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness.playwright._toolset import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_MAX_CONTENT_TOKENS,
     DEFAULT_NAVIGATION_TIMEOUT_MS,
+    CdpContextMode,
     EgressPolicy,
     PlaywrightBrowserSession,
     PlaywrightBrowserToolset,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from playwright.async_api import StorageState
 
@@ -100,28 +103,23 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     playwright install chromium
     ```
 
-    Egress: `allowed_domains=None` (the default) places no domain restriction on
-    the URLs the agent can reach; pass `allowed_domains=[...]` to bound navigation
-    and the request kinds that move data (`fetch`, XHR, EventSource, WebSocket,
-    `sendBeacon`) in any frame, leaving passive subresources and sub-frame
-    documents unbounded so a permitted page keeps its assets and its
-    identity-provider frames. Independently, `block_private_addresses=True` (the
-    default) refuses private, loopback, link-local and other reserved addresses
-    for every request kind in every frame, even under open egress, resolving a
-    hostname first so a name pointing at one of those addresses is refused too.
+    Egress: by default the agent can reach any public host; `allowed_domains`
+    bounds that, and `block_private_addresses` (on by default) refuses private,
+    loopback, link-local and other reserved addresses even under open egress.
     Neither is a general security boundary: an unanswered DNS lookup is refused
     but Chromium resolves the name again before it connects, so rebinding is not
     closed, and a proxy-based enforcement mode is tracked in
     https://github.com/pydantic/pydantic-ai/issues/9204. Set
     `allowed_domains` when the agent may act on untrusted input.
 
-    Chromium starts lazily on the first browser-tool call and is closed when the
-    run ends (on success, error, or cancellation); runs that never call a browser
-    tool pay no Playwright cost. When no browser can be started the tool returns a
+    The first browser-tool call launches Chromium or connects through CDP. At
+    run end, a local browser is closed or a CDP connection is disconnected. Runs
+    without browser calls start neither. When no browser can be started the tool returns a
     `playwright install chromium` hint instead of ending the run, so an agent that
     can run a shell can install it and carry on, and the process gets a
     `BrowserUnavailableWarning` for the developer who is not reading tool results.
-    Set `auto_install_chromium=True` to fetch the binary automatically instead. Set `cdp_url` to attach to a Chromium that is already running
+    Set `auto_install_chromium=True` to fetch the binary automatically instead.
+    Set `cdp_url` to attach to a Chromium that is already running
     (managed-browser providers, benchmark harnesses) rather than launching one.
 
     Every browser operation runs inside an OpenTelemetry span, and what the page
@@ -230,22 +228,69 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     reason `from_spec` does not accept it.
     """
 
-    cdp_url: str | None = field(default=None, repr=False)
-    """Attach to a Chromium already running at this Chrome DevTools Protocol endpoint.
+    cdp_url: str | Callable[[RunContext[AgentDepsT]], str | Awaitable[str]] | None = field(default=None, repr=False)
+    """Attach to a Chromium already running at this Chrome DevTools Protocol endpoint, or a function that returns one.
 
-    When set, the capability connects instead of launching, so no local Chromium
-    binary is needed and `auto_install_chromium` does not apply. Used for
-    managed-browser providers and benchmark harnesses that hand the agent a
-    browser. A new browser context is still created for the run, so
-    `storage_state` and the egress guards apply as they do for a launched
-    browser, and the run does not inherit the sessions already open in that
-    Chrome. Provider endpoints sometimes carry an auth token in the URL; treat
-    those as secrets.
+    No local Chromium binary is needed; `auto_install_chromium` does not apply.
+    Each run creates an isolated context unless `cdp_context='default'` is set.
+    Endpoints can contain authentication tokens; treat them as secrets.
+
+    A function of the run context, sync or async, can create or resume a
+    managed browser for each run. The first browser tool call of a run calls it,
+    and its endpoint is reused for the rest of that run, including connection
+    retries; a run without browser calls never calls it. `navigation_timeout_ms`
+    bounds an async call: one that times out is a tool error, and the next
+    browser tool call tries again. An exception the function raises ends the
+    run. At run end the capability only disconnects, so a browser the function
+    created is the app's to delete, for example from a handle it kept on
+    `ctx.deps`. A function cannot be supplied through a serializable spec.
     """
 
-    _session: PlaywrightBrowserSession = field(init=False, repr=False)
-    _toolset: PlaywrightBrowserToolset[AgentDepsT] = field(init=False, repr=False)
-    _policy: EgressPolicy = field(init=False, repr=False)
+    _: KW_ONLY
+    cdp_context: CdpContextMode = 'new'
+    """Create an isolated context, or use the CDP browser's existing default context.
+
+    `default` requires `cdp_url` and excludes `storage_state`.
+    It inherits saved sign-ins and open tabs, so the agent can act as every account
+    signed in to that browser: attach it to a profile dedicated to the agent, not
+    an everyday browser. Only tabs showing an `http(s)` page, `about:blank` or
+    Chromium's error page are adopted: any other tab, such as the browser's own
+    start page, is never listed, read or closed, whatever the policy, and neither
+    is a tab holding a frame outside the web other than an inline one, such as an
+    extension's injected UI. When a tracked tab moves to such a page or gets such
+    a frame, the call that finds it returns an error naming the page by its scheme
+    and host only, and the agent stops using that tab, which stays open in the
+    browser. A frame that appears during a call can still be captured by that
+    call's `snapshot` or `screenshot_on_navigate` image. Loaded tab and frame URLs must pass the egress policy
+    before handlers are attached and before tools read or act on a page. A
+    document that passed is not checked again until its frame navigates, and one
+    call spends at most five seconds checking: a call that runs out asks the model
+    to retry, and the retry picks up where it stopped. Egress
+    guards and native session handlers still apply, and documents loaded while
+    attached cannot register service workers. Downloads follow the browser's own
+    settings. Requests from workers registered before attachment go through the
+    guards too, unless `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` turns off
+    Playwright's worker routing, and a document loaded before attachment can still
+    register one until it navigates. Script that ran before attachment can also
+    keep the native `WebSocket` constructor, and a socket it opens through it
+    bypasses the guards.
+    """
+
+    id: str | None = 'playwright_browser'
+    """Stable capability ID, so its instructions are addressable and `defer_loading=True` needs none.
+
+    An agent has one set of browser tools, so two `PlaywrightBrowser` sharing this `id` are one browser
+    stated twice when they agree, and an error when they differ, since a merge could widen the egress one
+    of them was given. To keep two, give each its own `id` and wrap them in `PrefixTools`, since their
+    tool names are the same.
+    """
+
+    # Built from the fields above in `__post_init__`, so they're left out of equality: two browsers configured
+    # the same way compare equal, which is what lets `combine` treat them as one.
+    _session: PlaywrightBrowserSession = field(init=False, repr=False, compare=False)
+    _toolset: PlaywrightBrowserToolset[AgentDepsT] = field(init=False, repr=False, compare=False)
+    _policy: EgressPolicy = field(init=False, repr=False, compare=False)
+    _run_ctx: RunContext[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.policy is not None and (self.allowed_domains is not None or not self.block_private_addresses):
@@ -260,7 +305,8 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             policy=self._policy,
             headless=self.headless,
             storage_state=self.storage_state,
-            cdp_url=self.cdp_url,
+            cdp_url=self._call_cdp_url if callable(self.cdp_url) else self.cdp_url,
+            cdp_context=self.cdp_context,
             auto_install_chromium=self.auto_install_chromium,
             chromium_sandbox=self.chromium_sandbox,
             launch_timeout_ms=self.navigation_timeout_ms,
@@ -272,6 +318,16 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             action_timeout_ms=self.action_timeout_ms,
             navigation_timeout_ms=self.navigation_timeout_ms,
         )
+
+    def _call_cdp_url(self) -> str | Awaitable[str]:
+        """Call the `cdp_url` function with the context of the run this instance serves."""
+        assert callable(self.cdp_url) and self._run_ctx is not None
+        return self.cdp_url(self._run_ctx)
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one browser stated twice; two that disagree raise rather than merge."""
+        return one_per_id(capabilities)
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, object]) -> AbstractCapability[AgentDepsT]:
         """Refuse to bind to a durable-execution agent.
@@ -300,7 +356,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         return self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> PlaywrightBrowser[AgentDepsT]:
-        """Return a fresh instance per run so concurrent runs never share a page or browser."""
+        """Create per-run connection state; a default CDP context may share pages with other runs."""
         return replace(self)
 
     def get_toolset(self) -> PlaywrightBrowserToolset[AgentDepsT]:
@@ -323,9 +379,11 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         Chromium starts on the first browser-tool call, not here, so a run that
         never browses never launches one. The run's tracer is adopted here so
         browser spans follow the agent's instrumentation settings rather than a
-        tracer of this module's choosing.
+        tracer of this module's choosing, and its context is what a `cdp_url`
+        function receives.
         """
         self._session.tracer = ctx.tracer
+        self._run_ctx = ctx
         async with self._session:
             return await handler()
 
@@ -343,13 +401,19 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         cdp_url: str | None = None,
+        cdp_context: CdpContextMode = 'new',
+        id: str | None = 'playwright_browser',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> PlaywrightBrowser[AgentDepsT]:
         """Construct the capability from serializable spec options (all fields are plain scalars/lists).
 
         A spec carries connection configuration, not session credentials:
         `storage_state` is deliberately absent, so a spec naming it raises rather
         than moving cookies into whatever stores the spec. Set it on the
-        constructed capability instead.
+        constructed capability instead. `cdp_context='default'` is configuration
+        too: it selects the browser's signed-in context without putting its
+        credentials in the spec.
         """
         return cls(
             headless=headless,
@@ -362,4 +426,8 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             auto_install_chromium=auto_install_chromium,
             chromium_sandbox=chromium_sandbox,
             cdp_url=cdp_url,
+            cdp_context=cdp_context,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

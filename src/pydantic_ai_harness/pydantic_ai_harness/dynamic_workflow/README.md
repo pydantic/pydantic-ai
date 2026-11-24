@@ -1,56 +1,54 @@
 # Dynamic Workflow
 
-Let one agent coordinate a whole team of sub-agents by writing a small Python script.
+Coordinate sub-agents in parallel, chain their results, or retry them in one tool call. Use
+`DynamicWorkflow` when this coordination can run as Python rather than needing the orchestrator's
+judgment after each step. On success, intermediate results stay out of the orchestrator's context
+unless the script returns or prints them.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/dynamic_workflow/)
 
+```mermaid
+sequenceDiagram
+    accTitle: Dynamic Workflow: coordinate sub-agents with one script
+    accDescr: The orchestrator model calls run_workflow with one Python script, and the DynamicWorkflow capability runs it in the Monty sandbox. The capability starts two reviewer sub-agent runs in parallel, one for auth.py and one for parser.py, and their two reports stay in the sandbox. It passes both reports to a summarizer run and returns only the summary to the orchestrator model.
+    participant model as orchestrator model
+    participant cap as DynamicWorkflow()<br/>Monty sandbox
+    participant agents as sub-agent runs
+    model->>cap: run_workflow,<br/>one Python script
+    cap->>agents: reviewer, auth.py
+    cap->>agents: reviewer, parser.py,<br/>in parallel
+    agents-->>cap: two reports
+    Note over cap: both reports stay here
+    cap->>agents: summarizer,<br/>both reports
+    agents-->>cap: summary
+    cap-->>model: summary only
+```
+
 ## The idea
 
-Say you have a few specialist agents. One reviews code. One summarizes findings. One writes the
-final note. Each one is easy to call on its own. The hard part is the choreography between them. You
-want to review three files at once, keep only the reports that found something, summarize those, and
-hand the summary to the writer.
+`DynamicWorkflow` gives the orchestrator one tool, `run_workflow`. The model writes a Python script
+that runs in the [Monty](https://github.com/pydantic/monty) sandbox, with each named sub-agent
+available as an async function. Like [Code Mode](../code_mode/README.md), it replaces repeated tool
+calls with code; unlike Code Mode, it calls whole agents rather than individual tools.
 
-The usual way to do this is one tool call per step. The agent calls the reviewer and waits. It reads
-the result, calls the reviewer again, and waits again. And so on. Every intermediate result travels
-back into the agent's context, and every step that depends on the previous one is a separate model
-turn.
+## How this relates to Subagents
 
-`DynamicWorkflow` takes a different route. You hand it a catalog of named sub-agents, and it gives
-the model a single tool, `run_workflow`. Inside that tool the model writes ordinary Python. Each of
-your sub-agents is an `async` function it can call, loop over, and combine. The script runs to
-completion in one tool call, and only its final value comes back to the model.
+Use [`SubAgents`](../sub_agents/README.md) for occasional delegations or when the parent needs to
+judge each result before continuing. Use `DynamicWorkflow` for scripted fan-out, chaining, voting,
+or retries. You can switch between them without changing the underlying agents. Start with
+`SubAgents` if you are unsure.
 
-The choreography moves out of the conversation and into code.
+The controls they share cover the same ground at different levels. `DynamicWorkflow` budgets the
+whole catalog because one script fans out over it; `SubAgents` budgets each delegate because the
+parent picks one per call:
 
-Claude Code ships this same idea as a feature, also called dynamic workflows. Jarred Sumner used it
-to port Bun from Zig to Rust: around 780,000 lines of Rust, 100% of the test suite passing at merge,
-and eleven days from first commit to merge. The work peaked at about 64 concurrent Claude agents.
-Claude Code runs that at the scale of a whole session. This capability brings the same idea into
-your own Pydantic AI agents, inside a single `run_workflow` tool call. You can
-[read the Bun story here](https://bun.com/blog/bun-in-rust).
-
-> **Tip**
->
-> If you have met [Code Mode](../code_mode/README.md), this will feel familiar. It is the same
-> sandbox and the same idea: write a script instead of many tool calls. The difference is what the
-> script gets to call. In Code Mode it calls the agent's own tools. Here it calls whole sub-agents.
-
-## How this relates to SubAgents
-
-The harness has two delegation capabilities. They trade in the same currency, named and isolated
-sub-agent runs, but they work at different altitudes:
-
-- [`SubAgents`](../subagents/README.md) exposes one `delegate_task(agent_name, task)` tool. Each
-  delegation is its own tool call and its own model turn. The parent calls, waits, reads the result
-  into context, then decides the next step. It is simple to reason about. It is the right fit when
-  delegations are occasional, or when each result needs the parent's judgment before the next one.
-- `DynamicWorkflow` moves the choreography into a script. Fan-out, chaining, voting, and retry loops
-  all run inside one tool call, and intermediate results never enter the parent's context. It is the
-  right fit when the coordination between sub-agents is the actual work.
-
-Start with `SubAgents` if you are not sure. A `delegate_task` orchestrator converts to a workflow
-catalog without changing the sub-agents themselves.
+| Control | `DynamicWorkflow` | `SubAgents` |
+|---|---|---|
+| Retries of the parent's tool | `max_retries`, like other script tools such as `CodeMode` | `tool_retries` |
+| Number of sub-agent runs | `max_agent_calls`, across the catalog | `SubAgent.max_calls`, per delegate |
+| Usage limits of one sub-agent run | `sub_agent_usage_limits`, for every run | `SubAgent.usage_limits`, per delegate |
+| Shared usage accounting | `forward_usage` | `forward_usage` |
+| Sub-agent model | `inherit_model`, for every run | the `models` menu and `SubAgent.models` |
 
 ## Install
 
@@ -70,7 +68,7 @@ pip install "pydantic-ai-harness[dynamic-workflow]"
 
 ## Your first workflow
 
-Let's build the smallest thing that works. Two sub-agents, one orchestrator.
+Two sub-agents, one orchestrator:
 
 ```python
 from pydantic_ai import Agent
@@ -85,70 +83,45 @@ orchestrator = Agent(
 )
 ```
 
-That is the whole setup. Here is what each piece does:
-
-1. `reviewer` and `summarizer` are plain agents. There is nothing special about them. They are the
-   same `Agent` you already know.
-2. Their `name` becomes the function name the model calls in the script, so pick names that are
-   valid Python identifiers.
-3. Their `description` tells the model what each one is for. The model reads these to decide how to
-   wire them together, so write them the way you would document a function.
-4. `DynamicWorkflow(agents=[...])` bundles them into one capability and hands the orchestrator a
-   single `run_workflow` tool.
+Each agent's `name` becomes its sandbox function name and must be a valid Python identifier. Its
+`description` tells the model when to call it.
 
 ## What the model does with it
 
-When the orchestrator decides to use the tool, it does not call your sub-agents one at a time. It
-writes a script. For a "review these two files and summarize" task, the script it writes looks like
-this:
+The model can review two files concurrently, then summarize both reports:
 
 ```python
 import asyncio
 
 reports = await asyncio.gather(
-    reviewer(task="Review auth.py for bugs:\n<file contents>"),
-    reviewer(task="Review parser.py for bugs:\n<file contents>"),
+    reviewer(task='Review auth.py for bugs:\n<file contents>'),
+    reviewer(task='Review parser.py for bugs:\n<file contents>'),
 )
-await summarizer(task="Summarize these review findings:\n" + "\n\n".join(reports))
+await summarizer(task='Summarize these review findings:\n' + '\n\n'.join(reports))
 ```
 
-Here are the parts that matter most, because they are the core of how you use this capability:
+Call sub-agents with `await` and a keyword-only `task`. `asyncio.gather` runs calls concurrently
+(except in a DBOS workflow where a sub-agent
+[carries `DBOSDurability`](#running-under-other-durable-engines)); the last expression supplies the
+tool result.
 
-- Each sub-agent is an `async` function. You call it with `await`.
-- You pass the work as a single keyword argument, `task`. Always by keyword. Write
-  `reviewer(task="...")`, not `reviewer("...")`.
-- `asyncio.gather(...)` runs the two reviews at the same time instead of one after the other.
-- The last line's value becomes the result the model sees. The intermediate `reports` list never
-  leaves the sandbox.
-
-> **Info: what "call a sub-agent" actually means**
->
-> Each call is a full `Agent.run`. It has its own model loop, its own message history, its own
-> tools, and its own typed output. It is not a lightweight function. It is a real agent doing real
-> work. Two things follow from that, and both matter when you write or debug workflows:
->
-> - **Calls are isolated.** A sub-agent remembers nothing from an earlier call. Put everything it
->   needs into `task`.
-> - **Calls cost tokens and take time.** That is why this capability gives you budgets, which we
->   get to below.
-
-Because the coordination is ordinary Python, it scales past one-shot fan-out. Take a rule like
-"re-dispatch only the files that failed review, with the reviewer's issues attached, for up to two
-more rounds." That is a `for` loop over `asyncio.gather`, with the retry task text rebuilt from each
-failed review. Without this, the model would run that control flow turn by turn, one round-trip per
-step, with every intermediate draft flowing through its context.
+Each call is an isolated `Agent.run` with its own model loop, history, tools, and output.
+Include all required context in `task`: calls do not remember earlier runs. Each run costs tokens;
+use the [budgets below](#keeping-it-safe-budgets) to limit usage.
 
 ## Sub-agents can return structured data
 
-A sub-agent returns whatever its `output_type` produces. By default that is a string. But give a
-sub-agent a Pydantic model, and the script receives a `dict`:
+A sub-agent returns whatever its `output_type` produces. The default is a string, but give a
+sub-agent a Pydantic model and the script receives a `dict`:
 
 ```python
 from pydantic import BaseModel
 
+
 class Score(BaseModel):
     value: int
     reason: str
+
 
 critic = Agent('openai:gpt-5', name='critic', description='Scores an answer 0-10.', output_type=Score)
 ```
@@ -156,18 +129,24 @@ critic = Agent('openai:gpt-5', name='critic', description='Scores an answer 0-10
 Inside the script, the model reads the fields by subscript, the way you read a JSON object:
 
 ```python
-result = await critic(task="Score this answer: ...")
-result["value"]   # not result.value
+result = await critic(task='Score this answer: ...')
+result['value']  # not result.value
 ```
 
 The catalog the model sees renders each output type as a `TypedDict`, so it knows the fields and
 reads them by subscript on its own.
 
+Sub-agent runs cannot pause for [tool
+approval](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) or a [pending model
+response](https://pydantic.dev/docs/ai/core-concepts/batch/#ending-a-run-while-it-waits). The
+catalog omits `DeferredToolRequests` and `PendingModelResponse`; a sub-agent run that ends with
+either raises `RuntimeError` in the script. Pending requests are cancelled best effort; a batch is
+cancelled only when no other request in it is waiting.
+
 ## A complete, runnable example
 
-Now let's put it together into something you can actually run. This orchestrator runs a small
-tournament. It drafts three candidate answers in parallel, scores each one, picks the winner, and
-refines it. All of that happens in a single tool call.
+This orchestrator drafts three candidate answers in parallel, scores each one, picks the winner,
+and refines it, all in a single tool call.
 
 You need an Anthropic key and the `anthropic` package:
 
@@ -194,9 +173,11 @@ logfire.instrument_pydantic_ai()
 
 MODEL = 'anthropic:claude-sonnet-4-6'  # or 'anthropic:claude-opus-4-8'
 
+
 class Score(BaseModel):
     value: int  # 0-10
     reason: str
+
 
 drafter = Agent(
     MODEL,
@@ -228,12 +209,14 @@ orchestrator = Agent(
     capabilities=[DynamicWorkflow(agents=[drafter, critic, editor])],
 )
 
+
 async def main() -> None:
     result = await orchestrator.run(
         'Explain, for a new hire, why our service uses idempotency keys on payment requests.',
         usage_limits=UsageLimits(request_limit=20),
     )
     logfire.info('done', answer=result.output, requests=result.usage.requests)
+
 
 asyncio.run(main())
 ```
@@ -246,34 +229,30 @@ import asyncio
 
 # 1. Draft three candidates at the same time.
 drafts = await asyncio.gather(
-    drafter(task="explain idempotency keys on payments"),
-    drafter(task="explain idempotency keys on payments"),
-    drafter(task="explain idempotency keys on payments"),
+    drafter(task='explain idempotency keys on payments'),
+    drafter(task='explain idempotency keys on payments'),
+    drafter(task='explain idempotency keys on payments'),
 )
 # 2. Score each one. Structured output arrives as {"value": int, "reason": str}.
-scores = await asyncio.gather(*[critic(task="Score this answer:\n" + d) for d in drafts])
+scores = await asyncio.gather(*[critic(task='Score this answer:\n' + d) for d in drafts])
 # 3. Pick the winner and refine it, all in plain Python, no extra model turns.
-best = max(range(len(drafts)), key=lambda i: scores[i]["value"])
-await editor(task="Answer:\n" + drafts[best] + "\n\nCritique:\n" + scores[best]["reason"])
+best = max(range(len(drafts)), key=lambda i: scores[i]['value'])
+await editor(task='Answer:\n' + drafts[best] + '\n\nCritique:\n' + scores[best]['reason'])
 ```
 
-Read that script and notice what did not happen. The three drafts, the three scores, and the
-selection logic never traveled back through the orchestrator's context. The model issued one tool
-call and got back one answer. The comparison, the `max(...)`, and the string assembly are ordinary
-Python running in the sandbox.
+The three drafts, the three scores, and the selection logic never pass through the orchestrator's
+context: the model issues one tool call and gets back one answer.
 
 > **Tip**
 >
 > The [Logfire](https://pydantic.dev/logfire) trace is the best way to see what a workflow did.
 > Each sub-agent run appears nested under the `run_workflow` span, and the span carries the exact
-> `code` argument the model wrote, so you can read the script it actually ran.
+> `code` argument the model wrote, so you can read the script it actually ran. To watch sub-agent
+> runs inside the one tool call, set `event_stream_handler` on each sub-agent `Agent`.
 
 ## How results come back
 
 The value of the script's last expression becomes the tool result. The model does not `print()` it.
-
-For the common cases, that is all you need to know. If you want the exact rules, including what
-happens when the script also prints for debugging, here they are:
 
 > **Info: the precise return shape**
 >
@@ -283,7 +262,7 @@ happens when the script also prints for debugging, here they are:
 > | a Pydantic model | a `dict`, read as `r['field']` |
 > | list or scalar | the list or scalar |
 >
-> And here is how the final tool result is shaped:
+> The final tool result is shaped as follows:
 >
 > | The script... | The model receives |
 > | --- | --- |
@@ -303,9 +282,8 @@ is deliberately pinned to a different model.
 
 ## Keeping it safe: budgets
 
-A sub-agent is non-deterministic and costs tokens, and it can fan out into more sub-agents. So a
-workflow needs two kinds of ceiling. It needs a cap on *how many* sub-agent runs happen, and a cap
-on *how much* they spend. `DynamicWorkflow` gives you both, plus a guard against runaway sandbox
+A sub-agent is non-deterministic, costs tokens, and can fan out into more sub-agents.
+`DynamicWorkflow` gives you a hard count ceiling, token budgets, and a guard against runaway sandbox
 scripts.
 
 ### `max_agent_calls`: an exact count
@@ -314,16 +292,16 @@ scripts.
 DynamicWorkflow(agents=[...], max_agent_calls=50)  # 50 is the default
 ```
 
-This is a hard, host-enforced ceiling on the number of sub-agent runs in one parent run. It is one
-budget shared across every `run_workflow` call in that run, not a per-script allowance. It holds
-exactly, even when the script fans out with `asyncio.gather`. When the budget runs out, the workflow
+A hard, host-enforced ceiling on the number of sub-agent runs in one parent run. It is one budget
+shared across every `run_workflow` call in that run, not a per-script allowance, and it holds
+exactly even when the script fans out with `asyncio.gather`. When the budget runs out, the workflow
 stops calling sub-agents and returns a terminal result that tells the model to conclude with what it
 has. That result includes bounded previews of up to the 20 most recent completed sub-agent results.
 
 > **Note**
 >
-> `max_agent_calls` is the only knob that bounds the number of runs exactly. Reach for it when you
-> need a guarantee. The token-based limits below are budgets, not guarantees.
+> `max_agent_calls` is the only knob that bounds the number of runs exactly. The token-based limits
+> below are budgets, not exact ceilings.
 
 ### `sub_agent_usage_limits` and `forward_usage`: bounding cost
 
@@ -335,12 +313,10 @@ gives depends on `forward_usage`, which controls whether the whole tree shares o
 | `True` (default) | the parent's `usage` is shared across the tree | a tree-wide cap, checked against the shared counter. Under concurrent fan-out it is best-effort: several sub-agents can pass the check before any of them adds to the count. |
 | `False` | each sub-agent run counts on its own | per-run limits. A per-run `total_tokens_limit` of `T` with `max_agent_calls` of `N` bounds the tree to roughly `N * T` tokens. |
 
-> **Warning**
->
-> The `usage_limits` you pass to the parent `run()` is not forwarded into sub-agents. Core does not
-> expose that limit value to the capability, so it is re-checked only at the parent's own request
-> boundaries. If you want to bound sub-agents, set `sub_agent_usage_limits`. If you want an exact
-> ceiling on the number of runs, use `max_agent_calls`.
+Without `sub_agent_usage_limits`, sub-agents sharing the counter (`forward_usage=True`) run under
+the `usage_limits` you pass to the parent `run()`, so the parent's budget bounds the whole tree. With
+`forward_usage=False` they fall back to Pydantic AI's default `request_limit` of 50 per run. For an
+exact ceiling on the number of runs, use `max_agent_calls`.
 
 ### `resource_limits`: guarding the script itself
 
@@ -349,45 +325,31 @@ backstop is 256 MB with no time limit. Printed output is collected separately wi
 default cap.
 
 ```python
-DynamicWorkflow(agents=[...], resource_limits={'max_duration_secs': 30})
+DynamicWorkflow(agents=[...], resource_limits={'max_duration_seconds': 30})
 ```
 
-There is no default duration cap. To see why, it helps to know what the timer actually measures.
-
-> **Info: what `max_duration_secs` measures**
->
-> Monty checks this limit once per bytecode step. So it measures the time your script spends
-> running sandbox code. It does not measure wall-clock time.
->
-> This is the part that matters for sub-agents. While your script waits on a sub-agent, it is
-> suspended on the host. It is not running. That time does not count. The same is true whether you
-> await one sub-agent at a time or fan several out with `asyncio.gather`. A normal workflow spends
-> most of its time waiting, so the cap will not fire on it, no matter how long the sub-agents take.
->
-> So what is the cap for? One thing: a pure-CPU runaway. Picture a `while True:` loop that never
-> awaits. It burns a whole core and blocks the event loop, and none of the sub-agent budgets
-> (`max_agent_calls`, `sub_agent_usage_limits`) can stop it, because it never calls a sub-agent. If
-> you want that guard, set `max_duration_secs` yourself.
->
-> Two more knobs. Pass `'unlimited'` to remove every sandbox resource limit; the separate 10 MiB
-> print cap remains. Pass a partial dict like `{'max_memory': ...}` and it merges onto the backstop,
-> so you override only the caps you name and the rest keep their defaults.
+`max_duration_seconds` counts sandbox execution time, excluding waits for sub-agents. There is no
+default duration cap. A CPU-bound loop that never awaits is not stopped by sub-agent budgets and
+blocks the workflow thread under Temporal. Set `max_duration_seconds` to stop such loops. A partial
+limits dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource limits; the
+separate 10 MiB print cap remains. `max_duration_secs` is the deprecated name of
+`max_duration_seconds` and still works, with a warning.
 
 ### Workflows do not nest
 
-A sub-agent cannot start its own workflow. If one tries, the nested `run_workflow` call returns a
-terminal error instead of running.
+A sub-agent cannot start its own workflow. A sub-agent that has the `DynamicWorkflow` capability is
+not offered `run_workflow` while it runs inside a workflow.
 
 > **Tip**
 >
-> Here is the practical rule: do not give the sub-agents in your catalog the `DynamicWorkflow`
-> capability. They are the leaves of the orchestration, not orchestrators themselves.
+> Do not give the sub-agents in your catalog the `DynamicWorkflow` capability. They are the leaves
+> of the orchestration, not orchestrators.
 
 ## Renaming a sub-agent: `WorkflowAgent`
 
-By default, a sub-agent shows up in the script under its own `name` and `description`. Sometimes you
-want a different name or a different description for one particular workflow, without editing the
-agent itself. Wrap it in a `WorkflowAgent`:
+By default, a sub-agent shows up in the script under its own `name` and `description`. To give it a
+different name or description for one workflow without editing the agent itself, wrap it in a
+`WorkflowAgent`:
 
 ```python
 from pydantic_ai_harness.dynamic_workflow import WorkflowAgent
@@ -408,39 +370,33 @@ shorthand for wrapping it in a `WorkflowAgent` with no overrides.
 
 ## Adding sub-agents while a run is going: `reveal()`
 
-The catalog is fixed when a run starts, which keeps it in the prompt-cache prefix across turns. But
-sometimes you learn during a run that a new sub-agent should be available, say once a fixer agent has
-been provisioned. Keep a reference to the `DynamicWorkflow` instance and call `reveal()`:
+The catalog is fixed when a run starts, which keeps it in the prompt-cache prefix across turns. To
+make a new sub-agent available during a run (say once a fixer agent has been provisioned), keep a
+reference to the `DynamicWorkflow` instance and call `reveal()`:
 
 ```python
 workflow = DynamicWorkflow(agents=[reviewer])
-orchestrator = Agent('openai:gpt-5', deps_type=MyDeps, capabilities=[workflow])
+orchestrator = Agent('openai:gpt-5', capabilities=[workflow])
 
 # later, from the host or from another tool:
 workflow.reveal(fixer)
 ```
 
-The revealed sub-agent becomes callable on the next step. The model learns about it through a short
-system-level announcement message that carries the new function's signature. The `run_workflow`
-description itself stays frozen at the agents present when the run started, so even a runtime reveal
-never moves the prompt-cache prefix. If compaction or a history processor removes the announcement,
-the capability announces the sub-agent again on the next step.
+The new agent becomes callable on the next step, announced by an `AgentRevealPart` (a capability
+part whose `agent_name` field names the sub-agent) containing its signature. The tool description
+stays fixed to preserve the prompt-cache prefix. If compaction or a history processor removes the
+announcement, it is sent again.
 
-> **Note**
->
-> `reveal()` is append-only. Once a sub-agent appears it stays for the rest of the run, and there
-> is no way to remove or hide it again. Plan the catalog as something that only grows.
->
-> It validates right away. A missing name, an invalid identifier, a reserved keyword, or a name
-> collision raises `UserError` at the call site. And if you share one `DynamicWorkflow` instance
-> across concurrent runs, `reveal()` reaches all in-flight runs and joins the baseline for runs that
-> start afterward.
+`reveal()` is append-only. Missing names, invalid identifiers, reserved keywords, and collisions
+raise `UserError` immediately.
+
+When one `DynamicWorkflow` instance is shared across concurrent runs, `reveal()` reaches every
+in-flight run and joins the baseline for later runs.
 
 ## Loading it only when needed: `defer_loading`
 
-`DynamicWorkflow` carries a fair amount of instruction text, and most turns do not need it. You can
-keep it collapsed to a one-line entry until the model actually loads it. That pays close to zero
-tokens on turns that never orchestrate:
+`DynamicWorkflow` carries a fair amount of instruction text, and most turns do not need it. Keep it
+collapsed to a one-line entry until the model loads it:
 
 ```python
 DynamicWorkflow(
@@ -456,18 +412,20 @@ for the full picture.
 
 ## What runs in the sandbox
 
-The script runs in Monty, a subset of Python. The subset is what makes the sandbox safe, so it is
-worth knowing where the edges are:
+The script runs in Monty, a subset of Python:
 
 - No third-party libraries.
 - Importable standard-library modules include `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
-  `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use.
-  Filesystem, environment, and clock operations are not configured for workflow scripts.
+  `unicodedata`, `datetime`, `time`, and `random`. Import what you use. There is no filesystem
+  or environment access.
 - No clock or randomness: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and
-  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_secs` set,
+  unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait; with `max_duration_seconds` set,
   a script may sleep for at most that long in total.
-- `asyncio.gather(...)` runs sub-agents concurrently with positional awaitables but no keyword
-  arguments, including `return_exceptions=True`. Other task creation and wait APIs are unavailable.
+- `asyncio.gather(...)` takes positional awaitables but no keyword arguments, including
+  `return_exceptions=True`. It runs sub-agents and `asyncio.sleep` calls concurrently, except in a
+  DBOS workflow where a sub-agent [carries `DBOSDurability`](#running-under-other-durable-engines),
+  where sub-agent calls and sleeps run one at a time. Other task creation and wait APIs are
+  unavailable.
 
 Before a script runs, it is statically type-checked against the sub-agent signatures. An ordinary,
 statically provable mistake such as a misspelled function, a positional `task`, or a wrong-typed
@@ -488,43 +446,108 @@ Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflo
 sub-agent whose model requests should run as activities, then register every agent with its own
 `AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](../code_mode/README.md#temporal-durability),
 and is re-executed during replay against the recorded sub-agent results.
-Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
+Unlike Code Mode, a `max_duration_seconds` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
-## What is coming
+## Running under other durable engines
 
-A suspended Monty program is a small serializable value you can dump, reload, and fork. That points
-at two patterns that do not ship yet. The first is forking one expensive shared prefix into N
-best-of-N branches. The second is durable workflows that resume from a persisted snapshot after a
-crash or a redeploy. Two smaller extensions are also planned: structured sub-agent inputs (a
-`parameters` schema per `WorkflowAgent`, instead of only `task: str`) and first-class progress
-streaming. Until then, set `event_stream_handler` on each sub-agent `Agent`, or use Logfire, to
-watch sub-agent runs inside the one tool call.
+`DBOSDurability` numbers a workflow's steps in the order they start, so the steps of concurrent
+sub-agents would interleave by timing and recovery could replay one sub-agent's results into another
+call. When any sub-agent in the catalog carries it, every sub-agent call the script makes, and every
+`asyncio.sleep` it gathers, runs one at a time inside a DBOS workflow, including calls to sub-agents
+without `DBOSDurability`. An `asyncio.gather` over sub-agents then takes the sum of their run times
+rather than the longest. Each call runs as ordinary workflow code, as it would outside
+`DynamicWorkflow`. A sub-agent that carries `DBOSDurability` keeps checkpoints for its model
+requests, MCP tool calls, and tools decorated with `@DBOS.step`, and DBOS checks the roles those
+`@DBOS.step` tools require. Recovery replays a call's finished steps and runs on from there. Other
+function tools run as workflow code and run again on recovery, so put side effects in `@DBOS.step`
+tools. A sub-agent without `DBOSDurability` keeps no checkpoints for its model requests, so recovery
+runs those again. Recording each call as one DBOS step would let the calls overlap, but DBOS runs a
+step called from inside another step as a plain function call, without its own checkpoint or role
+check.
+
+`AWSLambdaDurability` numbers a context's steps in the order they start too. When sub-agents carry it,
+the calls a script makes before it next waits run as the branches of one Lambda `parallel` operation,
+named after the tool, in the order the script made them. Sub-agents still run concurrently. Each
+branch has a child context of its own, whose step IDs derive from the branch's position, so a
+sub-agent's model requests and tool calls keep their own checkpoints. A branch's output is checkpointed
+with the `serdes` in the sub-agent's `step_config`, like its steps. Recovery returns each finished
+branch's recorded output, and an unfinished branch replays its own checkpoints and runs on from there.
+
+Under other engines, sub-agents run concurrently.
+
+### Scheduling sub-agent calls
+
+`call_scheduler` decides when the script's sub-agent calls start. It is called with the run
+context once per `run_workflow` call, and returns a `WorkflowCallScheduler`. Each call reaches its
+`run` as a `WorkflowCall` carrying the sub-agent's `agent_name`, and starts when `run` awaits
+`call.start()`. Its `flush` is awaited each time the script waits on its calls, once every call
+made before the wait has reached `run`. A durable engine integration can use this to register
+every call of a batch, in the order the script made them, before any of them starts:
+
+```python
+import asyncio
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow, WorkflowCall
+
+
+class StartTogether:
+    def __init__(self) -> None:
+        self._held: list[asyncio.Future[None]] = []
+
+    async def run(self, call: WorkflowCall) -> object:
+        held = asyncio.get_running_loop().create_future()
+        self._held.append(held)  # register `call.agent_name` with the engine here
+        await held
+        return await call.start()
+
+    async def flush(self) -> None:
+        for held in self._held:
+            held.set_result(None)
+        self._held.clear()
+
+
+def start_together(ctx: RunContext[None]) -> StartTogether:
+    return StartTogether()
+
+
+reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
+workflow = DynamicWorkflow(agents=[reviewer], call_scheduler=start_together)
+```
+
+A call only completes after `run` awaits its `call.start()`, so a scheduler that holds calls back
+has to release them in `flush`. Under `AWSLambdaDurability`, the calls that have started when
+`flush` returns run as one `parallel` operation, so a released call has to await `call.start()`
+without suspending first: one that waits on something else first, such as a concurrency limit,
+misses the operation and the script waits on it indefinitely. An exception that `run` raises
+itself reaches the script as a `RuntimeError` naming only its type. Under `DBOSDurability` the
+calls already start one at a time in dispatch order, and the `call_scheduler` factory is not called.
 
 ## API
 
 ```python
-DynamicWorkflow(                  # all parameters are keyword-only
-    agents=[...],                 # Sequence[AbstractAgent | WorkflowAgent], required
+DynamicWorkflow(  # all parameters are keyword-only
+    agents=[...],  # Sequence[AbstractAgent | WorkflowAgent], required
     tool_name='run_workflow',
     max_agent_calls=50,
     max_retries=3,
     forward_usage=True,
-    inherit_model=False,          # True -> sub-agents run with the parent run's resolved model
-    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> pydantic-ai default
-    resource_limits=None,         # None -> backstop (256 MB, no time cap);
-                                  # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
-    id=None,                      # required when defer_loading=True
-    description=None,             # one-line catalog entry shown while deferred
+    inherit_model=False,  # True -> sub-agents run with the parent run's resolved model
+    sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent run's limits when forwarding usage
+    resource_limits=None,  # None -> 256 MB, no time cap; a dict overrides only named caps; 'unlimited' -> limits off
+    call_scheduler=None,  # (RunContext) -> WorkflowCallScheduler; None starts each call when made
+    id=None,  # required when defer_loading=True
+    description=None,  # one-line catalog entry shown while deferred
     defer_loading=False,
 )
 
-workflow.reveal(agent)            # AbstractAgent | WorkflowAgent; validates before appending
+workflow.reveal(agent)  # AbstractAgent | WorkflowAgent; validates before appending
 
 WorkflowAgent(
-    agent,                        # AbstractAgent, required, positional
-    name=None,                    # sandbox function name; falls back to agent.name
-    description=None,             # function docstring; falls back to agent.description
+    agent,  # AbstractAgent, required, positional
+    name=None,  # sandbox function name; falls back to agent.name
+    description=None,  # function docstring; None falls back to agent.description, '' hides it
 )
 ```
 
@@ -532,7 +555,7 @@ WorkflowAgent(
 
 - [Code Mode](../code_mode/README.md), the same sandbox, calling the agent's own tools instead of
   sub-agents.
-- [SubAgents](../subagents/README.md), one-delegation-per-tool-call sub-agents, without the
+- [SubAgents](../sub_agents/README.md), one-delegation-per-tool-call sub-agents, without the
   scripted choreography.
 - [Tool use via code](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic),
   the mechanism this applies to sub-agents.

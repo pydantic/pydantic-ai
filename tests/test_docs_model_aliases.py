@@ -33,7 +33,8 @@ EXEMPT_PAGES = {
     'migration.md': 'migration notes name the models of their version',
     'capabilities/thinking.md': 'thinking support and settings differ per model',
     'evals/evaluators/built-in.md': "documents the judge's default model",
-    'harness/clai2.md': 'lists the models Codex offers',
+    'harness/cdp-browser.md': 'reports a benchmark run of the models it measured',
+    'harness/clai2.md': 'generated from the CLAI README, which GitHub and PyPI render without resolving aliases',
     'harness/compaction.md': 'context windows differ per model',
     'harness/gh-aw.md': 'the engine runs `openai/` models on Chat Completions, where the aliased ones reject tools at their default reasoning effort',
     'realtime/azure.md': 'Azure Voice Live serves specific models',
@@ -66,7 +67,7 @@ _KINDS = {
     )
 }
 # Models the providers serve that Pydantic AI doesn't list as known yet; drop each once it does.
-_NOT_YET_KNOWN = {'xai:grok-4.7', 'openai:gpt-image-2.5-flare'}
+_NOT_YET_KNOWN = {'openai:gpt-image-2.5-flare'}
 # Chat models the tiers don't cover, such as audio and research models, may be named directly.
 _UNTIERED = re.compile(r'image|audio|tts|whisper|guard|moderation|computer-use|research|codex|multi-agent|^o\d')
 

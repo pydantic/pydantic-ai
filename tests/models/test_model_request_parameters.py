@@ -1,12 +1,18 @@
+"""`ModelRequestParameters` is built locally before any provider request, so these are unit tests: no recording can reach it."""
+
 from dataclasses import replace
 from typing import Literal
 
 import pytest
 from pydantic import TypeAdapter
 
+from pydantic_ai.messages import ToolKind
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
+    AbstractNativeTool,
+    AdvisorTool,
     CodeExecutionTool,
+    FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
     MemoryTool,
@@ -37,7 +43,9 @@ def test_model_request_parameters_are_serializable():
             'native_tools': [],
             'tool_visibility': None,
             'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
             'deferred_capability_ids': set(),
+            'deferred_capabilities': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [],
@@ -45,6 +53,7 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
             'cache': None,
         }
@@ -81,10 +90,12 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'durable': None,
                     'defer_loading': False,
                     'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
+                    'unless_tool_kind': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
@@ -95,6 +106,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'web_search',
                     'optional': False,
+                    'provider_settings': None,
                     'search_context_size': 'medium',
                     'user_location': {'city': 'New York', 'country': 'US'},
                     'blocked_domains': None,
@@ -106,6 +118,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'web_fetch',
                     'optional': False,
+                    'provider_settings': None,
                     'max_uses': None,
                     'allowed_domains': None,
                     'blocked_domains': None,
@@ -115,6 +128,7 @@ def test_model_request_parameters_are_serializable():
                 {
                     'kind': 'image_generation',
                     'optional': False,
+                    'provider_settings': None,
                     'action': 'auto',
                     'background': 'auto',
                     'input_fidelity': None,
@@ -151,7 +165,9 @@ def test_model_request_parameters_are_serializable():
             ],
             'tool_visibility': None,
             'revealed_tool_names': set(),
+            'introduced_tool_names': set(),
             'deferred_capability_ids': set(),
+            'deferred_capabilities': [],
             'output_mode': 'text',
             'output_object': None,
             'output_tools': [
@@ -165,10 +181,12 @@ def test_model_request_parameters_are_serializable():
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'durable': None,
                     'defer_loading': False,
                     'toolset_id': None,
                     'unless_native': None,
                     'with_native': None,
+                    'unless_tool_kind': None,
                     'tool_kind': None,
                     'return_schema': None,
                     'include_return_schema': None,
@@ -179,11 +197,41 @@ def test_model_request_parameters_are_serializable():
             'allow_text_output': True,
             'allow_image_output': False,
             'instruction_parts': None,
+            'instruction_visibility': None,
             'thinking': None,
             'cache': None,
         }
     )
     assert ta.validate_python(dumped) == params
+
+
+@pytest.mark.parametrize(
+    'tool',
+    [
+        WebSearchTool(provider_settings={'anthropic': {'response_inclusion': 'excluded'}}),
+        WebSearchTool(provider_settings={'openrouter': {'engine': 'exa', 'max_results': 3}}),
+        WebFetchTool(provider_settings={'anthropic': {'use_cache': False}}),
+        AdvisorTool(model='advisor', provider_settings={'openrouter': {'forward_transcript': True}}),
+        AdvisorTool(model='advisor', provider_settings={'anthropic': {'caching': '5m'}}),
+        ImageGenerationTool(provider_settings={'openai': {'quality': 'high'}}),
+        FileSearchTool(file_store_ids=['store'], provider_settings={'xai': {'retrieval_mode': 'keyword'}}),
+    ],
+)
+def test_provider_settings_survive_serialization(tool: AbstractNativeTool):
+    """Durable execution sends native tools through this round trip between activities."""
+    params = ModelRequestParameters(native_tools=[tool])
+
+    assert ta.validate_json(ta.dump_json(params)) == params
+
+
+def test_provider_settings_payload_with_unknown_option_is_kept():
+    """Like model settings, an option this version doesn't know is kept for a model that reads it, not rejected."""
+    payload = {'native_tools': [{'kind': 'web_search', 'provider_settings': {'openrouter': {'future': 1}}}]}
+
+    params = ta.validate_python(payload)
+
+    assert params.native_tools == [WebSearchTool(provider_settings={'openrouter': {'future': 1}})]  # pyright: ignore[reportArgumentType]
+    assert ta.validate_json(ta.dump_json(params)) == params
 
 
 def test_model_request_parameters_cache_round_trip():
@@ -243,6 +291,22 @@ def test_visibility_of_unresolved_parameters_uses_authored_deferral() -> None:
     assert params.visibility_of('hidden') == 'withheld'
     assert params.visibility_of('visible') == 'visible'
     assert params.visibility_of('unknown') == 'visible'
+
+
+def test_available_tool_names_for_kind_skips_deferred_tools_until_history_reveals_them() -> None:
+    lookup = ToolKind('request_parameters', 'lookup')
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='search', tool_kind='request_parameters.search'),
+            ToolDefinition(name='hidden_lookup', tool_kind=lookup, defer_loading=True),
+            ToolDefinition(name='revealed_lookup', tool_kind=lookup, defer_loading=True),
+            ToolDefinition(name='lookup', tool_kind=lookup),
+        ],
+        revealed_tool_names={'revealed_lookup'},
+    )
+    assert params.available_tool_names_for_kind(lookup) == ['revealed_lookup', 'lookup']
+    assert params.available_tool_names_for_kind(lookup.id) == ['revealed_lookup', 'lookup']
+    assert params.available_tool_names_for_kind('request_parameters.missing') == []
 
 
 @pytest.mark.parametrize(

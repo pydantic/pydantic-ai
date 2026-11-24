@@ -8,12 +8,15 @@ capability runs its local fallback instead.
 from __future__ import annotations as _annotations
 
 import re
+from collections.abc import AsyncIterator
 from datetime import UTC
 from decimal import Decimal
 from typing import Any
 
 import pytest
+from cassetter import Cassette
 from pydantic import BaseModel
+from pytest_mock import MockerFixture
 
 from pydantic_ai import (
     Agent,
@@ -27,9 +30,11 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     UserPromptPart,
 )
 from pydantic_ai.capabilities import ImageGeneration, NativeTool
@@ -43,6 +48,8 @@ from ..._inline_snapshot import snapshot
 from ...conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
+    from google.genai.types import Blob, Candidate, Content, FinishReason, GenerateContentResponse, Part
+
     from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -177,9 +184,11 @@ async def test_google_image_generation(allow_model_requests: None, gemini_api_ke
                     cost=Decimal('0.136628'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -228,9 +237,11 @@ async def test_google_image_generation(allow_model_requests: None, gemini_api_ke
                     cost=Decimal('0.138000'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -285,9 +296,11 @@ async def test_google_image_generation_stream(allow_model_requests: None, gemini
                     cost=Decimal('0.0387155'),
                 ),
                 model_name='gemini-2.5-flash-image',
+                model_id='google:gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -363,9 +376,11 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                     cost=Decimal('0.138472'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -388,6 +403,132 @@ async def test_google_image_or_text_output(allow_model_requests: None, gemini_ap
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output == snapshot(IsInstance(BinaryImage))
+
+
+async def test_google_2_5_flash_image_ignores_thinking(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """`gemini-2.5-flash-image` doesn't think, so unified `thinking` sends no thinking config, which the API would reject."""
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash-image', provider=provider), model_settings={'thinking': True})
+
+    result = await agent.run('Say hi in one word, no image please.')
+    assert result.output == snapshot('Hi!')
+    body = request_capture.body(':generateContent')
+    assert body['generationConfig'] == snapshot({'responseModalities': ['TEXT', 'IMAGE']})
+
+
+THOUGHT_IMAGE_PROMPT = 'Create a labeled infographic of the axolotl life cycle, with four stages and a title banner.'
+
+
+async def test_google_image_generation_drops_thought_images(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture, vcr: Cassette
+):
+    """Interim thought images never reach the output or the message history; the final image keeps its signature.
+
+    With thinking on and text output allowed, `gemini-3-pro-image-preview` sends an interim image marked
+    `thought=True`, with no thought signature, before the final image, which carries one. A request for image output
+    alone gets no thought parts back, so this test allows text output. The second turn replays the final image with its
+    signature, and Gemini accepts it.
+    """
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=120))
+    agent = Agent(
+        GoogleModel('gemini-3-pro-image-preview', provider=provider),
+        output_type=str | BinaryImage,
+        model_settings={'thinking': True},
+    )
+
+    result = await agent.run(THOUGHT_IMAGE_PROMPT)
+
+    assert vcr.interactions[0].response.body.content['candidates'][0]['content']['parts'] == snapshot(
+        [
+            {'text': IsStr(), 'thought': True},
+            {'inlineData': {'mimeType': 'image/jpeg', 'data': IsStr()}, 'thought': True},
+            {'text': IsStr(), 'thought': True},
+            {'inlineData': {'mimeType': 'image/jpeg', 'data': IsStr()}, 'thoughtSignature': IsStr()},
+        ]
+    )
+    assert result.response.parts == snapshot(
+        [
+            ThinkingPart(content=IsStr()),
+            ThinkingPart(content=IsStr()),
+            FilePart(
+                content=IsInstance(BinaryImage),
+                provider_name='google',
+                provider_details={'thought_signature': IsStr()},
+            ),
+        ]
+    )
+    assert result.response.images == [result.output]
+
+    result = await agent.run('Now give it a sombrero.', message_history=result.all_messages())
+
+    assert result.output == snapshot(IsInstance(BinaryImage))
+    assert request_capture.body(':generateContent', index=1)['contents'] == snapshot(
+        [
+            {'parts': [{'text': THOUGHT_IMAGE_PROMPT}], 'role': 'user'},
+            {
+                'parts': [
+                    {'text': IsStr(), 'thought': True},
+                    {'text': IsStr(), 'thought': True},
+                    {'inlineData': {'data': IsStr(), 'mime_type': 'image/jpeg'}, 'thoughtSignature': IsStr()},
+                ],
+                'role': 'model',
+            },
+            {'parts': [{'text': 'Now give it a sombrero.'}], 'role': 'user'},
+        ]
+    )
+
+
+async def test_google_image_generation_stream_drops_thought_images(
+    allow_model_requests: None, gemini_api_key: str, mocker: MockerFixture
+):
+    """Streaming drops interim thought images too; the final image keeps its signature.
+
+    The stream is hand-built rather than recorded because a recorded thought-image stream trips
+    `test_stream_parity.py::test_recorded_streams_match_the_complete_response`: the stream merges the thinking before
+    and after a dropped thought image into one `ThinkingPart`, where the complete response keeps two. The split is
+    tracked separately.
+    """
+    chunk = GenerateContentResponse(
+        model_version='gemini-3-pro-image-preview',
+        candidates=[
+            Candidate(
+                content=Content(
+                    role='model',
+                    parts=[
+                        Part(text='Planning the composition...', thought=True),
+                        Part(inline_data=Blob(data=b'draft-1', mime_type='image/png'), thought=True),
+                        Part(inline_data=Blob(data=b'draft-2', mime_type='image/png'), thought=True),
+                        Part(inline_data=Blob(data=b'final', mime_type='image/png'), thought_signature=b'signature'),
+                    ],
+                ),
+                finish_reason=FinishReason.STOP,
+            )
+        ],
+    )
+
+    async def stream_chunks() -> AsyncIterator[GenerateContentResponse]:
+        yield chunk
+
+    model = GoogleModel('gemini-3-pro-image-preview', provider=GoogleProvider(api_key=gemini_api_key))
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=stream_chunks())
+    agent = Agent(model, output_type=BinaryImage, model_settings={'thinking': True})
+
+    async with agent.run_stream('Generate an image of an axolotl.') as result:
+        output = await result.get_output()
+
+    assert output.data == b'final'
+    assert result.response.parts == snapshot(
+        [
+            ThinkingPart(content='Planning the composition...'),
+            FilePart(
+                content=BinaryImage(data=b'final', media_type='image/png', identifier='d594c2'),
+                provider_name='google',
+                provider_details={'thought_signature': 'c2lnbmF0dXJl'},
+            ),
+        ]
+    )
 
 
 async def test_google_image_and_text_output(allow_model_requests: None, gemini_api_key: str):
@@ -460,9 +601,11 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                     cost=Decimal('0.136998'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -471,9 +614,9 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
+                    RetryFeedbackPart(
                         content='Please return text.',
-                        tool_call_id=IsStr(),
+                        retry=RetryInfo(cause='no_output', attempt=1, max_retries=1),
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -504,9 +647,11 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                     cost=Decimal('0.003254'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -615,9 +760,11 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                     cost=Decimal('0.162734'),
                 ),
                 model_name='gemini-3-pro-image-preview',
+                model_id='google:gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
+                canonical_system='google',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 finish_reason='stop',

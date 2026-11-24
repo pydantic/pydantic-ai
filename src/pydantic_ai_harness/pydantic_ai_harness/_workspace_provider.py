@@ -5,19 +5,23 @@ from __future__ import annotations
 import asyncio
 import math
 import posixpath
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
+from typing import TypeVar
 
 import anyio
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
+from pydantic_ai.messages import Authority
+from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceRef, WorkspaceTimeoutError
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
 try:
     import sniffio as _sniffio
 except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
     _sniffio = None
+
+_T = TypeVar('_T')
 
 
 def safe_credential_reason(error: Exception) -> str:
@@ -51,6 +55,30 @@ def running_on_asyncio() -> bool:
         return _sniffio.current_async_library() == 'asyncio'
     except _sniffio.AsyncLibraryNotFoundError:
         return False
+
+
+def require_asyncio(message: str) -> None:
+    """Raise `UserError` with `message` unless the caller runs on asyncio."""
+    if not running_on_asyncio():
+        raise UserError(message)
+
+
+def reject_defer_loading(owner: str, defer_loading: bool) -> None:
+    """Raise `UserError` if the workspace capability `owner` is set to load deferred.
+
+    Core picks the run's workspace from the always-on capabilities only.
+    """
+    if defer_loading:
+        raise UserError(
+            f'`{owner}` does not support `defer_loading=True`: '
+            'the workspace is selected before deferred capabilities load.'
+        )
+
+
+def check_provider(ref: WorkspaceRef, provider: str) -> None:
+    """Raise `ValueError` unless `ref` names a workspace of `provider`."""
+    if ref.provider != provider:
+        raise ValueError(f'unsupported workspace provider {ref.provider!r}; expected {provider!r}')
 
 
 # asyncio holds only weak references to tasks, so a detached stop needs a strong one until it ends.
@@ -95,7 +123,7 @@ async def stop_shielded(stop: Callable[[], Awaitable[object]], *, grace: float =
             with anyio.CancelScope(shield=True):
                 while True:
                     try:
-                        await asyncio.sleep(0)
+                        await asyncio.sleep(0)  # noqa: TID251  (not converted to anyio yet)
                     except asyncio.CancelledError:
                         continue
                     break
@@ -123,6 +151,31 @@ async def command_deadline(
     if scope.cancelled_caught:
         stdout, stderr = output()
         raise WorkspaceTimeoutError(f'Command timed out after {timeout:g} seconds', stdout=stdout, stderr=stderr)
+
+
+async def run_to_completion(call: Callable[[], Awaitable[_T]]) -> _T:
+    """Await `call` in a task of its own and see it finish even if the caller is cancelled meanwhile.
+
+    For work whose outcome must be recorded, such as a created Sprite or a closed client: the
+    caller's cancellation is re-raised only once `call` has finished, and nothing outlives this
+    await. `call` must be bounded; the caller waits for it.
+    """
+    # AnyIO has no detached task: keep this native task alive and referenced until its result is recorded.
+    task = asyncio.ensure_future(call())
+    # Preserve the native cancellation to re-raise after the provider call finishes.
+    cancelled: asyncio.CancelledError | None = None
+    # The AnyIO shield holds off cancel scopes, but native `Task.cancel()` can still interrupt the
+    # caller. `asyncio.wait` does not propagate that cancellation to the independent provider task.
+    with anyio.CancelScope(shield=True):
+        while not task.done():
+            try:
+                await asyncio.wait([task])
+            except asyncio.CancelledError as error:
+                cancelled = error
+    if cancelled is not None:
+        task.exception()  # Retrieve a provider failure before the native cancellation takes precedence.
+        raise cancelled
+    return task.result()
 
 
 def absolute_path(name: str, value: str | None) -> str | None:
@@ -159,10 +212,58 @@ def command_argv(command: WorkspaceCommand, shell: bool) -> list[str]:
     return list(command)
 
 
+# Run as `sh -c EXEC_SCRIPT sh <argv>` by providers whose exec API leaves stdin open or reports a
+# program it cannot start as an error. `sh` resolves the program on `PATH` and exits 127 when it is
+# missing and 126 when it cannot run, as the protocol asks; `exec` keeps the argv literal and
+# replaces the shell with the program, with stdin at EOF. BusyBox and bash read a program named like
+# `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is resolved to its
+# path first. The command's `env` is the shell's own environment, and assigning a variable the
+# environment has changes what the program inherits, so the script assigns none on the usual path
+# and only a reserved name for a program named like an option.
+EXEC_SCRIPT = """case $1 in
+-*/*) PYDANTIC_AI_HARNESS_PROGRAM=./$1 ;;
+-*) PYDANTIC_AI_HARNESS_PROGRAM=$(command -v -- "$1") || { printf 'sh: %s: not found\\n' "$1" >&2; exit 127; } ;;
+*) exec "$@" </dev/null ;;
+esac
+shift
+exec "$PYDANTIC_AI_HARNESS_PROGRAM" "$@" </dev/null"""
+
+
+def check_env_types(env: Mapping[str, str] | None) -> None:
+    """Raise `TypeError` unless `env` is `None` or maps strings to strings."""
+    if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
+        raise TypeError('env keys and values must be strings')
+
+
+def check_env(env: Mapping[str, str] | None) -> None:
+    """Raise unless `env` maps non-empty names without `=` or NUL to strings without NUL.
+
+    A local VM engine passes them on as C strings, which would cut a value short at a NUL.
+    """
+    if env is None:
+        return
+    check_env_types(env)
+    if any(not key or '=' in key or '\0' in key or '\0' in value for key, value in env.items()):
+        raise ValueError('env keys must be non-empty without `=` or NUL, and values must not contain NUL')
+
+
 def check_working_dir(value: str | None) -> None:
     """Raise `UserError` unless a provider's `working_dir` is an absolute POSIX path or `None`."""
     if value is not None and not posixpath.isabs(value):
         raise UserError(f'working_dir must be an absolute POSIX path or None, got {value!r}.')
+
+
+def check_path_authority(path_authority: Mapping[str, Authority] | None) -> None:
+    """Raise `UserError` for a `path_authority` key starting with `~`, which a sandbox or remote host doesn't expand.
+
+    `AuthorityWorkspace` refuses it too, but only when the run builds the workspace; this fails where it's written.
+    """
+    for path in path_authority or ():
+        if path.startswith('~'):
+            raise UserError(
+                f'`path_authority` paths are paths on the sandbox or host, so `~` is not expanded: got {path!r}. '
+                'Pass an absolute path, or one relative to the working directory.'
+            )
 
 
 def check_integer(name: str, value: int | None, *, minimum: int = 1, optional: bool = False) -> None:

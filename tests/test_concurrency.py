@@ -22,6 +22,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import UsageLimits
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -29,8 +30,6 @@ if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
 logfire_installed = importlib.util.find_spec('logfire') is not None
-
-READINESS_WAIT_TIMEOUT = 5
 
 
 class AsyncBarrier:
@@ -149,9 +148,9 @@ class TestConcurrencyLimiter:
 
             for _ in range(3):
                 tg.start_soon(waiter)
-            with anyio.fail_after(2):
-                while limiter.waiting_count < 3:
-                    await anyio.sleep(0.01)
+            # Each waiter registers, then parks on the limiter: once every task is blocked, all three have. (No clock, so
+            # a runner too loaded to schedule this process for a while can't time the test out.)
+            await anyio.wait_all_tasks_blocked()
             assert limiter.waiting_count == 3
 
             release.set()

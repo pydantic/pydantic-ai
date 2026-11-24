@@ -5,6 +5,7 @@ import re
 import pytest
 from pytest_mock import MockerFixture
 
+from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.profiles.zai import zai_model_profile
@@ -110,6 +111,7 @@ def test_zai_provider_model_profile(mocker: MockerFixture):
     assert profile_5_3 is not None
     assert profile_5_3.get('supports_thinking') is True
     assert profile_5_3.get('thinking_always_enabled') is True
+    assert profile_5_3.get('json_schema_transformer') == InlineDefsJsonSchemaTransformer
     assert profile_5_3.get('zai_supports_reasoning_effort') is True
     assert profile_5_3.get('zai_reasoning_effort_mapping') == {'minimal': 'low', 'medium': 'high', 'xhigh': 'max'}
     assert profile_5_2.get('zai_reasoning_effort_mapping') is None

@@ -1,16 +1,22 @@
 """Private helpers for capabilities adopting the run sandbox."""
 
+import errno
+import hashlib
 import posixpath
-from collections.abc import Sequence
+import shlex
+import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ToolFailed, UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import Authority, ModelMessage, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
+    FileEntry,
     SupportsCommands,
     UnavailableWorkspace,
     Workspace,
@@ -58,6 +64,14 @@ def raise_tool_failure(error: WorkspaceError) -> NoReturn:
     raise ToolFailed(str(error) or f'The workspace operation failed ({type(error).__name__}).') from error
 
 
+async def stat_or_none(workspace: Workspace, path: str) -> FileEntry | None:
+    """The entry at `path`, or `None` when nothing is there."""
+    try:
+        return await workspace.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return None
+
+
 def supports_commands(workspace: Workspace) -> bool:
     """Whether `workspace.run` can succeed: a workspace is attached, its innermost backend executes commands, and no policy refuses them."""
     if not workspace.attached or workspace.read_only:
@@ -85,7 +99,19 @@ def is_unattached(workspace: Workspace) -> bool:
     return innermost_backend(workspace) is NO_WORKSPACE
 
 
-_PROVIDER_CAPABILITIES = {'modal': 'ModalSandbox()', 'e2b': 'E2BSandbox()', 'sprites': 'SpritesSandbox()'}
+_LOCAL_CAPABILITIES = {'local': 'LocalWorkspace', 'windows': 'WindowsWorkspace'}
+"""The capability for a host workspace's ref provider, which takes the ref's directory."""
+
+_PROVIDER_CAPABILITIES = {
+    'modal': 'ModalSandbox()',
+    'e2b': 'E2BSandbox()',
+    'render': 'RenderSandbox()',
+    'sprites': 'SpritesSandbox()',
+    'daytona': 'DaytonaSandbox()',
+    'boxd': 'BoxdSandbox()',
+    'kubernetes': 'KubernetesSandbox(warm_pool=...)',
+    'opensandbox': 'OpenSandbox()',
+}
 """The capability that provides each first-party provider's workspaces, to name in an error."""
 
 
@@ -107,8 +133,8 @@ def require_workspace(workspace: Workspace, owner: str, messages: Sequence[Model
     if isinstance(backend, UnavailableWorkspace) and not is_unattached(workspace):
         raise UserError(f'`{owner}` cannot use this workspace: {backend.reason}')
     if not workspace.attached and (ref := _history_ref(messages)) is not None:
-        if ref.provider == 'local':
-            example = f' (such as `LocalWorkspace({ref.id!r})`)'
+        if (local := _LOCAL_CAPABILITIES.get(ref.provider)) is not None:
+            example = f' (such as `{local}({ref.id!r})`)'
         elif (capability := _PROVIDER_CAPABILITIES.get(ref.provider)) is not None:
             example = f' (such as `{capability}`)'
         else:
@@ -119,10 +145,11 @@ def require_workspace(workspace: Workspace, owner: str, messages: Sequence[Model
             f'{example} to continue there, or pass `workspace=` to the run.'
         )
     if not workspace.attached:
+        local = 'WindowsWorkspace' if sys.platform == 'win32' else 'LocalWorkspace'
         raise UserError(
             f'`{owner}` needs a workspace, but none is attached to this run. '
-            "Add `LocalWorkspace('.')` (this machine; `from pydantic_ai.capabilities import LocalWorkspace`, "
-            'or `- LocalWorkspace: .` in an agent spec) or a sandbox capability such as `ModalSandbox()` '
+            f"Add `{local}('.')` (this machine; `from pydantic_ai.capabilities import {local}`, "
+            f'or `- {local}: .` in an agent spec) or a sandbox capability such as `ModalSandbox()` '
             "to the agent's capabilities, or pass `workspace=` to the run. "
             'See https://pydantic.dev/docs/ai/workspace/'
         )
@@ -159,11 +186,20 @@ def secondary_workspace(value: WorkspaceBackend | None, owner: str) -> Workspace
     return value if isinstance(value, Workspace) else Workspace(value)
 
 
+def in_working_dir(path: str) -> bool:
+    """Whether a configured workspace path stays inside the working directory.
+
+    `FileSystem`'s root contains the working directory, so the run's file tools can reach such a path.
+    """
+    normalized = posixpath.normpath(path)
+    return not posixpath.isabs(normalized) and normalized.split('/', 1)[0] != '..'
+
+
 METADATA_DIR = '.pydantic-ai-harness'
 """The directory, below a workspace's working directory, that holds files harness capabilities keep for themselves."""
 
 
-async def metadata_dir(workspace: Workspace, name: str) -> str:
+async def metadata_dir(workspace: Workspace, name: str, *, temp_fallback: bool = False) -> str:
     """Return `<working_dir>/.pydantic-ai-harness/<name>`, creating it.
 
     `.pydantic-ai-harness` gets a `.gitignore` holding `*` whenever it has none, including a
@@ -171,23 +207,69 @@ async def metadata_dir(workspace: Workspace, name: str) -> str:
     cannot run commands works too. A path in the way raises `WorkspaceError`: it is no tool
     argument's fault, so a retry cannot fix it. So does a symlink in place of either directory, or a
     dangling `.gitignore`: it could lead outside the working directory.
+
+    With `temp_fallback`, a working directory the workspace user cannot write to on a POSIX workspace
+    (a root-owned `/app` in a container that runs as `nobody`, or a read-only mount) gets the directory from
+    `_temp_metadata_dir` instead. That runs a command, so only callers that already need commands
+    pass it; the directory is outside the working directory, so `FileSystem` tools cannot read it.
     """
+    join = workspace.paths.join
     working_dir = await workspace.working_dir()
-    root = posixpath.join(working_dir, METADATA_DIR)
-    directory = posixpath.join(root, name)
-    gitignore = posixpath.join(root, '.gitignore')
-    real_root = posixpath.join(await workspace.realpath(working_dir), METADATA_DIR)
-    if await workspace.realpath(directory) != posixpath.join(real_root, name):
+    root = join(working_dir, METADATA_DIR)
+    directory = join(root, name)
+    gitignore = join(root, '.gitignore')
+    real_root = join(await workspace.realpath(working_dir), METADATA_DIR)
+    if await workspace.realpath(directory) != join(real_root, name):
         raise WorkspaceError(f'`{METADATA_DIR}/{name}` in the workspace is a symlink, so it is not used.')
     try:
         await workspace.make_dir(directory)
         if not await workspace.exists(gitignore):
             # A dangling symlink reads as missing; writing it would create its target.
-            if await workspace.realpath(gitignore) != posixpath.join(real_root, '.gitignore'):
+            if await workspace.realpath(gitignore) != join(real_root, '.gitignore'):
                 raise WorkspaceError(f'`{METADATA_DIR}/.gitignore` in the workspace is a symlink, so it is not used.')
             await workspace.write_text(gitignore, '*\n')
     except WorkspaceError:
         raise
     except OSError as error:
+        # The temp directory is found with a POSIX shell script.
+        posix = workspace.platform == 'posix'
+        if temp_fallback and posix and (isinstance(error, PermissionError) or error.errno == errno.EROFS):
+            return await _temp_metadata_dir(workspace, real_root, name, error)
         raise WorkspaceError(f'Cannot create `{METADATA_DIR}/{name}` in the workspace: {error.strerror}') from error
     return directory
+
+
+_TEMP_METADATA_DIR_SCRIPT = """umask 077
+dir="${{TMPDIR:-/tmp}}/{prefix}-$(id -u)-{tag}"
+sub="$dir"/{name}
+mkdir -p "$dir" && [ ! -L "$dir" ] && [ -O "$dir" ] && mkdir -p "$sub" && [ ! -L "$sub" ] && [ -O "$sub" ] && printf '%s' "$sub"
+"""
+
+
+async def _temp_metadata_dir(workspace: Workspace, real_root: str, name: str, error: OSError) -> str:
+    """Create `<name>` in a directory under the workspace user's temp directory, private to that user.
+
+    The directory is named after the user ID and the working directory, so each run in the same
+    workspace finds the same files. Another user on a shared `/tmp` could create that name first, so
+    each directory is checked to be no symlink and owned by the workspace user before anything is
+    created inside it; `umask 077` keeps a directory created here private.
+    """
+    tag = hashlib.sha256(real_root.encode()).hexdigest()[:12]
+    script = _TEMP_METADATA_DIR_SCRIPT.format(prefix=METADATA_DIR, tag=tag, name=shlex.quote(name))
+    result = await workspace.run(script, shell=True)
+    if result.exit_code != 0:
+        raise WorkspaceError(
+            f'Cannot create `{METADATA_DIR}/{name}` in the workspace ({error.strerror}) '
+            'or a private directory for it in the temp directory.'
+        ) from error
+    return result.stdout
+
+
+def with_authority(
+    backend: WorkspaceBackend | None, authority: Authority, path_authority: Mapping[str, Authority] | None
+) -> WorkspaceBackend | None:
+    """`backend` in an `AuthorityWorkspace` when a workspace capability's `authority` or `path_authority` asks for one."""
+    if backend is None or (authority == 'operator' and not path_authority):
+        return backend
+    workspace = backend if isinstance(backend, Workspace) else Workspace(backend)
+    return AuthorityWorkspace(workspace, authority=authority, path_authority=path_authority)

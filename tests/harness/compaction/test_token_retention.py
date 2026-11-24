@@ -10,9 +10,12 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
-    RetryPromptPart,
+    RetryFeedbackPart,
+    RetryInfo,
     SystemPromptPart,
+    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -21,6 +24,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.compaction import (
     FallbackCompaction,
     SlidingWindowCompaction,
@@ -29,6 +33,7 @@ from pydantic_ai_harness.compaction import (
     estimate_token_count,
     pin,
 )
+from tests.conftest import legacy_retry_prompt_part
 
 StrategyType = type[SlidingWindowCompaction[None]] | type[SummarizingCompaction[None]]
 
@@ -139,7 +144,7 @@ class TestCompactionTokenRetention:
     @pytest.mark.parametrize('retry', [False, True])
     async def test_reused_tool_id_only_retains_the_latest_call(self, strategy_type: StrategyType, retry: bool) -> None:
         reply = (
-            RetryPromptPart('new', tool_name='lookup', tool_call_id='same')
+            ToolReturnPart('lookup', 'new', tool_call_id='same', outcome='retried')
             if retry
             else ToolReturnPart('lookup', 'new', tool_call_id='same')
         )
@@ -325,21 +330,28 @@ class TestCompactionTokenRetention:
         assert usage.requests == 0
 
     @pytest.mark.parametrize('gap', [0, 7])
-    @pytest.mark.parametrize('reply_kind', ['return', 'tool_retry', 'generic_retry'])
+    @pytest.mark.parametrize(
+        'reply_kind', ['return', 'tool_retry', 'generic_retry', 'legacy_tool_retry', 'legacy_generic_retry']
+    )
     async def test_tool_reply_dependencies(self, strategy_type: StrategyType, gap: int, reply_kind: str) -> None:
         call = ModelResponse(parts=[ToolCallPart('lookup', {'key': 'value'}, tool_call_id='lookup-1')])
-        reply = (
-            ToolReturnPart('lookup', 'result', tool_call_id='lookup-1')
-            if reply_kind == 'return'
-            else RetryPromptPart(
-                'retry', tool_name='lookup' if reply_kind == 'tool_retry' else None, tool_call_id='lookup-1'
+        reply: ModelRequestPart
+        if reply_kind == 'return':
+            reply = ToolReturnPart('lookup', 'result', tool_call_id='lookup-1')
+        elif reply_kind == 'tool_retry':
+            reply = ToolReturnPart('lookup', 'retry', tool_call_id='lookup-1', outcome='retried')
+        elif reply_kind == 'generic_retry':
+            reply = RetryFeedbackPart('retry', retry=RetryInfo(cause='model_retry'))
+        else:
+            # TODO(v3): remove the legacy cases along with `RetryPromptPart`
+            reply = legacy_retry_prompt_part(
+                'retry', tool_name='lookup' if reply_kind == 'legacy_tool_retry' else None, tool_call_id='lookup-1'
             )
-        )
         returned = ModelRequest(parts=[reply])
         messages: list[ModelMessage] = [response('discard'), call]
         messages.extend(response(f'intervening {index}') for index in range(gap))
         messages.extend([returned, response('end')])
-        suffix = messages[-2:] if reply_kind == 'generic_retry' else messages[1:]
+        suffix = messages[-2:] if reply_kind in ('generic_retry', 'legacy_generic_retry') else messages[1:]
         snapshot = ModelMessagesTypeAdapter.dump_json(suffix)
         minimum = estimate_token_count(messages[-2:], tokenizer=len)
         strategy = strategy_type(max_messages=1, keep_tokens=minimum, tokenizer=len, preserve_first_user_message=False)
@@ -442,7 +454,14 @@ class TestSummarizingCompactionTokenRetention:
 
         result = await compact_now(strategy, history, model=TestModel(custom_output_text='summary'))
 
-        kept_text = [part.content for message in result for part in message.parts if isinstance(part, UserPromptPart)]
+        kept_text = [
+            ''.join(item.content for item in part.content if isinstance(item, TextContent))
+            if not isinstance(part.content, str)
+            else part.content
+            for message in result
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        ]
         assert kept_text == (['a'] if keep_messages and user_text == 'a' else [])
         assert len(result) == 2 + len(kept_text)
         assert result[-1] is history[-1]
@@ -505,14 +524,15 @@ class TestSummarizingCompactionTokenRetention:
         assert 'OLDER_RESPONSE_SENTINEL' in prompts[0]
         assert 'PROTECTED_USER_SENTINEL' not in prompts[0]
         assert 'PROTECTED_RESPONSE_SENTINEL' not in prompts[0]
+        # A retained copy's text is marked `TextContent`.
         retained_users = [
-            part.content
+            item.content
             for message in result[: -len(suffix)]
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, UserPromptPart)
-            and isinstance(part.content, str)
-            and 'OLDER_USER_SENTINEL' in part.content
+            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+            for item in part.content
+            if isinstance(item, TextContent) and 'OLDER_USER_SENTINEL' in item.content
         ]
         assert bool(retained_users) is keep_user_messages
         assert all(len(text) <= 30 for text in retained_users)
@@ -615,3 +635,38 @@ class TestSummarizingCompactionTokenRetention:
         assert len(result) == 2
         assert_original_suffix(result, messages[1:], ModelMessagesTypeAdapter.dump_json(messages[1:]))
         assert ModelMessagesTypeAdapter.dump_json(messages) == snapshot
+
+
+@pytest.mark.parametrize(
+    'strategy',
+    [
+        SlidingWindowCompaction[None](max_messages=1, keep_tokens=10),
+        SlidingWindowCompaction[None](max_messages=1, keep_tokens=0),
+        SlidingWindowCompaction[None](max_messages=1, keep_messages=1),
+        SummarizingCompaction[None](max_messages=1, keep_tokens=10),
+        SummarizingCompaction[None](max_messages=1, keep_tokens=0),
+        SummarizingCompaction[None](max_messages=1, keep_messages=1),
+    ],
+    ids=[
+        'sliding tokens',
+        'sliding no tokens',
+        'sliding messages',
+        'summary tokens',
+        'summary no tokens',
+        'summary messages',
+    ],
+)
+async def test_the_latest_workspace_response_is_kept(
+    strategy: SlidingWindowCompaction[None] | SummarizingCompaction[None],
+) -> None:
+    """The next run finds its workspace from the latest response, so a large request after it cannot push it out."""
+    ref = WorkspaceRef(provider='sandbox', id='sb-1')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('first ' * 100)]),
+        ModelResponse(parts=[TextPart('one ' * 100)], workspace_ref=ref),
+        ModelRequest(parts=[UserPromptPart('second ' * 100)]),
+        ModelResponse(parts=[TextPart('two ' * 100)], workspace_ref=ref),
+        ModelRequest(parts=[UserPromptPart('a pasted log ' * 500)]),
+    ]
+    result = await compact_now(strategy, history, model=TestModel(custom_output_text='summary'))
+    assert result[-2:] == history[-2:]

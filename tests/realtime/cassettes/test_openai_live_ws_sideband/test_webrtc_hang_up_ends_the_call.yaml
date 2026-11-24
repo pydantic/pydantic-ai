@@ -1,14 +1,20 @@
 version: 1
 interactions:
 - kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session: {}
+- kind: message
   direction: received
   at: 0.0
   data:
-    event_id: event_ETYIzNs2SiyGfLJqeNoQD
+    event_id: event_Ec0JYrXHGl3WUxiSsQe49
     type: session.started
     session:
-      id: live_u1_ETYIzp3oMdsOgToLqu6XD9tADPzN3Caj
-      expires_at: 1790719289
+      id: live_u2_Ec0JYp3oMroyVGMhjUvmQCsUvuTxUHA8
+      expires_at: 1792733580
       model: gpt-live-1
       instructions: You are a voice assistant. Keep replies short and conversational.
         When the user asks for something you cannot answer from this conversation

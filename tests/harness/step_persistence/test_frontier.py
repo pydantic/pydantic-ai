@@ -16,7 +16,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     InMemoryStepStore,
-    SnapshotSaved,
+    SnapshotSavedEvent,
     SqliteStepStore,
     StepEvent,
     StepPersistence,
@@ -28,11 +28,11 @@ from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 @pytest.mark.parametrize('stream', [False, True])
 async def test_input_checkpoint_on_first_model_failure(stream: bool) -> None:
     store = InMemoryStepStore()
-    notices: list[SnapshotSaved] = []
+    notices: list[SnapshotSavedEvent] = []
     hooks = Hooks()
 
-    @hooks.on.event(SnapshotSaved)
-    async def saved(ctx: RunContext[None], event: SnapshotSaved) -> None:
+    @hooks.on.event(SnapshotSavedEvent)
+    async def saved(ctx: RunContext[None], event: SnapshotSavedEvent) -> None:
         # Receipt is observable only after the store can read the checkpoint.
         assert await store.latest_snapshot(run_id=event.persistence_run_id, include_interrupted=True) is not None
         notices.append(event)

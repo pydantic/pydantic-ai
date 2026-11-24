@@ -14,4 +14,5 @@
             - Choices
             - BoolCriteria
             - DeferredToolRequests
+            - PendingModelResponse
             - OutputObjectDefinition

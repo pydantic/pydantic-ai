@@ -22,7 +22,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
@@ -224,7 +224,10 @@ async def test_a_picked_action_can_ask_for_a_retry():
     assert result.output == 'refund'
     assert attempts == ['tried']
     assert [
-        part.content for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+        part.content
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == 'retried'
     ] == snapshot(['That one is out of stock, pick another.'])
 
 

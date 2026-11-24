@@ -17,24 +17,28 @@ plane and a `TimeoutException` from envd (its proxy's 502); a 429 is `RateLimitE
 which is not. envd types only a missing path; its other path failures arrive as a 400
 (`InvalidArgumentException`) or a 500 (`SandboxException`) whose message carries envd's wording
 or Go's errno text, which `_path_error` reads.
+
+E2B's `desktop` template has Xvfb, XFCE (`startxfce4`), `xdotool`, `xwininfo`, `scrot`, `setsid` and
+`google-chrome` installed. It starts no X server when the sandbox boots: E2B's `e2b-desktop` package starts its
+own, and this backend starts its own with Xvfb.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import posixpath
 import shlex
+import time
 import uuid
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import TYPE_CHECKING
 
 import anyio
 import anyio.lowlevel
 
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     FileEntry,
@@ -50,13 +54,22 @@ from pydantic_ai.workspaces import (
 )
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
+    check_env_types,
+    check_provider,
+    check_timeout,
     command_argv,
+    require_asyncio,
     running_on_asyncio,
     safe_credential_reason,
     stop_shielded,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, start_display_script, wait_until_ready_script, x11_display
 
 if TYPE_CHECKING:
+    from e2b import SandboxNetworkOpts
+
     from pydantic_ai.workspaces import WorkspaceCommand
 
 __all__ = ('E2BSandboxBackend',)
@@ -68,8 +81,10 @@ except ImportError as _import_error:
 
 logger = logging.getLogger(__name__)
 
-_AUTH_MESSAGE = 'E2B rejected the credentials. Set a valid E2B_API_KEY in the environment.'
-_MISSING_KEY_MESSAGE = 'No E2B API key found. Set E2B_API_KEY in the environment.'
+_AUTH_MESSAGE = 'E2B rejected the credentials. Set a valid E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
+_MISSING_KEY_MESSAGE = (
+    'No E2B API key found. Set E2B_API_KEY in the environment, or pass a configured `e2b.E2B` as `client=`.'
+)
 
 
 def _auth_error(error: e2b.AuthenticationException) -> WorkspaceUnavailableError:
@@ -97,7 +112,7 @@ DEFAULT_SANDBOX_TIMEOUT = 3_600
 # Bound the sandbox-create call so a wedged control plane cannot hang acquisition.
 _CREATE_TIMEOUT = 120
 
-# Bounds the internal `pwd` probe behind `working_dir()` and the best-effort kills.
+# Bounds the backend's own short commands (`_probe` and the `setsid` check).
 _INTERNAL_EXEC_TIMEOUT = 10
 
 # A buffered upload's deadline: the SDK's default request timeout plus the transfer time at a
@@ -113,6 +128,35 @@ _SDK_STREAM_UNBOUNDED = 0
 # The local backend's cap and preview: the SDK's handle keeps all of a command's output in memory.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_CHARS = 64 * 1024
+
+_DESKTOP_TEMPLATE = 'desktop'
+
+
+_XVFB_LOG = '/tmp/pydantic-ai-xvfb.log'
+
+_XFCE_LOG = '/tmp/pydantic-ai-xfce.log'
+
+_XFCE_IS_VISIBLE = 'xdotool search --onlyvisible --class xfdesktop >/dev/null 2>&1'
+"""A command that succeeds when XFCE's desktop window is visible on `DISPLAY`."""
+
+_START_DESKTOP = start_display_script(_XVFB_LOG, with_desktop=False) + (
+    f'if command -v startxfce4 >/dev/null && ! {_XFCE_IS_VISIBLE}; then '
+    f'setsid startxfce4 >{_XFCE_LOG} 2>&1 9>&- & '
+    + wait_until_ready_script(_XFCE_IS_VISIBLE, '$!', 'the XFCE desktop', _XFCE_LOG)
+    + 'fi'
+)
+"""Start an X display of the size `$1`, such as `1280x800`, unless one runs, then start the XFCE desktop.
+
+XFCE starts whenever its desktop window isn't visible, so an XFCE that crashed comes back. The script then waits up to
+10 seconds for that window, so the first screenshot isn't black. It fails if XFCE exits first or the window never
+appears. A template without XFCE gets a display with no window manager. Output goes to log files, because E2B keeps a
+command open while a program it started in the background still holds the command's output.
+"""
+
+
+# Checked before an operation reaches the SDK: its HTTP and RPC calls run under `asyncio.wait_for`, which
+# raises 'no running event loop' on Trio, and E2B's own error wrapping can even report that as a sandbox timeout.
+_ASYNCIO_ONLY = 'E2B needs the asyncio event loop: the E2B SDK runs every request on asyncio.'
 
 
 def _path_error(error: Exception, path: str) -> OSError | None:
@@ -148,11 +192,16 @@ async def _file_entry(sandbox: e2b.AsyncSandbox, entry: e2b.EntryInfo, user: str
     return FileEntry(name=entry.name, path=entry.path, is_dir=is_dir, size=size)
 
 
-def _unavailable_message(sandbox_id: str, *, found: bool) -> str:
+def _not_found(path: str | None) -> FileNotFoundError:
+    """The protocol's missing-path error; `path` is `None` when the failing operation names no path, like `run`."""
+    return FileNotFoundError(f'No such file or directory in the E2B sandbox: {path!r}')
+
+
+def _unavailable_message(sandbox_id: str, *, found: bool, idle: bool = False) -> str:
     """Say the sandbox is gone; only one E2B still knows about (`found`) may merely be paused."""
+    timeouts = '`sandbox_timeout` or `idle_timeout`' if idle else '`sandbox_timeout`'
     reason = (
-        'it was killed, or it was paused when its `sandbox_timeout` ran out '
-        '(a later run that attaches to it resumes it)'
+        f'it was killed, or it was paused when its {timeouts} ran out (a later run that attaches to it resumes it)'
         if found
         else 'it was killed'
     )
@@ -190,10 +239,10 @@ def _refused_message(context: str, error: e2b.SandboxException) -> str:
     return message
 
 
-class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     """An [E2B](https://e2b.dev) sandbox as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
-    Commands and file operations run inside an E2B microVM, so the host is never exposed.
+    Commands and file operations run inside an E2B microVM, not on the host.
 
     Building one does no I/O. The first operation creates or attaches to a workspace, and the
     typed `e2b.AsyncSandbox` is available through `get_sandbox()`. The backend does not kill the
@@ -209,8 +258,17 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     starting), a separate command signals the process group when `setsid` is available.
     Custom templates without `setsid` fall back to stopping the command leader only.
 
+    The E2B SDK runs every request on asyncio, so under Trio every operation raises
+    `UserError` before it reaches E2B.
+
+    With `desktop`, the sandbox's display starts the first time it is used. A custom template needs `xdotool`,
+    `xwininfo` (`x11-utils`), `scrot`, `setsid`, and Xvfb unless an X server runs, which the first use installs with
+    `apt-get` if it can. It also needs `startxfce4` for the XFCE desktop, which isn't installed for you.
+
     Args:
         sandbox: A live `e2b.AsyncSandbox` you already have. Whoever created it owns killing it.
+        client: An `e2b.E2B` to create or attach with, for its API key and other connection
+            settings; `E2B_API_KEY` and the rest of the environment when `None`.
         ref: Identity of an existing sandbox to attach to on first use.
         template: E2B template name or ID a newly created sandbox runs; E2B's default when `None`.
             An unknown template raises `WorkspaceUnavailableError` on first use. Custom templates
@@ -219,34 +277,56 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         sandbox_timeout: Total lifetime of the sandbox in seconds, applied when it is created and
             again when attaching to it. When it runs out, E2B pauses the sandbox rather than
             killing it, and attaching resumes it. The default, 3600, is the most E2B's Hobby plan
-            allows; Pro plans allow up to 86400.
+            allows; Pro plans allow up to 86400. With `idle_timeout`, it is instead the most the backend
+            extends the lifetime to, from its first use, and a value over your plan's limit isn't refused
+            up front: the sandbox pauses at the plan's limit.
+        idle_timeout: Seconds without a command or file operation after which E2B pauses the sandbox.
+            Each operation extends the sandbox's lifetime with E2B's `set_timeout` as it starts, but
+            never past `sandbox_timeout` from when the backend first used it. Time between operations,
+            such as model turns, counts as idle, and one command must finish within `idle_timeout`.
+            `None` keeps the fixed `sandbox_timeout` lifetime.
         working_dir: Absolute directory commands start in and relative paths resolve against.
             E2B has no create-time working directory, so this is applied per command, including
             on an attached sandbox; `None` uses the sandbox's own default, discovered with
             `pwd -P` on first use.
         env: Environment variables every command gets, on a created or an attached sandbox;
             per-command `env` is layered on top. Nothing is read from the host environment.
+        network: E2B's network options for a newly created sandbox, passed to `Sandbox.create`
+            unchanged: egress allow and deny lists, and `rules` that set headers on requests to a
+            host, from E2B's proxy outside the sandbox. An attached sandbox keeps the options it
+            was created with.
+        desktop: Give the sandbox a screen for
+            [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or
+            a `(width, height)`. Without a `template`, a new sandbox uses E2B's `desktop` template.
     """
 
     def __init__(
         self,
         *,
         sandbox: e2b.AsyncSandbox | None = None,
+        client: e2b.E2B | None = None,
         ref: WorkspaceRef | None = None,
         template: str | None = None,
         allow_internet_access: bool = True,
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
+        idle_timeout: int | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        network: SandboxNetworkOpts | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
-        if ref is not None and ref.provider != 'e2b':
-            raise ValueError(f"unsupported workspace provider {ref.provider!r}; expected 'e2b'")
+        if ref is not None:
+            check_provider(ref, 'e2b')
         if sandbox is not None and ref is not None:
             raise ValueError('pass either `sandbox` or `ref`, not both')
-        if env is not None and any(type(key) is not str or type(value) is not str for key, value in env.items()):
-            raise TypeError('env keys and values must be strings')
+        check_env_types(env)
+        if type(sandbox_timeout) is not int or sandbox_timeout < 1:
+            raise ValueError(f'sandbox_timeout must be an integer of at least 1, got {sandbox_timeout!r}.')
+        if idle_timeout is not None and (type(idle_timeout) is not int or idle_timeout < 1):
+            raise ValueError(f'idle_timeout must be an integer of at least 1 or None, got {idle_timeout!r}.')
         self._ref = ref if sandbox is None else WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
         self._sandbox = sandbox
+        self._client = client
         self._user = 'user'
         self._working_dir = absolute_path('working_dir', working_dir)
         # `working_dir()` must return a canonical absolute path: the configured one, or the
@@ -258,9 +338,25 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         self._acquisition: asyncio.Task[e2b.AsyncSandbox] | None = None
         self._template = template
         self._sandbox_timeout = sandbox_timeout
+        self._idle_timeout = idle_timeout
+        # Monotonic times: when the sandbox pauses unless extended, and past which it is never extended.
+        # A sandbox passed in has an unknown lifetime, so its first operation extends it and starts the deadline.
+        self._expires_at = 0.0
+        self._deadline: float | None = None
         self._env = dict(env) if env is not None else None
         self._allow_internet_access = allow_internet_access
+        self._network = network
         self._probe_setsid = template is not None or sandbox is not None or ref is not None
+        if desktop and template is None:
+            self._template = _DESKTOP_TEMPLATE
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'E2B sandbox {self.ref.id if self.ref else "(not created)"}',
+            start_script=_START_DESKTOP,
+        )
+        if self._display:
+            self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
         self._setsid: bool | None = None
         self._setsid_lock = anyio.Lock()
 
@@ -290,6 +386,46 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             return task.result()
         return await self._acquire()
 
+    async def _sandbox_for_operation(self) -> e2b.AsyncSandbox:
+        """`get_sandbox()` for the backend's own operations, which all make E2B requests."""
+        # Also for a sandbox the caller passed in: `get_sandbox()` returns that one on Trio too.
+        require_asyncio(_ASYNCIO_ONLY)
+        sandbox = await self.get_sandbox()
+        await self._keep_alive(sandbox)
+        return sandbox
+
+    @property
+    def _initial_timeout(self) -> int:
+        """The lifetime requested on create and attach."""
+        if self._idle_timeout is None:
+            return self._sandbox_timeout
+        return min(self._idle_timeout, self._sandbox_timeout)
+
+    async def _keep_alive(self, sandbox: e2b.AsyncSandbox) -> None:
+        """Reset an `idle_timeout`, up to the `sandbox_timeout` deadline.
+
+        At most once per tenth of it, so a busy run makes few `set_timeout` requests and an unused
+        sandbox still pauses between 90% and 100% of `idle_timeout` after its last use.
+        """
+        if self._idle_timeout is None:
+            return
+        now = time.monotonic()
+        if self._deadline is None:
+            self._deadline = now + self._sandbox_timeout
+        # Within a second of the deadline, the last extension already reaches it.
+        if self._expires_at - now > self._idle_timeout * 0.9 or self._expires_at > self._deadline - 1:
+            return
+        timeout = min(self._idle_timeout, int(self._deadline - now))
+        if timeout < 1:
+            return
+        try:
+            await sandbox.set_timeout(timeout)
+        except Exception:
+            # The operation itself reports a sandbox that is gone; a failed extension is retried next time.
+            logger.warning('Could not extend the timeout of E2B sandbox %s', sandbox.sandbox_id, exc_info=True)
+            return
+        self._expires_at = now + timeout
+
     async def _acquire_detached(self) -> e2b.AsyncSandbox:
         try:
             return await self._acquire()
@@ -299,6 +435,8 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def _acquire(self) -> e2b.AsyncSandbox:
         async with self._lock:
             if (sandbox := self._sandbox) is None:
+                # Checked here, not in `get_sandbox`: a sandbox the caller passed in is returned as is.
+                require_asyncio(_ASYNCIO_ONLY)
                 ref = self._ref
                 sandbox = await self._attach(ref.id) if ref is not None else await self._create()
                 if ref is None:
@@ -307,6 +445,9 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 # Record the new sandbox before setup, so a failed mkdir still leaves
                 # a ref the caller can use to clean up the billed sandbox.
                 self._sandbox = sandbox
+                now = time.monotonic()
+                self._expires_at = now + self._initial_timeout
+                self._deadline = now + self._sandbox_timeout
                 self._ref = WorkspaceRef(provider='e2b', id=sandbox.sandbox_id)
                 self._working_dir_pending = ref is None and self._working_dir is not None
             if self._working_dir_pending:
@@ -359,7 +500,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if isinstance(error, e2b.SandboxNotFoundException) and sandbox_id is not None:
             return WorkspaceUnavailableError(_unavailable_message(sandbox_id, found=False))
         if isinstance(error, e2b.FileNotFoundException):
-            return FileNotFoundError(f'No such file or directory in the E2B sandbox: {path!r}')
+            return _not_found(path)
         if (
             path is not None
             and type(error) in (e2b.SandboxException, e2b.InvalidArgumentException)
@@ -369,103 +510,104 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         if isinstance(error, e2b.TimeoutException):
             sandbox = self._sandbox
             if sandbox is not None and not await _is_running(sandbox):
-                return WorkspaceUnavailableError(_unavailable_message(sandbox.sandbox_id, found=True))
+                return WorkspaceUnavailableError(
+                    _unavailable_message(sandbox.sandbox_id, found=True, idle=self._idle_timeout is not None)
+                )
             return error
         if isinstance(error, e2b.SandboxException) and not isinstance(error, e2b.RateLimitException):
             return WorkspaceError(f'{context}: {error}')
         return error
 
     async def read_bytes(self, path: str) -> bytes:
-        sandbox = await self.get_sandbox()
-        async with self._sdk_errors(sandbox.sandbox_id, f'Could not read {path!r}', path):
-            # envd reports FIFOs as files and its read blocks indefinitely without a writer.
-            # Probe via the shell before asking envd to open the path (also follows links).
-            probe = await self.run(f'test -p {shlex.quote(path)}', shell=True, timeout=_INTERNAL_EXEC_TIMEOUT)
-            if probe.exit_code == 0:
-                raise OSError(f'Could not read {path!r}: FIFO reads are not supported')
+        sandbox = await self._sandbox_for_operation()
+        # envd reports FIFOs as files, and its read of one without a writer waits out the SDK's
+        # 60-second request timeout. Probe via the shell before asking envd to open the path (also
+        # follows links).
+        context = f'Could not read {path!r}'
+        probe = await self._probe(['test', '-p', path], context)
+        if probe.exit_code == 0:
+            raise OSError(f'{context}: FIFO reads are not supported')
+        async with self._sdk_errors(sandbox.sandbox_id, context, path):
             return bytes(await sandbox.files.read(path, 'bytes', user=self._user))
 
     async def write_bytes(self, path: str, data: bytes) -> None:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not write {path!r}', path):
             # The SDK bounds a buffered upload by one whole-request deadline, and 0 means none: keep
             # its 60 s for small files and allow a slow link's throughput for large ones.
             deadline = _UPLOAD_BASE_TIMEOUT + len(data) / _UPLOAD_MIN_BYTES_PER_SECOND
+            # The SDK annotates `data` with a bare `IO`, which leaves the method's type partly unknown.
             await sandbox.files.write(path, data, user=self._user, request_timeout=deadline)  # pyright: ignore[reportUnknownMemberType]
 
     async def stat(self, path: str) -> FileEntry:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not stat {path!r}', path):
             return await _file_entry(sandbox, await sandbox.files.get_info(path, user=self._user), self._user)
 
     async def list_dir(self, path: str) -> Sequence[FileEntry]:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not list {path!r}', path):
             # `depth=1` is E2B's non-recursive listing, as the protocol asks.
             entries = await sandbox.files.list(path, depth=1, user=self._user)
-            resolved: list[FileEntry | None] = [None] * len(entries)
-            failures: list[Exception | None] = [None] * len(entries)
-            limit = anyio.Semaphore(16)
+        resolved: list[FileEntry | None] = [None] * len(entries)
+        failures: list[Exception | None] = [None] * len(entries)
+        limit = anyio.Semaphore(16)
 
-            async def resolve(index: int, entry: e2b.EntryInfo) -> None:
-                # Symlinks need an envd round trip; cap concurrent lookups without
-                # changing the order returned by the listing.
-                async with limit:
-                    try:
-                        resolved[index] = await _file_entry(sandbox, entry, self._user)
-                    except Exception as error:
-                        # Keep each entry's path and the original SDK exception out of
-                        # ExceptionGroup; transient failures must retain their identity.
-                        failures[index] = error
+        async def resolve(index: int, entry: e2b.EntryInfo) -> None:
+            # Symlinks need an envd round trip; cap concurrent lookups without
+            # changing the order returned by the listing.
+            async with limit:
+                try:
+                    resolved[index] = await _file_entry(sandbox, entry, self._user)
+                except Exception as error:
+                    # Keep each entry's path and the original SDK exception out of
+                    # ExceptionGroup; transient failures must retain their identity.
+                    failures[index] = error
 
-            async with anyio.create_task_group() as group:
-                for index, entry in enumerate(entries):
-                    group.start_soon(resolve, index, entry)
-            for index, error in enumerate(failures):
-                if error is not None:
-                    translated = await self._translate(
-                        error, f'Could not list {path!r}', entries[index].path, sandbox.sandbox_id
-                    )
-                    if translated is error:
-                        raise error
-                    raise translated from error
-            return [entry for entry in resolved if entry is not None]
+        async with anyio.create_task_group() as group:
+            for index, entry in enumerate(entries):
+                group.start_soon(resolve, index, entry)
+        for index, error in enumerate(failures):
+            if error is not None:
+                async with self._sdk_errors(sandbox.sandbox_id, f'Could not list {path!r}', entries[index].path):
+                    raise error
+        return [entry for entry in resolved if entry is not None]
 
     async def make_dir(self, path: str) -> None:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not create directory {path!r}', path):
             await sandbox.files.make_dir(path, user=self._user)
 
     async def remove(self, path: str) -> None:
-        sandbox = await self.get_sandbox()
-        async with self._sdk_errors(sandbox.sandbox_id, f'Could not remove {path!r}', path):
-            # envd removes with `os.RemoveAll`, which succeeds on a missing path; the protocol
-            # reports that as `FileNotFoundError`. envd's stat follows links, so a dangling
-            # symlink reads as missing; it is still removed itself.
-            if (
-                not await sandbox.files.exists(path, user=self._user)
-                and (await self.run(['test', '-L', path], timeout=_INTERNAL_EXEC_TIMEOUT)).exit_code != 0
-            ):
-                raise e2b.FileNotFoundException(path)
-            # The removal is recursive, so refuse the working directory and its ancestors, like the
-            # built-in backends. The leaf stays unresolved: removing a link removes only the link.
-            root = await self.working_dir()
-            parent = await Workspace(self).realpath(posixpath.dirname(path))
-            target = posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
-            if root == target or root.startswith(target.rstrip('/') + '/'):
-                raise ValueError('cannot remove the workspace root or its ancestor')
+        sandbox = await self._sandbox_for_operation()
+        context = f'Could not remove {path!r}'
+        async with self._sdk_errors(sandbox.sandbox_id, context, path):
+            exists = await sandbox.files.exists(path, user=self._user)
+        # envd removes with `os.RemoveAll`, which succeeds on a missing path; the protocol
+        # reports that as `FileNotFoundError`. envd's stat follows links, so a dangling
+        # symlink reads as missing; it is still removed itself.
+        if not exists and (await self._probe(['test', '-L', path], context)).exit_code != 0:
+            raise _not_found(path)
+        # The removal is recursive, so refuse the working directory and its ancestors, like the
+        # built-in backends. The leaf stays unresolved: removing a link removes only the link.
+        root = await self.working_dir()
+        parent = await Workspace(self).realpath(posixpath.dirname(path))
+        target = posixpath.normpath(posixpath.join(parent, posixpath.basename(path)))
+        if root == target or root.startswith(target.rstrip('/') + '/'):
+            raise ValueError('cannot remove the workspace root or its ancestor')
+        async with self._sdk_errors(sandbox.sandbox_id, context, path):
             await sandbox.files.remove(path, user=self._user)
 
     async def exists(self, path: str) -> bool:
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         async with self._sdk_errors(sandbox.sandbox_id, f'Could not check {path!r}', path):
             return await sandbox.files.exists(path, user=self._user)
 
     async def _create(self) -> e2b.AsyncSandbox:
         """Provision a fresh E2B sandbox.
 
-        E2B may create the sandbox before its response arrives. The asyncio acquisition task
-        survives caller cancellation, and the Trio path shields this call; `_CREATE_TIMEOUT`
+        E2B may create the sandbox before its response arrives. The acquisition task survives
+        caller cancellation, and the shield keeps this call running too; `_CREATE_TIMEOUT`
         bounds the SDK request, though a response lost after remote creation cannot be recovered. A request E2B refuses
         (rejected credentials, an unknown template, a lifetime over the plan's limit) is
         `WorkspaceUnavailableError`: retrying it cannot succeed. Any other 4xx keeps the upstream error.
@@ -473,11 +615,12 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         with anyio.move_on_after(_CREATE_TIMEOUT, shield=True):
             async with self._sdk_errors(None, 'Could not start E2B sandbox'):
                 try:
-                    return await e2b.AsyncSandbox.create(
+                    return await _sandboxes(self._client).create(
                         template=self._template,
-                        timeout=self._sandbox_timeout,
+                        timeout=self._initial_timeout,
                         envs=dict(self._env) if self._env is not None else None,
                         allow_internet_access=self._allow_internet_access,
+                        network=self._network,
                         # Pause at the end of the lifetime instead of killing, so the files survive.
                         lifecycle={'on_timeout': 'pause'},
                     )
@@ -506,7 +649,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             try:
                 # Without `timeout`, a resumed sandbox gets E2B's 300 seconds; a running one keeps
                 # the longer of its current and the given lifetime.
-                return await e2b.AsyncSandbox.connect(sandbox_id, timeout=self._sandbox_timeout)
+                return await _sandboxes(self._client).connect(sandbox_id, timeout=self._initial_timeout)
             except e2b.SandboxException as error:
                 if type(error) is not e2b.SandboxException or not _is_lifetime_refusal(error):
                     raise
@@ -515,10 +658,10 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
     async def working_dir(self) -> str:
         """The canonical absolute directory commands start in."""
         if self._resolved_working_dir is None:
-            result = await self.run(['pwd', '-P'], timeout=_INTERNAL_EXEC_TIMEOUT)
+            result = await self._probe(['pwd', '-P'], 'Could not determine the working directory')
             printed = result.stdout.removesuffix('\n')
             if result.exit_code != 0 or not posixpath.isabs(printed):
-                sandbox = await self.get_sandbox()
+                sandbox = await self._sandbox_for_operation()
                 raise WorkspaceError(
                     f'Could not determine the working directory of E2B sandbox {sandbox.sandbox_id}: '
                     f'`pwd -P` exited {result.exit_code} and printed {result.stdout!r}.'
@@ -526,12 +669,30 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
             self._resolved_working_dir = printed
         return self._resolved_working_dir
 
+    async def _probe(self, argv: list[str], context: str) -> CommandResult:
+        """Run one of the backend's own short commands; `run` already translates SDK failures.
+
+        Its deadline is internal, so a timeout names the operation rather than a command the caller
+        never ran; it is still a `WorkspaceTimeoutError` carrying the command's partial output.
+        """
+        try:
+            return await self.run(argv, timeout=_INTERNAL_EXEC_TIMEOUT)
+        except WorkspaceTimeoutError as error:
+            raise WorkspaceTimeoutError(
+                f'{context}: the E2B sandbox did not answer within {_INTERNAL_EXEC_TIMEOUT}s',
+                stdout=error.stdout,
+                stderr=error.stderr,
+            ) from error
+
     async def _has_setsid(self, sandbox: e2b.AsyncSandbox) -> bool:
         async with self._setsid_lock:
             if self._setsid is None:
                 async with self._sdk_errors(sandbox.sandbox_id, 'Could not probe E2B command launcher'):
                     probe = await sandbox.commands.run(
-                        'command -v setsid >/dev/null 2>&1', background=True, timeout=10, user=self._user
+                        'command -v setsid >/dev/null 2>&1',
+                        background=True,
+                        timeout=_INTERNAL_EXEC_TIMEOUT,
+                        user=self._user,
                     )
                     try:
                         result = await probe.wait()
@@ -549,79 +710,59 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         timeout: float | None = None,
     ) -> CommandResult:
         """Run a command, killing it on timeout, cancellation, or a failed result read."""
+        argv = command_argv(command, shell)
+        check_timeout(timeout)
+        if self._display is not None:
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display first. The display's own commands run this way."""
         # `commands.run` takes only a string, which E2B hands to `/bin/bash -l -c`; `shlex.join`
         # keeps each argv element one word, and a `shell=True` string runs under `/bin/sh -c`.
-        line = shlex.join(command_argv(command, shell))
-        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
-            raise ValueError(f'timeout must be a positive finite number or None, got {timeout!r}.')
-        if not running_on_asyncio():
-            # E2B's command handle starts its output reader with `asyncio.create_task`.
-            raise UserError('E2B commands need the asyncio event loop: the E2B SDK runs them on asyncio tasks.')
+        line = shlex.join(argv)
         # Acquiring the sandbox has its own bound; the timeout is the command's alone.
-        sandbox = await self.get_sandbox()
+        sandbox = await self._sandbox_for_operation()
         handle: e2b.AsyncCommandHandle | None = None
         result: e2b.CommandResult | None = None
         # The token is allocated before the start RPC: a lost ACK must not make the
         # remote group undiscoverable. setsid isolates this invocation from other jobs.
         claim = f'/tmp/pydantic-e2b-pgid-{uuid.uuid4().hex}'
         pgid_file = f'{claim}/pgid'
+        # Prints a process's start time and then its group id, for the launcher to record and the stop
+        # to check: a reused PID belongs to another run. Linux's `/proc` needs no extra package, and E2B
+        # sandboxes always have it; the `ps` branch keeps the host-backed test fake working on macOS,
+        # under `LC_ALL=C` because a per-command env (`run(env=...)`, or `env` on an attached sandbox)
+        # reaches only the launcher. `/proc` is read whole, not by line, because a command name may hold
+        # a newline. A process that is gone prints nothing, which never matches a record.
+        identify = (
+            '_pydantic_e2b_id() { '
+            'if [ -r "/proc/$1/stat" ]; then '
+            '_s=$(cat "/proc/$1/stat" 2>/dev/null) || return 0; _s=${_s##*) }; set -- $_s; echo "${20} $3"; '
+            'else set -- $(LC_ALL=C ps -o lstart= -o pgid= -p "$1" 2>/dev/null); echo "$*"; fi; }; '
+        )
         # The launcher and canceller race on one atomic mkdir. A cancelled late launcher
         # exits before user code; if launch wins, the canceller waits for its registration.
         # Keep a cancellation claim when the start ACK is lost so a late RPC stays fenced.
-        launch = f'mkdir {claim} 2>/dev/null || exit 143; echo "$$:$(LC_ALL=C ps -o lstart= -p $$)" > {pgid_file}; exec {line}'
+        launch = f'mkdir {claim} 2>/dev/null || exit 143; {identify}echo "$$:$(_pydantic_e2b_id $$)" > {pgid_file}; exec {line}'
         # Probe only custom/attached images: default E2B images include util-linux.
         isolated = await self._has_setsid(sandbox) if self._probe_setsid else True
         launch = f'{"setsid " if isolated else ""}sh -c {shlex.quote(launch)}'
-
-        async def stop() -> None:
-            # A new SDK command can run even when the original output stream is blocked.
-            script = (
-                f'if mkdir {claim} 2>/dev/null; then exit 0; fi; '
-                f'i=0; while [ ! -s {pgid_file} ] && [ "$i" -lt 100 ]; do '
-                'sleep 0.1; i=$((i+1)); done; '
-                # A registered launcher consumed its claim, so it can go; a claim this stop won stays.
-                f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -rf {claim}; '
-                'p=${record%%:*}; '
-                # Match creation time before signalling: a reused PID belongs to another run. Both sides
-                # format it under LC_ALL=C, since only the launcher gets the user's locale.
-                '[ "$(LC_ALL=C ps -o lstart= -p "$p")" = "${record#*:}" ] || exit 0; '
-                + ('[ "$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " ")" = "$p" ] || exit 0; ' if isolated else '')
-                + f'kill -TERM {"-" if isolated else ""}"$p" 2>/dev/null || true; sleep 0.1; '
-                + f'kill -KILL {"-" if isolated else ""}"$p" 2>/dev/null || true; fi'
-            )
-            try:
-                stopper = await sandbox.commands.run(
-                    f'sh -c {shlex.quote(script)}', background=True, timeout=_SDK_STREAM_UNBOUNDED, user=self._user
-                )
-                await stopper.wait()
-            except Exception:
-                # A failed control-plane stop must not mask the original failure; the command may
-                # still be running, and the sandbox ref stays available for explicit cleanup.
-                logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id)
-
         # Counted as the SDK receives it, so `yes` or a large `cat` stops at the cap instead of
         # growing this process; the SDK calls these from its own event-pump task.
-        output_bytes = 0
-        overflow = anyio.CancelScope()
-
-        def count(chunk: str) -> None:
-            nonlocal output_bytes
-            output_bytes += len(chunk.encode())
-            if output_bytes > _MAX_OUTPUT_BYTES:
-                overflow.cancel()
-
+        counter = _OutputCounter()
         try:
-            with anyio.move_on_after(timeout), overflow:
+            with anyio.move_on_after(timeout), counter.overflow:
                 # A lost start ACK must not hide a launched command from the side-channel stop.
                 handle = await sandbox.commands.run(
                     launch,
                     background=True,
-                    envs={**(self._env or {}), **(env or {})},
+                    envs={**(self._env or {}), **env},
                     cwd=self._working_dir,
                     timeout=_SDK_STREAM_UNBOUNDED,
                     user=self._user,
-                    on_stdout=count,
-                    on_stderr=count,
+                    on_stdout=counter.add,
+                    on_stderr=counter.add,
                 )
                 assert handle is not None
                 try:
@@ -629,7 +770,7 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                 except e2b.CommandExitException as exited:
                     # A nonzero exit is a completed result; the SDK's exception carries it.
                     result = exited
-            if output_bytes > _MAX_OUTPUT_BYTES:
+            if counter.bytes > _MAX_OUTPUT_BYTES:
                 # The SDK builds the handle before its pump delivers any output, so one exists here.
                 assert handle is not None
                 # Raised inside the `try`, so the stop below kills the command like on a timeout.
@@ -650,16 +791,22 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
         except BaseException as error:
             # A child task shields the side-channel stop from repeated task cancellation.
             # Allow the winning launcher to publish its PID before bounding a lost start ACK.
-            await stop_shielded(stop, grace=12)
-            if isinstance(error, Exception):
-                context = (
-                    'Command could not run in the E2B sandbox'
-                    if handle is None
-                    else 'Could not read the command result (the command may still be running)'
-                )
-                translated = await self._translate(error, context, None, sandbox.sandbox_id)
-                if translated is not error:
-                    raise translated from error
+            await stop_shielded(
+                partial(
+                    self._stop_command, sandbox, claim=claim, pgid_file=pgid_file, identify=identify, isolated=isolated
+                ),
+                grace=12,
+            )
+            if not isinstance(error, Exception):
+                raise
+            context = (
+                'Command could not run in the E2B sandbox'
+                if handle is None
+                else 'Could not read the command result (the command may still be running)'
+            )
+            translated = await self._translate(error, context, None, sandbox.sandbox_id)
+            if translated is not error:
+                raise translated from error
             raise
         finally:
             # Only a completed start and result proves no late RPC can use this claim.
@@ -668,17 +815,70 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
                     try:
                         await sandbox.files.remove(claim, user=self._user)
                     except Exception:
-                        pass
+                        # A leftover claim is a small directory in `/tmp`; it cannot fence a later command.
+                        logger.debug('Could not remove E2B stop claim %s', claim, exc_info=True)
+
+    @property
+    def display(self) -> Display | None:
+        """The sandbox's desktop, or `None` when the sandbox was created without `desktop`."""
+        return self._display
+
+    async def _stop_command(
+        self, sandbox: e2b.AsyncSandbox, *, claim: str, pgid_file: str, identify: str, isolated: bool
+    ) -> None:
+        # A new SDK command can run even when the original output stream is blocked.
+        script = (
+            f'if mkdir {claim} 2>/dev/null; then exit 0; fi; {identify}'
+            f'i=0; while [ ! -s {pgid_file} ] && [ "$i" -lt 100 ]; do '
+            'sleep 0.1; i=$((i+1)); done; '
+            # A registered launcher consumed its claim, so it can go; a claim this stop won stays.
+            f'if [ -s {pgid_file} ]; then record=$(cat {pgid_file}); rm -rf {claim}; '
+            'p=${record%%:*}; recorded=${record#*:}; current=$(_pydantic_e2b_id "$p"); '
+            # The start time alone identifies the process: a leader stop must still reach one that
+            # has since moved to its own group. A group stop also needs that group to be the one setsid made.
+            '[ "${current% *}" = "${recorded% *}" ] || exit 0; '
+            + ('[ "${current##* }" = "$p" ] || exit 0; ' if isolated else '')
+            + f'kill -TERM {"-" if isolated else ""}"$p" 2>/dev/null || true; sleep 0.1; '
+            + f'kill -KILL {"-" if isolated else ""}"$p" 2>/dev/null || true; fi'
+        )
+        try:
+            stopper = await sandbox.commands.run(
+                f'sh -c {shlex.quote(script)}', background=True, timeout=_SDK_STREAM_UNBOUNDED, user=self._user
+            )
+            await stopper.wait()
+        except Exception:
+            # A failed control-plane stop must not mask the original failure; the command may
+            # still be running, and the sandbox ref stays available for explicit cleanup.
+            logger.warning('Could not stop E2B command in sandbox %s', sandbox.sandbox_id, exc_info=True)
 
 
-async def kill_sandbox(sandbox_id: str) -> None:
+class _OutputCounter:
+    """The output bytes the SDK has delivered for one command, cancelling `overflow` once they pass the cap."""
+
+    def __init__(self) -> None:
+        self.bytes = 0
+        self.overflow = anyio.CancelScope()
+
+    def add(self, chunk: str) -> None:
+        self.bytes += len(chunk.encode())
+        if self.bytes > _MAX_OUTPUT_BYTES:
+            self.overflow.cancel()
+
+
+def _sandboxes(client: e2b.E2B | None) -> type[e2b.AsyncSandbox]:
+    """`e2b.AsyncSandbox`, bound to `client`'s connection settings when there is one."""
+    return client.AsyncSandbox if client is not None else e2b.AsyncSandbox
+
+
+async def kill_sandbox(sandbox_id: str, *, client: e2b.E2B | None = None) -> None:
     """Kill a sandbox by ID without connecting: connecting would resume a paused sandbox and bill it.
 
     A sandbox that is already gone returns quietly (E2B's kill answers `False`); rejected
     credentials raise `WorkspaceUnavailableError`, like any other operation.
     """
+    require_asyncio(_ASYNCIO_ONLY)
     try:
-        await e2b.AsyncSandbox.kill(sandbox_id)
+        await _sandboxes(client).kill(sandbox_id)
     except e2b.AuthenticationException as error:
         raise _auth_error(error) from error
 
@@ -692,4 +892,5 @@ async def _is_running(sandbox: e2b.AsyncSandbox) -> bool:
     try:
         return await sandbox.is_running()
     except Exception:
+        logger.debug('E2B health probe for sandbox %s failed', sandbox.sandbox_id, exc_info=True)
         return True

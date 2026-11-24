@@ -8,6 +8,23 @@ user's workspaces.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: Ordinal: draft, schedule and analyze social posts through Ordinal's MCP server
+    accDescr: Inside your agent, the model calls tools of the Ordinal capability and gets their results. Its ordinal_get_workspace_context tool gives the workspaceSlug for the other tools. Your auth function gives the capability a token for each run, and the capability calls the Ordinal MCP server at app.tryordinal.com/mcp with an OAuth access token.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        cap["Ordinal()<br/>ordinal_get_workspace_context:<br/>workspaceSlug for other tools"]:::capability
+    end
+    server["Ordinal MCP server<br/>app.tryordinal.com/mcp"]:::external
+    model <-->|"tool call, result"| cap
+    auth -->|"token for each run"| cap
+    cap <-->|"OAuth access token"| server
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
+
 ## Before you start
 
 Ordinal MCP needs the Pro plan or higher, the same as the REST API. You need an
@@ -67,7 +84,7 @@ other Ordinal tool needs a `workspaceSlug` from `ordinal_get_workspace_context`.
 | Not set, `None`, or `''` | `ORDINAL_ACCESS_TOKEN`. If that is not set either, creating the agent raises an error. |
 | An access token | That token, for every run. |
 | `'oauth'` | The account you sign in to through the browser. This only works on your own machine. |
-| A function | Called at the start of each run. The token it returns is used for that run. If it returns `None` or `''`, that run has no Ordinal tools. A function never uses `ORDINAL_ACCESS_TOKEN`, and must not return `'oauth'`. |
+| A function | Called at the start of each run, and can be async. The token it returns is used for that run. If it returns `None` or `''`, that run has no Ordinal tools. A function never uses `ORDINAL_ACCESS_TOKEN`, and must not return `'oauth'`. |
 
 A fixed token or `ORDINAL_ACCESS_TOKEN` suits a script or an agent on your own
 machine, where every run is the same account.
@@ -100,15 +117,26 @@ Each run connects as its own user, so concurrent runs never share an account.
 Your app gets each user's token, stores it, and refreshes it. For example, a
 "Connect Ordinal" button that runs the OAuth flow from [Before you
 start](#before-you-start) and saves the token to their account. Before each run,
-load it (this can be async) and put it in the deps; the function only reads it.
+put it in the deps, or load it in an async `auth` function.
 
 With durable execution such as Temporal, read the token from the run's deps
 rather than from a global, since the function may run in another process. The
 capability's `id` defaults to `ordinal`, so `defer_loading=True` works without
 one. To add more than one `Ordinal` to an agent, give each a distinct `id` and
-wrap them in [PrefixTools](https://pydantic.dev/docs/ai/capabilities/prefix-tools/),
-since their tool names are the same; two that share an `id` but differ raise an
-error.
+`tool_prefix`; two that share an `id` but differ raise an error.
+
+## Tool names
+
+`Ordinal` has no default prefix, unlike most hosted MCP capabilities: the
+server's tool names already start with the service, as in
+`ordinal_get_workspace_context`, so a default prefix would repeat it
+(`ordinal_ordinal_get_workspace_context`). The agent sees the names as they are.
+Set `tool_prefix` to put a prefix and `_` in front of them, for example
+`tool_prefix='work'` gives `work_ordinal_get_workspace_context`.
+
+A [toolset wrapper](https://pydantic.dev/docs/ai/tools-toolsets/toolsets/) on
+`capability.get_toolset()`, such as `filtered()`, sees the names the agent sees,
+prefix included.
 
 ## Tool selection and approval
 
@@ -138,7 +166,7 @@ Limits](https://pydantic.dev/docs/ai/harness/tool-output-limits/).
 
 ## Connection customization
 
-Use `auth` in almost every case. Pass `client` only when you need control of the
+Pass `client` when you need control of the
 connection itself: your own FastMCP client or transport, for example one with a
 proxy or MCP handlers. The client then owns the URL and authentication, so
 passing `client` together with `auth` raises an error.
@@ -177,5 +205,3 @@ from pydantic_ai_harness import Ordinal
 
 agent = Agent.from_file('agent.yaml', custom_capability_types=[Ordinal])
 ```
-
-Pass `custom_capability_types` so the loader can create `Ordinal` from the file.

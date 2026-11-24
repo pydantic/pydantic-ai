@@ -81,7 +81,7 @@ agent = Agent(model)
 ...
 ```
 
-`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes. Unlike other providers, the xAI SDK does not support per-request timeouts, so [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported and has no effect. Both options are omitted when left unset, so the SDK's own defaults apply.
+`api_host` is the hostname of the xAI API server (the SDK connects over gRPC), and `timeout` is the default timeout in seconds applied to every request the client makes; a request that exceeds it raises [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]. Unlike other providers, the xAI SDK does not support per-request timeouts, so [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] is not supported and has no effect. Both options are omitted when left unset, so the SDK's own defaults apply.
 
 Or with a custom `xai_sdk.AsyncClient`:
 
@@ -145,7 +145,7 @@ async def main():
         #> The capital of France is Paris.
 ```
 
-See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
+The retry policy belongs to the channel and can't change per request, so [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) has no effect on xAI. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.
 
 ## Image generation
 
@@ -220,9 +220,15 @@ The `XSearch` capability accepts:
 
 As an alternative to the capability, you can pass the lower-level [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] directly via `capabilities=[NativeTool(XSearchTool(...))]` — see the [X Search Tool documentation](../native-tools.md#x-search-tool) — or enable raw output globally via the [`XaiModelSettings.xai_include_x_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_x_search_output] [model setting](../agent.md#model-run-settings).
 
+## Image input {#image-input}
+
+Grok reads JPEG, PNG, WebP and ICO images. xAI rejects GIF, on its own API and through OpenRouter's `x-ai/` models, so a GIF a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
+
 ## File attachments
 
 When you include a document in a user prompt, xAI automatically makes its `attachment_search` tool available on [supported agentic models](https://docs.x.ai/developers/files). If the model uses the tool, Pydantic AI exposes its lifecycle alongside the model's response. xAI limits each file to [48 MB](https://docs.x.ai/developers/files#limitations). See [document input](../input.md#document-input) for supported input forms.
+
+A document sent as [`BinaryContent`][pydantic_ai.messages.BinaryContent] or [`DocumentUrl`][pydantic_ai.messages.DocumentUrl] is uploaded to the xAI Files API once per [`XaiModel`][pydantic_ai.models.xai.XaiModel] instance, and later requests that replay it reuse the file ID. A `DocumentUrl` is still downloaded on every request, so its `force_download` setting applies each time; only the upload is skipped when the bytes match an earlier one, and the reused file keeps the name it was first uploaded with. If xAI deletes the file or it expires, later requests keep referencing it until you create a new model instance ([#13131](https://github.com/pydantic/pydantic-ai/issues/13131)).
 
 The [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] have a `tool_name` of `'attachment_search'`, and the call's `provider_details['function_name']` holds xAI's own name for the operation it ran (for example `'pdf_browse'`). Set [`XaiModelSettings.xai_include_attachment_search_output`][pydantic_ai.models.xai.XaiModelSettings.xai_include_attachment_search_output] to `True` to ask xAI to include the browsed content on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. It defaults to `False`, so the option is not sent unless you enable it.
 
@@ -244,7 +250,9 @@ agent = Agent(
 
 Set `xai_reasoning_effort='none'` or `thinking=False` to disable reasoning on Grok 4.3. xAI redirects several retired text model slugs to `grok-4.3`; choose `grok-4.3` and an explicit reasoning effort when you need predictable behavior and cost. See the [xAI May 15 retirement guide](https://docs.x.ai/developers/migration/may-15-retirement) for details.
 
-Grok 4.5 supports `'low'`, `'medium'`, and `'high'` but not `'none'`, so it always reasons: `thinking=False` is silently ignored and `thinking=True` maps to `'medium'`.
+Grok 3 Mini (`grok-3-mini` and `grok-3-mini-fast`) also accepts `'none'`, so `thinking=False` disables reasoning there too; `thinking=True` and the other levels map onto its `'low'` and `'high'`.
+
+Grok 4.5 and 4.6 support `'low'`, `'medium'`, and `'high'` but not `'none'`, so they always reason: `thinking=False` sends the lowest effort, `'low'`, and `thinking=True` maps to `'medium'`. Grok 4.7 supports the same values but not `'none'`; `thinking=False` also sends `'low'`, while `thinking=True` omits `reasoning_effort` so xAI applies its documented `'high'` default. xAI accepts `'xhigh'`, but Pydantic AI currently maps it (and unified `'max'`) to `'high'`; see [issue #9744](https://github.com/pydantic/pydantic-ai/issues/9744) for dedicated support.
 
 ## Agentic turns
 
@@ -279,6 +287,24 @@ agent = Agent(
 ```
 
 More agents means deeper research, at the cost of more tokens and higher latency. Other xAI models ignore the setting.
+
+## Service tier
+
+xAI offers [priority processing](https://docs.x.ai/developers/advanced-api-usage/priority-processing), which schedules a request ahead of standard traffic when priority capacity is available, at a premium per-token price. Set the unified [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier] field to `'priority'` to opt in, or to `'default'` to request standard processing explicitly:
+
+```py {title="xai_service_tier.py"}
+from pydantic_ai import Agent
+from pydantic_ai.settings import ModelSettings
+
+agent = Agent(
+    '{{ xai:medium }}',
+    model_settings=ModelSettings(service_tier='priority'),
+)
+```
+
+xAI has no auto or flex tier, so `'auto'` and `'flex'` are omitted from the request and xAI's standard processing applies.
+
+A priority request can be served at the default tier, and xAI bills the priority rate only when the response confirms `'priority'`. When xAI reports the tier that served a response, it's stored in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['service_tier']`.
 
 ## Streaming cancellation
 

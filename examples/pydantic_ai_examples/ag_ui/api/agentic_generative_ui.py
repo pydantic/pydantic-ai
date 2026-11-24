@@ -119,9 +119,15 @@ async def update_plan_step(
         changes.append(
             JSONPatchOp(op='replace', path=f'/steps/{index}/status', value=status)
         )
-    return StateDeltaEvent(
-        type=EventType.STATE_DELTA,
-        delta=changes,
+    # Validated from plain dicts: ag-ui-protocol 1.0 types `delta` as its own operation models.
+    return StateDeltaEvent.model_validate(
+        {
+            'type': EventType.STATE_DELTA,
+            'delta': [
+                change.model_dump(by_alias=True, exclude_unset=True)
+                for change in changes
+            ],
+        }
     )
 
 

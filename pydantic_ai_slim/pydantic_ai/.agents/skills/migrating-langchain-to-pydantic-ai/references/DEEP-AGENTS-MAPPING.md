@@ -72,7 +72,7 @@ Enforce authorization and isolation at the backing service. Treat prompt instruc
 
 ## Orchestration and recovery
 
-Import `SubAgent` and `SubAgents` from `pydantic_ai_harness.subagents`. Harness can load its Markdown agent format from configured folders, but it does not consume a Deep Agents YAML roster. Parse and validate retained application configuration into explicit `Agent` and `SubAgent` objects, or intentionally convert it: YAML `system_prompt` becomes `Agent.instructions` or the Markdown body, `description` remains the description, and `tools` become explicit toolsets or a `tool_resolver`. Set the child model explicitly or through `AgentOverride`; a `model` key in Harness Markdown is parsed but not applied.
+Import `SubAgent` and `SubAgents` from `pydantic_ai_harness.sub_agents`. Harness can load its Markdown agent format from configured folders, but it does not consume a Deep Agents YAML roster. Parse and validate retained application configuration into explicit `Agent` and `SubAgent` objects, or intentionally convert it: YAML `system_prompt` becomes `Agent.instructions` or the Markdown body, `description` remains the description, and `tools` become explicit toolsets or a `tool_resolver`. Set the child model explicitly or through `AgentOverride`; a `model` key in Harness Markdown is parsed but not applied.
 
 | Deep Agents feature | Pydantic AI and Harness candidate | Important difference |
 | --- | --- | --- |
@@ -83,7 +83,7 @@ Import `SubAgent` and `SubAgents` from `pydantic_ai_harness.subagents`. Harness 
 | `interrupt_on` and approval | `DeferredToolRequests`, `DeferredToolResults`, `ToolApproved`, and `ToolDenied` | Include `DeferredToolRequests` in `output_type`. When returned, persist `result.all_messages()`, resolve the request with `build_results(...)`, then call `run(message_history=..., deferred_tool_results=...)`. Use `HandleDeferredToolCalls` only for an in-process handler whose lifecycle is sufficient. The LangGraph `Command(resume=...)` protocol is not reproduced; see [Workaround Recipes](WORKAROUND-RECIPES.md#conversational-interrupts-approval-and-durable-resume) for the durable record. |
 | provider-valid run snapshots | `StepPersistence` | It records step events, continuable snapshots, lineage, and tool effects; it is not arbitrary LangGraph graph-state checkpointing. |
 | durable model and tool execution | `TemporalDurability`, `DBOSDurability`, `PrefectDurability`, `AWSLambdaDurability`, or another matching integration | Select by the deployment contract and install its extra. Wire the integration's workflow or handler boundary, not only its capability; verify crash and redeploy recovery, replay, timers, signals, and side-effect idempotency in that runtime. |
-| retries, fallbacks, and call limits | Pydantic AI tool/output retries, provider transport retries, `FallbackModel`, `UsageLimits`, Harness `SpendLimits`, and application or durable-workflow policy | Classify expected versus unexpected errors and retry scope. Match backoff, fallback order, tool-error visibility, counters, terminal propagation, and side-effect idempotency. |
+| retries, fallbacks, and call limits | Pydantic AI tool/output retries, provider transport retries, the `ModelFallback` capability, `UsageLimits`, Harness `SpendLimits`, and application or durable-workflow policy | Classify expected versus unexpected errors and retry scope. Match backoff, fallback order, tool-error visibility, counters, terminal propagation, and side-effect idempotency. |
 | LangGraph and Deep Agents event streaming | Pydantic AI streaming APIs plus capability event handlers | Translate the application's selected modes and projections. Namespaced graphs and subagent handles with child identity, status, messages, tool calls, nested work, and output are not preserved automatically. |
 
 Explicit designs for gaps:
@@ -125,11 +125,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from pydantic_ai_harness.compaction import SlidingWindowCompaction
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.planning import Planning
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.skills import Skills
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 
 
 async def stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:

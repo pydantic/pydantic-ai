@@ -18,9 +18,10 @@ To use any other models or integrations, add the relevant extras to your install
 ## Next steps
 
 Build your first agent with the [Agents guide](agent.md), or start from one of the [examples](examples/setup.md).
-To see what your agent does, [set up Pydantic Logfire](logfire.md#using-logfire), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account).
+To see what your agent does, run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Pydantic Logfire](logfire.md#using-logfire), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account); you can [use it for local development](logfire.md#local-development) even if your team uses another tool in production.
 To reach models from several providers with one API key, use the [Pydantic AI Gateway](gateway.md).
 If a coding agent is building with you, install the [Pydantic AI skill](coding-agent-skills.md).
+When you're ready to deploy, read [Going to Production](production.md).
 
 ## TLS certificates
 
@@ -93,3 +94,5 @@ You can also install dependencies for multiple models and use cases, for example
 ```bash
 pip/uv-add "pydantic-ai-slim[openai,google,logfire]"
 ```
+
+With Pydantic AI installed, build your first agent with the [Agents guide](agent.md).

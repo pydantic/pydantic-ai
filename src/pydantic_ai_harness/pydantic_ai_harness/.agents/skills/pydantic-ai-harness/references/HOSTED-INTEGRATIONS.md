@@ -11,7 +11,7 @@ listed here, use core `MCP` (see the end of this page).
 
 | Class | Import from | Extra | Credential (`auth` or env var) | Notable options |
 |---|---|---|---|---|
-| `GitHub` | `pydantic_ai_harness.github` | `github` | `GITHUB_TOKEN` (PAT or GitHub App user token) | `toolsets`, `url` (GHE Cloud), server-side `read_only` |
+| `GitHub` | `pydantic_ai_harness.github` | `github` | `GITHUB_TOKEN` (PAT or GitHub App user token) | `toolsets`, `lockdown`, `url` (GHE Cloud, `https://`; `http://` is deprecated), server-side `read_only` plus annotation filter |
 | `Linear` | `pydantic_ai_harness.linear` | `linear` | `LINEAR_ACCESS_TOKEN` (API key or OAuth token), `'oauth'` | `read_only` uses Linear's read-only endpoint |
 | `Notion` | `pydantic_ai_harness.notion` | `notion` | `NOTION_ACCESS_TOKEN` (OAuth token only), `'oauth'` | `read_only` |
 | `Slack` | `pydantic_ai_harness.slack` | `slack` | `SLACK_USER_TOKEN` (`xoxp-` user token, not `xoxb-`) | `read_only` |
@@ -22,7 +22,7 @@ listed here, use core `MCP` (see the end of this page).
 | `DayAI` | `pydantic_ai_harness.day_ai` | `day-ai` | `DAY_AI_ACCESS_TOKEN`, `'oauth'` | no `read_only` (server has no annotations) |
 | `PostHog` | `pydantic_ai_harness.posthog` | `posthog` | `POSTHOG_PERSONAL_API_KEY`, `'oauth'` | `features`, server-side `read_only` |
 | `Pylon` | `pydantic_ai_harness.pylon` | `pylon` | `PYLON_ACCESS_TOKEN` (OAuth only), `'oauth'` | `read_only` |
-| `StackOne` | `pydantic_ai_harness.stackone` | `stackone` | `api_key=` or `STACKONE_API_KEY` | `account_id` (required), `actions`, `tool_mode` |
+| `StackOne` | `pydantic_ai_harness.stackone` | `stackone` | `STACKONE_API_KEY` | `account_id` (required), `actions`, `tool_mode` |
 
 Every class imports from its submodule. `Ordinal`, `Grain`, `DayAI`, `PostHog`, `Pylon`, and
 `StackOne` are also exported from top-level `pydantic_ai_harness`; the others are submodule-only. Every extra installs `pydantic-ai-slim[mcp]`.
@@ -40,7 +40,15 @@ All classes except `StackOne` take the same keyword-only fields:
 - `include_instructions: bool = True`: forward the server's own MCP instructions to the agent.
 - `client`: your own FastMCP client or transport, for a custom auth scheme, proxy, or handlers
   (absent on `GoogleWorkspace`). It owns the connection, so combining it with `auth` (and with
-  `url`/`toolsets`/`features` where those exist) raises `UserError`.
+  `url`/`toolsets`/`lockdown`/`features` where those exist) raises `UserError`.
+- `tool_prefix: str | None`: prepended with `_` to the server's tool names (absent on `GoogleWorkspace`,
+  which already prefixes by product). It defaults to the service (`'github'`, `'linear'`, `'logfire'`,
+  `'grain'`, `'day_ai'`, `'posthog'`, `'pylon'`), so `get_me` reaches the model as `github_get_me`.
+  `Notion`, `Slack`, and `Ordinal` default to `None`, since their servers already name tools after the
+  service (`notion-search`, `slack_send_message`). `None` keeps the server's names, which is what
+  releases before the prefix used for every class except `LogfireMCP`. Filters on `get_toolset()` see
+  the prefixed names; `read_only`, GitHub `toolsets`, and PostHog `features` select before the prefix
+  applies.
 - `id`, `description`, `defer_loading` from `AbstractCapability`. The default `id` is fixed
   (`'github'`, `'linear'`, `'notion'`, `'slack'`, `'logfire-mcp'`, `'ordinal'`, `'grain'`, `'day_ai'`,
   `'posthog'`, `'pylon'`), so `defer_loading=True` and durable execution need no explicit `id`.
@@ -63,7 +71,7 @@ agent = Agent(
 | unset, `None`, or `''` | Reads the env var. If that is unset too, `Agent(...)` raises `UserError` at construction. |
 | a string | That token for every run. |
 | `'oauth'` | FastMCP browser sign-in. Local machine only; it would hang a server. Supported where the vendor has OAuth client registration: Linear, Notion, LogfireMCP, Ordinal, Grain, DayAI, PostHog, Pylon. |
-| a function | Called at the start of each run. Its return value is that run's token. `None` or `''` means that run has no tools from this integration. A function never falls back to the env var, and returning `'oauth'` raises `UserError`. |
+| a function | Called at the start of each run, and can be async. Its return value is that run's token. `None` or `''` means that run has no tools from this integration. A function never falls back to the env var, and returning `'oauth'` raises `UserError`. |
 
 Use the function form when one agent serves many users. Read the token from deps, not a global:
 under Temporal/DBOS/Prefect the function can run in another process.
@@ -98,9 +106,9 @@ Two mechanisms:
 
 - **Server-side mode**: GitHub (`X-MCP-Readonly` header), Linear (`/mcp/readonly` endpoint), PostHog
   (`x-posthog-read-only` header). The server decides which tools exist.
-- **Annotation filter**: every other class, and GitHub/Linear/PostHog when you pass `client`. Keeps only
-  tools whose MCP annotations set `readOnlyHint: true`. Unmarked tools are dropped, so a server that
-  does not annotate can leave the agent with no tools.
+- **Annotation filter**: every other class, GitHub always (on top of its header), and Linear/PostHog when
+  you pass `client`. Keeps only tools whose MCP annotations set `readOnlyHint: true`. Unmarked tools are
+  dropped, so a server that does not annotate can leave the agent with no tools.
 
 `read_only` is not an access boundary. The token's scopes are. PostHog's default mode serves one
 `posthog` tool that is not marked read-only, so `PostHog(client=..., read_only=True)` leaves no tools.
@@ -113,7 +121,7 @@ passing it as a toolset:
 ```python {test="skip" lint="skip"}
 def allowed(ctx: RunContext[None], tool: ToolDefinition) -> bool:
     hints = (tool.metadata or {}).get('annotations') or {}
-    return hints.get('readOnlyHint') is True or tool.name in {'add_issue_comment'}
+    return hints.get('readOnlyHint') is True or tool.name in {'github_add_issue_comment'}
 
 
 agent = Agent('test', toolsets=[GitHub(auth='ghp_example').get_toolset().filtered(allowed)])
@@ -123,20 +131,18 @@ agent = Agent('test', toolsets=[GitHub(auth='ghp_example').get_toolset().filtere
 
 One instance is one connection to one account. Two with the same `id` and identical settings merge
 into one. Two with the same `id` and different settings raise `UserError` at agent construction. To
-keep two accounts, give each its own `id`. Their tool names are identical, so also wrap each in core
-`PrefixTools`:
+keep two accounts, give each its own `id` and `tool_prefix`, since their tool names are otherwise identical:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import PrefixTools
 
 from pydantic_ai_harness.github import GitHub
 
 agent = Agent(
     'test',
     capabilities=[
-        PrefixTools(GitHub(id='github-work', auth='ghp_work'), prefix='work'),
-        PrefixTools(GitHub(id='github-oss', auth='ghp_oss'), prefix='oss'),
+        GitHub(id='github-work', tool_prefix='github_work', auth='ghp_work'),
+        GitHub(id='github-oss', tool_prefix='github_oss', auth='ghp_oss'),
     ],
 )
 ```
@@ -166,16 +172,22 @@ Add `ToolOutputLimits` to cap large tool results.
 
 **GitHub.** `toolsets=['repos', 'issues', 'actions']` picks GitHub's tool groups (`None` keeps the
 server's defaults, which include write tools). `toolsets=[]` raises, and so does an entry containing a
-comma. `url` targets GitHub Enterprise Cloud (`GITHUB_MCP_URL` is the default). The capability does not
-limit which repositories are reachable; the token's permissions do.
+comma. `url` targets GitHub Enterprise Cloud (`GITHUB_MCP_URL` is the default) and must be `https://`
+(`http://` warns with `HarnessDeprecationWarning`). `lockdown=True` sends `X-MCP-Lockdown`, which
+withholds public-repository content written by users without push access (best-effort, not a security
+boundary; other tools can still return it). `'oauth'` raises: GitHub has no automatic OAuth client
+registration. The capability does not limit which repositories are reachable; the token's permissions
+do.
 
 **GoogleWorkspace.** `services` is the first positional argument: one of, or a list of, `'gmail'`,
 `'drive'`, `'docs'`, `'sheets'`, `'slides'`, `'calendar'`, `'chat'`, `'people'`. Each service is its own MCP
 server. Tool names are prefixed with the service (`gmail_search_threads`). The default `id` is
 `google-workspace-<sorted services>` (for example `google-workspace-calendar-gmail`), so two instances
-for different services coexist. There is no `client` and no merge: two for the same services collide.
+whose services do not overlap coexist. Overlapping services register the same tool names, so wrap one in
+`PrefixTools`; two for the same services also collide on `id`. There is no `client` and no merge.
 Google does not support automatic client registration, so register your own OAuth client with the
-needed scopes. Access tokens expire after about an hour.
+needed scopes; `auth='oauth'` raises `UserError`. Access tokens expire after about an hour, and the
+capability reads a token once per run (or once at construction for a fixed one), so it never refreshes one.
 
 ```python
 from pydantic_ai import Agent
@@ -190,8 +202,8 @@ print(workspace.id)
 
 **LogfireMCP.** `url=LOGFIRE_EU_MCP_URL` for EU data, or a self-hosted MCP URL (import the constants
 from `pydantic_ai_harness.logfire_mcp`). With `include_instructions=True` it also adds query guidance and
-the current UTC time (taken from the request timestamp, so Temporal-safe) to the instructions. Its tool
-names are prefixed `logfire_` (`query_run` becomes `logfire_query_run`).
+the current UTC time (taken from the request timestamp, so Temporal-safe) to the instructions, including a
+note that the server's own text names tools without the `tool_prefix` (`query_run` is `logfire_query_run`).
 
 **PostHog.** By default the server exposes a single command-driven `posthog` tool. `features='flags'`
 or `['flags', 'insights']` limits the server to those feature groups. `features=[]` raises (the server
@@ -205,8 +217,11 @@ annotate its tools. Note the underscore in the default `id`, `'day_ai'`.
 
 **StackOne** is the odd one out: HTTP Basic auth plus an account header, not bearer auth.
 
-- `StackOne(account_id, *, api_key=None, base_url='https://api.stackone.com', actions=(), tool_mode=None,
-  include_instructions=True, metadata=None, client=None)`. There is no `auth` and no `read_only`.
+- `StackOne(account_id, *, auth=None, base_url='https://api.stackone.com', actions=(), tool_mode=None,
+  include_instructions=True, metadata=None, client=None)`. `auth` resolves as in the table above, except
+  that a string `'oauth'` is sent as the key; a function returning `'oauth'` raises `UserError`. `api_key=`
+  is its deprecated alias; passing both raises `UserError`. There is no `read_only` or `tool_prefix`. A URL
+  `client` still receives the `auth` key; a prebuilt client keeps its own auth.
 - `tool_mode='search_execute'` (the default when `actions` is empty) exposes two meta-tools: a search tool
   that returns runtime `action_id`s and an execute tool that takes them. `'individual'` registers one
   tool per action. Passing `actions` (case-insensitive `fnmatch` globs over `{connector}_{action}_{entity}`
@@ -224,7 +239,7 @@ from pydantic_ai import Agent
 from pydantic_ai_harness import StackOne
 from pydantic_ai_harness.stackone import StackOneToolset
 
-hr = StackOne('hr-account', api_key='sk-example', actions=['*_list_*'])
+hr = StackOne('hr-account', auth='sk-example', actions=['*_list_*'])
 writes = StackOneToolset(
     account_id='hr-account', api_key='sk-example', actions=['workday_create_worker']
 ).approval_required()
@@ -236,7 +251,8 @@ print(hr.id)
 ## Agent specs
 
 All twelve classes can be loaded from YAML or JSON. Pass the class in `custom_capability_types`, and
-keep secrets out of the file by leaving `auth`/`api_key` unset so the env var is used. Install each
+keep secrets out of the file by leaving `auth` unset so the env var is used. `StackOne` specs take no `auth`,
+and their `api_key` option is deprecated. Install each
 integration's extra, plus `pydantic-ai-slim[spec]` for YAML files:
 
 ```yaml

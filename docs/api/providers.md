@@ -16,7 +16,13 @@
 
 ::: pydantic_ai.providers.openai
 
+::: pydantic_ai.providers.openai_compatible
+
 ::: pydantic_ai.providers.openai_codex
+    options:
+      inherited_members: true
+
+::: pydantic_ai.providers.openai_chatgpt
     options:
       inherited_members: true
 
@@ -25,6 +31,8 @@
       inherited_members: true
 
 ::: pydantic_ai.providers.xai
+
+::: pydantic_ai.providers.elevenlabs
 
 ::: pydantic_ai.providers.deepseek
 
@@ -80,6 +88,8 @@
 
 ::: pydantic_ai.providers.nebius.NebiusProvider
 
+::: pydantic_ai.providers.otari.OtariProvider
+
 ::: pydantic_ai.providers.ovhcloud.OVHcloudProvider
 
 ::: pydantic_ai.providers.crusoe.CrusoeProvider
@@ -87,6 +97,8 @@
 ::: pydantic_ai.providers.alibaba.AlibabaProvider
 
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
+
+::: pydantic_ai.providers.stav.StavProvider
 
 ::: pydantic_ai.providers.snowflake.SnowflakeProvider
 

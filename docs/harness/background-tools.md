@@ -35,6 +35,21 @@ By default, any tool with `metadata={'background': True}` runs in the background
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+sequenceDiagram
+    accTitle: Background Tools: slow tools run while the agent keeps working
+    accDescr: The model calls slow_research(query) through the BackgroundTools capability. The capability runs slow_research in the background and answers with a started message and a task ID, so the model works on other calls or ends its turn. When slow_research returns its result, the capability sends the model a follow-up user message with the result and the same task ID.
+    participant model
+    participant cap as BackgroundTools()
+    participant tool as slow_research
+    model->>cap: slow_research(query)
+    cap->>tool: runs in the<br/>background
+    cap-->>model: started, task ID
+    Note over model: works on other calls<br/>or ends its turn
+    tool-->>cap: result
+    cap->>model: follow-up user message:<br/>result, same task ID
+```
+
 ## Selecting which tools run in the background
 
 `BackgroundTools(tools=...)` accepts the standard [`ToolSelector`][pydantic_ai.tools.ToolSelector]:
@@ -59,9 +74,9 @@ BackgroundTools(tools=lambda ctx, td: td.name.startswith('research_'))
 Use `metadata={'background': 'optional'}` to let the model decide for each call. The model sees a
 `run_in_background` argument, but your function does not receive it.
 
-A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools and
-realtime sessions run normally. Do not use `run_in_background` as one of your function's own
-parameters.
+A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools,
+realtime sessions, and calls that code mode's `run_code` makes from its sandbox run normally, even
+with `run_in_background`. Do not use `run_in_background` as one of your function's own parameters.
 
 ```python
 from pydantic_ai import Agent
@@ -101,25 +116,62 @@ agent = Agent(
 The model first receives a message saying that the tool has started. The message includes a task ID.
 When the tool finishes, the model receives the result with the same task ID.
 
-Each follow-up is a [`ModelRequest`][pydantic_ai.messages.ModelRequest] containing a
-[`UserPromptPart`][pydantic_ai.messages.UserPromptPart] whose first content item is
-[`TextContent`][pydantic_ai.messages.TextContent] with
-`metadata={'origin': 'pydantic-ai-harness.background_tools.result.v1', 'tool_call_id': original_tool_call_id}`, including handled
-failure notifications. This identifies the entire completion part, including any files and extra
-content. The metadata is not sent to the model and survives native message serialization and merging
-consecutive requests. The Vercel AI and AG-UI message conversions omit this metadata.
+Each follow-up, including a handled failure notification, is a
+`BackgroundToolResultPart` (from `pydantic_ai_harness.background_tools`), a
+[`CapabilityPart`][pydantic_ai.messages.CapabilityPart] the run enqueues for its next [`ModelRequest`][pydantic_ai.messages.ModelRequest].
+Find follow-ups in history by that type: its `tool_name`, `tool_call_id` and `outcome` fields name the call.
+The Vercel AI and AG-UI message conversions leave capability parts out, so follow-ups stay in
+server-side history.
 
-Text and files returned by the tool are sent to the model. [`ToolReturn.metadata`][pydantic_ai.messages.ToolReturn.metadata]
+The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
+tags, like the `<pyai:tool_result>` tags Pydantic AI puts around tool files it sends on the user
+channel, with a note in the application's voice that the tool wrote it, not the user or the
+application. This tells the
+model the text is the tool's output rather than something the user said, and which pending call it
+completes. The output goes out as the tool wrote it: text in it that looks like the frame's own tag
+or an application frame such as `<system>` gets a further note naming the tool as its author, so it
+can't end the frame early or speak as the application. A failed call is framed
+the same way with `outcome="failed"`, wrapping the message from `ModelRetry` or `ToolFailed`.
+
+Text and files returned by the tool, then any [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content], are sent to the model in that
+frame, with adjacent text joined on separate lines. [`ToolReturn.metadata`][pydantic_ai.messages.ToolReturn.metadata]
 is discarded.
-`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text. Any
-other tool exception ends the run with the original exception, as it does for a sequential tool.
-Running out of retries or raising `CancelledError` also ends the run. A tool can call `ctx.cancel()`
-to stop the run and the other background tools.
+`ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text, also
+when a `before_tool_execute` or `after_tool_execute` hook raises them. A `ValidationError` from
+such a hook is reported too, as a sequential tool retries it. Any other tool exception ends the
+run with the original exception, as it does for a sequential tool.
+A `ModelRetry` or `ValidationError` counts toward the tool's `retries` when its follow-up is
+delivered, however long the tool ran, and a result resets the count. The started message does
+neither, so `ctx.retry` and `ctx.last_attempt` behave as they do for a sequential tool.
+Running out of retries or raising `CancelledError` also ends the run. The run ends at its next step, so
+a model request already in progress finishes first. A tool can call `ctx.cancel()` to stop the run and
+the other background tools.
 
-A normal run waits for its background tools to finish. A pending call counts toward
-`tool_calls_limit`. If the run pauses or stops early, unfinished tools are cancelled and their
-results are not delivered. Async tools must allow cancellation; ignoring it can prevent the run from
-stopping.
+A run waits for its background tools to finish, also when it pauses for deferred tools. A pending call
+counts toward `tool_calls_limit`. At a deferred-tool pause, the results are added to the message history
+after the paused step, in the order the calls were made, so a resumed run sees them, even after a restart.
+A failed tool still ends the run.
+
+Results stay queued instead, and `BackgroundTools` doesn't queue them again, in two cases:
+
+- other queued content includes a `ModelResponse` or an interrupted request;
+- the run ends with a [`PendingModelResponse`](../batch.md#ending-a-run-while-it-waits),
+  which ends it once its request is submitted: background tools still running are cancelled, and only
+  results that already arrived stay queued.
+
+Results left queued aren't delivered. When you drive the run with
+[`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter], you can read them from
+[`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages]. With `run()`, `run_sync()`,
+`run_stream()` or a UI adapter, they're dropped.
+
+A tool's own `timeout` bounds how long the run waits for it, and a run's
+[`timeout`](../timeouts.md#bounding-a-whole-run) bounds the whole wait.
+
+Because the pause waits, `DeferredToolRequests` reaches the caller only after the slowest background
+tool finishes. To answer approvals while background tools keep running, resolve them inside the run
+with a [`HandleDeferredToolCalls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) handler.
+If the run stops early, unfinished tools are cancelled and results that have not been delivered
+are dropped. Async tools must allow cancellation; ignoring it can prevent the run from stopping.
 
 !!! warning
     Python cannot stop a synchronous tool before it returns. Cancelling the run will still wait for
@@ -136,13 +188,22 @@ stopping.
 - A sequential tool can overlap background work that started earlier. Tools that must not overlap
   should protect their shared data or should not run in the background.
 - Realtime sessions already run tools concurrently, so `BackgroundTools` leaves them unchanged.
-- The later result message does not pass through tool-result or tool-error hooks. Validate or limit
-  the result inside the tool when this matters.
+- `after_tool_execute`, `on_tool_execute_error`, and the `wrap_tool_execute` hooks of capabilities
+  listed after `BackgroundTools` run inside the background task and see the real result.
+  `wrap_tool_execute` hooks of capabilities listed before it, and tool result events, see the
+  started message.
+- The result reaches the model as a user message, in plain text that names the tool and task. A
+  tool that returns untrusted content, such as a fetched web page, can make that content look like
+  another task's result. Delimit or sanitize such output inside the tool.
+- List `RepairToolArguments`, or `Coder`, which includes it, before `BackgroundTools`. Otherwise a
+  malformed call that sets `run_in_background` is retried instead of repaired. A repaired call runs
+  in the foreground.
 
 ## Tracing
 
-`BackgroundTools` does not add tracing spans. Pydantic AI records the tool call and its immediate
-"started" result. The completed result remains in the agent's message history.
+`BackgroundTools` does not add tracing spans. Pydantic AI's tool span ends when the started message
+is returned, so it does not cover the tool's work or record a failure. The completed result remains in
+the agent's message history.
 
 ## Durable execution
 

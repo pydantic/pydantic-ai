@@ -21,6 +21,29 @@ follow `parallel_execution_mode`, which runs them one at a time by default (see
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
+```mermaid
+flowchart TB
+    accTitle: pgtask Durability: pick up a crashed run where it left off
+    accDescr: In attempt 1, the worker finishes a model request and a tool call, and each is saved to Postgres as a pgtask step. The worker then crashes during the next model request, before that step is saved. pgtask runs the task again: the PGTaskDurability capability returns the stored results of the saved steps with no model or tool call, and then the next model request runs live.
+    subgraph first["Worker, attempt 1"]
+        done["model request, tool call<br/>each one finishes"]
+        crash["next model request<br/>worker crashes before<br/>the step is saved"]:::blocked
+    end
+    steps[("Postgres<br/>pgtask steps")]:::external
+    subgraph retry["Task run again"]
+        replay["PGTaskDurability()<br/>returns stored results,<br/>no model or tool call"]:::capability
+        live["next model request<br/>runs live"]
+    end
+    done -.-x crash
+    done -->|"each saved as a step"| steps
+    crash -.->|"pgtask runs<br/>the task again"| replay
+    steps -->|"saved steps"| replay
+    replay --> live
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
+
 ## Installation
 
 ```bash
@@ -71,8 +94,9 @@ pgtask runs your task function again from the start. Ordinary code in the functi
 when the agent reaches a model request or tool call that already has a saved step, it uses the saved
 result and skips the call.
 
-- A tool that raises `ModelRetry` or `ToolFailed` has that outcome saved too, so after a crash the
-  model gets the same error and the tool doesn't run again.
+- A tool that raises `ModelRetry` or `ToolFailed`, or a sub-agent run inside a tool that cancels
+  itself or times out (`RunCancelled`), has that outcome saved too, so after a crash the model gets
+  the same error and the tool doesn't run again.
 - A tool that raises any other exception has nothing saved, so it runs again when pgtask retries the
   task.
 - An MCP server is only connected when a call needs it. If every call to it already has a saved
@@ -87,7 +111,9 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
 |---|---|
 | `{name}__model.request` | a model request |
 | `{name}__model.request_stream` | a streamed model request |
+| `{name}__model.request.retry_after`, `{name}__model.request_stream.retry_after`, `{name}__model.compact_messages.retry_after`, `{name}__model.cancel_suspended_response.retry_after` | the wait a model error's `retry_after` asked for, before that model operation runs again |
 | `{name}__model.compact_messages` | a request asking the model to shorten the message history |
+| `{name}__model.count_tokens` | a token count ahead of a model request, with `count_tokens_before_request` |
 | `{name}__model.cancel_suspended_response` | cancelling a response the model provider is still working on in the background |
 | `{name}__capability__{capability_id}.{operation}` | work added by another capability |
 | `{name}__function_toolset__{id}.validate_args` | checking a tool's arguments with its `args_validator` |
@@ -107,6 +133,12 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   `agent.run()` called twice, pgtask numbers them 0, 1, 2, and so on, in the order they happen.
   Finish one `agent.run()` before starting the next in the same task, so the numbers come out the
   same after a crash.
+- An async function tool with [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) gets no
+  step: it runs in the task on every attempt, so keep it deterministic and free of I/O.
+- A `DynamicToolset` built with `per_run_step=False` is resolved once per run and held for its
+  steps. Its factory, and the `for_run` of the toolset it returns (for an `MCPToolset`, its `auth` or
+  `headers` function), run in the task outside any step on every attempt, so keep them deterministic
+  and leave their I/O to the steps.
 
 ## Rules
 
@@ -123,9 +155,22 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   `event_stream_handler` so that running them twice does no harm.
 - Inside a task, passing function, MCP, or dynamic toolsets to a single run with
   `run(toolsets=...)` raises a `UserError`. Add them to the agent instead. `ExternalToolset` is
-  fine.
+  fine, and so is a `FunctionToolset` whose tools are all async and set `durable=False`.
 - Streaming inside a task isn't live: the whole model response is received and saved first, and
   then its events are sent to you.
+- Under [`BatchModelRequests`](../batch.md#durable-execution), submitting a request and each check on its batch are
+  saved steps, but the waits between checks are plain sleeps: the task has to keep running for as
+  long as the batch takes, within its timeout, and a recovered run sleeps again through the waits
+  it already did.
+- A model request that fails with a model error that has a `retry_after` (read from a provider's
+  `Retry-After` header, for example) is saved as a failed attempt. The task then sleeps that long
+  with pgtask's durable `sleep_for` (the `{name}__model.request.retry_after` step), which suspends
+  it until then, and the request runs again as the next occurrence of its step. The task's
+  `retry_delay` is set where its handler is registered and isn't available to the run, so the wait
+  is capped at a minute. Each model request waits at most as many times as the task has attempts
+  left after the current one; after that, the model error fails the attempt and pgtask's own retry
+  applies. The suspension leaves `agent.run` as pgtask's own signal, so an `on_model_request_error`
+  hook that handles every exception has to re-raise it.
 
 ## Running tools at the same time
 

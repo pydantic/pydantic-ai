@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br, zstd
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - "265"
+      - "266"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 64000
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -27,7 +27,7 @@ interactions:
               What is the capital of France? Give me an answer that contains the word
               "Paris", but is not the first word.
             type: text
-        model: claude-sonnet-4-5
+        model: claude-sonnet-5-5
         stop_sequences:
         - Paris
         stream: true
@@ -42,10 +42,12 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=263
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-0f8f44cdcfcdc87a624b777eca5ba96c-a7ab20065920754a-01
+      - 00-630d53a3f6682df10d776535112414ff-48f016ba1fe325fb-01
       transfer-encoding:
       - chunked
       vary:
@@ -54,27 +56,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3qcAu7Lj1sXctUkwhT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":32,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}}
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPJPuFH5HH4jue6LWLnV","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":39,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}          }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The capital of France is"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" capital of France is "}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" "} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0              }
+        data: {"type":"content_block_stop","index":0     }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"stop_sequence","stop_sequence":"Paris","stop_details":null,"container":null},"usage":{"input_tokens":32,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":6}     }
+        data: {"type":"message_delta","delta":{"stop_reason":"stop_sequence","stop_sequence":"Paris","stop_details":null,"container":null},"usage":{"input_tokens":39,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":12,"output_tokens_details":{"thinking_tokens":0}} }
 
         event: message_stop
-        data: {"type":"message_stop"        }
+        data: {"type":"message_stop"}
 
-  recorded_at: 2026-09-29T16:31:04.382388+00:00
+  recorded_at: 2026-10-25T16:51:04.591433+00:00

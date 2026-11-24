@@ -7,24 +7,28 @@ launcher's process group) and returns once the wrapper is running. The wrapper p
 command's output to log files next to it, and publishes the exit code when the command ends.
 Each job's files live in one owner-only directory below `.pydantic-ai-harness/shell` in the
 workspace's working directory, never on the host unless the workspace is the host. Status and output are read, and the process group
-is signalled, through the same workspace.
+is signalled, through the same workspace. A `'windows'` workspace has none of these tools: `_powershell.py` does the same in
+PowerShell there.
 """
 
 from __future__ import annotations
 
 import base64
+import heapq
 import json
-import posixpath
 import shlex
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import AnyStr
 
 import anyio
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.workspaces import Workspace, WorkspaceError
+from pydantic_ai.workspaces import Workspace, WorkspaceCommand, WorkspaceError
+from pydantic_ai_harness.shell import _powershell
 from pydantic_ai_harness.shell._limits import LIMIT_FUNCTION
+from pydantic_ai_harness.shell._policy import run_model_command
 
 CONTROL_TIMEOUT = 30.0
 """Deadline in seconds for one control command (launch, read, signal).
@@ -35,14 +39,67 @@ These return at once in a healthy workspace; the deadline keeps a wedged one fro
 _KILL_GRACE_PERIOD = 2.0
 """Seconds a job gets to exit after `SIGTERM` before its process group is sent `SIGKILL`."""
 
+_LOG_CHECK_INTERVAL = 1.0
+"""Seconds between a job's log size checks against `max_log_bytes`.
+
+`sleep 1` stands in where `sleep` takes only whole seconds.
+"""
+
 POLL_MIN = 0.05
 POLL_MAX = 1.0
 """Bounds of the backoff between polls of a job's status, so a remote workspace is not asked every 50 ms."""
+
+_STATUS_READ_ATTEMPTS = 100
+_STATUS_READ_DELAY = 0.02
+"""Reads of `status.json` a `'windows'` workspace refuses before the refusal is raised, and the seconds between them.
+
+`Move-Item -Force` replaces the file by deleting it and renaming `status.tmp`, holding it open for `DELETE` at each
+step. Windows refuses an open that does not share delete while it does, and `os.open` does not share delete. It
+reports that refusal and an access denial alike, so a refusal that outlasts these attempts is raised. They match the
+retry `_powershell`'s `Publish` gives its replace. Counted rather than timed, so a durable engine replays the reads.
+"""
 
 _WRAPPER = f"""{LIMIT_FUNCTION}
 dir=$1
 publish() {{
   printf '{{"pid": %s, "exit_code": %s}}' "$$" "$1" > "$dir/status.tmp" && mv -f "$dir/status.tmp" "$dir/status.json"
+}}
+clear_logs() {{
+  for log in "$out" "$err"; do
+    __harness_size=$(( $(wc -c < "$log" 2> /dev/null) + 0 ))
+    if [ "$__harness_size" -gt "$1" ] && [ "$__harness_size" -gt $(( ${{#__harness_notice}} + 1 )) ]; then
+      printf x >> "$dir/log_clears"
+      : > "$log"
+      printf '%s\\n' "$__harness_notice" >> "$log"
+      printf x >> "$dir/log_clears"
+    fi
+  done
+}}
+watch_logs() {{
+  trap '__harness_watch_stopped=1; kill "$__harness_sleeper" 2> /dev/null' TERM
+  true 2> /dev/null > "$dir/watch.trapped"
+  __harness_notice="[Log exceeded max_log_bytes=$1; earlier output was cleared.]"
+  __harness_interval=$2
+  while [ -z "$__harness_watch_stopped" ] && [ ! -e "$dir/watch.stop" ] && kill -0 "$$" 2> /dev/null; do
+    sleep "$__harness_interval" 2> /dev/null & __harness_sleeper=$!
+    [ -z "$__harness_watch_stopped" ] || kill "$__harness_sleeper" 2> /dev/null
+    wait "$__harness_sleeper" || [ $? -gt 128 ] || __harness_interval=1
+    [ -z "$__harness_watch_stopped" ] && [ ! -e "$dir/watch.stop" ] || break
+    clear_logs "$1"
+  done
+  wait "$__harness_sleeper" 2> /dev/null
+  # Once more for the output since the last round, so a finished job's logs end within the limit.
+  clear_logs "$1"
+}}
+stop_watcher() {{
+  [ -z "$watcher" ] || {{
+    if true 2> /dev/null > "$dir/watch.stop"; then
+      [ ! -e "$dir/watch.trapped" ] || kill "$watcher" 2> /dev/null
+      wait "$watcher" 2> /dev/null
+    else
+      kill "$watcher" 2> /dev/null
+    fi
+  }}
 }}
 unset __harness_stopped
 trap __harness_stopped=1 TERM
@@ -52,25 +109,60 @@ while [ -z "$__harness_stopped" ] && [ ! -e "$dir/launch.ready" ]; do
   sleep 0.1 2> /dev/null || [ -n "$__harness_stopped" ] || sleep 1
 done
 if [ "$2" = combined ]; then out="$dir/output.log"; err="$dir/output.log"; else out="$dir/stdout.log"; err="$dir/stderr.log"; fi
+watcher=
+if [ -n "$6" ]; then watch_logs "$6" "$7" & watcher=$!; fi
 if [ -n "$4" ]; then
-  __harness_limit_files "$4" || {{ echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1; }}
+  __harness_limit_files "$4" || {{
+    stop_watcher
+    echo 'Unable to apply max_file_bytes.' >> "$err"; publish 1; exit 1
+  }}
 fi
 (
   [ -z "$__harness_stopped" ] && [ ! -e "$dir/stop" ] || exit 143
   exec sh -c "$3"
 ) < /dev/null >> "$out" 2>> "$err"
-publish $?
+code=$?
+[ -w "$dir" ] || chmod u+w "$dir" 2> /dev/null
+stop_watcher
+publish $code
 """
-"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, and the launcher's PID.
+"""The job's supervisor: arguments are the job directory, the log mode, the command, the file limit, the launcher's PID,
+the log limit, and the seconds between log checks.
+
+With a log limit, a watcher checks each log every `_LOG_CHECK_INTERVAL` seconds, and once more when it stops, and
+empties one that has grown past it, leaving a notice. It appends a byte to `log_clears` before and after each clear, so
+a reader can tell a clear is under way (an odd size) or done, even once the log has grown back. The command keeps
+running, and a command that reads its own log (a glob over job logs) reaches the end of it and stops, instead of copying
+the log into itself until the disk is full. A log holding no more than the notice is left alone, so a limit below its
+size doesn't clear it at every check. The watcher starts before `max_file_bytes` applies, since `log_clears` keeps
+growing, finishes a clear it has started when the wrapper stops it, and exits once the wrapper is gone (killed on its
+own and reaped). The wrapper stops it by creating `watch.stop`, then sending `TERM` to cut its sleep short, but only
+once the watcher has created `watch.trapped` after setting its trap: a `TERM` before the trap would end it before its
+last check. When `watch.stop` cannot be created, as when the command removed the job directory or left it read-only
+(below), the wrapper sends `TERM` regardless and exits without waiting for the watcher; publishing the exit status needs
+the same write, so none is published. That `TERM` is then the watcher's only stop, and it can be lost: `dash` drops a
+`TERM` that arrives before the watcher's subshell has reset the trap it inherits from the wrapper, and a shell that
+started with `TERM` ignored never gets it. Such a watcher exits at its next check, once the wrapper is gone. A watcher
+that gets no `TERM` sees `watch.stop` before its first sleep, or, in a shell that started with `TERM` ignored, at its
+next check. It sleeps in a child it stops and reaps itself, so a stopped job leaves no orphan behind; a `sleep` without
+fractional seconds gets 1.
 
 The `TERM` trap lets the wrapper outlive a `SIGTERM` sent to the whole group long enough to
 publish the command's exit status; the command itself runs with default signal handling, since
 a trap with an action is reset in a child. Stopping the group therefore still records how the
-command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation leaves `exit_code` null.
+command ended (`143` for `SIGTERM`); only a `SIGKILL` escalation, or a job directory the wrapper cannot write to
+(below), leaves `exit_code` null.
 The trap also records the signal, so a job stopped before its command starts (the wrapper waits
 for `launch.ready` first) never starts it and publishes `143` instead. A launcher that dies
 before `launch.ready` (a cancelled or timed-out launch) counts as a stop too, so the wrapper
 never waits for it forever.
+
+A command can take write permission away from its job directory, as `chmod -R a-w .` in the workspace does. Stopping the
+watcher and publishing both create files there, so once the command exits, the wrapper gives the directory's owner write
+permission back; a directory that is still writable costs only the `-w` test, a shell builtin. Nothing else the command
+changed is restored, so a jobs directory it made read-only keeps `Job.cleanup` from removing the job directory. A stop
+signal that lands while `chmod` runs ends it, as `chmod` runs with default signal handling, and the directory stays
+read-only: no exit status is published.
 
 A `SIGTERM` that lands while the command's subshell is being forked, before its default signal
 handling is in place, is lost. `Job.kill` therefore creates the job's `stop` file before
@@ -84,6 +176,17 @@ _SIGNAL_SCRIPT = 'true 2> /dev/null > "$3"; kill -s "$1" -- "$2"'
 directory may be gone).
 """
 
+_ZOMBIE_GROUP_SCRIPT = """[ "$(uname -s 2> /dev/null)" = Darwin ] || exit 1
+members=$(ps -A -o pgid= -o stat=) || exit 1
+echo "$members" | while read -r group state; do [ "$group" != "$1" ] || case $state in Z*) ;; *) exit 1 ;; esac; done
+"""
+"""Exit 0 on macOS when `ps` lists no live member of process group `$1`: macOS refuses any signal to a group of zombies.
+
+Without `setsid` the wrapper is left to `launchd` once the launcher exits, so between the wrapper's exit and its reap
+the job's group holds only zombies. A group `ps` no longer lists was reaped after the signal. Linux signals a group of
+zombies, so elsewhere this exits 1 and the refusal stands.
+"""
+
 _REQUIRED_TOOLS = ('mv', 'base64')
 """Executables the job files need: the wrapper publishes its status with `mv`, and logs are read back through `base64`."""
 
@@ -94,16 +197,16 @@ _LAUNCHER = f"""missing=
 for tool in {' '.join(_REQUIRED_TOOLS)}; do command -v "$tool" > /dev/null 2>&1 || missing="$missing $tool"; done
 if [ -n "$missing" ]; then echo $missing; exit {_MISSING_TOOLS}; fi
 if [ "$exclusive" = 1 ]; then
-  (umask 077 && mkdir "$dir") || exit 126
+  (umask 077 && mkdir -p "${{dir%/*}}" && mkdir "$dir") || {{ [ -e "$dir" ] && exit 126; exit 125; }}
 else
   (umask 077 && mkdir -p "$dir") || exit 125
 fi
 if [ "$mode" = combined ]; then : > "$dir/output.log"; else : > "$dir/stdout.log"; : > "$dir/stderr.log"; fi
 if command -v setsid > /dev/null 2>&1; then
-  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
+  setsid sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" "$log_interval" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=$pid
 else
-  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ < /dev/null > /dev/null 2>&1 &
+  nohup sh -c "$wrapper" sh "$dir" "$mode" "$cmd" "$limit" $$ "$log_limit" "$log_interval" < /dev/null > /dev/null 2>&1 &
   pid=$!; group=-
   if [ "$(ps -o pgid= -p $$ 2> /dev/null | tr -d ' ')" = "$$" ]; then group=$$; fi
 fi
@@ -113,6 +216,10 @@ echo "$pid $group" > "$dir/handle"
 echo "$pid $group"
 """
 """Start the wrapper detached and print `<pid> <process group or ->`, also kept in the job's `handle` file.
+
+The command is the launcher's argument `$1` rather than quoted into the script, so it reaches the
+wrapper as itself: quoting turns each `'` into `'"'"'`, and a command full of them could pass the
+operating system's limit on the size of one argument (128 KiB on Linux).
 
 It first checks for `_REQUIRED_TOOLS` with the shell's `command -v` builtin, which costs no extra
 process, and prints the missing ones and exits `_MISSING_TOOLS` instead of launching.
@@ -154,24 +261,20 @@ class Job:
         env: Mapping[str, str] | None,
         combined: bool,
         file_limit: int | None = None,
+        log_limit: int | None = None,
         job_id: str | None = None,
     ) -> Job:
-        directory = posixpath.join(base, job_id or uuid.uuid4().hex)
-        mode = 'combined' if combined else 'separate'
-        assignments = ' '.join(
-            f'{name}={shlex.quote(value)}'
-            for name, value in (
-                ('dir', directory),
-                ('exclusive', '1' if job_id is not None else '0'),
-                ('mode', mode),
-                ('cmd', command),
-                ('limit', '' if file_limit is None else str(file_limit)),
-                ('wrapper', _WRAPPER),
-            )
+        directory = workspace.paths.join(base, job_id or uuid.uuid4().hex)
+        launcher = cls._launcher(
+            workspace,
+            directory,
+            cwd,
+            exclusive=job_id is not None,
+            combined=combined,
+            file_limit=file_limit,
+            log_limit=log_limit,
         )
-        result = await workspace.run(
-            f'cd {shlex.quote(cwd)} || exit\n{assignments}\n{_LAUNCHER}', shell=True, env=env, timeout=CONTROL_TIMEOUT
-        )
+        result = await run_model_command(workspace, launcher, command, env=env, timeout=CONTROL_TIMEOUT)
         if result.exit_code == _MISSING_TOOLS:
             # Without these the launcher would wait out `CONTROL_TIMEOUT` for a status that is never
             # published, or a log read would fail looking like the command's own output.
@@ -192,10 +295,61 @@ class Job:
         return cls(workspace=workspace, directory=directory, pid=int(fields[0]), pgid=pgid, combined=combined)
 
     @classmethod
+    def _launcher(
+        cls,
+        workspace: Workspace,
+        directory: str,
+        cwd: str,
+        *,
+        exclusive: bool,
+        combined: bool,
+        file_limit: int | None,
+        log_limit: int | None,
+    ) -> Callable[[str], WorkspaceCommand]:
+        """The launcher invocation for a command: `sh` running `_LAUNCHER`, or on Windows, `_powershell.launch_script`."""
+        if workspace.platform == 'windows':
+            if file_limit is not None:
+                raise WorkspaceError('`max_file_bytes` needs a POSIX workspace.')
+            return lambda cmd: _powershell.launch_script(
+                directory,
+                cwd,
+                cmd,
+                exclusive=exclusive,
+                combined=combined,
+                log_limit=log_limit,
+                interval=_LOG_CHECK_INTERVAL,
+            )
+        script = cls._launch_script(
+            directory, cwd, exclusive=exclusive, combined=combined, file_limit=file_limit, log_limit=log_limit
+        )
+        return lambda cmd: ['sh', '-c', script, 'sh', cmd]
+
+    @staticmethod
+    def _launch_script(
+        directory: str, cwd: str, *, exclusive: bool, combined: bool, file_limit: int | None, log_limit: int | None
+    ) -> str:
+        """The `sh` script that runs `_LAUNCHER` in `cwd`, its variables set for a job in `directory`."""
+        mode = 'combined' if combined else 'separate'
+        assignments = ' '.join(
+            f'{name}={shlex.quote(value)}'
+            for name, value in (
+                ('dir', directory),
+                ('exclusive', '1' if exclusive else '0'),
+                ('mode', mode),
+                ('limit', '' if file_limit is None else str(file_limit)),
+                ('log_limit', '' if log_limit is None else str(log_limit)),
+                ('log_interval', f'{_LOG_CHECK_INTERVAL:g}'),
+                ('wrapper', _WRAPPER),
+            )
+        )
+        return f'cd {shlex.quote(cwd)} || exit\n{assignments} cmd=$1\n{_LAUNCHER}'
+
+    @classmethod
     async def attach(cls, workspace: Workspace, directory: str, *, combined: bool) -> Job | None:
         """The job launched into `directory`, from its `handle` file, or `None` when there is none."""
         try:
-            fields = (await workspace.read_bytes(posixpath.join(directory, 'handle'))).decode(errors='replace').split()
+            handle = workspace.paths.join(directory, 'handle')
+            fields = (await workspace.read_bytes(handle)).decode(errors='replace').split()
         except WorkspaceError:
             raise
         except OSError:  # missing, a directory, or unreadable: no job to attach to
@@ -208,29 +362,47 @@ class Job:
     @property
     def output_path(self) -> str:
         """The combined log, or stdout's log when the streams are kept apart."""
-        return posixpath.join(self.directory, 'output.log' if self.combined else 'stdout.log')
+        return self.workspace.paths.join(self.directory, 'output.log' if self.combined else 'stdout.log')
 
     @property
     def stderr_path(self) -> str:
-        return posixpath.join(self.directory, 'output.log' if self.combined else 'stderr.log')
+        return self.workspace.paths.join(self.directory, 'output.log' if self.combined else 'stderr.log')
 
     @property
     def status_path(self) -> str:
-        return posixpath.join(self.directory, 'status.json')
+        return self.workspace.paths.join(self.directory, 'status.json')
+
+    @property
+    def clears_path(self) -> str:
+        """A file one byte longer before and again after each time `max_log_bytes` empties one of the job's logs."""
+        return self.workspace.paths.join(self.directory, 'log_clears')
 
     @property
     def stop_command(self) -> str:
         """The command a model runs to stop the whole job."""
+        if self.workspace.platform == 'windows':
+            return f'& {_powershell.literal(self.workspace.paths.join(self.directory, "stop.ps1"))}'
         return f'kill -- -{self.pgid}' if self.pgid is not None else f'kill {self.pid}'
 
     async def status_text(self) -> str | None:
         """`status.json` as the wrapper published it, or `None` before the first publication."""
         if self._final_status is not None:
             return self._final_status
-        try:
-            text = (await self.workspace.read_bytes(self.status_path)).decode('utf-8', errors='replace')
-        except FileNotFoundError:
-            return None
+        attempts = 1
+        while True:
+            try:
+                text = (await self.workspace.read_bytes(self.status_path)).decode('utf-8', errors='replace')
+                break
+            except FileNotFoundError:
+                return None
+            # Before `PermissionError`: a `WorkspaceError` subclassing it is a backend failure, not a sharing violation.
+            except WorkspaceError:
+                raise
+            except PermissionError:
+                if self.workspace.platform != 'windows' or attempts == _STATUS_READ_ATTEMPTS:
+                    raise
+            attempts += 1
+            await anyio.sleep(_STATUS_READ_DELAY)
         try:
             exit_code = json.loads(text)['exit_code']
         except (ValueError, KeyError, TypeError):
@@ -268,29 +440,41 @@ class Job:
         """Up to `length` bytes of `path` from `offset`, read inside the workspace so only they cross the wire."""
         if length <= 0:
             return b''
-        quoted = shlex.quote(path)
-        result = await self.workspace.run(
+        if self.workspace.platform == 'windows':
+            script = _powershell.read_script(path, offset, length)
+        else:
+            quoted = shlex.quote(path)
             # A pipeline reports only `base64`'s status, so check the log is readable before it.
             # A log removed between the two checks is missing, not unreadable.
-            f'test -f {quoted} || exit 66; test -r {quoted} || {{ test -f {quoted} || exit 66; exit 67; }}; '
-            f'tail -c +{offset + 1} {quoted} | head -c {length} | base64',
-            shell=True,
-            timeout=CONTROL_TIMEOUT,
-        )
+            script = (
+                f'test -f {quoted} || exit 66; test -r {quoted} || {{ test -f {quoted} || exit 66; exit 67; }}; '
+                f'tail -c +{offset + 1} {quoted} | head -c {length} | base64'
+            )
+        result = await self.workspace.run(script, shell=True, timeout=CONTROL_TIMEOUT)
         if result.exit_code == 66:
             return b''
         if result.exit_code != 0:
             raise WorkspaceError(result.stderr.strip() or f'Unable to read job log {path!r}.')
         return base64.b64decode(result.stdout)
 
-    async def tail(self, path: str, max_bytes: int) -> bytes:
-        """The last `max_bytes` bytes of `path`."""
+    async def tail(self, path: str, max_bytes: int, *, secrets: Sequence[bytes] = ()) -> bytes:
+        """The last `max_bytes` bytes of `path`, starting after any of `secrets` the cut would split."""
+        return (await self.read_tail(path, max_bytes, secrets=secrets))[1]
+
+    async def read_tail(self, path: str, max_bytes: int, *, secrets: Sequence[bytes] = ()) -> tuple[int, bytes]:
+        """The offset and bytes of `tail`, so a split secret leaves no fragment for masking to miss."""
         size = await self.size(path)
         start = max(0, size - max_bytes)
-        return await self.read(path, start, size - start)
+        pad = min(start, max(map(len, secrets), default=0))
+        data = await self.read(path, start - pad, size - start + pad)
+        cut = past_secrets(data, pad, secrets)
+        return start - pad + cut, data[cut:]
 
     async def kill(self) -> None:
         """Stop the job's process group: `SIGTERM`, then `SIGKILL` if it is still running after the grace period."""
+        if self.workspace.platform == 'windows':
+            await self._kill_tree()
+            return
         if not await self._signal('TERM'):
             return
         if self.pgid is None:
@@ -301,30 +485,47 @@ class Job:
             if await self._signal('0'):
                 await self._signal('KILL')
             return
+        # The grace period is counted in the time slept, not read from a clock, so a durable engine that
+        # records each signal replays the same ones (as `run_persistent_command`'s foreground wait).
         interval = POLL_MIN
-        with anyio.move_on_after(_KILL_GRACE_PERIOD):
-            while await self._signal('0'):
-                await anyio.sleep(interval)
-                interval = min(interval * 2, POLL_MAX)
-            return
+        waited = 0.0
+        while waited < _KILL_GRACE_PERIOD:
+            if not await self._signal('0'):
+                return
+            await anyio.sleep(interval)
+            waited += interval
+            interval = min(interval * 2, POLL_MAX)
         await self._signal('KILL')
+
+    async def _kill_tree(self) -> None:
+        """End the wrapper's process tree with `taskkill`, publishing the exit code the wrapper no longer can."""
+        result = await self.workspace.run(_powershell.stop_script(self.directory), shell=True, timeout=CONTROL_TIMEOUT)
+        if result.exit_code != 0:  # pragma: no cover - `taskkill` was refused
+            raise WorkspaceError(result.stderr.strip() or f'Unable to stop job {self.pid}.')
 
     async def _signal(self, name: str) -> bool:
         """Whether the signal reached a process; a job that already exited is not an error.
 
         The shell's `kill` builtin sends it, so no `kill` executable is needed: slim images
         such as Debian's ship none. A failure other than "no such process" raises, rather than
-        reporting a job stopped that may still be running.
+        reporting a job stopped that may still be running, unless `_ZOMBIE_GROUP_SCRIPT` finds
+        the group holds only zombies.
         """
         target = f'-{self.pgid}' if self.pgid is not None else str(self.pid)
         result = await self.workspace.run(
-            ['sh', '-c', _SIGNAL_SCRIPT, 'kill', name, target, posixpath.join(self.directory, 'stop')],
+            ['sh', '-c', _SIGNAL_SCRIPT, 'kill', name, target, self.workspace.paths.join(self.directory, 'stop')],
             timeout=CONTROL_TIMEOUT,
         )
         if result.exit_code == 0:
             return True
         if 'no such process' in result.stderr.lower():
             return False
+        if self.pgid is not None:
+            check = await self.workspace.run(
+                ['sh', '-c', _ZOMBIE_GROUP_SCRIPT, 'sh', str(self.pgid)], timeout=CONTROL_TIMEOUT
+            )
+            if check.exit_code == 0:
+                return False
         raise WorkspaceError(result.stderr.strip() or f'Unable to send SIG{name} to job {self.pid}.')
 
     async def cleanup(self) -> None:
@@ -333,3 +534,29 @@ class Job:
             await self.workspace.remove(self.directory)
         except FileNotFoundError:
             pass
+
+
+def secret_spans(data: AnyStr, secrets: Sequence[AnyStr], start: int = 0) -> Iterator[tuple[int, int, int]]:
+    """Every occurrence of a secret in `data` that ends after `start`, overlapping ones included.
+
+    Each is `(start, -length, index in secrets)`, by start and, at a shared start, longest first. The occurrences of
+    each secret are merged as they are found, so memory grows with the number of secrets, not of occurrences.
+    """
+    return heapq.merge(*(_occurrences(data, secret, number, start) for number, secret in enumerate(secrets)))
+
+
+def _occurrences(data: AnyStr, secret: AnyStr, number: int, start: int) -> Iterator[tuple[int, int, int]]:
+    index = data.find(secret, max(0, start - len(secret) + 1))
+    while index != -1:
+        yield index, -len(secret), number
+        index = data.find(secret, index + 1)
+
+
+def past_secrets(data: AnyStr, cut: int, secrets: Sequence[AnyStr]) -> int:
+    """`cut`, moved past the end of every occurrence of a secret in `data` that spans it, or that a move makes span."""
+    # By start, so a span the cut moves into is still ahead of it, and none after one that starts at the cut is.
+    for start, negative_length, _ in secret_spans(data, secrets, cut):
+        if start >= cut:
+            break
+        cut = max(cut, start - negative_length)
+    return cut
