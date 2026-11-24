@@ -139,6 +139,16 @@ def cancelled_sub_agent_return(
     )
 
 
+def _snapshot_tool_value(value: Any) -> Any:
+    """Snapshot mutable tool return payloads so later mutations do not rewrite message history."""
+    if value is None or isinstance(value, str | int | float | bool | bytes):
+        return value
+    try:
+        return deepcopy(value)
+    except TypeError:
+        return value
+
+
 def build_tool_return_part(
     tool_result: Any,
     *,
@@ -187,11 +197,11 @@ def build_tool_return_part(
     return_part = _messages.ToolReturnPart(
         tool_name=call.tool_name,
         tool_call_id=call.tool_call_id,
-        content=tool_return.return_value,
-        metadata=tool_return.metadata,
+        content=_snapshot_tool_value(tool_return.return_value),
+        metadata=_snapshot_tool_value(tool_return.metadata),
         tool_kind=tool_kind,
     )
-    return _messages.ToolReturnPart.narrow_type(return_part), tool_return.content or None, tools
+    return _messages.ToolReturnPart.narrow_type(return_part), _snapshot_tool_value(tool_return.content) or None, tools
 
 
 _DeferredBucket = Literal['external', 'question', 'unapproved']

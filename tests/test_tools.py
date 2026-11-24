@@ -6641,3 +6641,36 @@ async def test_an_approved_call_that_asks_a_question_stays_pending_as_one() -> N
     assert isinstance(result.output, DeferredToolRequests)
     assert [call.tool_call_id for call in result.output.calls] == ['external', 'approval']
     assert result.output.kind('approval') == 'question'
+
+
+async def test_mutable_tool_return_is_snapshotted_in_history():
+    """Mutating a returned container after a tool finishes must not rewrite earlier history."""
+    seen: list[str] = []
+    state: dict[str, list[str]] = {'items': ['a']}
+
+    def model_fn(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        for m in messages:
+            if isinstance(m, ModelRequest):
+                for p in m.parts:
+                    if isinstance(p, ToolReturnPart) and p.tool_call_id == 'c1':
+                        seen.append(p.model_response_str())
+        n = sum(isinstance(m, ModelResponse) for m in messages)
+        if n == 0:
+            return ModelResponse(parts=[ToolCallPart('get_items', {}, tool_call_id='c1')])
+        if n == 1:
+            return ModelResponse(parts=[ToolCallPart('add_item', {'x': 'b'}, tool_call_id='c2')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool_plain
+    def get_items() -> dict[str, list[str]]:
+        return state
+
+    @agent.tool_plain
+    def add_item(x: str) -> str:
+        state['items'].append(x)
+        return 'ok'
+
+    await agent.run('go')
+    assert seen == ['{"items":["a"]}', '{"items":["a"]}']
