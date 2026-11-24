@@ -309,6 +309,23 @@ async def test_cancelling_after_the_output_arrived_still_settles() -> None:
         assert streamed.result.output == 'settled'
 
 
+async def test_cancelling_after_none_output_arrived_still_settles() -> None:
+    """A stream consumed to the end with a validated `None` output still settles after `cancel()`."""
+    from pydantic_ai import TextOutput
+
+    def to_none(_text: str) -> None:
+        return None
+
+    agent = Agent(TestModel(custom_output_text='hello'), output_type=TextOutput(to_none))
+
+    async with agent.run_stream('Stream this') as streamed:
+        assert await streamed.get_output() is None
+        assert streamed.result.output is None
+        await streamed.cancel()
+
+        assert streamed.result.output is None
+
+
 @pytest.mark.parametrize('method', ['stream_text', 'stream_text_delta', 'stream_response'])
 async def test_settling_a_run_whose_final_output_failed_validation_is_refused(
     method: Literal['stream_text', 'stream_text_delta', 'stream_response'],

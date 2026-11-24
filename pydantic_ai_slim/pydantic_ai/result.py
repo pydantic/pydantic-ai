@@ -283,7 +283,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         so by then `_cached_output` holds it. Cancelling does not: it marks the stream complete
         without a final response, and there is no output to settle on.
         """
-        if self._cached_output is None and self.cancelled:
+        if not self._output_validated and self.cancelled:
             raise exceptions.UserError(
                 'The stream was cancelled before it produced an output, so this run has no settled '
                 'result. The messages recorded up to the interruption are still available from '
