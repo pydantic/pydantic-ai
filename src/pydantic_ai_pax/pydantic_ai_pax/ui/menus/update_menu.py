@@ -1,4 +1,4 @@
-"""`/update`'s menu: the running CLAI and whether a newer one is out, an update that asks first, and `updates.channel`.
+"""`/update`'s menu: the running Pax and whether a newer one is out, an update that asks first, and `updates.channel`.
 
 Bare `/update` opens it, in the terminal and in the web UI, which shows it as Settings > About.
 """
@@ -22,7 +22,7 @@ ABOUT_MAX_AGE = 300.0
 class AboutSource:
     """The version row, read-only, then `/set`'s `updates.channel` row."""
 
-    title = 'About CLAI'
+    title = 'About Pax'
 
     def __init__(self, context: CommandContext, updates: Updates) -> None:
         """The channel is edited through `context`, as `/set updates.channel` does."""
@@ -30,17 +30,17 @@ class AboutSource:
         self._updates = updates
 
     def version(self) -> str:
-        """The running CLAI's version, with the commit a `main` install was built from."""
+        """The running Pax's version, with the commit a `main` install was built from."""
         current = self._updates.current
         return current.version if current.commit is None else f'{current.version} ({current.commit[:9]})'
 
     def status(self) -> str:
-        """Whether a newer CLAI is out on the update channel, checking for one in the background first."""
+        """Whether a newer Pax is out on the update channel, checking for one in the background first."""
         found = self._updates.check(wait=CHECK_WAIT, max_age=ABOUT_MAX_AGE)
         if found is None:
-            return 'Checking for a newer CLAI…'
+            return 'Checking for a newer Pax…'
         if found.error is not None:
-            return f'Could not check for a newer CLAI: {found.error}'
+            return f'Could not check for a newer Pax: {found.error}'
         minutes = int((self._updates.clock() - found.checked) // 60)
         checked = 'just now' if minutes < 1 else f'{minutes} min ago' if minutes < 60 else f'{minutes // 60} h ago'
         if found.update is None:
@@ -55,7 +55,7 @@ class AboutSource:
         version = FieldRow(
             key=VERSION,
             label='Version',
-            description='The CLAI running now. Update installs the newest one on the update channel, as /update now does.',
+            description='The Pax running now. Update installs the newest one on the update channel, as /update now does.',
             default=self.version(),
             note=self.status(),
             button='Update…',
@@ -110,11 +110,11 @@ def update_menu(
             return refused(reason)
         channel = context.settings.update_channel
         confirmed = await dialogs.confirm(
-            title='Update CLAI?',
+            title='Update Pax?',
             yes='Update',
             no='Cancel',
             description=(
-                f'Installs the newest CLAI from the {channel} channel with uv tool install --force '
+                f'Installs the newest Pax from the {channel} channel with uv tool install --force '
                 '--compile-bytecode, as /update now does. A running turn finishes first.'
             ),
         )

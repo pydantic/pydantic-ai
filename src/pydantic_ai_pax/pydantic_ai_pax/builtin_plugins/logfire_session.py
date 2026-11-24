@@ -75,11 +75,11 @@ class SessionTracing(AbstractCapability[None]):
                 self.instance.config.get_tracer_provider()
                 .get_tracer(SCOPE)
                 .start_span(
-                    'CLAI session',
+                    'Pax session',
                     context=Context(),
                     attributes={
                         'agent_session_id': session_id,
-                        'logfire.msg': 'CLAI session',
+                        'logfire.msg': 'Pax session',
                         'logfire.tags': self._tags(),
                         **self._user(),
                     },
@@ -130,7 +130,7 @@ class SessionTracing(AbstractCapability[None]):
             # `tags=`, not a `logfire.tags` attribute, which `log` would serialize to a JSON string.
             self.instance.log(
                 'info',
-                'CLAI session opened',
+                'Pax session opened',
                 attributes={'agent_session_id': session_id, **self._user()},
                 tags=self._tags(),
             )

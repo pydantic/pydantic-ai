@@ -41,7 +41,7 @@ def session_entry(
         model=summary.model,
         current=current,
         archived=summary.archived_at is not None,
-        # Another CLAI's session shows read-only until the user forks it, as its transcript says.
+        # Another Pax's session shows read-only until the user forks it, as its transcript says.
         openable=openable and state != 'busy',
         source=imported_from(summary),
     )
