@@ -1184,8 +1184,8 @@ async def test_for_run_sees_the_workspace_a_capability_function_supplies(tmp_pat
     seen: list[str] = []
     calls: list[Path] = []
 
-    class ReadsInForRun(AbstractCapability[Any]):
-        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+    class ReadsInForRun(AbstractCapability[Path]):
+        async def for_run(self, ctx: RunContext[Path]) -> AbstractCapability[Path]:
             seen.append(await ctx.workspace.read_text('catalog.txt'))
             return self
 
@@ -1207,7 +1207,7 @@ async def test_a_capability_function_sees_a_workspace_passed_to_the_run(tmp_path
     (tmp_path / 'catalog.txt').write_text('from the workspace')
     seen: list[tuple[str, dict[str, Any] | None]] = []
 
-    async def reads_the_run(ctx: RunContext[Any]) -> AbstractCapability[Any] | None:
+    async def reads_the_run(ctx: RunContext[object]) -> AbstractCapability[object] | None:
         seen.append((await ctx.workspace.read_text('catalog.txt'), ctx.metadata))
         return None
 
