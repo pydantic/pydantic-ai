@@ -15,7 +15,8 @@ environment come from the working tree both times, so the library code is the on
 
 Each stream is one JSON line of kind `stream`: the events its `__aiter__` hands the consumer, `PartEndEvent`s and
 `FinalResultEvent`s included, the error iteration raised if any, and the response `get()` builds once iteration ends,
-or once the test ends if the stream still lives then. A stream holds what the run iterating it holds, like its
+or once the test ends if the stream still lives then; a response `get()` can't build, or the capture can't write, is
+`null`. A stream holds what the run iterating it holds, like its
 dependencies, so the capture holds a stream only while the recording of its iteration lives.
 The capture wraps `__aiter__` on `StreamedResponse` and on every subclass that overrides it, whether the subclass is
 defined before the capture starts or after; one that overrides `__init_subclass__` without calling `super()`, or
@@ -542,13 +543,13 @@ class ImportWatcher(importlib.abc.MetaPathFinder):
         loader = spec.loader
         assert loader is not None
         exec_module = type(loader).exec_module
+        loader_ref = weakref.ref(loader)
 
         # Set on the loader the spec holds, and deleted again once called, which leaves the loader's own method. It
-        # reaches the loader through the module's spec, so a loader whose spec never runs holds no reference cycle.
+        # holds the loader weakly, so a loader whose spec never runs holds no reference cycle.
         def exec_then_wrap(module: ModuleType) -> None:
-            spec = module.__spec__
-            assert spec is not None and spec.loader is not None
-            loader = spec.loader
+            loader = loader_ref()
+            assert loader is not None
             delattr(loader, 'exec_module')
             exec_module(loader, module)
             self.wraps.pop(fullname, lambda: None)()
@@ -831,7 +832,8 @@ class RefactorCapture:
         """
         for record, stream_ref in self._streams:
             if (stream := stream_ref()) is not None:
-                record['response'] = normalized(stream.get())
+                with suppress(Exception):
+                    record['response'] = normalized(stream.get())
         self._order_tool_calls()
         self.records.extend(sorted(self._durable_names, key=json.dumps))
         for calls in sorted(self._cache_key_calls, key=json.dumps):

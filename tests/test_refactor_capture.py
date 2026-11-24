@@ -2576,13 +2576,17 @@ To resolve this, you can:
 async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
     """A stream holds what the run iterating it holds, like its dependencies, so the capture holds it only while the
     recording of its iteration lives. The response it builds is recorded once iteration ends, and again when the test
-    ends if the stream still lives then.
+    ends if the stream still lives then; one that can't be written is left `None`, never raised.
 
     Garbage collection is off, as in `tests/test_run_reference_cycles.py`, so only reference counting frees them.
     """
 
     class Deps:
         pass
+
+    class Unwritable:
+        def __repr__(self) -> str:
+            raise RuntimeError('unwritable')
 
     async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'hello'
@@ -2604,15 +2608,22 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
             async for _ in kept:
                 pass
         kept.provider_details = {'set': 'once iteration ended'}
+        async with model_request_stream(
+            FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
+        ) as unwritable:
+            unwritable.provider_details = {'unwritable': Unwritable()}
+            async for _ in unwritable:
+                pass
         capture.write('test_streams.py::test_kept')
     finally:
         gc.enable()
         capture.pytest_unconfigure()
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    *streams, unwritten = [record for record in records if record['kind'] == 'stream']
+    assert unwritten['response'] is None
     assert [
         (record['stream'], record['response']['parts'][0]['content'], record['response']['provider_details'])
-        for record in records
-        if record['kind'] == 'stream'
+        for record in streams
     ] == snapshot(
         [
             ('pydantic_ai.models._continuation._ContinuationStreamedResponse', 'hello', None),
@@ -2642,8 +2653,15 @@ def test_capture_wraps_a_module_now_or_once_it_runs(tmp_path: Path, monkeypatch:
     try:
         assert wrapped == ['json']
         importlib.import_module('unwatched_module')
-        assert importlib.util.find_spec('watched_module') is not None
-        assert wrapped == ['json']
+        spec = importlib.util.find_spec('watched_module')
+        assert spec is not None and wrapped == ['json']
+        # Garbage collection is off, so only reference counting frees the loader of a spec that never runs.
+        gc.disable()
+        try:
+            not_run = weakref.ref(spec.loader)
+            del spec
+        finally:
+            gc.enable()
         module = importlib.import_module('watched_module')
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module('missing_module')
@@ -2651,6 +2669,7 @@ def test_capture_wraps_a_module_now_or_once_it_runs(tmp_path: Path, monkeypatch:
         capture.pytest_unconfigure()
         for name in ('watched_module', 'unwatched_module'):
             sys.modules.pop(name, None)
+    assert not_run() is None
     assert wrapped == ['json', 1]
     assert 'exec_module' not in vars(module.__loader__)
     assert not any(isinstance(finder, ImportWatcher) for finder in sys.meta_path)
