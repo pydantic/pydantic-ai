@@ -347,9 +347,8 @@ inside the workspace, and that directory is carried into subsequent calls. The p
 updated when the command exits `0`. If the recorded directory disappears, the next command reports a retry and resets to the workspace working directory. The record is written out-of-band (not
 to stdout) so command output can never spoof the tracked directory.
 
-The instructions tell the model where commands start. They name the directory of a workspace that already exists,
-such as a local one, and never create a sandbox to do it: until a sandbox's first tool call, the instructions say to
-use relative paths, and the path is added after that call.
+The instructions name the working directory through [`WorkingDirectory`](../working_directory/), which states it once however
+many capabilities bring it, and starts a sandbox that isn't running to ask for it.
 
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 

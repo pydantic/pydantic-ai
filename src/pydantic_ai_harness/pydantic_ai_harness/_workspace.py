@@ -91,21 +91,6 @@ def innermost_backend(workspace: Workspace) -> WorkspaceBackend:
     return current
 
 
-async def nameable_working_dir(workspace: Workspace) -> str | None:
-    """The working directory, if instructions can name it without creating a sandbox.
-
-    Only an environment that exists (`ref` is set) is asked. A sandbox no tool has created yet gives
-    `None`: its first tool call creates it, and the next request names it. So does one that is gone,
-    so a run that calls no tool doesn't fail on it; its first tool call reports the error.
-    """
-    if workspace.ref is None:
-        return None
-    try:
-        return await workspace.working_dir()
-    except WorkspaceUnavailableError:
-        return None
-
-
 def is_unattached(workspace: Workspace) -> bool:
     """Whether `workspace` is core's placeholder for a run with no workspace.
 

@@ -449,23 +449,16 @@ class TestCoder:
             assert guidance.endswith('\n' + extra_instructions)
 
     @pytest.mark.parametrize('repo_context', [False, True])
-    @pytest.mark.parametrize(
-        ('unrestricted', 'files'),
-        [(False, ', and the file tools only accept paths inside it.'), (True, '.')],
-    )
-    async def test_instructions_name_the_project_once(
-        self, tmp_path: Path, repo_context: bool, unrestricted: bool, files: str
-    ) -> None:
-        """`Shell` and `FileSystem` name the directory, with or without `RepoContext`; `Coder` adds no line of its own."""
+    async def test_instructions_name_the_project_once(self, tmp_path: Path, repo_context: bool) -> None:
+        """`Shell` and `FileSystem` each bring `WorkingDirectory`, which states the directory once."""
         model = TestModel(call_tools=[])
-        coder = Coder(unrestricted_filesystem=unrestricted, repo_context=repo_context)
-        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        await Agent(model, capabilities=[Coder(repo_context=repo_context)]).run(
+            'go', workspace=LocalWorkspaceBackend(tmp_path)
+        )
         assert model.last_model_request_parameters is not None
-        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
-        path = tmp_path.resolve()
-        assert text.count(f'`{path}`') == 2
-        assert f'Shell commands start in `{path}`.' in text
-        assert f'Relative file paths resolve from `{path}`{files}' in text
+        parts = model.last_model_request_parameters.instruction_parts or []
+        notes = [part.content for part in parts if 'working directory is' in part.content]
+        assert notes == [f'The working directory is `{tmp_path.resolve()}`.']
 
     @pytest.mark.parametrize(
         ('config', 'loaded', 'nested'),

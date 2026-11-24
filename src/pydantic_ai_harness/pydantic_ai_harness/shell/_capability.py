@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import anyio
 
-from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapRunHandler
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
-from pydantic_ai_harness._workspace import nameable_working_dir, require_workspace
+from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT
 from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, ShellToolset
+from pydantic_ai_harness.working_directory import WorkingDirectory
 
 _DEFAULT_DENIED_COMMANDS: tuple[str, ...] = (
     'rm',
@@ -175,24 +175,9 @@ class Shell(AbstractCapability[AgentDepsT]):
         """Fail the run at its start when it has no workspace to run commands in."""
         require_workspace(ctx.workspace, 'Shell', ctx.messages)
 
-    def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:
-        """Where commands start, naming the directory when `nameable_working_dir` can."""
-        carries = ' A `cd` in one command carries over to later commands.' if self.persist_cwd else ''
-
-        async def instructions(ctx: RunContext[AgentDepsT]) -> str:
-            working_dir = await nameable_working_dir(ctx.workspace)
-            if working_dir is None:
-                return (
-                    'Shell commands start in the working directory; use relative paths, not guessed absolute ones.'
-                    + carries
-                )
-            return f'Shell commands start in `{working_dir}`.{carries}'
-
-        return instructions
-
-    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
-        # The directory is named once known, as a change appended to the cached prompt.
-        return append_on_change_by_default(super()._collect_instructions(), key='shell')
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        """Bring `WorkingDirectory` along; copies from other capabilities merge into one line."""
+        return CombinedCapability([self, WorkingDirectory()])
 
     def get_toolset(self) -> ShellToolset[AgentDepsT]:
         """The shell toolset, built once; its `for_run` gives each run a fresh copy."""

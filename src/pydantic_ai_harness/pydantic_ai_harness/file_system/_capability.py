@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
-from pydantic_ai_harness._workspace import nameable_working_dir, require_workspace
+from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.file_system._toolset import (
     DEFAULT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
     FileSystemToolset,
     root_spelling,
 )
+from pydantic_ai_harness.working_directory import WorkingDirectory
 
 _DEFAULT_READ_CHARS = 50_000
 
@@ -179,22 +179,9 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         """Fail without a workspace, without touching it: the boundary waits for the first file operation."""
         require_workspace(ctx.workspace, 'FileSystem', ctx.messages)
 
-    def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:
-        """Where relative paths resolve from, naming the directory when `nameable_working_dir` can."""
-        # Without `root_dir`, the working directory is also the boundary.
-        bounded = ', and the file tools only accept paths inside it' if self.root_dir is None else ''
-
-        async def instructions(ctx: RunContext[AgentDepsT]) -> str:
-            working_dir = await nameable_working_dir(ctx.workspace)
-            if working_dir is None:
-                return f'Relative file paths resolve from the working directory{bounded}. Use them, not guessed absolute paths.'
-            return f'Relative file paths resolve from `{working_dir}`{bounded}.'
-
-        return instructions
-
-    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
-        # The directory is named once known, as a change appended to the cached prompt.
-        return append_on_change_by_default(super()._collect_instructions(), key='file_system')
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        """Bring `WorkingDirectory` along; copies from other capabilities merge into one line."""
+        return CombinedCapability([self, WorkingDirectory()])
 
     def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
         """The filesystem toolset, the same one for every run, so durable execution sees the leaf it registered."""

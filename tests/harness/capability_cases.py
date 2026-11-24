@@ -94,6 +94,7 @@ from pydantic_ai_harness import (
     ToolOutputLimits,
     TrajectoryJudge,
     WarnNearLimits,
+    WorkingDirectory,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
@@ -328,6 +329,10 @@ def _check_background_tools(merged: BackgroundTools[None]) -> None:
 
 def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
+
+
+def _check_working_directory(merged: WorkingDirectory[None]) -> None:
+    assert merged.id == 'working_directory'
 
 
 def _check_current_time(merged: CurrentTime[None]) -> None:
@@ -566,6 +571,13 @@ CASES: dict[str, CapabilityCase] = {
             'one fixed text; two would state it twice',
             lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
             _check_benchmark_instructions,
+        )
+    ),
+    'WorkingDirectory': CapabilityCase(
+        Combines(
+            'one fixed line; `Shell` and `FileSystem` each bring a copy, which must state it once',
+            lambda: (WorkingDirectory[None](), WorkingDirectory[None]()),
+            _check_working_directory,
         )
     ),
     'CurrentTime': CapabilityCase(

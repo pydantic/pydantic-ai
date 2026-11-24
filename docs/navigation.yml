@@ -433,6 +433,9 @@ navigation:
           - page: "Shell"
             path: "harness/shell.md"
             slug: "harness/shell"
+          - page: "Working Directory"
+            path: "harness/working-directory.md"
+            slug: "harness/working-directory"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:
