@@ -911,7 +911,9 @@ class ComputerTool(AbstractNativeTool):
 
     Supported by:
 
+    * Anthropic, on the models listed under [Anthropic](../models/anthropic.md#computer-use)
     * OpenAI Responses, on the models listed under [OpenAI](../models/openai.md#computer-use)
+    * Google, on the models listed under [Google](../models/google.md#computer-use)
     """
 
     display_size: tuple[int, int]
@@ -919,7 +921,7 @@ class ComputerTool(AbstractNativeTool):
 
     `ComputerUse` fills it in from the latest screenshot, or from the display before the first one. Anthropic's
     `computer_20250124` and `computer_20251124` tools send it to the model as the display size;
-    `computer_toolset_20260801` has no size field.
+    `computer_toolset_20260801` has no size field. Gemini uses it to turn its 0-999 positions into pixels.
     """
 
     kind: str = 'computer'

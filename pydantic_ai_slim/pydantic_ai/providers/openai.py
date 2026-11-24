@@ -10,6 +10,7 @@ from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import (
+    _GPT_6_2_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
@@ -158,6 +159,13 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_tool_choice_accepts_additional_tools=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # `gpt-6.2-sol` and `gpt-6.2-astra` put the top-level `instructions` after `input` and bill them at
+                # the uncached rate, and OpenAI recommends leading input messages for reusable instructions
+                # (measured live: https://github.com/pydantic/pydantic-ai/pull/14095). Set here rather than in
+                # `openai_model_profile` because OpenAI-compatible endpoints that share it may render instructions
+                # differently.
+                # https://developers.openai.com/api/docs/guides/latest-model
+                openai_responses_stable_instructions_as_input=model_name.startswith(_GPT_6_2_MODEL_PREFIXES),
                 # GPT-5.6 and later, the models with explicit cache breakpoints, accept `reasoning.effort='max'`
                 # (verified live). Set here rather than in `openai_model_profile` because `max` is unverified on
                 # the OpenAI-compatible endpoints that share it.
@@ -181,6 +189,11 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # `ModelRequestRejectedError` before sending. Set here rather than in `openai_model_profile` because the
                 # restriction is unverified on the OpenAI-compatible endpoints that share it.
                 openai_chat_function_tools_require_reasoning_off=model_name.startswith(_GPT_6_MODEL_PREFIXES),
+                # Gemini's OpenAI-compatible endpoint repeats the running usage across streamed chunks: see
+                # `test_gemini_stream_usage_replaces_running_totals` and the live check across Gemini model families
+                # on https://github.com/pydantic/pydantic-ai/pull/14285. Set here rather than in
+                # `openai_model_profile`, which OpenAI-compatible hosts share without this being verified on them.
+                openai_chat_streaming_repeats_usage_totals=model_name.startswith('gemini'),
                 # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.
