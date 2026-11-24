@@ -1089,6 +1089,7 @@ class UploadedFile:
     For most providers, this is the file ID returned by the provider's upload API.
     For GoogleModel (Google Cloud), this must be a GCS URI (`gs://bucket/path`).
     For GoogleModel (Gemini API), this must be a Google Files API URI (`https://generativelanguage.googleapis.com/...`).
+    `GoogleInteractionsModel` takes the same URIs as `GoogleModel` on each transport.
     For BedrockConverseModel, this must be an S3 URI (`s3://bucket/key`).
     """
 
@@ -1110,6 +1111,7 @@ class UploadedFile:
 
     Supported by:
     - `GoogleModel`: used as `video_metadata` for video files, `vendor_metadata['media_processing']` is forwarded as the per-Part `media_processing` field: https://ai.google.dev/gemini-api/docs/video-understanding#agentic-video-understanding, and `UploadedFile.vendor_metadata['media_resolution']` is forwarded as the per-Part `media_resolution` field: https://ai.google.dev/gemini-api/docs/media-resolution
+    - `GoogleInteractionsModel`: video `start_offset`, `end_offset` and `fps` map to static `processing`; `vendor_metadata['media_processing']` replaces that processing, including its offsets and fps. `vendor_metadata['media_resolution']` sets per-file resolution, overriding `google_video_resolution`.
     - `OpenAIResponsesModel`: `UploadedFile.vendor_metadata['detail']` is used as `detail` setting for image files
     """
 
