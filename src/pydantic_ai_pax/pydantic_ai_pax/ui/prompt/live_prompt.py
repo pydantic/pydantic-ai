@@ -227,9 +227,11 @@ class LivePrompt:
         if self._editing is None:
             return
         if self.buffer.history_index is None and (shelved := self._shelved_draft):
-            joined = '\n'.join(filter(None, [self.buffer.text.strip(), shelved]))
+            edit = self.buffer.text.strip()
+            joined = '\n'.join(filter(None, [edit, shelved]))
+            # A bare `!` edit is a prompt alone, but joined it would send the draft to the shell.
             if joined == shelved or all(
-                input_kind(expand_bare_command(text)) == 'prompt' for text in (joined, shelved)
+                input_kind(expand_bare_command(text)) == 'prompt' for text in (edit, shelved, joined)
             ):
                 self.buffer.replace(joined)
                 self.refresh_completions()
@@ -468,7 +470,8 @@ class LivePrompt:
             self._edit(None)
             self.submit(KeyboardInterrupt())
         elif (editing := self._editing) is not None:
-            # Only Enter saves an edit: the prompt runs unchanged, as Esc returns it, and Up finds the edit in history.
+            # Only Enter saves an edit: the prompt runs unchanged, or is removed if cleared, as Esc leaves it, and Up
+            # finds the edit in history.
             if (edit := self.buffer.text.strip()) and expand_bare_command(edit) != editing.text:
                 self.history.append_string(edit)
                 self.buffer.history.append(edit)

@@ -585,7 +585,7 @@ it still do. Its queue row shows `(editing)` at the place it keeps, and the inpu
 box shows `Enter to save · Esc to stop editing · Clear it to remove`. Enter puts the
 edited message back in its place. Esc puts it back unchanged; it does not interrupt
 the turn, so a second Esc does. To remove the message, clear the draft and press
-Enter or Esc. Each of these, and Alt+Enter, restores the draft you had before pressing Up. If the turn
+Enter, Esc, or Ctrl-C. Each of these, and Alt+Enter, restores the draft you had before pressing Up. If the turn
 ends and nothing else is queued, the message stays in the input as an unsent
 draft. With nothing queued, Up/down only walk history.
 While you walk history, Up/down stay on history even when a recalled slash
@@ -1423,9 +1423,10 @@ example with `export WT_SESSION=1` in the shell you start Pax from.
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
 Queued messages, slash commands, and `!` shell commands stay queued and run next, in
 the order you queued them. While you edit a queued message, the first Esc stops
-editing instead of interrupting. Ctrl-C interrupts and puts the message back in its
-place unchanged, since only Enter saves an edit; Up finds your edit in history, and
-the draft you had before pressing Up comes back.
+editing instead of interrupting. Ctrl-C interrupts and ends the edit as Esc does:
+the message goes back to its place unchanged, since only Enter saves an edit, or is
+removed if you cleared it. Up finds your edit in history, and the draft you had
+before pressing Up comes back.
 Tool cleanup finishes before the next queued message starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather

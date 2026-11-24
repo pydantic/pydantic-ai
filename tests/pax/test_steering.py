@@ -977,6 +977,7 @@ async def test_a_draft_a_search_hides_keeps_its_images() -> None:
         ('!git status', 'only2'),
         ('/help', 'only2'),
         ('clear', 'only2'),
+        ('more', 'clear'),
     ],
 )
 async def test_a_command_never_joins_the_edit_and_the_draft_up_set_aside(draft: str, edit: str) -> None:
