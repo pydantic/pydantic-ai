@@ -1104,8 +1104,8 @@ CASES: dict[str, CapabilityCase] = {
     'BrowserUse': CapabilityCase(
         Collides('its toolset registers its browser tools under fixed names'),
         requires='browser_use',
-        # Its browser agent's requests are its own run's, made inside the tool; Temporal refuses its id-less
-        # toolset (`DURABLE_TEMPORAL` exempts it).
+        # Temporal refuses its id-less toolset (`DURABLE_TEMPORAL` exempts it). Only the browser-use CI job installs
+        # `browser_use`, and it doesn't run the durable suites, so neither checks this case in CI.
         calls=Calls((('browse_web', {'task': 'Find the price of the Pro plan.'}),), _browser_use),
     ),
     'SmartSearch': CapabilityCase(

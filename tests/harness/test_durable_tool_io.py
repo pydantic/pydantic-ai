@@ -50,16 +50,9 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..append_only import skip_unless_installed
 from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL
+from ._contracts import CASES, assert_holds, contract_cases
 from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
-from ._durable_cases import (
-    CASES,
-    assert_holds,
-    build_case,
-    case_params,
-    installed,
-    journal_breaks,
-    one_call_per_response,
-)
+from ._durable_cases import build_case, installed, journal_breaks, one_call_per_response
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
@@ -180,7 +173,7 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
     return snapshot
 
 
-@pytest.mark.parametrize('name', case_params(DURABLE_DBOS))
+@pytest.mark.parametrize('name', contract_cases(DURABLE_DBOS))
 async def test_dbos_recovery_does_not_repeat_tool_requests(
     name: str, dbos: DBOS, count_requests: Callable[[], Counter[str]]
 ) -> None:

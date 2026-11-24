@@ -30,22 +30,14 @@ from tests.temporal_utils import temporal_dev_server_cache_dir
 
 from ..append_only import skip_unless_installed
 from ..capability_cases import DURABLE_TEMPORAL
+from ._contracts import CASES, assert_holds, contract_cases
 from ._counting_clients import REQUESTS
-from ._durable_cases import (
-    CASES,
-    PROMPT,
-    assert_holds,
-    build_case,
-    case_params,
-    installed,
-    journal_breaks,
-    one_call_per_response,
-)
+from ._durable_cases import PROMPT, build_case, installed, journal_breaks, one_call_per_response
 
 pytest.importorskip('temporalio')
 
 from temporalio import workflow
-from temporalio.client import Client, WorkflowFailureError
+from temporalio.client import Client
 from temporalio.common import RetryPolicy
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
@@ -134,16 +126,13 @@ async def _breaks(name: str, temporal: _Temporal) -> list[str]:
     calls = CASES[name].calls
     assert calls is not None
     workflow_id = f'{name}-{uuid.uuid4()}'
-    try:
-        output = await temporal.client.execute_workflow(
-            CaseWorkflow.run,
-            name,
-            id=workflow_id,
-            task_queue=TASK_QUEUE,
-            execution_timeout=timedelta(seconds=READINESS_WAIT_TIMEOUT),
-        )
-    except WorkflowFailureError as error:
-        return [f'the workflow failed: {error.cause!r}']
+    output = await temporal.client.execute_workflow(
+        CaseWorkflow.run,
+        name,
+        id=workflow_id,
+        task_queue=TASK_QUEUE,
+        execution_timeout=timedelta(seconds=READINESS_WAIT_TIMEOUT),
+    )
     assert output == 'done'
     history = await temporal.client.get_workflow_handle(workflow_id).fetch_history()
 
@@ -154,11 +143,10 @@ async def _breaks(name: str, temporal: _Temporal) -> list[str]:
         workflow_runner=_runner(),
     )
     replay = await replayer.replay_workflow(history, raise_on_replay_failure=False)
-    breaks: list[str] = []
-    if replay.replay_failure is not None:
-        breaks.append(f'the recorded history does not replay: {replay.replay_failure!r}')
-    if Counter(REQUESTS) != before:
-        breaks.append(f'replaying made a request again: {before} became {Counter(REQUESTS)}')
+    failure = replay.replay_failure
+    after = Counter(REQUESTS)
+    breaks = [] if failure is None else [f'the recorded history does not replay: {failure!r}']
+    breaks += [] if after == before else [f'replaying made a request again: {before} became {after}']
     activities = [
         event.activity_task_scheduled_event_attributes.activity_type.name
         for event in history.events
@@ -174,7 +162,7 @@ async def _breaks(name: str, temporal: _Temporal) -> list[str]:
     )
 
 
-@pytest.mark.parametrize('name', case_params(DURABLE_TEMPORAL))
+@pytest.mark.parametrize('name', contract_cases(DURABLE_TEMPORAL))
 async def test_a_case_replays_equal_under_temporal(name: str, temporal: _Temporal) -> None:
     skip_unless_installed(name, CASES[name].requires)
     assert_holds(DURABLE_TEMPORAL, name, await _breaks(name, temporal))
