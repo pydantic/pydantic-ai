@@ -459,7 +459,7 @@ async def test_cancelled_activity_error_is_not_logged(client: Client, caplog: py
             id=f'{CancelledActivityErrorRetrievedWorkflow.__name__}-{uuid.uuid4()}',
             task_queue=TASK_QUEUE,
         )
-        await handle.execute_update(CancelledActivityErrorRetrievedWorkflow.wait_for_timeout)
+        await handle.execute_update(CancelledActivityErrorRetrievedWorkflow.wait_for_timeout)  # pyright: ignore[reportUnknownMemberType]
         gc.collect()
         await handle.signal(CancelledActivityErrorRetrievedWorkflow.finish_run)
         await handle.result()

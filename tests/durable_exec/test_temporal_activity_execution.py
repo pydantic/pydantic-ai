@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
@@ -37,7 +37,7 @@ class _ActivityHandle(asyncio.Future[Any]):
 
 
 @contextmanager
-def _loop_errors() -> Iterator[list[dict[str, Any]]]:
+def _loop_errors() -> Generator[list[dict[str, Any]]]:
     """Collect what asyncio reports to the loop's exception handler, such as a never-retrieved future error."""
     loop = asyncio.get_running_loop()
     previous_handler = loop.get_exception_handler()
