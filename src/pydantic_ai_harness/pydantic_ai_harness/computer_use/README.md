@@ -1,0 +1,169 @@
+# Computer Use
+
+`ComputerUse` lets your agent use a desktop. It adds one tool, `computer`, that the model calls with mouse and keyboard
+actions. The actions run on the screen of the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), and the tool returns a screenshot of
+the result.
+
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/computer_use/)
+
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
+## Get started
+
+uv:
+
+```bash
+uv add "pydantic-ai-harness[anthropic]"
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[anthropic]"
+```
+
+Use your model provider's extra instead of `anthropic`. Set `ANTHROPIC_API_KEY`, and have Docker running.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import ComputerUse, DockerContainer
+
+agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[DockerContainer(desktop=True), ComputerUse()])
+
+result = agent.run_sync('Open Firefox and find the current Python release on python.org.')
+print(result.output)
+```
+
+The first run builds a desktop image with Firefox, which takes a few minutes. The agent then looks at the screen,
+clicks and types until it has the answer, and prints it. The container keeps running afterwards; to remove it, see
+[Clean up](../docker_container/#clean-up).
+
+## Models
+
+The model must accept images. On the models listed under [OpenAI](https://pydantic.dev/docs/ai/models/openai/#computer-use) and [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use), it gets its provider's own computer use
+tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
+tool.
+
+## Sandboxes
+
+| Sandbox | Turn on its screen |
+|---|---|
+| Docker | [`DockerContainer(desktop=True)`](../docker_container/#give-the-agent-a-desktop) |
+| boxd | [`BoxdSandbox(desktop=True)`](../boxd_sandbox/#give-the-agent-a-desktop) |
+| BoxLite | [`BoxLiteSandbox(desktop=True)`](../boxlite_sandbox/#give-the-agent-a-desktop) |
+| Daytona | [`DaytonaSandbox(desktop=True)`](../daytona_sandbox/#give-the-agent-a-desktop) |
+| E2B | [`E2BSandbox(desktop=True)`](../e2b_sandbox/#give-the-agent-a-desktop) |
+| Fly.io Sprites | [`SpritesSandbox(desktop=True)`](../sprites_sandbox/#give-the-agent-a-desktop) |
+| Kubernetes | [`KubernetesSandbox(warm_pool=..., desktop=True)`](../kubernetes_sandbox/#give-the-agent-a-desktop) |
+| Modal | [`ModalSandbox(desktop=True)`](../modal_sandbox/#give-the-agent-a-desktop) |
+| OpenSandbox | [`OpenSandbox(image=..., desktop=True)`](../opensandbox_sandbox/#give-the-agent-a-desktop) |
+| Render | [`RenderSandbox(desktop=True)`](../render_sandbox/#give-the-agent-a-desktop) |
+| smolvm | [`SmolSandbox(desktop=True)`](../smol_sandbox/#give-the-agent-a-desktop) |
+
+For any other workspace, see [Your own display](#your-own-display).
+
+### What the display needs
+
+[Daytona](../daytona_sandbox/#give-the-agent-a-desktop) and [boxd](../boxd_sandbox/#give-the-agent-a-desktop) start their own
+desktops. Every other sandbox above needs these programs:
+
+- Xvfb, unless an X server is already running
+- `xdotool`
+- `xwininfo` (Debian's `x11-utils`)
+- `scrot`
+- `setsid`
+- `fluxbox`, `tint2` and `xterm`, for the windows, the panel and its terminal, on every sandbox but
+  [E2B](../e2b_sandbox/#give-the-agent-a-desktop), which uses its template's XFCE desktop (`startxfce4`) instead
+
+The first use of the display installs any that are missing with `apt-get`, as root or with passwordless `sudo`. Add
+them to your image so the first use doesn't wait for the install. If one of the first five can't be installed, the run
+ends with a `WorkspaceUnavailableError` naming what's missing. Without the last three, the screen works without the
+panel. To give the agent a browser, install one in your image, such as `firefox-esr`.
+
+Drags move the pointer in steps with short pauses, so a web page's drag-and-drop sees them. Now and then a
+page still misses one.
+
+## Safety
+
+The model controls a real screen, and anything it clicks or types happens. Run it in a sandbox that holds only what
+the task needs. To approve each call that does more than look at the screen, raise `ApprovalRequired` from a
+[`before_tool_execute` hook](https://pydantic.dev/docs/ai/core-concepts/hooks/):
+
+```python {title="computer_use_ask_before_acting.py"}
+from pydantic_ai import ApprovalRequired
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.computer_use import COMPUTER_KIND
+
+hooks = Hooks()
+
+
+@hooks.on.before_tool_execute
+async def ask_before_acting(ctx, *, call, tool_def, args):
+    looking = {'screenshot', 'zoom', 'wait', 'cursor_position'}
+    if tool_def.tool_kind == COMPUTER_KIND.id and not ctx.tool_call_approved:
+        if any(action.type not in looking for action in args['actions']):
+            raise ApprovalRequired
+    return args
+```
+
+## Durable execution
+
+Use `TemporalDurability` or `PrefectDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't
+run `ComputerUse`. Each `computer` call is one [durable](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/) step, and a step cut off
+before it was recorded can run again. On Temporal, set these on `TemporalDurability`:
+
+- `activity_config=ActivityConfig(start_to_close_timeout=..., retry_policy=RetryPolicy(maximum_attempts=1))`: a
+  timeout longer than your longest call (the default is 60 seconds), and one attempt so a call never runs twice (the
+  default retries without limit).
+- `model_activity_config=ActivityConfig(retry_policy=RetryPolicy())`, and `toolset_activity_config` for other tools:
+  this gives them back the retries the line above takes away.
+- [External storage](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#large-payloads): after a few steps, the screenshots pass
+  Temporal's 2 MB payload limit.
+
+## Your own display
+
+To give your own workspace backend a screen, implement
+`SupportsDisplay`: a `display` property that returns the same
+`Display` every time, or `None` for no screen, without doing I/O. A
+`Display` has `display_size()`, `screenshot()`, which returns PNG bytes, and `act()`, which runs one
+`DisplayAction`. Positions are in screenshot pixels. Raise
+`UnsupportedActionError` for an action it can't do exactly.
+For the `zoom` and `cursor_position` actions, also implement
+`SupportsZoom` and
+`SupportsCursorPosition`. See the
+[API reference](#api-reference).
+
+## Errors and limits
+
+- If the workspace is gone, for example because its sandbox was deleted, the run ends with
+  [`WorkspaceUnavailableError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceUnavailableError).
+- Each `computer` call takes one model request, so a long task can reach the default `request_limit` of 50. To allow
+  more, pass higher [`UsageLimits`](https://pydantic.dev/docs/ai/api/pydantic-ai/usage/#pydantic_ai.usage.UsageLimits).
+- Every request sends all the earlier screenshots again. They are the main cost, which `ComputerUse` lowers by turning
+  on prompt caching, and a long run can reach a provider's image limit: Claude refuses a request with more than 100
+  images on its models with a 200k-token context.
+- A 1280x800 screen suits every model. A larger one costs more tokens per screenshot.
+- On Claude, a screenshot over the model's image size limit fails the request or makes clicks miss; see
+  [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
+- If the screen changes size, a call that gives positions is refused until the model takes a new screenshot.
+- When one `computer` call in a model response fails, the response's later `computer` calls don't run, and the model
+  is told so.
+- A drag must finish within one run, approvals included: when a run ends, held mouse buttons are released.
+
+## API reference
+
+::: pydantic_ai_harness.computer_use.ComputerUse
+
+::: pydantic_ai_harness.computer_use.ActionsPerformedEvent
+
+::: pydantic_ai_harness.computer_use.Display
+
+::: pydantic_ai_harness.computer_use.SupportsDisplay
+
+::: pydantic_ai_harness.computer_use.SupportsZoom
+
+::: pydantic_ai_harness.computer_use.SupportsCursorPosition
+
+::: pydantic_ai_harness.computer_use.DisplayAction
+
+::: pydantic_ai_harness.computer_use.UnsupportedActionError
