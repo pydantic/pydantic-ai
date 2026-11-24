@@ -3,7 +3,8 @@
 Web research and browser capabilities: `Researcher` (a ready-made research stack), `ExaSearch` /
 `ExaAgent` (Exa API), `YouSearch` / `YouResearch` (You.com API), `KeenableSearch` (Keenable API, keyless),
 `BrowserUse` (hand a goal to an autonomous browser agent), `PlaywrightBrowser` (the model drives Chromium itself),
-and `ComputerUse` (the model clicks and types on the workspace's desktop from screenshots). All are
+`CDPBrowser` (the model's code drives Chrome with raw DevTools Protocol commands), and `ComputerUse` (the model clicks
+and types on the workspace's desktop from screenshots). All are
 capabilities passed in `Agent(capabilities=[...])`.
 
 ## Which one to use
@@ -17,6 +18,7 @@ capabilities passed in `Agent(capabilities=[...])`.
 | Synthesized, cited answer or multi-step research in one tool call | `ExaSearch(include_deep_search=True)`, `ExaAgent`, or `YouResearch` |
 | Fuzzy goal on unknown pages ("find the Pro plan price") | `BrowserUse` |
 | Known, repeatable flows, logged-in pages, JS-rendered SPAs, deterministic actions | `PlaywrightBrowser` |
+| Scraping and page automation from code (`CodeMode`), one low-level tool, fewest input tokens | `CDPBrowser` |
 | Desktop applications, or a site exactly as a person sees it | `ComputerUse` |
 
 Core is enough when the model's provider has native search/fetch or DuckDuckGo plus markdownify
@@ -366,6 +368,7 @@ Playwright routes service-worker requests through the guards unless
 `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before attachment bypass
 them, as does a new WebSocket opened through the native `WebSocket` constructor that script running
 before attachment kept, and a page loaded before attachment can register a worker until it navigates.
+Under an enforced policy, pages lose WebRTC, WebTransport, `WebSocketStream` and FedCM, whose traffic no guard sees; workers, isolated sandboxed iframes and documents loaded before attachment keep some of them.
 
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,
@@ -404,7 +407,40 @@ Gotchas:
   construction.
 - `storage_state` is credential material and is not accepted by agent-spec loading.
 - No uploads or downloads. Tool errors come back as strings the model can act on.
-- Use one browser capability per agent; `BrowserUse` and `PlaywrightBrowser` do not share sessions.
+- Use one browser capability per agent; `BrowserUse`, `PlaywrightBrowser` and `CDPBrowser` do not share sessions.
+
+## CDPBrowser
+
+One tool, `browser_cdp(method, params, wait_for_event, timeout)`, sends a raw Chrome DevTools Protocol command to
+a throwaway Chrome tab. Pair it with `CodeMode`, so the model's code calls the tool in loops.
+
+```bash
+uv add "pydantic-ai-harness[cdp-browser]"
+```
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import CDPBrowser, CodeMode
+
+agent = Agent('test', capabilities=[CDPBrowser(allowed_domains=['example.com']), CodeMode()])
+```
+
+Fields: `headless=True`, `chrome_path=None` (`CHROME_PATH`, then the usual install locations),
+`chrome_sandbox=True`, `allowed_methods=DEFAULT_ALLOWED_CDP_METHODS`, `allowed_domains=None`,
+`block_private_addresses=True`, `policy=None` (the same `EgressPolicy` as `PlaywrightBrowser`, exported from
+`pydantic_ai_harness.cdp_browser` too).
+
+- Chrome launches when the run starts, even if the tool is never called, and closes when it ends; each run gets
+  its own. A missing Chrome fails the run with `FileNotFoundError`.
+- Commands outside `allowed_methods`, non-http(s) `Page.navigate` URLs, URLs the egress policy refuses,
+  protocol errors and commands that time out (`timeout=30` covers the command and `wait_for_event`) are retries.
+- The egress policy applies to every request of the tab, its frames, popups and workers through CDP `Fetch`
+  interception, including navigations page scripts start. DNS rebinding on HTTP requests is not covered.
+- `Page.captureScreenshot` returns image content (5 MB cap). Dialogs are dismissed; downloads are denied.
+- WebSocket connections go through a local proxy that applies the egress policy to their host and port.
+- Set `chrome_sandbox=False` only where Chrome's sandbox cannot start (it exits with "No usable sandbox!").
+- Durable execution is rejected with `UserError` at agent construction.
 
 ## ComputerUse
 
@@ -447,6 +483,10 @@ Gotchas:
   `pydantic_ai.computer_use`), `ctx.tool_call_approved` is false, and an action in the validated `args['actions']`
   isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test `isinstance(call, ComputerCallPart)`: a call
   whose arguments a hook repaired arrives as a plain `ToolCallPart`.
+- On the Gemini API, a call Gemini flags as needing confirmation raises `ApprovalRequired` in the tool itself. Resolve
+  it with a `HandleDeferredToolCalls` capability, or add `DeferredToolRequests` to `output_type` and resume the run;
+  with neither, the run fails at the first flagged call. Streamed runs (`run_stream()`, the UI adapters, an event
+  stream handler) get no flags from Google, so they never pause.
 - Screenshots are sent at the screen's full size. A 1280x800 screen suits every model.
 - If the screen changes size, a call that gives positions is refused until the model takes a new screenshot.
 - When one `computer` call in a model response fails, the response's later `computer` calls don't run, and the model
@@ -467,6 +507,7 @@ Gotchas:
 - https://pydantic.dev/docs/ai/harness/keenable-search/
 - https://pydantic.dev/docs/ai/harness/browser-use/
 - https://pydantic.dev/docs/ai/harness/playwright/
+- https://pydantic.dev/docs/ai/harness/cdp-browser/
 - https://pydantic.dev/docs/ai/capabilities/web-search/
 - https://pydantic.dev/docs/ai/capabilities/web-fetch/
 - https://pydantic.dev/docs/ai/harness/computer-use/

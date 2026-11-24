@@ -315,6 +315,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   posted, and says how many it left out; the status still counts it. The job summary always carries
   the usage table. A `critical` or `high` finding,
   an `INCOMPLETE` check, or a check without a result fails the status. `medium` findings do not.
+  The artifact service can list a finalized upload seconds late, so when every review job
+  succeeded and a result is still missing, `publish` waits 30 s and downloads the results once more.
 - A `User` with write access applies `pr-review-checks:accepted` to pass the current head despite its
   findings. Every event that reviews the head again, a push included, removes the label; apply it
   again after that review.

@@ -37,7 +37,7 @@ clicks and types until it has the answer, and prints it. The container keeps run
 
 ## Models
 
-The model must accept images. On the models listed under [OpenAI](../models/openai.md#computer-use) and [Anthropic](../models/anthropic.md#computer-use), it gets its provider's own computer use
+The model must accept images. On the models listed under [OpenAI](../models/openai.md#computer-use), [Anthropic](../models/anthropic.md#computer-use) and [Google](../models/google.md#computer-use), it gets its provider's own computer use
 tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
 tool.
 
@@ -46,21 +46,31 @@ tool.
 | Sandbox | Turn on its screen |
 |---|---|
 | Docker | [`DockerContainer(desktop=True)`](docker-container.md#give-the-agent-a-desktop) |
+| boxd | [`BoxdSandbox(desktop=True)`](boxd-sandbox.md#give-the-agent-a-desktop) |
+| BoxLite | [`BoxLiteSandbox(desktop=True)`](boxlite-sandbox.md#give-the-agent-a-desktop) |
 | Daytona | [`DaytonaSandbox(desktop=True)`](daytona-sandbox.md#give-the-agent-a-desktop) |
+| E2B | [`E2BSandbox(desktop=True)`](e2b-sandbox.md#give-the-agent-a-desktop) |
+| Fly.io Sprites | [`SpritesSandbox(desktop=True)`](sprites-sandbox.md#give-the-agent-a-desktop) |
+| Kubernetes | [`KubernetesSandbox(warm_pool=..., desktop=True)`](kubernetes-sandbox.md#give-the-agent-a-desktop) |
+| Modal | [`ModalSandbox(desktop=True)`](modal-sandbox.md#give-the-agent-a-desktop) |
+| OpenSandbox | [`OpenSandbox(image=..., desktop=True)`](opensandbox-sandbox.md#give-the-agent-a-desktop) |
+| Render | [`RenderSandbox(desktop=True)`](render-sandbox.md#give-the-agent-a-desktop) |
+| smolvm | [`SmolSandbox(desktop=True)`](smol-sandbox.md#give-the-agent-a-desktop) |
 
 For any other workspace, see [Your own display](#your-own-display).
 
 ### What the display needs
 
-[Daytona](daytona-sandbox.md#give-the-agent-a-desktop) starts its own desktop. Every other sandbox above runs one
-that needs these programs:
+[Daytona](daytona-sandbox.md#give-the-agent-a-desktop) and [boxd](boxd-sandbox.md#give-the-agent-a-desktop) start their own
+desktops. Every other sandbox above needs these programs:
 
 - Xvfb, unless an X server is already running
 - `xdotool`
 - `xwininfo` (Debian's `x11-utils`)
 - `scrot`
 - `setsid`
-- `fluxbox`, `tint2` and `xterm`, for the windows, the panel and its terminal
+- `fluxbox`, `tint2` and `xterm`, for the windows, the panel and its terminal, on every sandbox but
+  [E2B](e2b-sandbox.md#give-the-agent-a-desktop), which uses its template's XFCE desktop (`startxfce4`) instead
 
 The first use of the display installs any that are missing with `apt-get`, as root or with passwordless `sudo`. Add
 them to your image so the first use doesn't wait for the install. If one of the first five can't be installed, the run
@@ -92,6 +102,11 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
             raise ApprovalRequired
     return args
 ```
+
+Gemini can flag an action for a person to approve. `ComputerUse` then asks for approval itself, after your hooks run,
+so no hook can skip it. If your own hook already asked and the call was approved, that approval counts. A Gemini
+agent without a way to resolve the approval fails at the first flagged action; see
+[Google](../models/google.md#actions-that-need-approval) for the handler to add.
 
 A read-only workspace gets no `computer` tool, since actions on the screen can change anything the workspace holds.
 

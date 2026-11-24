@@ -35,7 +35,7 @@ from pydantic_ai.computer_use import (
     Wait,
     Zoom,
 )
-from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
     BinaryImage,
     ModelResponse,
@@ -174,6 +174,8 @@ class _CallInputs:
     """The mouse buttons the last call that succeeded said are still pressed."""
     buttons_outlive_call: bool
     """Whether buttons left pressed stay pressed until the run ends, rather than being released when the call ends."""
+    approved_by_person: bool = False
+    """Whether a person approved the call because its provider asked for a confirmation."""
 
 
 @dataclass
@@ -373,7 +375,7 @@ def _find_computer_call(ctx: RunContext[Any]) -> tuple[int, ModelResponse, ToolC
     for index in range(len(ctx.messages) - 1, -1, -1):
         message = ctx.messages[index]
         # A realtime session can place other calls' returns and new input after the response that made this call.
-        if not isinstance(message, ModelResponse):  # pragma: no cover
+        if not isinstance(message, ModelResponse):
             continue
         for part in message.parts:  # pragma: no branch
             if isinstance(part, ToolCallPart) and part.tool_call_id == ctx.tool_call_id:
@@ -530,16 +532,24 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         if ctx.tool_call_id in run_buttons.halted_call_ids:
             run_buttons.halted_call_ids.discard(ctx.tool_call_id)
             raise ToolFailed(_EARLIER_CALL_FAILED)
-        # Cleared below if the call succeeds.
+        part = found_call[2] if found_call else None
+        confirmation = part.confirmation if isinstance(part, ComputerCallPart) else None
+        # Cleared below if the call succeeds. Set before the approval check, so a call waiting for a person also
+        # stops the response's later calls, which expect the screen after it.
         run_buttons.halted_call_ids = _other_call_ids(found_call[1], ctx.tool_call_id) if found_call else set()
+        if confirmation is not None and not ctx.tool_call_approved:
+            # The provider asked for a person to approve this action before it runs. This is checked here, in the
+            # tool, so no hook can skip it.
+            raise ApprovalRequired(metadata={'reason': confirmation})
         call_inputs = _CallInputs(
             # The model gave its positions on the latest screenshot before its call.
             screenshot_size=latest_screenshot_size(ctx.messages[:response_index]) if found_call else None,
             # A call left a plain `ToolCallPart` had arguments that didn't validate, so a hook replaced them.
-            actions_changed=found_call is not None
-            and (not isinstance(part := found_call[2], ComputerCallPart) or part.actions != actions),
+            actions_changed=part is not None and (not isinstance(part, ComputerCallPart) or part.actions != actions),
             pressed_at_start=list(run_buttons.pressed),
             buttons_outlive_call=buttons_outlive_call,
+            # Past the check above, a flagged call is an approved one.
+            approved_by_person=confirmation is not None,
         )
         maybe_pressed_before = list(run_buttons.maybe_pressed)
         # A call that never reports back, such as an interrupted one, may leave these pressed until the run ends. The
@@ -633,6 +643,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """
         performed, error = await runner.perform(actions)
         result = ComputerResult(performed=performed)
+        if call_inputs.approved_by_person:
+            result['confirmed'] = True
         summary: list[str] = []
         if call_inputs.actions_changed:
             result['actions_changed'] = True
