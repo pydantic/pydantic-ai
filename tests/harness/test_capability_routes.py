@@ -41,7 +41,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai_harness import BackgroundTools, CodeMode, IPythonCodeMode, SubAgent, SubAgents, ToolBridge
+from pydantic_ai_harness import BackgroundTools, CodeMode, SubAgent, SubAgents, ToolBridge
 from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 
 from .. import capability_cases as core
@@ -51,7 +51,7 @@ from ..conftest import try_import
 from .capability_cases import CASES as HARNESS_CASES, HARNESS_CAPABILITY_PACKAGES
 
 with try_import() as ipython_installed:
-    from pydantic_ai_harness.ipython_code_mode import IPythonKernel
+    from pydantic_ai_harness.ipython_code_mode import IPythonCodeMode, IPythonKernel
 
 CASES: dict[str, CapabilityCase] = {**core.CASES, **HARNESS_CASES}
 PUBLIC = {**discover_capabilities(CORE_CAPABILITY_PACKAGES), **discover_capabilities(HARNESS_CAPABILITY_PACKAGES)}
@@ -320,14 +320,14 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
         await parent.run('go', event_stream_handler=drain_events)
         [history] = observer.histories
         return RouteRun(history, _ran(calls, observer))
-    around: dict[Route, list[AbstractCapability[None]]] = {
-        'code_mode': [CodeMode()],
-        'ipython_code_mode': [IPythonCodeMode(kernel=kernel)],
-        'tool_bridge': [ToolBridge()],
-        'background_tools': [BackgroundTools(tools='all')],
-        'prepare_hook': [PrepareTools(_rebuild_definitions)],
+    around: dict[Route, Callable[[], AbstractCapability[None]]] = {
+        'code_mode': CodeMode,
+        'ipython_code_mode': lambda: IPythonCodeMode(kernel=kernel),
+        'tool_bridge': ToolBridge,
+        'background_tools': lambda: BackgroundTools(tools='all'),
+        'prepare_hook': lambda: PrepareTools(_rebuild_definitions),
     }
-    agent = Agent(script.model, capabilities=[*capabilities, *around[route], observer])
+    agent = Agent(script.model, capabilities=[*capabilities, around[route](), observer])
     result = await agent.run('go', event_stream_handler=drain_events)
     if route in _WRAPS and not script.wrapped:
         pytest.skip(f'{route} keeps every tool the calls make native')
