@@ -1098,3 +1098,20 @@ def test_structured_judge_serialization():
     )
     evaluator = StructuredJudge('How does it treat the customer?', output_type=Literal['polite', 'curt'])
     assert evaluator.build_serialization_arguments()['output_type'] == snapshot("typing.Literal['polite', 'curt']")
+
+
+def test_structured_judge_serializes_a_model_of_questions_by_name():
+    """A model of questions is written by name, so a result's `source` still serializes to JSON."""
+
+    @dataclass
+    class DataclassReply:
+        polite: bool
+
+    class TypedDictReply(TypedDict):
+        polite: bool
+
+    for questions in (ReplyReview, DataclassReply, TypedDictReply):
+        spec = StructuredJudge(questions).as_spec()
+        assert spec.arguments == (questions.__name__,)
+        # Online evaluation records each result's `source` as this JSON.
+        assert spec.model_dump_json() == f'{{"name":"StructuredJudge","arguments":["{questions.__name__}"]}}'

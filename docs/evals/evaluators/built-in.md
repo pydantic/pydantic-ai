@@ -426,8 +426,8 @@ One request answering every question also fails as one, and asking the questions
 answers. See [Several Measures in One Request](llm-judge.md#several-measures-in-one-request).
 
 A question answered yes or no and the mapping of rubrics can be written in a YAML or JSON dataset file. Any
-other `output_type`, and a model of questions, is a Python type, so an evaluator that uses one is built in
-Python.
+other `output_type`, and a model of questions, is a Python type, written by name, so an evaluator that uses
+one is built in Python.
 
 ---
 

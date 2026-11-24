@@ -398,7 +398,7 @@ class StructuredJudge(Evaluator[object, object, object]):
 
     A type cannot be written in a YAML or JSON dataset file, so only a question answered yes or no and the
     mapping of rubrics round-trip through [`Dataset.to_file`][pydantic_evals.dataset.Dataset.to_file]. Any other
-    `output_type` is written by name.
+    `output_type`, and a model of questions, is written by name, so build an evaluator that uses one in Python.
     """
 
     # A Python class has no JSON schema, so only a question and the mapping form are offered to a dataset file.
@@ -472,7 +472,10 @@ class StructuredJudge(Evaluator[object, object, object]):
 
     def build_serialization_arguments(self):
         arguments = _serialize_model_as_string(super().build_serialization_arguments())
-        # A type does not survive a YAML round trip; its name keeps the spec serializable.
+        # A type does not survive a YAML round trip; its name keeps the spec serializable, as the JSON of a
+        # result's `source` must be.
+        if isinstance(questions := arguments.get('questions'), type):
+            arguments['questions'] = questions.__name__
         if (output_type := arguments.get('output_type')) is not None:
             arguments['output_type'] = output_type.__name__ if isinstance(output_type, type) else str(output_type)
         return arguments
