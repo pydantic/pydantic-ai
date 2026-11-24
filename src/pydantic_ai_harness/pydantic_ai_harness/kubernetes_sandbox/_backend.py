@@ -205,9 +205,9 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDispl
         desktop: Whether the sandbox has a display for
             [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True` for 1280x800, or its
             `(width, height)`. Without root or passwordless `sudo` nothing is installed, so the image needs the
-            display's programs, listed under "What the display needs" in the `ComputerUse` docs; otherwise the
-            first use of the display raises `WorkspaceUnavailableError` naming what is missing. No port is opened
-            for it.
+            display's programs, listed under "What the display needs" in the `ComputerUse` docs; otherwise every
+            command and file operation raises `WorkspaceUnavailableError` naming what is missing. No port is
+            opened for it.
     """
 
     # File operations don't use sandboxd's file API: it serves only paths under its root and moves
@@ -312,10 +312,12 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDispl
         check_env_types(env)
         argv = command_argv(command, shell)
         require_asyncio(_ASYNCIO_ONLY)
-        if self._display is not None:
-            # Started first, so a program the command opens shows on the screen.
-            await self._display.start()
-        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+        # One operation, so an `aclose()` while the display starts waits for the command too.
+        async with self._operation():
+            if self._display is not None:
+                # Started first, so a program the command opens shows on the screen.
+                await self._display.start()
+            return await self._run_argv(argv, env=env or {}, timeout=timeout)
 
     async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
         """Run `argv` without starting the display, as the display's own commands do."""

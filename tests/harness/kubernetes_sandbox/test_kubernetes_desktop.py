@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import KubernetesSandbox, KubernetesSandboxBackend
 from pydantic_ai_harness.computer_use import ComputerUse
 
@@ -84,3 +86,18 @@ async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_claim(
     assert len(cluster.created) == 1
     assert len(display.starts) == 1
     assert any(command.endswith('mousemove 3 4 click --repeat 1 1') for command in display.xdotool)
+
+
+async def test_a_command_and_the_display_start_before_it_are_one_operation(
+    cluster: FakeCluster, display: FakeDisplay
+) -> None:
+    # Outside a run each operation closes its connection when it ends. One connection shows the start and the command
+    # are one operation, so an `aclose()` while the display starts waits for the command too.
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-1')
+    backend = KubernetesSandbox(warm_pool='pool', desktop=True).get_workspace(ctx, ref=None)
+    assert isinstance(backend, KubernetesSandboxBackend)
+
+    await backend.run(['true'])
+
+    assert len(display.starts) == 1
+    assert [client.closed for client in cluster.clients] == [True]

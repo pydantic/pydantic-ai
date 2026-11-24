@@ -185,7 +185,7 @@ Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
 `capabilities=[KubernetesSandbox(warm_pool='desktop-pool', desktop=True), ComputerUse()]`. The screen is 1280x800;
 pass a size such as `desktop=(1440, 900)` for another.
 
-The template above runs as a non-root user, so nothing is installed for you: build [the display's programs](../computer_use/#what-the-display-needs) into the image, along with the programs the agent should use. Without them, the first use of the screen raises `WorkspaceUnavailableError` naming what is missing. Then copy the template and its pool under new names, `desktop` and `desktop-pool`, with that image in place of `python:3.12`:
+The template above runs as a non-root user, so nothing is installed for you: build [the display's programs](../computer_use/#what-the-display-needs) into the image, along with the programs the agent should use. Without them, every command and file operation in the sandbox raises `WorkspaceUnavailableError` naming what is missing. Then copy the template and its pool under new names, `desktop` and `desktop-pool`, with that image in place of `python:3.12`:
 
 ```dockerfile
 FROM python:3.12
