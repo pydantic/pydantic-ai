@@ -82,12 +82,15 @@ class ScriptedDesktop(DockerContainerBackend):
     cancelled.
     """
 
-    def __init__(self, *results: CommandResult | Exception, block_first: bool = False) -> None:
-        super().__init__(image='my-desktop', desktop=True)
+    def __init__(
+        self, *results: CommandResult | Exception, block_first: bool = False, desktop: bool | tuple[int, int] = True
+    ) -> None:
+        super().__init__(image='my-desktop', desktop=desktop)
         self.results = list(results)
         self.calls: list[tuple[WorkspaceCommand, Mapping[str, str]]] = []
         self.timeouts: list[float | None] = []
         self.starts = 0
+        self.start_argvs: list[list[str]] = []
         self.block_first = block_first
         self.started = anyio.Event()
         assert self.display is not None
@@ -97,6 +100,7 @@ class ScriptedDesktop(DockerContainerBackend):
         await anyio.lowlevel.checkpoint()  # as a real command does, so a deadline can cut it short
         if 'Xvfb' in str(argv):
             self.starts += 1
+            self.start_argvs.append(argv)
             await anyio.sleep(0)  # a start takes a moment, so concurrent first uses overlap
             return CommandResult(exit_code=0, stdout='', stderr='')
         self.calls.append((argv, env))
@@ -427,17 +431,10 @@ def test_a_sentence_that_lists_what_a_custom_image_needs_names_every_program_the
 
 
 async def test_an_x11_display_starts_xvfb_at_its_size() -> None:
-    argvs: list[list[str]] = []
-
-    async def run(argv: list[str], /, *, env: Mapping[str, str], timeout: float) -> CommandResult:
-        argvs.append(argv)
-        return CommandResult(exit_code=0, stdout='', stderr='')
-
-    assert _x11.x11_display(run, None, str) is None
-    display = _x11.x11_display(run, (8, 6), str)
-    assert display is not None
-    await display.start()
-    assert 'Xvfb' in argvs[0][2] and argvs[0][-1] == '8x6'
+    desktop = ScriptedDesktop(desktop=(8, 6))
+    await desktop.screen.act(MouseUp())
+    (argv,) = desktop.start_argvs
+    assert 'Xvfb' in argv[2] and argv[-1] == '8x6'
 
 
 async def test_a_display_marked_stopped_is_started_again_on_its_next_use() -> None:
