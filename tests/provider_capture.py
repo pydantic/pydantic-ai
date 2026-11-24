@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, cast
 
 import httpx2
+import pytest
 
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage
@@ -60,6 +61,16 @@ CAPTURED_PROVIDERS: tuple[CapturedProvider, ...] = (
     'cohere',
 )
 """The providers `capture` can build offline. Bedrock, xAI (gRPC), Groq and Hugging Face aren't wired up yet."""
+
+
+_INSTALLED: dict[CapturedProvider, Callable[[], bool]] = {
+    'anthropic': anthropic_available,
+    'openai-chat': openai_available,
+    'openai-responses': openai_available,
+    'google': google_available,
+    'mistral': mistral_available,
+    'cohere': cohere_available,
+}
 
 
 @dataclass
@@ -137,6 +148,8 @@ async def capture(
     params: ModelRequestParameters | None = None,
 ) -> CapturedRequest:
     """The request body `provider`'s model builds for `messages`, as `Agent` would send it."""
+    if not _INSTALLED[provider]():
+        pytest.skip(f'the {provider} extra is not installed')
     recorder = _Capture()
     model = _model(provider, recorder)
     params = params or ModelRequestParameters()
