@@ -70,12 +70,14 @@ async def test_the_default_image_has_the_display_programs(fake_modal: FakeModal,
 
 
 async def test_a_shell_command_finds_the_desktop_running(fake_modal: FakeModal, display: FakeDisplay) -> None:
-    # A program the shell starts opens on the screen, so a command starts the display.
-    await ModalSandboxBackend(desktop=True, env={'FOO': 'bar'}).run('xterm &', shell=True)
+    # A program the shell starts opens on the screen, so a command starts the display first. The fake refuses
+    # `xwininfo -root` until the display is up.
+    result = await ModalSandboxBackend(desktop=True, env={'FOO': 'bar'}).run('xwininfo -root', shell=True)
 
+    assert 'Width: 1280' in result.stdout
     assert len(display.starts) == 1
     command = fake_modal.sandboxes[0].exec_calls[-1]
-    assert command.argv[-1] == 'xterm &'
+    assert command.argv[-1] == 'xwininfo -root'
     assert command.env == {'DISPLAY': ':1', 'FOO': 'bar'}
 
 
