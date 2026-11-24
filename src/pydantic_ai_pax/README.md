@@ -6,9 +6,9 @@
 [![license](https://img.shields.io/github/license/pydantic/pydantic-ai.svg)](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/LICENSE)
 [![Join Slack](https://img.shields.io/badge/Slack-Join%20Slack-4A154B?logo=slack)](https://logfire.pydantic.dev/docs/join-slack/)
 
-A coding agent TUI for your own harness, or for the default one: built on the
-[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) SDK's
-[`Coder`](https://pydantic.dev/docs/ai/harness/coder/), and a terminal
+A coding agent TUI built on the [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)
+SDK's [`Coder`](https://pydantic.dev/docs/ai/harness/coder/), ready to run as it comes or
+with a harness of your own. Pax is also a terminal
 [interface](https://pydantic.dev/docs/ai/overview/interfaces/) for any
 [Pydantic AI](https://pydantic.dev/docs/ai/) agent.
 
@@ -18,10 +18,10 @@ subscription, or bring an API key for OpenAI, Anthropic, or another provider Pyd
 supports.
 
 Everything in Pax is a plugin, the coding agent included, so you can add tools,
-commands and menus without forking anything, swap any piece out, or point it at an
-agent of your own with `pax --agent mymodule:agent`. Plugins also carry the parts that
-are still arriving, such as sandboxes today and remote workspaces and remote computer
-use as they land.
+commands and menus without forking anything, or swap any piece out. Sandboxes and
+workspaces are plugins too, so where the agent runs and where it works are yours to
+choose. To run an agent of your own instead, use `pax --agent my_module:agent`, which
+loads that agent on its own without Pax's plugins.
 
 ![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
