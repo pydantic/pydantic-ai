@@ -133,27 +133,34 @@ environment variables before they import it. Each name the code in `pydantic_ai.
 `temporalio.activity.defn`, `temporalio.workflow.defn`, `DBOS.step`, `DBOS.workflow`, `prefect.task` or `prefect.flow`
 is one line of kind `durable_name`, with the decorator as the target, the name the engine registers it under, and the
 other options the call passes. One registered while a module is collected, like by an agent the module defines, is
-recorded under the module's node. A name a test registers itself isn't recorded.
+recorded under the module's node. A name a test registers itself isn't recorded, and neither is one registered again
+in Temporal's workflow sandbox, which imports a workflow's module, and the agents it defines, again for each run.
 
 Each Temporal workflow run is one line of kind `temporal`, with its workflow type as the target, its workflow ID, and
 each command its workflow activations issue, in order, as `MessageToDict` gives it, with each payload's metadata, and
-its data when it's JSON, decoded. A failure's stack trace is left out, since a refactor moves the lines it names. The
-capture reads a run's type and ID from the activation that starts it, which the bridge worker's
+its data when it's JSON, decoded. A failure's stack trace is left out, since a refactor moves the lines it names. A
+serialized run context sends each set it holds, like `active_capability_ids`, as a list in the set's order, which
+differs from run to run where its members end in the random suffix of a capability's key, so those lists are sorted.
+The capture reads a run's type and ID from the activation that starts it, which the bridge worker's
 `poll_workflow_activation` returns, and its commands from each completion `complete_workflow_activation` is handed. A
 completion that issues nothing, like the one for the activation that evicts a run from the worker's cache, adds
 nothing. Each DBOS workflow is one line of kind `dbos`, with its name as the target, its ID, class name, config name and
 parent workflow's ID, and each operation it checks for a recorded result, in order: its function ID and name, and
 whether a result was recorded, unless the check raised, like on a step that isn't the one recorded, whose error reaches
-the test. The capture wraps the system database's
-`_insert_workflow_status` and `_check_operation_execution_txn`. Workflows run concurrently, so a test's `temporal` and
-`dbos` lines come after its others, sorted.
+the test. The capture wraps the system database's `_insert_workflow_status` and `_check_operation_execution_txn`.
 
 Each `compute_key` call on a Prefect cache policy is one line of kind `cache_key`, with the policy's class as the
 target, the inputs it's handed, and the key it returns or the error it raises. The capture wraps `compute_key` where
 `CachePolicy` or a subclass defines it, whether the subclass is defined before the capture starts or after. A call made
 in another, like the one a compound policy makes on each policy it combines, comes after it, and leaves out its inputs
 when they're the ones the other was handed. A key the flow run's ID went into, the `RunId` policy's and a compound
-policy's that combines it, is recorded as `RUN_ID`.
+policy's that combines it, is recorded as `RUN_ID`. Inputs or options that can't be written as JSON, like ones that
+hold a reference cycle, as a run context does, are recorded as the error writing them raised, which the code under
+test never sees.
+
+Durable names and cache keys are made on other threads than the test's, like the one Prefect runs a task on, and
+workflows run concurrently, so a test's `durable_name`, `cache_key`, `temporal` and `dbos` lines come after its others,
+each kind sorted, a policy's calls kept together.
 
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
@@ -441,6 +448,16 @@ _RECORDING_SESSION_CALL: ContextVar[tuple[int, int] | None] = ContextVar('_RECOR
 DURABLE_EXEC_PACKAGE = 'pydantic_ai.durable_exec.'
 # What a capture records for a Prefect cache key computed from the flow run's ID, which each run draws anew.
 RUN_ID_KEY = 'RUN_ID'
+# The sets a serialized run context sends as lists, in their own order, which `sorted_sets` sorts.
+RUN_CONTEXT_SETS = frozenset(
+    {
+        'loaded_capability_ids',
+        'discovered_tool_names',
+        'available_tool_names',
+        'active_capability_ids',
+        '_deferred_capability_ids',
+    }
+)
 
 WrappedT = TypeVar('WrappedT')
 
@@ -548,6 +565,11 @@ class RefactorCapture:
         # operations it holds, which `write` records in a set order.
         self._temporal_runs: dict[str, tuple[dict[str, object], list[object]]] = {}
         self._dbos_workflows: dict[str, tuple[dict[str, object], list[object]]] = {}
+        # The durable names registered, and the records of each outermost `compute_key` call on a Prefect cache policy
+        # with the calls it made, which `write` records in a set order: Prefect runs a task on another thread than the
+        # requests its flow sends.
+        self._durable_names: list[dict[str, object]] = []
+        self._cache_key_calls: list[list[dict[str, object]]] = []
         self._import_watcher = ImportWatcher({})
         # The requests Prefect's client has sent, so a retry, which sends one again, isn't recorded twice.
         self._prefect_requests: weakref.WeakSet[httpx.Request | httpx2.Request] = weakref.WeakSet()
@@ -768,12 +790,16 @@ class RefactorCapture:
 
     def _append_records(self) -> None:
         """Append the records so far to this worker's records file, with the response each stream that lives builds
-        now, and the workflows last, in a set order: workflows run concurrently, and their IDs are drawn anew each run.
+        now, and the durable names, cache keys and workflows last, each in a set order: they're made on other threads
+        than the test's, or concurrently, and a workflow's ID is drawn anew each run.
         """
         for record, stream_ref in self._streams:
             if (stream := stream_ref()) is not None:
                 record['response'] = normalized(stream.get())
         self._order_tool_calls()
+        self.records.extend(sorted(self._durable_names, key=json.dumps))
+        for calls in sorted(self._cache_key_calls, key=json.dumps):
+            self.records.extend(calls)
         for workflows in (self._temporal_runs, self._dbos_workflows):
             self.records.extend(sorted((record for record, _ in workflows.values()), key=json.dumps))
         if self.records:
@@ -809,6 +835,8 @@ class RefactorCapture:
         self._iterators.clear()
         self._temporal_runs.clear()
         self._dbos_workflows.clear()
+        self._durable_names.clear()
+        self._cache_key_calls.clear()
         self._numbers.clear()
         self._next_numbers.clear()
         self._closed_sessions.clear()
@@ -1653,9 +1681,10 @@ class RefactorCapture:
         registered_name: Callable[[object], object],
         *,
         owner_args: int = 0,
+        unrecorded: Callable[[], bool] = lambda: False,
     ) -> Callable[..., object]:
         """`decorator`, recording the name each call `pydantic_ai.durable_exec` makes on it registers, and the options
-        it passes.
+        it passes, unless `unrecorded()` says otherwise.
 
         The first `owner_args` positional arguments are what `decorator`, a method, is bound to. A call handed what it
         decorates registers it, and one handed only options returns the decorator that does.
@@ -1664,13 +1693,13 @@ class RefactorCapture:
         @functools.wraps(decorator)
         def recording(*args: object, **kwargs: object) -> object:
             result = decorator(*args, **kwargs)
-            if not calling_module().startswith(DURABLE_EXEC_PACKAGE):
+            if not calling_module().startswith(DURABLE_EXEC_PACKAGE) or unrecorded():
                 return result
             node = self.node or self.collecting
-            options = normalized({key: value for key, value in kwargs.items() if key != 'name'})
+            options = recorded_value({key: value for key, value in kwargs.items() if key != 'name'})
 
             def record(registered: object) -> object:
-                self.records.append(
+                self._durable_names.append(
                     {
                         'kind': 'durable_name',
                         'node': node,
@@ -1699,7 +1728,9 @@ class RefactorCapture:
         def registered_name(function: object) -> object:
             return getattr(getattr(function, '__temporal_activity_definition'), 'name')
 
-        recording = self._recorded_registration('temporalio.activity.defn', activity.defn, registered_name)
+        recording = self._recorded_registration(
+            'temporalio.activity.defn', activity.defn, registered_name, unrecorded=in_workflow_sandbox
+        )
         self._monkeypatch.setattr(activity, 'defn', recording)
 
     def _wrap_temporal_workflow_defn(self) -> None:
@@ -1708,7 +1739,9 @@ class RefactorCapture:
         def registered_name(cls: object) -> object:
             return getattr(getattr(cls, '__temporal_workflow_definition'), 'name')
 
-        recording = self._recorded_registration('temporalio.workflow.defn', workflow.defn, registered_name)
+        recording = self._recorded_registration(
+            'temporalio.workflow.defn', workflow.defn, registered_name, unrecorded=in_workflow_sandbox
+        )
         self._monkeypatch.setattr(workflow, 'defn', recording)
 
     def _wrap_temporal_worker(self) -> None:
@@ -1755,7 +1788,10 @@ class RefactorCapture:
             # is left out.
             if commands:
                 steps = self._workflow_steps(
-                    self._temporal_runs, completion.run_id, {'kind': 'temporal', 'node': self.node}, 'commands'
+                    self._temporal_runs,
+                    completion.run_id,
+                    {'kind': 'temporal', 'node': self.node, 'target': None},
+                    'commands',
                 )
                 steps.extend(map(normalized, map(decoded_payloads, commands)))
             return await complete(worker, completion)
@@ -1824,7 +1860,7 @@ class RefactorCapture:
                 'function_id': arguments['function_id'],
                 'function_name': arguments['function_name'],
             }
-            unknown: dict[str, object] = {'kind': 'dbos', 'node': self.node, 'workflow_id': workflow_id}
+            unknown: dict[str, object] = {'kind': 'dbos', 'node': self.node, 'target': None, 'workflow_id': workflow_id}
             self._workflow_steps(self._dbos_workflows, workflow_id, unknown, 'operations').append(operation)
             # A check that raises, like on a step that isn't the one recorded, records neither; the error reaches the
             # test, as an exception record when it catches it.
@@ -1863,8 +1899,8 @@ class RefactorCapture:
     def _wrap_compute_key(self, cls: type[object], run_id_policy: type[object]) -> None:
         """Record each `compute_key` call on a Prefect cache policy, with the inputs it's handed and the key it returns.
 
-        A call made in another, like the one a compound policy makes on each policy it combines, is recorded after it
-        and handed the same inputs leaves them out. A key the flow run's ID went into is recorded as `RUN_ID_KEY`.
+        A call made in another, like the one a compound policy makes on each policy it combines, is recorded after it,
+        and one handed the same inputs leaves them out. A key the flow run's ID went into is recorded as `RUN_ID_KEY`.
         """
         if 'compute_key' not in vars(cls):
             return
@@ -1881,7 +1917,7 @@ class RefactorCapture:
                 'target': method_target(type(policy), 'compute_key'),
             }
             if outer is None or inputs is not outer.inputs:
-                record['inputs'] = normalized(inputs)
+                record['inputs'] = recorded_value(inputs)
             call = CacheKeyCall(inputs, [] if outer is None else outer.records, outer)
             call.records.append(record)
             token = _COMPUTING_CACHE_KEY.set(call)
@@ -1902,7 +1938,7 @@ class RefactorCapture:
                 _COMPUTING_CACHE_KEY.reset(token)
                 # The calls a policy makes on the ones it combines are written with it, as one.
                 if outer is None:
-                    self.records.extend(call.records)
+                    self._cache_key_calls.append(call.records)
 
         self._monkeypatch.setattr(cls, 'compute_key', recording_compute_key)
 
@@ -1945,6 +1981,25 @@ def calling_module() -> str:
         del frame
 
 
+def in_workflow_sandbox() -> bool:
+    """Whether Temporal's workflow sandbox runs this, which imports a workflow's module again for each run, and with it
+    the agents the module defines.
+    """
+    from temporalio import workflow
+
+    return workflow.unsafe.in_sandbox()
+
+
+def recorded_value(value: object) -> object:
+    """`value` normalized, or the error normalizing it raised, like on a reference cycle, which is never raised into
+    the code under test.
+    """
+    try:
+        return normalized(value)
+    except Exception as e:
+        return {'unrecorded': normalized(f'{type(e).__name__}: {e}')}
+
+
 def registered_attribute_name(registered: object) -> object:
     """The name of a Prefect task or flow, which is what it's registered under."""
     return getattr(registered, 'name')
@@ -1970,9 +2025,30 @@ def decoded_payloads(value: object) -> object:
         return {
             **fields,
             'metadata': decoded,
-            'data': json.loads(data) if decoded['encoding'] == 'json/plain' else fields.get('data'),
+            'data': sorted_sets(json.loads(data)) if decoded['encoding'] == 'json/plain' else fields.get('data'),
         }
     return {key: decoded_payloads(item) for key, item in fields.items() if key != 'stack_trace'}
+
+
+def sorted_sets(value: object) -> object:
+    """`value`, a payload's JSON data, with each set a serialized run context holds sorted.
+
+    The run context sends each as a list in the set's order, which differs from run to run where its members end in the
+    random suffix of a capability's key, and reads it back as a set.
+    """
+    if isinstance(value, list):
+        items: list[object] = [*value]
+        return [sorted_sets(item) for item in items]
+    if not isinstance(value, dict):
+        return value
+    fields: dict[str, object] = {**value}
+    for key, item in fields.items():
+        if key in RUN_CONTEXT_SETS and isinstance(item, list):
+            members: list[object] = [*item]
+            fields[key] = sorted(map(str, members))
+        else:
+            fields[key] = sorted_sets(item)
+    return fields
 
 
 def workspace_roots() -> list[Path]:

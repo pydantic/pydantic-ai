@@ -943,7 +943,10 @@ def test_temporal_commands():
     commands = [
         WorkflowCommand(
             schedule_activity=ScheduleActivity(
-                seq=1, activity_id='1', activity_type='agent__model_request', arguments=[payload({{'prompt': 'hi'}})]
+                seq=1,
+                activity_id='1',
+                activity_type='agent__model_request',
+                arguments=[payload({{'serialized_run_context': {{'active_capability_ids': ['tool_search', 'agent']}}}})],
             )
         ),
         WorkflowCommand(
@@ -1002,6 +1005,9 @@ def test_cache_keys():
         pass
 
     Inherited().compute_key(task_ctx, {{'n': 1}}, {{}})
+    cyclic = []
+    cyclic.append(cyclic)
+    INPUTS.compute_key(task_ctx, {{'cyclic': cyclic}}, {{}})
 """
 
 
@@ -2368,9 +2374,10 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
 
     A name registered while the module is collected is recorded under the module's node; one the test registers
     itself isn't recorded. The Temporal worker polls and completes activations through a stand-in for its core: the
-    runs are recorded in a set order, the activation that evicts a run issues nothing, and a failure's stack trace is
-    left out. The compound default policy's key, and the key of the policy for the flow run's ID it combines, hold the
-    run's ID; the calls handed the same inputs as the call they're made in leave them out.
+    runs are recorded in a set order, a run context's set sorted, the activation that evicts a run issues nothing, and a
+    failure's stack trace is left out. The compound default policy's key, and the key of the policy for the flow run's
+    ID it combines, hold the run's ID; the calls handed the same inputs as the call they're made in leave them out, and
+    inputs that hold a reference cycle are recorded as the error writing them raised.
 
     The Prefect modules are imported before the capture starts, as a conftest can import them, so they hold the `task`
     decorator they imported, which the capture rebinds.
@@ -2385,33 +2392,33 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
         if record['kind'] == 'durable_name'
     ] == snapshot(
         [
+            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_cancel_suspended_response', {}),
+            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_compact_messages', {}),
+            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_count_tokens', {}),
             ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_request', {}),
             ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_request_stream', {}),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_compact_messages', {}),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_cancel_suspended_response', {}),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_count_tokens', {}),
             ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__toolset__<agent>__call_tool', {}),
+            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__toolset__<agent>__validate_args', {}),
             (
                 'test_durable.py',
                 'temporalio.workflow.defn',
                 'agent__collected__toolset__<agent>__call_tool__child_workflow',
                 {},
             ),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__toolset__<agent>__validate_args', {}),
-            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request', {}),
-            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request_stream', {}),
-            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.compact_messages', {}),
             (
                 'test_durable.py::test_durable_names',
                 'dbos.DBOS.step',
                 'dbos_agent__model.cancel_suspended_response',
                 {},
             ),
+            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.compact_messages', {}),
             ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.count_tokens', {}),
-            ('test_durable.py::test_durable_names', 'prefect.task', 'wrapped_request', {}),
-            ('test_durable.py::test_durable_names', 'prefect.task', 'request_stream_task', {}),
-            ('test_durable.py::test_durable_names', 'prefect.task', 'cancel_suspended_response_task', {}),
+            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request', {}),
+            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request_stream', {}),
             ('test_durable.py::test_durable_names', 'prefect.task', 'call_tool_task', {}),
+            ('test_durable.py::test_durable_names', 'prefect.task', 'cancel_suspended_response_task', {}),
+            ('test_durable.py::test_durable_names', 'prefect.task', 'request_stream_task', {}),
+            ('test_durable.py::test_durable_names', 'prefect.task', 'wrapped_request', {}),
         ]
     )
     assert [
@@ -2430,7 +2437,14 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
                             'seq': 1,
                             'activity_id': '1',
                             'activity_type': 'agent__model_request',
-                            'arguments': [{'metadata': {'encoding': 'json/plain'}, 'data': {'prompt': 'hi'}}],
+                            'arguments': [
+                                {
+                                    'metadata': {'encoding': 'json/plain'},
+                                    'data': {
+                                        'serialized_run_context': {'active_capability_ids': ['agent', 'tool_search']}
+                                    },
+                                }
+                            ],
                         }
                     },
                     {
@@ -2504,6 +2518,13 @@ To resolve this, you can:
   1. Exclude these arguments by defining a custom `cache_key_fn`
   2. Disable caching by passing `cache_policy=NO_CACHE`
 """,
+            },
+            {
+                'target': 'prefect.cache_policies.Inputs.compute_key',
+                'inputs': {
+                    'unrecorded': 'PydanticSerializationError: Error serializing to JSON: ValueError: Circular reference detected (id repeated)'
+                },
+                'key': 'b4e74d9d48bc91343a5a0b0553ebf41e',
             },
             {
                 'target': 'test_durable.test_cache_keys.<locals>.Inherited.compute_key',
