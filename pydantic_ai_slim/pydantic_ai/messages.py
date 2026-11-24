@@ -2996,6 +2996,10 @@ class RetryFeedbackPart:
     which is what a retry rendered as bare user text never allowed
     (https://github.com/pydantic/pydantic-ai/issues/6404), and keeping the presentation out of the
     history keeps a cached prefix valid across providers.
+
+    [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the exception:
+    it sends the feedback as a `developer` message whatever its cause, so the model doesn't read it as
+    a newer request.
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -3006,8 +3010,8 @@ class RetryFeedbackPart:
 
     A string comes from a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] your own code raised, and
     goes out in the user voice inside a `<pyai:retry_feedback>` fence, since output validators commonly
-    interpolate the output they reject; or, for a `'no_output'` cause, it's the framework's own fixed
-    text.
+    interpolate the output they reject (except on `OpenAIDecisionsModel`, as above); or, for a
+    `'no_output'` cause, it's the framework's own fixed text.
     """
 
     _: KW_ONLY
