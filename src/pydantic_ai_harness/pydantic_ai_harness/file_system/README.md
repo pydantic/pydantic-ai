@@ -67,7 +67,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP), PDF or video (MP4, QuickTime, WebM, FLV, MPEG, WMV, 3GP) up to 5 MB is returned as the file itself, so a model that takes that kind of file sees it, and a model that doesn't gets a note in its place; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP), PDF or video (MP4, QuickTime, WebM, FLV, MPEG, WMV, 3GP) up to 5 MB is returned as the file itself, so a model that takes that kind of file sees it, and a model that doesn't gets a note in its place. With `max_image_side` set (`Coder` sets 1024), a larger image is downscaled to fit first. Other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -201,8 +201,8 @@ so it is left out of every run step that has `read_file`. The instructions name 
 they stay the same either way; the spill marker and `Memory`'s per-call notices name `read_file` as it
 is called in the run:
 
-- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceOverflowStore()`. Reads of its spill
-  files through `read_file` are not reduced again.
+- `ToolOutputLimits`' `read_tool_result` and `grep_tool_result`, with the default
+  `WorkspaceOverflowStore()`. Reads of its spill files through `read_file` are not reduced again.
 - `Memory`'s `read_memory`, with a `FileMemoryStore` that has no `workspace=` of its own and a relative
   `directory` inside the working directory.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
@@ -369,11 +369,17 @@ applies the same rule to absolute symlink targets.
   some models whose profile admits the kind reject the format (Gemini takes no
   Office documents or Matroska, and OpenAI-compatible endpoints report audio
   input for models that reject it), which would fail the request rather than
-  become a note. A file over 5 MB, the strictest mainstream per-image limit, is
+  become a note.
+  With `max_image_side` set (`Coder` sets 1024), an image larger than that on its longest side is downscaled to it first, in its own format and aspect ratio, and the header names both sizes; the hash is still that of the file. An image over 25 megapixels (for a baseline JPEG, at the 1/2 to 1/8 scale it decodes at) is described instead of decoded. Downscaling needs Pillow, which the `coder` extra installs; setting `max_image_side` without it raises an `ImportError`. A file still over 5 MB after that, the strictest mainstream per-image limit, is
   described instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than overwriting newer content.
+- **Ordered changes.** `write_file`, `edit_file` and `create_directory` are
+  [sequential tools](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#parallel-tool-calls-concurrency):
+  when a model sends several tool calls in one response, each change runs after the
+  calls before it, so a write into a directory created earlier in the response
+  finds it. The read tools still run in parallel.
 - **Text encodings.** Text is read as UTF-8, and a byte that isn't valid UTF-8
   is shown as U+FFFD. `edit_file` writes such bytes back unchanged when an edit
   matches only the text around them; `write_file` replaces the whole file with
@@ -465,6 +471,7 @@ FileSystem(
     read_only_patterns=[...],      # read-only globs (defaults to secrets/.git)
     max_read_lines=2000,           # most lines one read_file returns, and its default limit
     max_read_chars=50_000,         # cap on a whole read_file result, ending on a complete line
+    max_image_side=None,           # downscale images read_file returns to this longest side (needs Pillow; Coder sets 1024)
     max_list_results=1000,         # cap for list_directory
     max_search_results=1000,       # cap for search_files and grep
     max_find_results=1000,         # cap for find_files and list_files
@@ -505,7 +512,9 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect; the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
+`FileSystem` works under Temporal, DBOS, Prefect, [Azure Durable Task](https://pydantic.dev/docs/ai/harness/azure-durable-task/), and [Render Workflows](https://pydantic.dev/docs/ai/harness/render-workflows/); the [workspace guide](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/#harness-workspace-capabilities).
+
+On Azure Durable Task and Render, `write_file`, `edit_file` and `create_directory` run in the orchestrator or parent task, so file-change requests and write events reach listeners live. On Azure, events from the other tools are dropped, and listeners run in orchestrator code: they re-run on every replay, so keep them deterministic and idempotent, and they can't do I/O, so interactive approval of file changes through a UI or external service isn't supported on Azure yet. On Render, listeners run in the parent task, and events from the other tools are carried back to the run.
 
 ## Further reading
 

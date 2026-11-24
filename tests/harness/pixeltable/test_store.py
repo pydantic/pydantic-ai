@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 from functools import partial
+from types import SimpleNamespace
 from typing import Literal, NoReturn
 
 import anyio.from_thread
@@ -19,6 +20,7 @@ from tests.conftest import try_import
 
 with try_import() as imports_successful:
     import pixeltable as pxt
+    from pixeltable.exprs.expr import Expr
 
     from pydantic_ai_harness.memory import (
         MemoryConflictError,
@@ -156,6 +158,25 @@ class TestPixeltableMemoryStore:
         file = await store.read('a.md', max_chars=10)
         assert file is not None
         assert file.content == 'new'
+
+    @pytest.mark.parametrize('field', ['updated_rows', 'upd_rows'])
+    async def test_update_count_is_read_under_either_field_name(
+        self, store: PixeltableMemoryStore, monkeypatch: pytest.MonkeyPatch, field: str
+    ) -> None:
+        # Pixeltable 0.7.25 renamed `RowCountStats.upd_rows` to `updated_rows`, and the installed
+        # release has only one of them, so each name is staged on top of the real update's count.
+        created = await store.write('a.md', 'old', expected_version=None)
+        real_update = store.table.update
+
+        def update(values: dict[str, object], where: Expr | None = None) -> SimpleNamespace:
+            count = real_update(values, where=where).row_count_stats.num_rows
+            return SimpleNamespace(row_count_stats=SimpleNamespace(**{field: count}))
+
+        monkeypatch.setattr(store.table, 'update', update)
+        written = await store.write('a.md', 'new', expected_version=created.version)
+        file = await store.read('a.md', max_chars=10)
+        assert file is not None
+        assert (file.content, file.version) == ('new', written.version)
 
 
 class TestPixeltableMemoryStoreSchema:

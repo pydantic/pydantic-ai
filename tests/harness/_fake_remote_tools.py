@@ -16,6 +16,17 @@ BWRAP_WORKS = (
 )
 """Whether this machine has a working `bwrap` (Linux with user namespaces), for the tests that need the real one."""
 
+
+def require_bwrap() -> None:
+    """Skip a test without a working `bwrap`, or fail it where `BWRAP_REQUIRE_LIVE` is set (CI does)."""
+    if BWRAP_WORKS:
+        return
+    reason = 'needs a working `bwrap` (Linux with user namespaces)'
+    if os.getenv('BWRAP_REQUIRE_LIVE'):
+        pytest.fail(f'BWRAP_REQUIRE_LIVE is set, but the test cannot run: it {reason}.')
+    pytest.skip(reason)
+
+
 # Runs the remote command on this machine, starting in `$HOME` like a login. `unreachable` and `dropped` fail on
 # purpose, `chatty` prints a login banner first, `slow` takes 30 seconds to log in, `lossy` loses the connection
 # (`ssh` exits 255) after the command finishes, `held` stays connected until the command's output is closed, as

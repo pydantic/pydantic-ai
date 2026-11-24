@@ -9,10 +9,17 @@ from typing import TYPE_CHECKING, Any
 from sprites import AsyncSpritesClient
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace import innermost_backend
-from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
+from pydantic_ai_harness._workspace import innermost_backend, with_authority
+from pydantic_ai_harness._workspace_provider import (
+    check_path_authority,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
 from pydantic_ai_harness.sprites_sandbox._backend import SpritesSandboxBackend, destroy_sprite
 
 if TYPE_CHECKING:
@@ -63,10 +70,26 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, on top of the Sprite's own; a command's `env` is layered on top."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the Sprite a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`."""
+
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the sandbox's files: `'none'` for files nobody on the
+    application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('SpritesSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
+        checked_desktop_size(self.desktop)
 
     @classmethod
     def from_spec(
@@ -78,6 +101,9 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         runtime: str | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
     ) -> SpritesSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -91,12 +117,20 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
             runtime=runtime,
             working_dir=working_dir,
             env=env,
+            desktop=desktop,
+            authority=authority,
+            path_authority=path_authority,
         )
 
     def backend(self, ref: WorkspaceRef) -> SpritesSandboxBackend:
         """Construct a lazy backend for an existing Sprite."""
         return SpritesSandboxBackend(
-            client=self.client, ref=ref, runtime=self.runtime, working_dir=self.working_dir, env=self.env
+            client=self.client,
+            ref=ref,
+            runtime=self.runtime,
+            working_dir=self.working_dir,
+            env=self.env,
+            desktop=self.desktop,
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -108,6 +142,10 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
         await destroy_sprite(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""
+        return with_authority(self._run_backend(ctx, ref=ref), self.authority, self.path_authority)
+
+    def _run_backend(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it attaches or creates on first use."""
         if ref is not None and ref.provider != 'sprites':
             return None
@@ -118,6 +156,7 @@ class SpritesSandbox(AbstractCapability[AgentDepsT]):
             runtime=self.runtime,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

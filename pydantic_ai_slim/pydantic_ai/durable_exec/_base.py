@@ -49,7 +49,10 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import (
+    UserError,
+    _TokenCountingUnavailableError,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.external_events import _refuse_unsupported_external_events  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -74,6 +77,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.function import FunctionToolsetTool
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
@@ -102,6 +106,7 @@ from ._operation import (
     DynamicToolsetCallToolParams,
     EventStreamHandlerId,
     EventStreamHandlerParams,
+    IdentityParameterTransport,
     ModelCancelSuspendedResponseId,
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesId,
@@ -141,6 +146,7 @@ from ._toolset import (
     call_dynamic_tool,
     get_dynamic_tools,
     guard_run_context,
+    opts_out_of_durable_unit,
     resolve_tool_durable_config,
     run_args_validator,
     toolset_for_unit,
@@ -904,6 +910,30 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
         )
 
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        """Validate what `override(capabilities=...)` keeps of the agent's own capabilities.
+
+        `capabilities` are the leaves of the list's items taken unchanged from `root_capability.capabilities`.
+        A durability capability refuses a list that doesn't pass its bound copy through: dropping it would run
+        the agent without durability, and reaching it any other way, as a copy you constructed or inside
+        another capability, would bind it again and register this engine's durable units a second time.
+        Checked wherever the override is entered, inside or outside a durable container, because DBOS and
+        Prefect carry an override entered outside a workflow or flow into it.
+        """
+        for capability in capabilities:
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if capability is self:
+                return
+        name = type(self).__name__
+        raise UserError(
+            "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep, unchanged, "
+            f'the item of `agent.root_capability.capabilities` that holds the bound `{name}` the agent registered '
+            f'its durable {self.durable_unit_plural} with. A `{name}` you construct, or the bound one inside '
+            'another capability, would be bound again. Build the list from `agent.root_capability.capabilities`, '
+            'for example `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+        )
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
@@ -1139,7 +1169,9 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         def resolve(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
             if metadata_key is None:
                 # An engine that declares no config key takes no per-tool config at all, so tool
-                # metadata is not consulted. Collapsing `None` to `''` here would instead read the
+                # metadata is not consulted. The one per-tool opt-out such an engine still honors is the
+                # typed `ToolDefinition.durable` field, which `_runs_outside_durable_unit` checks before
+                # this resolver runs. Collapsing `None` to `''` here would instead read the
                 # empty-string key, letting `metadata={'': False}` opt a tool out of its durable
                 # unit -- un-checkpointing the call and shifting the recorded unit sequence, which
                 # is exactly what DBOS's "tool metadata is ignored" contract exists to prevent.
@@ -1153,8 +1185,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 config_type_label=f'{self.engine_name} durable config',
             )
             if config is False:
-                # `fallback_config` is deliberately empty above, so `False` can only come from
-                # metadata on a concrete tool.
+                # `fallback_config` is deliberately empty above, so `False` can only come from a
+                # concrete tool: its engine metadata key, or its typed `durable=False` field.
                 assert tool is not None
                 return False
             if not config:
@@ -1166,6 +1198,38 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             return self._normalize_unit_config(combined)
 
         return resolve
+
+    def _durable_opts_out(self, tool: ToolsetTool[Any] | None) -> bool:
+        """Whether the tool's `durable=False` is set and not overridden by the engine's own metadata key."""
+        return tool is not None and opts_out_of_durable_unit(
+            tool.tool_def.durable, tool.tool_def.metadata, engine_key=self.engine_spec.tool_config_key
+        )
+
+    def _runs_outside_durable_unit(self, tool: ToolsetTool[Any] | None, tool_name: str) -> bool:
+        """Whether a function tool's `durable=False` runs it outside the durable unit.
+
+        The field wins over the engine backend's per-tool config. Every engine built on this base applies the
+        same rule to the function tools it wraps: only async ones can opt out. An engine that doesn't wrap
+        function tools, such as DBOS, already runs them in workflow code and never reads the field for them.
+        """
+        if not self._durable_opts_out(tool):
+            return False
+        if not (isinstance(tool, FunctionToolsetTool) and tool.is_async):
+            raise UserError(
+                f'Tool {tool_name!r} has `durable=False`, but only async tools can run outside a '
+                f"durable {self.durable_unit_noun}: a non-async tool runs in a thread, which some engines' workflow "
+                'code cannot use. Make the tool function async instead.'
+            )
+        return True
+
+    def _refuse_durable_opt_out(self, tool: ToolsetTool[Any] | None, tool_name: str) -> None:
+        """Raise if an MCP or dynamic toolset tool asks to run outside its durable unit with `durable=False`."""
+        if self._durable_opts_out(tool):
+            raise UserError(
+                f'Tool {tool_name!r} has `durable=False`, but only function tools can run outside a '
+                f'durable {self.durable_unit_noun}: MCP and dynamic toolset tools may perform I/O. Remove the '
+                'setting, or move the tool to a static `FunctionToolset`.'
+            )
 
     async def wrap_run(
         self,
@@ -1335,9 +1399,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         validate_args = self._bind_validate_tool_arguments_operation(backend, toolset, 'function')
 
         def resolve_tool_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            if self._runs_outside_durable_unit(tool, tool_name):
+                return False
             return backend.config_for_tool(operation, tool=tool, tool_name=tool_name)
 
         def resolve_validation_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            if self._runs_outside_durable_unit(tool, tool_name):
+                return False
             return backend.config_for_tool(validate_args.operation, tool=tool, tool_name=tool_name)
 
         async def call_tool_operation(
@@ -1430,9 +1498,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         validate_args = self._bind_validate_tool_arguments_operation(backend, toolset, 'dynamic')
 
         def resolve_tool_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            self._refuse_durable_opt_out(tool, tool_name)
             return backend.config_for_tool(call_operation, tool=tool, tool_name=tool_name)
 
         def resolve_validation_config(tool: ToolsetTool[Any] | None, tool_name: str) -> ToolConfig:
+            self._refuse_durable_opt_out(tool, tool_name)
             return backend.config_for_tool(validate_args.operation, tool=tool, tool_name=tool_name)
 
         async def get_tools_operation(ctx: RunContext[AgentDepsT]) -> DynamicToolsResult:
@@ -1480,6 +1550,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             resolve_tool_config=resolve_tool_config,
             resolve_validation_config=resolve_validation_config,
             lifecycle=self.engine_spec.toolset_lifecycles['dynamic'],
+            # Identity transports hand every unit the run's own `RunContext`, so the units reach a
+            # toolset the run holds. Transports that carry the context in another form mean the
+            # units run elsewhere and resolve their own.
+            units_share_run_context=all(
+                isinstance(operation.parameter_transport, IdentityParameterTransport)
+                for operation in (get_tools.operation, call_operation)
+            ),
             durable_registrations=self._bound_operation_registrations(get_tools, call_tool, validate_args),
             durable_config=base_config,
         )
@@ -1617,6 +1694,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                         f'run outside a durable {self.durable_unit_noun}. Remove the metadata so the call '
                         'stays durable.'
                     )
+            self._refuse_durable_opt_out(tool, tool_name)
             return backend.config_for_tool(call_operation, tool=tool, tool_name=tool_name)
 
         async def call_tool_operation(
@@ -1961,6 +2039,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     params.messages, params.model_settings, params.model_request_parameters
                 )
             except NotImplementedError as error:
+                # A provider that serves no token counting raises a `UserError` that is also a `NotImplementedError`:
+                # it's recorded as the `UserError` it's documented as, so it fails the run instead of being retried.
+                # Any other error with both bases is recorded as a `NotImplementedError`.
+                if isinstance(error, _TokenCountingUnavailableError):
+                    return CountTokensResult(error=('UserError', str(error)))
                 return CountTokensResult(error=('NotImplementedError', str(error)))
             except UserError as error:
                 # A subclass carries more than its message, so it fails the unit as the engine fails any error.

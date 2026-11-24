@@ -26,7 +26,12 @@ from .exceptions import (
 )
 
 HTTPErrorCategory = type[
-    ModelRateLimitError | ModelQuotaExceededError | ModelUnavailableError | ModelServerError | ModelRequestRejectedError
+    ModelRateLimitError
+    | ModelQuotaExceededError
+    | ModelUnavailableError
+    | ModelServerError
+    | ModelTimeoutError
+    | ModelRequestRejectedError
 ]
 """An error category an HTTP error can belong to; see `ModelHTTPError.for_category`."""
 
@@ -45,8 +50,11 @@ def http_status_category(status_code: int, message: object = None) -> HTTPErrorC
 
     A 503 whose `message` says the provider is overloaded is a `ModelOverloadedError`; any other 503 is only
     unavailable. A 400, 413 or 422 is a `ModelRequestRejectedError`, unless the caller found a more specific category
-    in the provider's own error code or message first.
+    in the provider's own error code or message first. A 408 is the provider timing out the attempt, so a
+    `ModelTimeoutError`.
     """
+    if status_code == 408:
+        return ModelTimeoutError
     if status_code in (401, 403):
         return ModelAuthenticationError
     if status_code == 404:
@@ -387,6 +395,8 @@ def bedrock_code_category(code: str | None, message: object) -> HTTPErrorCategor
         case 'modelstreamerrorexception':
             # The model failed while streaming its response; Bedrock says to retry the request.
             return ModelServerError
+        case 'modeltimeoutexception':
+            return ModelTimeoutError
         case 'serviceunavailableexception' | 'modelnotreadyexception':
             return ModelOverloadedError if says_overloaded(message) else ModelUnavailableError
         case 'mpagreementbeingcreated':

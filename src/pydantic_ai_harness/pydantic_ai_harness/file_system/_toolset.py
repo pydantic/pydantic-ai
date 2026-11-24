@@ -19,6 +19,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Concatenate, ParamSpec, TypeVar
 
 import anyio
+import anyio.to_thread
 from typing_extensions import TypedDict
 
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -38,21 +39,25 @@ from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import raise_tool_failure, supports_commands, workspace_path
 from pydantic_ai_harness.file_system._access import AccessPatterns
-from pydantic_ai_harness.file_system._changes import Change, split_lines
+from pydantic_ai_harness.file_system._changes import Change, count_lines, skip_lines, split_lines
 from pydantic_ai_harness.file_system._command_search import run_posix_search
 from pydantic_ai_harness.file_system._content import (
+    MAX_DECODE_PIXELS,
     MAX_MEDIA_BYTES,
     NOTICE_CHARS,
+    PIL_FORMATS,
     Replacement,
+    TooLargeToDecode,
     apply_replacements,
     bytes_hash,
     check_expected_hash,
+    downscale_image,
     format_lines,
     hex_preview,
     is_binary,
     normalize_replacements,
+    require_pillow,
     sniff_media_type,
-    text_hash,
 )
 from pydantic_ai_harness.file_system._events import (
     MAX_DIFF_SOURCE_CHARS,
@@ -583,6 +588,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         protected_patterns: Sequence[str] | None = None,
         cwd: Path | None = None,
         max_retries: int | None = None,
+        max_image_side: int | None = None,
     ) -> None:
         super().__init__(id=id, max_retries=max_retries)
         if cwd is not None:
@@ -611,6 +617,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         self._max_search_results = max_search_results
         self._max_find_results = max_find_results
         self._content_hashes = content_hashes
+        if max_image_side is not None:
+            require_pillow()
+        self._max_image_side = max_image_side
         self._tools = tuple(tools)
         if unknown := sorted(set(self._tools) - set(FILE_SYSTEM_TOOL_NAMES)):
             raise ValueError(
@@ -631,10 +640,17 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         }
         for name in FILE_SYSTEM_TOOL_NAMES:
             if name in self._tools:
-                # Approval must run in the workflow before the durable workspace write activity.
-                metadata = {'temporal': False} if name in {'write_file', 'edit_file', 'create_directory'} else None
+                changes = name in {'write_file', 'edit_file', 'create_directory'}
                 self.add_function(
-                    registrations[name], name=name, metadata=metadata, tool_kind=FILE_SYSTEM_TOOL_KINDS[name]
+                    registrations[name],
+                    name=name,
+                    # Approval must run in the workflow before the durable workspace write.
+                    metadata={'temporal': False, 'azure_durable_task': False, 'render_workflows': False}
+                    if changes
+                    else None,
+                    tool_kind=FILE_SYSTEM_TOOL_KINDS[name],
+                    # A change can depend on an earlier call in the same response, like a write into a new directory.
+                    sequential=changes,
                 )
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -951,14 +967,18 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         media_type = sniff_media_type(raw)
         if media_type is not None or is_binary(raw):
             await self._emit_read(scope, ctx, resolved, content_hash)
-            return self._read_binary(path, raw, media_type, content_hash)
+            return await self._read_binary(path, raw, media_type, content_hash)
 
-        text = raw.decode('utf-8', errors='replace')
-        lines = split_lines(text)
-        header = self._read_header(path, len(lines), content_hash)
+        total = count_lines(raw)
+        header = self._read_header(path, total, content_hash)
+        # Decode only the lines shown, from a view so the window is not copied first: a large
+        # file is paged through one window at a time.
+        start = skip_lines(raw, offset)
+        end = len(raw) if offset + limit >= total else skip_lines(raw, limit, start)
+        window = split_lines(str(memoryview(raw)[start:end], 'utf-8', 'replace'))
         # Format before emitting: an out-of-range offset is a failed read, and
         # a failed read must not look like a successful one to subscribers.
-        body = format_lines(lines, offset, limit, self._body_budget(header))
+        body = format_lines(window, offset, total, self._body_budget(header))
         await self._emit_read(scope, ctx, resolved, content_hash)
         return header + body
 
@@ -968,16 +988,36 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if ctx is not None:
             await ctx.emit(FileReadEvent(**self._event_location(scope, resolved), content_hash=content_hash))
 
-    def _read_binary(
+    async def _read_binary(
         self, path: str, raw: bytes, media_type: str | None, content_hash: str
     ) -> str | list[str | BinaryContent]:
-        """A recognized file as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text."""
+        """A recognized file as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text.
+
+        An image larger than `max_image_side` is downscaled first; the header still
+        reports the size and hash of the file in the workspace.
+        """
         hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
         shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
         header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'
         if media_type is None:
             intro = 'Binary file; the first bytes in hex:\n'
             return header + intro + hex_preview(raw, self._body_budget(header + intro))
+        if self._max_image_side is not None and media_type in PIL_FORMATS:
+            downscaled = await anyio.to_thread.run_sync(
+                downscale_image, raw, media_type, self._max_image_side, abandon_on_cancel=True
+            )
+            if isinstance(downscaled, TooLargeToDecode):
+                if downscaled.size is None:
+                    return f'{header}Too large to view: Pillow refused to decode it as a possible decompression bomb.\n'
+                width, height = downscaled.size
+                return (
+                    f'{header}Too large to view: {width}x{height} pixels is over the {MAX_DECODE_PIXELS:,}-pixel '
+                    'limit for downscaling.\n'
+                )
+            if downscaled is not None:
+                (width, height), (shown_width, shown_height) = downscaled.original, downscaled.shown
+                header += f'Shown downscaled from {width}x{height} to {shown_width}x{shown_height} pixels.\n'
+                raw = downscaled.data
         if len(raw) <= MAX_MEDIA_BYTES:
             return [header, BinaryContent(data=raw, media_type=media_type)]
         return f'{header}Too large to view: the limit is {MAX_MEDIA_BYTES} bytes.\n'
@@ -1029,7 +1069,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             Confirmation message with new hash.
         """
         return await self._write_file(
-            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, content, expected_hash=expected_hash
+            await self._scope(ctx.workspace),
+            event_ctx(ctx, 'FileSystem', asks=True),
+            path,
+            content,
+            expected_hash=expected_hash,
         )
 
     async def _write_file_tool_unhashed(self, ctx: RunContext[AgentDepsT], path: str, content: str) -> str:
@@ -1040,7 +1084,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             path: File path relative to the working directory.
             content: The text content to write.
         """
-        return await self._write_file(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, content)
+        return await self._write_file(
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem', asks=True), path, content
+        )
 
     async def _announced_state(
         self, scope: _Scope, resolved: str, path: str, *, exists: bool, expected_hash: str | None
@@ -1131,10 +1177,12 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
             if guard is not None:
                 await self._check_guard(scope, resolved, path, guard)
-            await scope.workspace.write_bytes(resolved, content.encode('utf-8'))
+            raw = content.encode('utf-8')
+            await scope.workspace.write_bytes(resolved, raw)
 
-        new_hash = text_hash(content)
-        lines = len(split_lines(content))
+        new_hash = bytes_hash(raw)
+        # Counted as `split_lines` splits: one per line feed, plus a final line without one.
+        lines = content.count('\n') + (content[-1:] not in ('', '\n'))
         if ctx is not None:
             await ctx.emit(FileWrittenEvent(**self._event_location(scope, resolved), content_hash=new_hash))
         return f'Wrote {len(content)} chars ({lines} lines) to {path}.{self._hash_suffix(new_hash)}'
@@ -1204,7 +1252,11 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         """
         edits = normalize_replacements(old_text, new_text, replacements)
         return await self._edit_file(
-            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits, expected_hash=expected_hash
+            await self._scope(ctx.workspace),
+            event_ctx(ctx, 'FileSystem', asks=True),
+            path,
+            edits,
+            expected_hash=expected_hash,
         )
 
     async def _edit_file_tool_unhashed(
@@ -1231,7 +1283,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             replacements: Replacements to apply in order, instead of a single pair.
         """
         edits = normalize_replacements(old_text, new_text, replacements)
-        return await self._edit_file(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, edits)
+        return await self._edit_file(
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem', asks=True), path, edits
+        )
 
     @_recoverable
     async def _edit_file(
@@ -1385,7 +1439,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
                 also spans `/`: '*.py' for every Python file, 'src/*.py' for those anywhere under `src`.
 
         Returns:
-            str: Matching lines formatted as file:line_number:text, with paths relative to the working directory.
+            Matching lines formatted as file:line_number:text, with paths relative to the working directory.
         """
         return await self._search_files(
             await self._scope(ctx.workspace),
@@ -2154,7 +2208,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         Returns:
             Confirmation message.
         """
-        return await self._create_directory(await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path)
+        return await self._create_directory(
+            await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem', asks=True), path
+        )
 
     async def _nearest_existing_is_dir(self, scope: _Scope, path: str) -> bool:
         """Whether the closest existing ancestor of `path` (or the filesystem root) is a directory."""
@@ -2245,8 +2301,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             is_bin = is_binary(raw)
             parts.append(f'binary: {is_bin}')
             if not is_bin:
-                text = raw.decode('utf-8', errors='replace')
-                parts.append(f'lines: {len(split_lines(text))}')
+                parts.append(f'lines: {count_lines(raw)}')
                 parts.append(f'hash: {bytes_hash(raw)}')
 
         if (target := await self._symlink_target(scope, resolved)) is not None:

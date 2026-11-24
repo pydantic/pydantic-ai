@@ -28,7 +28,18 @@ from pydantic_graph import GraphRunContext
 from pydantic_graph.basenode import NodeRunEndT
 
 from . import _output, exceptions, messages as _messages, result
+from ._deferred import jsonable_validated_args
 from ._deferred_capabilities import LoadCapabilityCallPart
+from ._enqueue import within_ceiling
+from ._tool_status import (
+    FINAL_RESULT_PROCESSED,
+    OUTPUT_EXECUTION_FAILED,
+    OUTPUT_NOT_FINAL_RESULT,
+    OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED,
+    OUTPUT_VALIDATION_FAILED,
+    RETRY_WINS,
+    TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+)
 from .exceptions import ToolFailedError, ToolRetryError
 from .tools import (
     DeferredToolRequests,
@@ -72,7 +83,7 @@ async def _iter_completed_or_buffered(
         return
 
     waiters = event_stream_buffer.waiters
-    signal = asyncio.Event()
+    signal = asyncio.Event()  # noqa: TID251  (raced with asyncio tasks in `asyncio.wait`)
     waiters.append(signal)
     try:
         while pending:
@@ -98,18 +109,6 @@ async def _iter_completed_or_buffered(
                 yield task
     finally:
         waiters.remove(signal)
-
-
-# Status messages synthesized as the `content` of an output/function tool's `ToolReturnPart`
-# when the tool isn't run (or its result isn't used). Centralized so the same wording is shared
-# by the producers and by `_apply_retry_wins`, which replaces the winning output's status part.
-_FINAL_RESULT_PROCESSED = 'Final result processed.'
-_RETRY_WINS = 'Output not used as the final result - addressing tool retries from this round first.'
-_OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED = 'Output tool not used - a final result was already processed.'
-_OUTPUT_NOT_FINAL_RESULT = 'Output tool processed, but its value will not be the final result of the agent run.'
-_OUTPUT_EXECUTION_FAILED = 'Output tool not used - output function execution failed.'
-_OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
-_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was already processed.'
 
 
 def cancelled_sub_agent_return(
@@ -201,6 +200,7 @@ _DEFERRED_BUCKETS: tuple[_DeferredBucket, ...] = ('unapproved', 'external', 'que
 def _deferred_tool_requests(
     deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]],
     deferred_metadata: dict[str, dict[str, Any]],
+    deferred_validated_args: dict[str, dict[str, Any]],
     *,
     order: Sequence[_messages.ToolCallPart],
 ) -> DeferredToolRequests:
@@ -216,6 +216,7 @@ def _deferred_tool_requests(
         calls=calls,
         approvals=deferred_calls['unapproved'],
         metadata=deferred_metadata,
+        validated_args=deferred_validated_args,
         _kinds={call.tool_call_id: 'question' for call in questions},
     )
 
@@ -229,6 +230,7 @@ def _with_deferred_tool_requests(
     pending.calls.extend(new.calls)
     pending.approvals.extend(new.approvals)
     pending.metadata.update(new.metadata)
+    pending.validated_args.update(new.validated_args)
     pending._kinds.update(new._kinds)  # pyright: ignore[reportPrivateUsage]
     return pending
 
@@ -497,6 +499,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     winning_output_part: _messages.ToolReturnPart | None = dataclasses.field(default=None, init=False)
     deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]] = dataclasses.field(init=False)
     deferred_metadata: dict[str, dict[str, Any]] = dataclasses.field(init=False)
+    deferred_validated_args: dict[str, dict[str, Any]] = dataclasses.field(init=False)
     # The validated calls whose tool deferred them as questions, so an answer given during the run
     # passes the tool's result hooks, as it did when the tool waited for the answer itself.
     question_calls: dict[str, ValidatedToolCall[DepsT]] = dataclasses.field(init=False)
@@ -505,6 +508,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         self.final_result_was_set_externally = self.final_result is not None
         self.deferred_calls = defaultdict(list)
         self.deferred_metadata = {}
+        self.deferred_validated_args = {}
         self.question_calls = {}
 
         # Classify each call once, preserving emission order for the per-index views below.
@@ -645,6 +649,11 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # `validation_error` is always a `ToolRetryError` here — unlike the function-tool
             # path, which also handles `ToolFailedError`.
             assert isinstance(validated.validation_error, ToolRetryError)
+            # Re-prompting the model with the same token limit would only cut the arguments off again.
+            try:
+                self.ctx.state.check_incomplete_tool_call(call)
+            except exceptions.IncompleteToolCall as e:
+                return _OutputCallResult(call=call, args_valid=False, raise_exc=e)
             self.output_retries_increment += 1
             return _OutputCallResult(
                 call=call, args_valid=False, retry_part=tool_bound_retry_part(validated.validation_error)
@@ -670,7 +679,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         Tracks the part directly (`winning_output_part`) so `_apply_retry_wins` can replace it
         in `output_parts` without scanning the list.
         """
-        self.winning_output_part = self._status_part(call, _FINAL_RESULT_PROCESSED)
+        self.winning_output_part = self._status_part(call, FINAL_RESULT_PROCESSED)
         yield from self._record_output_part(call, self.winning_output_part, args_valid=True)
 
     async def _run_output(self, call: _messages.ToolCallPart) -> AsyncIterator[_messages.AgentStreamEvent]:
@@ -679,7 +688,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             for event in self._emit_winning_output(call):
                 yield event
         elif self.final_result is not None:
-            part = self._status_part(call, _OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED)
+            part = self._status_part(call, OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED)
             for event in self._record_output_part(call, part, args_valid=None):
                 yield event
         else:
@@ -703,7 +712,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             else:
                 # A successful-but-not-winning output only happens under `'exhaustive'`; `'early'`
                 # and `'graceful'` stop running output tools at the first success.
-                part = self._status_part(r.call, _OUTPUT_NOT_FINAL_RESULT)
+                part = self._status_part(r.call, OUTPUT_NOT_FINAL_RESULT)
                 yield from self._record_output_part(r.call, part, args_valid=True)
         elif r.retry_part is not None:
             yield from self._record_output_part(r.call, r.retry_part, args_valid=r.args_valid)
@@ -711,7 +720,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # Absorbed failure: another output won, so this one's max-retries error is recorded
             # as a skip rather than raised. (When no output won, the caller raises `raise_exc`.)
             assert r.raise_exc is not None
-            message = _OUTPUT_EXECUTION_FAILED if r.args_valid else _OUTPUT_VALIDATION_FAILED
+            message = OUTPUT_EXECUTION_FAILED if r.args_valid else OUTPUT_VALIDATION_FAILED
             part = self._status_part(r.call, message)
             yield from self._record_output_part(r.call, part, args_valid=r.args_valid)
 
@@ -726,7 +735,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         """
         part = _messages.ToolReturnPart(
             tool_name=call.tool_name,
-            content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+            content=TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
             tool_call_id=call.tool_call_id,
         )
         self.output_parts.append(part)
@@ -802,6 +811,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 validated_calls=validated_calls,
                 deferred_calls=self.deferred_calls,
                 deferred_metadata=self.deferred_metadata,
+                deferred_validated_args=self.deferred_validated_args,
             )
         ) as events:
             async for event in events:
@@ -909,6 +919,23 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             )
         return parts, tool_user_content
 
+    def _tool_user_part(
+        self, call: _messages.ToolCallPart, content: str | Sequence[_messages.UserContent]
+    ) -> _messages.ModelRequestPart:
+        """The user-channel part for a tool's `ToolReturn.content`, held to its owning capability's authority.
+
+        A tool a capability contributes speaks with no more authority than the capability, as what it enqueues does: at
+        `'none'`, its content is data naming the capability.
+        """
+        part = _messages.UserPromptPart(content=content)
+        tool_def = self.tool_manager.get_tool_def(call.tool_name)
+        capability_id = None if tool_def is None else tool_def.capability_id
+        run_ctx = self.tool_manager.ctx
+        owner = None if capability_id is None or run_ctx is None else run_ctx.capabilities.get(capability_id)
+        if owner is None or capability_id is None:
+            return part
+        return within_ceiling(part, capability_id, owner._effective_authority)  # pyright: ignore[reportPrivateUsage]
+
     async def _call_tools(  # noqa: C901
         self,
         tool_calls: list[_messages.ToolCallPart],
@@ -917,9 +944,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         validated_calls: dict[str, ValidatedToolCall[DepsT]],
         deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]],
         deferred_metadata: dict[str, dict[str, Any]],
+        deferred_validated_args: dict[str, dict[str, Any]],
     ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         tool_parts_by_index: dict[int, _FunctionCallParts] = {}
-        user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
+        user_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
         deferred_calls_by_index: dict[int, _DeferredBucket] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
@@ -929,7 +957,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             tool_parts, tool_user_content = result
             tool_parts_by_index[index] = tool_parts
             if tool_user_content:
-                user_parts_by_index[index] = _messages.UserPromptPart(content=tool_user_content)
+                user_parts_by_index[index] = self._tool_user_part(tool_calls[index], tool_user_content)
 
             tool_part = tool_parts[0]
             assert isinstance(tool_part, _messages.ToolReturnPart)
@@ -1058,25 +1086,33 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         self._populate_deferred_calls(
             tool_calls,
+            validated_calls=validated_calls,
             deferred_calls_by_index=deferred_calls_by_index,
             deferred_metadata_by_index=deferred_metadata_by_index,
             deferred_calls=deferred_calls,
             deferred_metadata=deferred_metadata,
+            deferred_validated_args=deferred_validated_args,
         )
 
     def _populate_deferred_calls(
         self,
         tool_calls: list[_messages.ToolCallPart],
         *,
+        validated_calls: dict[str, ValidatedToolCall[DepsT]],
         deferred_calls_by_index: dict[int, _DeferredBucket],
         deferred_metadata_by_index: dict[int, dict[str, Any] | None],
         deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]],
         deferred_metadata: dict[str, dict[str, Any]],
+        deferred_validated_args: dict[str, dict[str, Any]],
     ) -> None:
-        """Populate deferred calls and metadata from indexed mappings."""
+        """Populate deferred calls, metadata and validated arguments from indexed mappings."""
         for k in sorted(deferred_calls_by_index):
             call = tool_calls[k]
             deferred_calls[deferred_calls_by_index[k]].append(call)
+            # A call can only defer once it runs, and only a validated call runs.
+            deferred_validated_args[call.tool_call_id] = jsonable_validated_args(
+                validated_calls[call.tool_call_id].validated_args
+            )
             metadata = deferred_metadata_by_index[k]
             if metadata is not None:
                 deferred_metadata[call.tool_call_id] = metadata
@@ -1113,7 +1149,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # locate it by identity and replace it in `output_parts` without scanning for a content match.
         assert self.winning_output_part is not None
         idx = self.output_parts.index(self.winning_output_part)
-        self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
+        self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=RETRY_WINS)
         self.final_result = None
 
     async def _finalize_deferred(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
@@ -1146,13 +1182,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 try:
                     validated = await self.tool_manager.validate_tool_call(call)
                 except exceptions.UnexpectedModelBehavior:
+                    self.ctx.state.check_incomplete_tool_call()
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
 
                 yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
                 if validated.args_valid:
-                    self._route_deferred_call(call, validated.deferral)
+                    self._route_deferred_call(validated)
                 else:
                     # Call execute_tool_call to raise the validation error inside a trace span;
                     # retry failures are already tracked by validate_tool_call() via failed_tools.
@@ -1163,14 +1200,14 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                         self.output_parts.append(part)
                         yield _messages.FunctionToolResultEvent(part)
 
-    def _route_deferred_call(
-        self, call: _messages.ToolCallPart, deferral: exceptions.CallDeferred | exceptions.ApprovalRequired | None
-    ) -> None:
+    def _route_deferred_call(self, validated: ValidatedToolCall[DepsT]) -> None:
         """Collect a validated call of a deferred kind, routed by the deferral its validation raised, if any.
 
         A deferral raised during validation routes the call by its type, as one raised by the tool
         function would; only a call that validation didn't defer goes by its tool's kind.
         """
+        call, deferral = validated.call, validated.deferral
+        self.deferred_validated_args[call.tool_call_id] = jsonable_validated_args(validated.validated_args)
         bucket: _DeferredBucket
         if deferral is None:
             bucket = 'external' if call in self.tool_calls_by_kind['external'] else 'unapproved'
@@ -1223,7 +1260,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             )
 
         deferred_tool_requests: DeferredToolRequests | None = _deferred_tool_requests(
-            self.deferred_calls, self.deferred_metadata, order=self.tool_calls
+            self.deferred_calls, self.deferred_metadata, self.deferred_validated_args, order=self.tool_calls
         )
 
         # Emit the batch of deferred requests so stream consumers can observe the pending
@@ -1268,6 +1305,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
             new_deferred_calls: dict[_DeferredBucket, list[_messages.ToolCallPart]] = defaultdict(list)
             new_deferred_metadata: dict[str, dict[str, Any]] = {}
+            new_deferred_validated_args: dict[str, dict[str, Any]] = {}
             async with aclosing(
                 self._call_tools(
                     resolved_calls,
@@ -1275,6 +1313,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     validated_calls=handler_validated_calls,
                     deferred_calls=new_deferred_calls,
                     deferred_metadata=new_deferred_metadata,
+                    deferred_validated_args=new_deferred_validated_args,
                 )
             ) as events:
                 async for event in events:
@@ -1289,7 +1328,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 # pending batch still surfaces as the run's `DeferredToolRequests` output below.
                 deferred_tool_requests = _with_deferred_tool_requests(
                     deferred_tool_requests,
-                    _deferred_tool_requests(new_deferred_calls, new_deferred_metadata, order=self.tool_calls),
+                    _deferred_tool_requests(
+                        new_deferred_calls, new_deferred_metadata, new_deferred_validated_args, order=self.tool_calls
+                    ),
                 )
 
         if deferred_tool_requests is not None:
@@ -1400,7 +1441,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         )
 
         function_parts: dict[int, _FunctionCallParts] = {}
-        function_user_parts: dict[int, _messages.UserPromptPart] = {}
+        function_user_parts: dict[int, _messages.ModelRequestPart] = {}
         # Under `parallel_ordered_events`, function-tool result events are buffered and yielded in
         # emission order at the end (alongside output events) instead of streaming as tasks complete.
         function_events: dict[int, _messages.FunctionToolResultEvent] = {}
@@ -1449,7 +1490,9 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                 tool_parts, tool_user_content = payload
                                 function_parts[index] = tool_parts
                                 if tool_user_content:
-                                    function_user_parts[index] = _messages.UserPromptPart(content=tool_user_content)
+                                    function_user_parts[index] = self._tool_user_part(
+                                        self.tool_calls[index], tool_user_content
+                                    )
                                 tool_part = tool_parts[0]
                                 assert isinstance(tool_part, _messages.ToolReturnPart)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
@@ -1536,9 +1579,11 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
 
         self._populate_deferred_calls(
             self.tool_calls,
+            validated_calls=validated_calls,
             deferred_calls_by_index=deferred_by_index,
             deferred_metadata_by_index=deferred_meta_by_index,
             deferred_calls=self.deferred_calls,
             deferred_metadata=self.deferred_metadata,
+            deferred_validated_args=self.deferred_validated_args,
         )
         self.ctx.state.output_retries_used += self.output_retries_increment

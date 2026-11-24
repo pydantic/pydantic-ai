@@ -333,6 +333,35 @@ class TestGrep:
             locked.chmod(0o644)
             locked_dir.chmod(0o755)
 
+    @pytest.mark.skipif(os.name == 'nt', reason='Windows runs `rg` without the script that reports its status')
+    async def test_unreadable_path_is_read_up_to_its_error(self, workspace: Path) -> None:
+        # The reason follows the last `: `; the path keeps any `: ` before it, unless `rg` names an
+        # entry under the path that failed.
+        lines = [
+            'rg: a: b.py: Permission denied (os error 13)',
+            'rg: locked: IO error for operation on locked/c: d.py: Permission denied (os error 13)',
+            '__harness_rg_status=2',
+        ]
+
+        class Answering(LocalWorkspaceBackend):
+            """A local workspace whose `rg` finds nothing and reports `lines` on stderr."""
+
+            async def run(
+                self,
+                command: WorkspaceCommand,
+                *,
+                shell: bool = False,
+                env: Mapping[str, str] | None = None,
+                timeout: float | None = None,
+            ) -> CommandResult:
+                if isinstance(command, str) and '__harness_rg_status=' in command:
+                    return CommandResult(exit_code=0, stdout='', stderr='\n'.join(lines))
+                return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+        assert await toolset(workspace).grep('import', workspace=Answering(workspace)) == (
+            'No matches found.\n[2 paths could not be read (Permission denied): a: b.py, locked]'
+        )
+
     @pytest.mark.skipif(os.name == 'nt', reason='POSIX symlinks')
     async def test_symlink_outside_root_is_dropped(
         self, workspace: Path, tmp_path_factory: pytest.TempPathFactory

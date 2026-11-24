@@ -209,7 +209,7 @@ A tool call can only be [deferred](deferred-tools.md) once its arguments have be
 
 An [external tool](deferred-tools.md#external-tool-execution) is executed outside the run, which therefore can't approve its calls, so raising `ApprovalRequired` while validating one is a [`UserError`][pydantic_ai.exceptions.UserError]. Raise `CallDeferred` instead, with any `metadata` the code that executes the call needs to approve it.
 
-Whoever resolves the deferral is shown the arguments as the model sent them, not as these hooks rewrote them. If they approve the call, the hooks run again and the tool runs with the rewritten arguments. [Human-in-the-Loop Tool Approval](deferred-tools.md#human-in-the-loop-tool-approval) shows where to change arguments instead.
+Whoever resolves the deferral can see the arguments as these hooks rewrote them in [`validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args], while the deferred `ToolCallPart` keeps the model's. If they approve the call, the hooks run again on the model's arguments. [Human-in-the-Loop Tool Approval](deferred-tools.md#human-in-the-loop-tool-approval) covers a hook whose rewrite can differ the second time.
 
 ### Tool execution hooks
 

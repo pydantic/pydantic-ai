@@ -91,10 +91,10 @@ class BudgetStatus:
     """A budget and how much of it is left."""
 
     budget: Budget[Any]
-    """The budget this describes.
+    """The budget this describes, as configured. `usd_limit` and `token_limit` hold its resolved ceilings.
 
     Unparameterised because this is a reading: the dependency type only types
-    `Budget.scope`, and nothing calls a scope through a status.
+    the callables of a `Budget`, and nothing calls one through a status.
     """
 
     key: str
@@ -103,11 +103,17 @@ class BudgetStatus:
     spent: Spent
     """What the budget's current window has accumulated."""
 
+    usd_limit: Decimal | None = None
+    """The USD ceiling this reading is measured against, resolved for the run when `Budget.usd` is a callable."""
+
+    token_limit: int | None = None
+    """The token ceiling this reading is measured against, resolved for the run when `Budget.tokens` is a callable."""
+
     remaining_usd: Decimal | None
-    """`None` when the budget sets no USD limit."""
+    """`None` when no USD ceiling applies to this reading (`usd_limit` is `None`)."""
 
     remaining_tokens: int | None
-    """`None` when the budget sets no token limit."""
+    """`None` when no token ceiling applies to this reading (`token_limit` is `None`)."""
 
     warning: bool
     """Whether spend has crossed `Budget.warn_at`. Always `False` without one."""

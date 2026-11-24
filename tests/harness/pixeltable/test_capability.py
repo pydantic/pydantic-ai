@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from pydantic_ai import Agent
@@ -19,6 +21,7 @@ from tests.conftest import try_import
 
 with try_import() as imports_successful:
     import pixeltable as pxt
+    from pixeltable.runtime import close_threadpool_runtimes
 
     from pydantic_ai_harness.pixeltable import Pixeltable, PixeltableToolset
 
@@ -141,7 +144,13 @@ class TestPixeltableAgent:
             return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(FunctionModel(model), capabilities=[Pixeltable(tables=[chunks])])
-        result = await agent.run('Which chunks are open?')
+        # The sync tools run on a worker thread, where Pixeltable gives the thread a runtime with its own event loop.
+        # Left to the collector, that loop can be finalized after its self-pipe socket, and its `__del__` then raises.
+        with ThreadPoolExecutor(max_workers=1) as executor, Agent.using_thread_executor(executor):
+            try:
+                result = await agent.run('Which chunks are open?')
+            finally:
+                close_threadpool_runtimes(executor, 1)
 
         listed, refused, queried = _tool_returns(result.all_messages())
         assert isinstance(listed, ToolReturnPart)

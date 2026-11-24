@@ -24,10 +24,11 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import infer_model
 from pydantic_ai.providers import infer_provider_class
+from tests._ports import reserve_loopback_port
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
-from .oauth_helpers import free_port, get_callback, make_jwt
+from .oauth_helpers import get_callback, make_jwt
 
 with try_import() as imports_successful:
     from openai import AsyncOpenAI
@@ -205,7 +206,7 @@ def test_id_token_hint_must_identify_an_account():
 
 async def test_sign_in_registers_through_the_loopback_callback(token_endpoint: TokenEndpoint):
     """The callback's issued `client_id` is the one exchanged and kept, never `dynamic_agent_client`."""
-    url = f'http://127.0.0.1:{free_port()}/auth/callback'
+    url = f'http://127.0.0.1:{reserve_loopback_port()}/auth/callback'
     flow = OpenAIChatGPTOAuthFlow(app_name='My App', host_id=HOST_ID, redirect_uri=url)
     endpoint = token_endpoint(token_response(flow))
     exchange = asyncio.create_task(flow.exchange_code_from_callback())
