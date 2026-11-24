@@ -354,6 +354,17 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
     This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
 
+    openai_chat_streaming_repeats_usage_totals: bool
+    """Whether every streamed Chat Completions chunk repeats the running usage totals unprompted. Default: `False`.
+
+    When enabled, each chunk's usage replaces the usage recorded so far instead of adding to it, as
+    [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_continuous_usage_stats]
+    does, without sending `stream_options.continuous_usage_stats`.
+
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] enables it for `gemini*` model names, including
+    through a custom `base_url`. A server that serves these names and reports per-chunk deltas instead would have its
+    usage under-reported, so turn this off in the model's profile."""
+
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
 

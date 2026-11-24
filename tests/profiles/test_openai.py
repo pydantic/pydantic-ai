@@ -323,6 +323,20 @@ def test_openai_compatible_endpoints_fall_back_from_max_effort():
     assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
 
 
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [('gemini-3.1-flash-lite', True), ('google/gemini-3.1-flash-lite', False), ('gpt-5-mini', False)],
+)
+def test_cumulative_stream_usage_only_on_openai_provider_gemini_names(model_name: str, expected: bool):
+    """The shared profile stays off, as the hosts that reuse it aren't verified to repeat running totals."""
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_chat_streaming_repeats_usage_totals', False) is expected
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get('openai_chat_streaming_repeats_usage_totals', False) is False
+
+
 class TestEncryptedReasoningContent:
     """Tests for encrypted reasoning content support."""
 

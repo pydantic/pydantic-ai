@@ -181,6 +181,11 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # `ModelRequestRejectedError` before sending. Set here rather than in `openai_model_profile` because the
                 # restriction is unverified on the OpenAI-compatible endpoints that share it.
                 openai_chat_function_tools_require_reasoning_off=model_name.startswith(_GPT_6_MODEL_PREFIXES),
+                # Gemini's OpenAI-compatible endpoint repeats the running usage across streamed chunks: see
+                # `test_gemini_stream_usage_replaces_running_totals` and the live check across Gemini model families
+                # on https://github.com/pydantic/pydantic-ai/pull/14285. Set here rather than in
+                # `openai_model_profile`, which OpenAI-compatible hosts share without this being verified on them.
+                openai_chat_streaming_repeats_usage_totals=model_name.startswith('gemini'),
                 # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.
