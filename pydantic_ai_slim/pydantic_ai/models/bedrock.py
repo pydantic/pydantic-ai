@@ -83,6 +83,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelNotFoundError,
+    ModelServerError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -104,6 +105,7 @@ from pydantic_ai.models import (
     download_item,
 )
 from pydantic_ai.models._anthropic_max_tokens import cap_max_tokens
+from pydantic_ai.models._anthropic_sampling import drop_conflicting_sampling_settings
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -233,6 +235,17 @@ def _map_api_errors(
         raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as an event stream: {e}') from e
 
 
+def _model_error_category(e: ClientError, message: str | None) -> _model_errors.HTTPErrorCategory:
+    """A 424 `ModelErrorException` is the model failing; the model's own status, when present, says more than the 424."""
+    original_status_code = e.response.get('originalStatusCode')
+    category = (
+        _model_errors.http_status_category(original_status_code, message)
+        if isinstance(original_status_code, int)
+        else None
+    )
+    return category or ModelServerError
+
+
 def _map_client_error(
     e: ClientError, model_name: str, model_id_namespace: str, *, strict_schema_limits: bool
 ) -> ModelAPIError:
@@ -242,6 +255,8 @@ def _map_client_error(
     code, message = error.get('Code'), error.get('Message')
     provider_error_code = code if isinstance(code, str) else None
     category = _model_errors.bedrock_code_category(provider_error_code, message)
+    if provider_error_code == 'ModelErrorException':
+        category = _model_error_category(e, message)
     # An exception event inside a `ConverseStream` response carries no status code; it gets the status the same
     # exception has before the stream opens.
     in_stream = not isinstance(status_code, int)
@@ -1109,13 +1124,8 @@ class BedrockConverseModel(Model[BaseClient]):
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
         prepared_settings = cap_max_tokens(prepared_settings, self.profile.get('anthropic_max_output_tokens'))
-        if prepared_settings and (
-            self.profile.get('anthropic_disallows_sampling_settings', False)
-            or self.profile.get('bedrock_disallows_sampling_settings', False)
-        ):
-            filtered: ModelSettings = {**prepared_settings}
-            self._drop_unsupported_sampling_settings(filtered)
-            prepared_settings = filtered or None
+        if prepared_settings:
+            prepared_settings = self._drop_rejected_sampling_settings(prepared_settings, model_request_parameters)
         if prepared_settings and 'stop_sequences' in self._unsupported_settings():
             # `super().prepare_request()` has already warned that it's ignored.
             without_stop_sequences: ModelSettings = {**prepared_settings}
@@ -1125,6 +1135,20 @@ class BedrockConverseModel(Model[BaseClient]):
         if (cache := model_request_parameters.cache) and not self._has_provider_cache_settings(prepared_settings or {}):
             prepared_settings = self._translate_cache(cast(BedrockModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
+
+    def _drop_rejected_sampling_settings(
+        self, model_settings: ModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelSettings | None:
+        """Drop the sampling settings the model rejects alone or with the rest of the request, like `AnthropicModel`."""
+        profile = cast(BedrockModelProfile, self.profile)
+        if profile.get('anthropic_disallows_sampling_settings', False) or profile.get(
+            'bedrock_disallows_sampling_settings', False
+        ):
+            filtered: ModelSettings = {**model_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            return filtered or None
+        thinking = _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
+        return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
     def _check_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters

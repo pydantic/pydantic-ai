@@ -145,6 +145,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
+from ..manifests import union_members
 from ..workspace_fakes import FakeWorkspace
 
 
@@ -1037,17 +1038,6 @@ def test_event_payload_goldens() -> None:
     }
 
 
-def _union_members(union: object) -> set[type]:
-    """The classes a union admits, with nested unions flattened and `Annotated` wrappers removed."""
-    members: set[type] = set()
-    for member in get_union_args(union):
-        if get_union_args(member):
-            members |= _union_members(member)
-        else:
-            members.add(member)
-    return members
-
-
 def test_every_stream_event_and_message_part_round_trips_through_the_json_codec() -> None:
     """Every member of the event and part unions must survive the codec a durable boundary uses.
 
@@ -1129,24 +1119,24 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
     # by `isinstance`, as `CustomEvent` and `CapabilityEvent` are covered by registered subclasses.
     assert {
         member.__name__
-        for member in _union_members(ModelRequestPart)
+        for member in union_members(ModelRequestPart)
         if not any(
             isinstance(part, member) if member is CapabilityPart else type(part) is member for part in request_parts
         )
     } == {'RetryPromptPart'}
     assert [
         member.__name__
-        for member in _union_members(ModelResponsePart)
+        for member in union_members(ModelResponsePart)
         if not any(type(part) is member for part in response_parts)
     ] == []
     assert [
         member.__name__
-        for member in _union_members(ModelResponsePartDelta)
+        for member in union_members(ModelResponsePartDelta)
         if not any(type(delta) is member for delta in deltas)
     ] == []
     assert [
         member.__name__
-        for member in _union_members(AgentStreamEvent)
+        for member in union_members(AgentStreamEvent)
         if not any(isinstance(event, member) for event in events)
     ] == []
 

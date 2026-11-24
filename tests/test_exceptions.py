@@ -895,6 +895,7 @@ _HTTP_CATEGORIES = [
     ModelUnavailableError,
     ModelOverloadedError,
     ModelServerError,
+    ModelTimeoutError,
     ModelContextWindowExceededError,
     ModelRequestRejectedError,
     ModelAuthenticationError,
@@ -960,9 +961,7 @@ def test_model_http_error_for_category_rejects_a_non_http_category():
         )
 
 
-@pytest.mark.parametrize(
-    'category', [*_HTTP_CATEGORIES, ModelConnectionError, ModelTimeoutError], ids=lambda c: c.__name__
-)
+@pytest.mark.parametrize('category', [*_HTTP_CATEGORIES, ModelConnectionError], ids=lambda c: c.__name__)
 def test_model_error_categories_pickle_round_trip(category: type[ModelAPIError]):
     error = category('gpt-4', 'failed', body={'error': 'x'}, provider_error_code='code', in_stream=True)
     restored = pickle.loads(pickle.dumps(error))

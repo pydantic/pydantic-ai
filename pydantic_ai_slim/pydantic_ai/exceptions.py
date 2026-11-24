@@ -68,6 +68,7 @@ __all__ = (
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
     'UnsupportedSettingWarning',
+    'DeprecatedModelWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
@@ -315,6 +316,15 @@ class UserError(RuntimeError):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+
+class _TokenCountingUnavailableError(UserError, NotImplementedError):  # pyright: ignore[reportUnusedClass]
+    """Raised by a model's `count_tokens` when its provider serves no token counting.
+
+    It is a `NotImplementedError`, as `Model.count_tokens` raises for a model that can't count, so a caller that
+    falls back for such a model, like Pydantic AI Harness running a nested agent, falls back here too. A durable
+    engine records it as a `UserError`.
+    """
 
 
 class UndrainedPendingMessagesError(UserError):
@@ -781,7 +791,7 @@ RequestTimeoutSetting: TypeAlias = Literal['request_timeout', 'first_event_timeo
 
 
 class ModelConnectionError(ModelAPIError):
-    """Raised when the request could not reach the provider or its response could not be read.
+    """Raised when the request could not reach the provider, its response could not be read, or the provider timed it out.
 
     For example a refused connection, a reset connection, or a dropped stream. The transport library's exception
     is available as `__cause__`.
@@ -796,7 +806,8 @@ class ModelConnectionError(ModelAPIError):
     - `'read'`: receiving the response, including a stream that broke off. The request was sent, so the provider
       may have acted on it.
 
-    `None` when the transport error doesn't say, e.g. a connection closed at an unknown point.
+    `None` when the transport error doesn't say, e.g. a connection closed at an unknown point, and for a timeout the
+    provider reports, which is not a transport error.
     """
 
     def __init__(
@@ -827,12 +838,14 @@ class ModelConnectionError(ModelAPIError):
 
 
 class ModelTimeoutError(ModelConnectionError):
-    """Raised when a single attempt at the request timed out at the transport layer.
+    """Raised when a single attempt at the request timed out, at the transport layer or at the provider.
 
-    This is the provider SDK's or HTTP client's own timeout, controlled by
-    [`ModelSettings['timeout']`][pydantic_ai.settings.ModelSettings.timeout], and applies to one attempt. A deadline
-    over all attempts at a request is [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout],
-    which raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead.
+    A transport timeout is the provider SDK's or HTTP client's own, controlled by
+    [`ModelSettings['timeout']`][pydantic_ai.settings.ModelSettings.timeout], and applies to one attempt. A timeout
+    the provider reports, like an HTTP 408 or Bedrock's `ModelTimeoutException`, is also a
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], and its `phase` is `None`. A deadline over all attempts
+    at a request is [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout], which
+    raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead.
     """
 
 
@@ -1040,6 +1053,7 @@ class ModelHTTPError(ModelAPIError):
             | ModelQuotaExceededError
             | ModelUnavailableError
             | ModelServerError
+            | ModelTimeoutError
             | ModelRequestRejectedError
         ]
         | None,
@@ -1075,6 +1089,7 @@ class ModelHTTPError(ModelAPIError):
                 [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError],
                 [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError],
                 [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
+                [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError],
                 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
                 [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
                 [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], or
@@ -1170,6 +1185,10 @@ class _HTTPModelServerError(_CategorizedHTTPError, ModelServerError):
     pass
 
 
+class _HTTPModelTimeoutError(_CategorizedHTTPError, ModelTimeoutError):
+    pass
+
+
 class _HTTPModelContextWindowExceededError(_CategorizedHTTPError, ModelContextWindowExceededError):
     pass
 
@@ -1192,6 +1211,7 @@ _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] =
     ModelUnavailableError: _HTTPModelUnavailableError,
     ModelOverloadedError: _HTTPModelOverloadedError,
     ModelServerError: _HTTPModelServerError,
+    ModelTimeoutError: _HTTPModelTimeoutError,
     ModelContextWindowExceededError: _HTTPModelContextWindowExceededError,
     ModelRequestRejectedError: _HTTPModelRequestRejectedError,
     ModelAuthenticationError: _HTTPModelAuthenticationError,
@@ -1399,5 +1419,29 @@ class UnsupportedSettingWarning(UserWarning):
     from pydantic_ai import UnsupportedSettingWarning
 
     warnings.filterwarnings('error', category=UnsupportedSettingWarning)
+    ```
+    """
+
+
+class DeprecatedModelWarning(UserWarning):
+    """Warning emitted when a request targets a model that its provider has deprecated or retired.
+
+    It's emitted each time a model prepares a request it sends, streamed or not, for a model whose profile has a
+    [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation]. The message names the model, its retirement
+    date and the replacement the provider recommends, and links the provider's announcement. Creating the model
+    doesn't warn. Python's warning filters decide how often it's shown.
+
+    The profile is set for models on the Anthropic and OpenAI APIs, including through the Pydantic AI Gateway, and
+    not where another platform, such as Amazon Bedrock, Google Cloud's Vertex AI or Azure, serves the same model on a
+    schedule of its own. See [Deprecated models](../models/overview.md#deprecated-models).
+
+    To turn it into an error, use a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import DeprecatedModelWarning
+
+    warnings.filterwarnings('error', category=DeprecatedModelWarning)
     ```
     """

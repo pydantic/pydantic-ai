@@ -1,4 +1,5 @@
 Stale
+agentic-workflows
 approved:ci-config	Maintainer approval for changes to CI config (workflows, actions, scripts, pre-commit, Makefile)
 approved:dependencies	Maintainer approval for changes to pyproject.toml or uv.lock
 area:absurd	Absurd durable execution integration (`AbsurdDurability`).
@@ -6,7 +7,7 @@ area:agent	The Agent class and run loop: instructions, deps, retries, cancellati
 area:agentic-workflows	This repo's own agentic workflows and bots: runs, incidents, quotas. Engine code is area:gh-aw.
 area:caching	Prompt caching, cache retention, cached-token usage, and cache-bust detection.
 area:capabilities	The capability framework: lifecycle, loading, composition, hooks. Not any single capability.
-area:clai2-web-ui	The clai2 web UI: its web plugin, front end, and npm dependencies (src/pydantic_clai2/web-ui).
+area:clai2-web-ui	The clai2 web UI: its web plugin, front end, and npm dependencies (src/pydantic_ai_pax/web-ui).
 area:codemode	CodeMode: model-written scripts, the tools they call, their limits, and interpreter state.
 area:compaction	Message-history reduction: summarization, retention rules, token budgets, and compaction strategies.
 area:conversation-store	Stored conversations: `Conversation`, `ConversationStore`, backends, UI adapter `conversation_store`
@@ -60,6 +61,7 @@ cluster:concise-docs	Trim harness docs pages and Ruff-format their code and diag
 cluster:extra-headers	Header-name handling in extra_headers (user-agent, anthropic-beta)
 cluster:gh-aw	Work stream: gh-aw agentic workflows on the public pydantic-ai engine
 cluster:thinking-profiles	Work stream: model profiles that turn thinking on for model families and gateway routes
+cluster:tool-search	Replaying tool-search calls and results in message history
 cluster:voice-authority	Work stream: voice and authority of model-visible text across frames and untrusted channels
 community contribution
 community snippets
@@ -107,7 +109,7 @@ parked:no-user-report	Real, found by the team, fix scoped or ready; held until a
 partner: Vstorm
 performance
 pkg:clai	clai, the original CLI (clai/)
-pkg:clai2	pydantic-clai2 (src/pydantic_clai2)
+pkg:clai2	pydantic-ai-pax (src/pydantic_ai_pax)
 pkg:core	pydantic-ai-slim, pydantic-ai and examples (pydantic_ai_slim/, examples/)
 pkg:evals	pydantic-evals (pydantic_evals/)
 pkg:graph	pydantic-graph (pydantic_graph/)

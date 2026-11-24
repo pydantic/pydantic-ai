@@ -202,6 +202,32 @@ jobs:
           pattern: pr-review-checks-result-*
           merge-multiple: true
           path: ${{ runner.temp }}/pr-review-checks-result
+      # The artifact service can list a finalized upload seconds late, and the download step lists only once
+      # (https://github.com/actions/download-artifact/issues/505). Every review job that succeeded uploaded its
+      # result, so the job waits and downloads again before a result counts as missing.
+      - name: Wait for results the artifact list missed
+        id: unlisted
+        if: needs.review.result == 'success'
+        run: |
+          for check in $(jq -r '.[]' <<< "$REVIEW_CHECKS"); do
+            if [ ! -f "$RESULTS_DIR/$check.json" ]; then
+              echo "Not listed yet: $check"
+              echo 'missing=true' >> "$GITHUB_OUTPUT"
+              sleep 30
+              break
+            fi
+          done
+        env:
+          REVIEW_CHECKS: ${{ needs.detect.outputs.checks }}
+          RESULTS_DIR: ${{ runner.temp }}/pr-review-checks-result
+      - name: Download the review results again
+        if: steps.unlisted.outputs.missing == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: pr-review-checks-result-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/pr-review-checks-result
       - name: Checkout trusted default-branch publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

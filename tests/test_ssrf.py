@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import csv
 import gzip
+import ipaddress
+import re
 import zlib
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -20,6 +24,7 @@ from pydantic_ai import _ssrf
 from pydantic_ai._ssrf import (
     _DEFAULT_TIMEOUT,  # pyright: ignore[reportPrivateUsage]
     _MAX_REDIRECTS,  # pyright: ignore[reportPrivateUsage]
+    DownloadTooLargeError,
     ResolvedUrl,
     _domain_key,  # pyright: ignore[reportPrivateUsage]
     build_url_with_ip,
@@ -81,6 +86,48 @@ def mock_ssrf_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     return mock
 
 
+_IanaNetwork = ipaddress.IPv4Network | ipaddress.IPv6Network
+_IANA_FOOTNOTE = re.compile(r'\s*\[\d+\]')
+# Snapshots of IANA's special-purpose address registries, fetched on 2026-11-23 from
+# https://www.iana.org/assignments/iana-ipv4-special-registry/iana-ipv4-special-registry-1.csv and
+# https://www.iana.org/assignments/iana-ipv6-special-registry/iana-ipv6-special-registry-1.csv.
+_IANA_REGISTRIES = (
+    Path(__file__).parent / 'assets' / 'iana-ipv4-special-registry-1.csv',
+    Path(__file__).parent / 'assets' / 'iana-ipv6-special-registry-1.csv',
+)
+# Each registry address block, mapped to its `Globally Reachable` value, or `None` when that is `N/A` or empty.
+_IANA_ROWS: dict[_IanaNetwork, bool | None] = {
+    ipaddress.ip_network(block): {'True': True, 'False': False}.get(
+        _IANA_FOOTNOTE.sub('', record['Globally Reachable'])
+    )
+    for path in _IANA_REGISTRIES
+    for record in csv.DictReader(path.read_text().splitlines())
+    for block in _IANA_FOOTNOTE.sub('', record['Address Block']).split(', ')
+}
+# Rows that `is_private_ip` does not judge by their `Globally Reachable` value, mapped to whether it blocks them.
+_IANA_ROW_OVERRIDES: dict[_IanaNetwork, bool] = {
+    # `N/A`: the table lists Teredo whole.
+    ipaddress.IPv6Network('2001::/32'): True,
+    # Globally reachable anycast addresses inside `192.0.0.0/24`, which the table lists whole.
+    ipaddress.IPv4Network('192.0.0.9/32'): True,
+    ipaddress.IPv4Network('192.0.0.10/32'): True,
+    # Deprecated, with no value: the 6to4 relay anycast prefix is not listed, and the former ORCHID
+    # prefix falls back to `2001::/23`.
+    ipaddress.IPv4Network('192.88.99.0/24'): False,
+    ipaddress.IPv6Network('2001:10::/28'): True,
+}
+# Rows that `is_private_ip` decodes to the IPv4 they embed and judges by that IPv4, as the 6to4, NAT64 and
+# IPv4-mapped cases in `TestIsPrivateIp` check.
+_IANA_ROWS_DECODED: frozenset[_IanaNetwork] = frozenset(
+    {
+        ipaddress.IPv6Network('::ffff:0:0/96'),  # IPv4-mapped
+        ipaddress.IPv6Network('64:ff9b::/96'),  # NAT64 well-known prefix
+        ipaddress.IPv6Network('64:ff9b:1::/48'),  # NAT64 local-use prefix
+        ipaddress.IPv6Network('2002::/16'),  # 6to4, `N/A`
+    }
+)
+
+
 class TestIsPrivateIp:
     """Tests for is_private_ip function."""
 
@@ -114,10 +161,13 @@ class TestIsPrivateIp:
             '192.0.0.1',  # IETF Protocol Assignments (RFC 6890)
             '192.0.0.170',  # NAT64 well-known address
             '192.0.2.1',  # TEST-NET-1
+            '192.0.2.255',
             '198.18.0.1',  # Network benchmarking (RFC 2544)
             '198.19.255.255',
             '198.51.100.1',  # TEST-NET-2
+            '198.51.100.255',
             '203.0.113.1',  # TEST-NET-3
+            '203.0.113.255',
             '224.0.0.1',  # Multicast (RFC 5771)
             '239.255.255.255',
             '240.0.0.1',  # Reserved for future use
@@ -127,6 +177,7 @@ class TestIsPrivateIp:
             # IPv6 link-local
             'fe80::1',
             'fe80::ffff:ffff:ffff:ffff',
+            'febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff',  # the next address, fec0::, is site-local
             # IPv6 unique local
             'fc00::1',
             'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
@@ -141,14 +192,23 @@ class TestIsPrivateIp:
             '::',  # Unspecified
             '::ffff:0:10.0.0.1',  # IPv4-translated (RFC 2765)
             '::ffff:0:127.0.0.1',
+            '::ffff:0:255.255.255.255',
             '100::1',  # Discard prefix (RFC 6666)
+            '100::ffff:ffff:ffff:ffff',  # the next address opens the dummy prefix
             '100:0:0:1::1',  # Dummy prefix (RFC 9780)
+            '100:0:0:1:ffff:ffff:ffff:ffff',
             '2001::1',  # Teredo tunneling (RFC 4380)
+            '2001:0:ffff:ffff:ffff:ffff:ffff:ffff',
             '2001:2::1',  # Benchmarking (RFC 5180)
+            '2001:2:0:ffff:ffff:ffff:ffff:ffff',
             '2001:db8::1',  # Documentation (RFC 3849)
+            '2001:db8:ffff:ffff:ffff:ffff:ffff:ffff',
             '3fff::1',  # Documentation (RFC 9637)
+            '3fff:fff:ffff:ffff:ffff:ffff:ffff:ffff',
             '5f00::1',  # Segment Routing (SRv6) SIDs (RFC 9602)
+            '5f00:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
             'ff02::1',  # Multicast (RFC 4291)
+            'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',  # the last IPv6 address
             # NAT64 well-known prefix (RFC 6052) wrapping a private IPv4
             '64:ff9b::192.168.1.1',
             '64:ff9b::a9fe:a9fe',  # Wraps 169.254.169.254
@@ -162,6 +222,8 @@ class TestIsPrivateIp:
             # ISATAP (RFC 5214) with a public prefix, embedding a private/link-local IPv4
             '2606:4700::5efe:192.168.1.1',
             '2606:4700::200:5efe:169.254.169.254',
+            # ISATAP in a globally reachable row of 2001::/23 (AMT), embedding a private IPv4
+            '2001:3::5efe:192.168.1.1',
         ],
     )
     def test_private_ips_detected(self, ip: str) -> None:
@@ -178,6 +240,16 @@ class TestIsPrivateIp:
             # Public IPv6
             '2001:4860:4860::8888',
             '2606:4700:4700::1111',
+            # The first address past a special-purpose range
+            '192.0.3.0',  # TEST-NET-1
+            '198.51.101.0',  # TEST-NET-2
+            '203.0.114.0',  # TEST-NET-3
+            '::ffff:1:0:0',  # IPv4-translated
+            '100:0:0:2::',  # Dummy prefix
+            '2001:200::',  # IETF Protocol Assignments
+            '2001:db9::',  # Documentation (RFC 3849)
+            '3fff:1000::',  # Documentation (RFC 9637)
+            '5f01::',  # Segment Routing (SRv6) SIDs
         ],
     )
     def test_public_ips_allowed(self, ip: str) -> None:
@@ -270,6 +342,35 @@ class TestIsPrivateIp:
         """Invalid IP addresses should be treated as potentially dangerous."""
         assert is_private_ip('not-an-ip') is True
         assert is_private_ip('') is True
+
+    @pytest.mark.parametrize(
+        'address',
+        dict.fromkeys(
+            address
+            for row in _IANA_ROWS
+            if row not in _IANA_ROWS_DECODED
+            for address in (row[0], row[row.num_addresses // 2], row[-1])
+        ),
+        ids=str,
+    )
+    def test_matches_iana_special_purpose_registries(
+        self, address: ipaddress.IPv4Address | ipaddress.IPv6Address
+    ) -> None:
+        """An address is blocked exactly when the most specific IANA row holding it is not globally reachable.
+
+        A row in `_IANA_ROW_OVERRIDES` is judged by its override instead, and the rows in `_IANA_ROWS_DECODED`
+        are left to the embedded-IPv4 cases. The first, middle and last address of every row outside
+        `_IANA_ROWS_DECODED` are checked, so a wrong prefix length fails.
+        """
+        row = max((row for row in _IANA_ROWS if address in row), key=lambda row: row.prefixlen)
+        blocked = _IANA_ROW_OVERRIDES.get(row, not _IANA_ROWS[row])
+        assert is_private_ip(str(address)) is blocked, f'IANA row {row}'
+
+    def test_iana_rows_without_a_verdict_are_explicit(self) -> None:
+        """Every IANA row with no `Globally Reachable` value is judged explicitly, and every explicit row is in IANA's registries."""
+        explicit = _IANA_ROW_OVERRIDES.keys() | _IANA_ROWS_DECODED
+        assert {row for row, reachable in _IANA_ROWS.items() if reachable is None} <= explicit
+        assert explicit <= _IANA_ROWS.keys()
 
 
 class TestIsCloudMetadataIp:
@@ -815,22 +916,33 @@ class TestSafeDownload:
         assert exc_info.value.request is request
 
     @pytest.mark.skipif(httpx is None, reason='legacy httpx is not installed')
+    @pytest.mark.parametrize('max_bytes', [None, 64])
     async def test_status_errors_remain_compatible_with_legacy_httpx(
-        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock, max_bytes: int | None
     ) -> None:
-        """Public download errors keep matching legacy httpx status handlers when available."""
+        """Public download errors keep matching legacy httpx status handlers when available.
+
+        The status is checked before the body is read: this body fails to stream, so reading it
+        first would raise a request error instead.
+        """
         assert httpx is not None
         request = httpx2.Request('GET', 'https://93.184.215.14/file.txt')
-        response = httpx2.Response(404, request=request)
+
+        async def unreadable_body() -> AsyncIterator[bytes]:  # pragma: no cover
+            yield b'partial'
+            raise httpx2.ReadError('connection lost mid-body', request=request)
+
+        response = httpx2.Response(404, content=unreadable_body(), request=request)
         client = AsyncMock()
         client.get.return_value = response
         mock_ssrf_client.return_value = client
         mock_dns.return_value = [(2, 1, 6, '', ('93.184.215.14', 0))]
 
         with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            await safe_download('https://example.com/file.txt')
+            await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
 
         assert isinstance(exc_info.value, httpx2.HTTPStatusError)
+        assert str(exc_info.value) == str(exc_info.value.__cause__)
         assert exc_info.value.request is request
         assert exc_info.value.response is response
 
@@ -879,20 +991,38 @@ class TestSafeDownload:
         assert exc_info.value.request.url.path == '/file.txt'
 
     @pytest.mark.parametrize(
-        ('url', 'expected_host'),
+        ('url', 'expected_url', 'expected_host'),
         [
-            ('https://example.com/file.txt', 'example.com'),
-            ('https://example.com:8443/file.txt', 'example.com:8443'),
-            ('http://example.com/file.txt', 'example.com'),
-            ('http://example.com:8080/file.txt', 'example.com:8080'),
-            ('https://[2606:4700:4700::1111]:8443/file.txt', '[2606:4700:4700::1111]:8443'),
-            ('http://93.184.215.14:8080/file.txt', '93.184.215.14:8080'),
+            ('https://example.com/file.txt', 'https://93.184.215.14/file.txt', 'example.com'),
+            ('https://example.com:8443/file.txt', 'https://93.184.215.14:8443/file.txt', 'example.com:8443'),
+            ('http://example.com/file.txt', 'http://93.184.215.14/file.txt', 'example.com'),
+            ('http://example.com:8080/file.txt', 'http://93.184.215.14:8080/file.txt', 'example.com:8080'),
+            (
+                'https://[2606:4700:4700::1111]:8443/file.txt',
+                'https://[2606:4700:4700::1111]:8443/file.txt',
+                '[2606:4700:4700::1111]:8443',
+            ),
+            (
+                'https://[2606:4700:4700::1111]/file.txt',
+                'https://[2606:4700:4700::1111]/file.txt',
+                '[2606:4700:4700::1111]',
+            ),
+            (
+                'http://[2606:4700:4700::1111]/file.txt',
+                'http://[2606:4700:4700::1111]/file.txt',
+                '[2606:4700:4700::1111]',
+            ),
+            ('http://93.184.215.14:8080/file.txt', 'http://93.184.215.14:8080/file.txt', '93.184.215.14:8080'),
         ],
     )
-    async def test_host_header_includes_non_default_port(
-        self, url: str, expected_host: str, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
+    async def test_request_url_and_host_header(
+        self, url: str, expected_url: str, expected_host: str, mock_dns: AsyncMock, mock_ssrf_client: MagicMock
     ) -> None:
-        """The Host header includes the non-default port, matching the connect URL and RFC 9110 §7.2."""
+        """The request goes to the resolved IP, with the URL's host and non-default port as the Host header.
+
+        The Host header matches the connect URL and RFC 9110 §7.2, and replaces any the caller
+        passes, in any case.
+        """
         mock_response = AsyncMock()
         mock_response.is_redirect = False
         mock_response.raise_for_status = lambda: None
@@ -903,10 +1033,14 @@ class TestSafeDownload:
         mock_client.get.return_value = mock_response
         mock_ssrf_client.return_value = mock_client
 
-        await safe_download(url)
+        await safe_download(
+            url, headers={'Host': 'attacker.example', 'host': 'attacker.example', 'HOST': 'attacker.example'}
+        )
 
         call_args = mock_client.get.call_args
-        assert call_args[1]['headers']['Host'] == expected_host
+        assert call_args[0][0] == expected_url
+        sent_host = {name: value for name, value in call_args[1]['headers'].items() if name.lower() == 'host'}
+        assert sent_host == {'Host': expected_host}
 
     @pytest.fixture
     def serve_requests(self, mock_dns: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> Callable[[RequestHandler], None]:
@@ -954,13 +1088,39 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='maximum size of 100000 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=100_000)
 
+    @pytest.fixture
+    def decoded_sizes(self, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        """Records how many bytes each real zlib `decompress` call hands back to the gzip reader.
+
+        Their sum is the most decoded data the reader ever buffers, which its result alone
+        cannot show: a reader that decoded everything before checking the cap raises the same error.
+        """
+        sizes: list[int] = []
+        decompressobj = zlib.decompressobj
+
+        class CountingDecompressor:
+            def __init__(self, wbits: int) -> None:
+                self._decompressor = decompressobj(wbits)
+
+            def decompress(self, data: bytes, max_length: int = 0) -> bytes:
+                decoded = self._decompressor.decompress(data, max_length)
+                sizes.append(len(decoded))
+                return decoded
+
+            def __getattr__(self, name: str) -> object:
+                return getattr(self._decompressor, name)
+
+        monkeypatch.setattr(_ssrf.zlib, 'decompressobj', CountingDecompressor)
+        return sizes
+
     async def test_max_bytes_rejects_gzip_bomb_without_materializing_full_decoded_body(
-        self, serve_requests: Callable[[RequestHandler], None]
+        self, serve_requests: Callable[[RequestHandler], None], decoded_sizes: list[int]
     ) -> None:
         """A single highly compressible raw chunk is rejected without buffering the full expansion.
 
         `aiter_bytes` would materialize the entire decoded bomb before any size check; the capped
         path must use `max_length` decompression so peak decoded buffering stays near the limit.
+        It decodes exactly one byte past the limit, which tells an oversized body from one that fills it.
         """
         # ~1 MiB of zeros compresses to a tiny gzip payload delivered as one network chunk.
         encoded = gzip.compress(bytes(1_000_000))
@@ -968,19 +1128,27 @@ class TestSafeDownload:
         serve_requests(stream_response(encoded, content_encoding='gzip'))
 
         assert len(encoded) < max_bytes
-        with pytest.raises(ValueError, match=f'maximum size of {max_bytes} bytes'):
+        with pytest.raises(DownloadTooLargeError, match=f'maximum size of {max_bytes} bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
+        assert sum(decoded_sizes) == max_bytes + 1
 
+    @pytest.mark.parametrize('split', [False, True], ids=['one-chunk', 'two-chunks'])
     async def test_max_bytes_rejects_oversized_encoded_body(
-        self, serve_requests: Callable[[RequestHandler], None]
+        self, serve_requests: Callable[[RequestHandler], None], split: bool
     ) -> None:
-        """The limit bounds the encoded stream too, so a body that decodes small can't stream on unchecked."""
+        """The limit bounds the encoded stream too, so a body that decodes small can't stream on unchecked.
+
+        The encoded size is counted across chunks, each of which fits the limit on its own.
+        """
         payload = bytes(range(256))
         encoded = gzip.compress(payload)
-        max_bytes = (len(payload) + len(encoded)) // 2
-        serve_requests(stream_response(encoded, content_encoding='gzip'))
+        max_bytes = len(encoded) - 1
+        half = len(encoded) // 2
+        chunks = [encoded[:half], encoded[half:]] if split else [encoded]
+        serve_requests(chunked_stream_response(chunks, content_encoding='gzip'))
 
-        with pytest.raises(ValueError, match=f'maximum size of {max_bytes} bytes'):
+        assert len(payload) < max_bytes
+        with pytest.raises(DownloadTooLargeError, match=f'maximum size of {max_bytes} bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
 
     async def test_max_bytes_decodes_compressed_body_once(
@@ -1004,6 +1172,8 @@ class TestSafeDownload:
 
         assert response.content == b'streamed content'
         assert 'content-encoding' not in response.headers
+        # The encoded body's length no longer applies.
+        assert response.headers['content-length'] == str(len(b'streamed content'))
 
     async def test_max_bytes_follows_redirect(self, serve_requests: Callable[[RequestHandler], None]) -> None:
         """A bounded download closes each streamed redirect hop before re-requesting."""
@@ -1028,13 +1198,15 @@ class TestSafeDownload:
         response = await safe_download('https://example.com/file.txt', max_bytes=64)
         assert response.content == b'streamed content'
 
+    @pytest.mark.parametrize('max_bytes', [0, 16])
     async def test_max_bytes_rejects_oversized_streamed_identity_body(
-        self, serve_requests: Callable[[RequestHandler], None]
+        self, serve_requests: Callable[[RequestHandler], None], max_bytes: int
     ) -> None:
+        """`max_bytes=0` is a limit like any other, not a missing one."""
         serve_requests(stream_response(b'content longer than the limit'))
 
-        with pytest.raises(ValueError, match='maximum size of 16 bytes'):
-            await safe_download('https://example.com/file.txt', max_bytes=16)
+        with pytest.raises(DownloadTooLargeError, match=f'maximum size of {max_bytes} bytes'):
+            await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
 
     @pytest.mark.parametrize('max_bytes', [None, 64])
     async def test_x_gzip_alias(self, serve_requests: Callable[[RequestHandler], None], max_bytes: int | None) -> None:
@@ -1092,17 +1264,19 @@ class TestSafeDownload:
     async def test_rejects_corrupt_gzip_member(
         self, serve_requests: Callable[[RequestHandler], None], max_bytes: int | None
     ) -> None:
-        """CRC failures consistently use HTTPX's content-decoding error type."""
+        """CRC failures consistently use HTTPX's content-decoding error type, carrying zlib's reason."""
         encoded = bytearray(gzip.compress(b'corrupt gzip body'))
         encoded[-8] ^= 0xFF
         serve_requests(stream_response(bytes(encoded), content_encoding='gzip'))
 
-        with pytest.raises(httpx2.DecodingError) as exc_info:
+        with pytest.raises(
+            httpx2.DecodingError, match=r'^Invalid gzip response body: Error -3 while decompressing data: '
+        ) as exc_info:
             await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
 
         assert exc_info.value.request.url.path == '/file.txt'
 
-    @pytest.mark.parametrize('max_bytes', [None, 512])
+    @pytest.mark.parametrize('max_bytes', [None, 0, 512])
     async def test_accepts_empty_gzip_body(
         self, serve_requests: Callable[[RequestHandler], None], max_bytes: int | None
     ) -> None:
@@ -1126,15 +1300,20 @@ class TestSafeDownload:
         assert response.content == b'firstsecond'
 
     async def test_max_bytes_applies_across_gzip_members(
-        self, serve_requests: Callable[[RequestHandler], None]
+        self, serve_requests: Callable[[RequestHandler], None], decoded_sizes: list[int]
     ) -> None:
-        """The decoded-size limit is cumulative across concatenated gzip members."""
+        """The decoded-size limit is cumulative across concatenated gzip members.
+
+        The later member is decoded only up to what is left of the limit, plus the one byte that
+        shows the body is oversized.
+        """
         encoded = gzip.compress(b'a' * 40) + gzip.compress(b'b' * 40)
         assert len(encoded) < 64
         serve_requests(stream_response(encoded, content_encoding='gzip'))
 
-        with pytest.raises(ValueError, match='maximum size of 64 bytes'):
+        with pytest.raises(DownloadTooLargeError, match='maximum size of 64 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=64)
+        assert sum(decoded_sizes) == 64 + 1
 
     async def test_max_bytes_strips_identity_from_content_encoding(
         self, serve_requests: Callable[[RequestHandler], None]
@@ -1145,39 +1324,84 @@ class TestSafeDownload:
         response = await safe_download('https://example.com/file.txt', max_bytes=64)
         assert response.content == payload
 
-    @pytest.mark.parametrize('coding', ['br', 'zstd', 'deflate', 'gzip, deflate', 'not-a-real-coding'])
+    # Content codings the bounded gzip reader does not handle, each with a body encoded in it.
+    _NON_GZIP_CODINGS = [
+        # `brotli.compress(b'decoded by httpx2')`
+        pytest.param('br', bytes.fromhex('0b08806465636f6465642062792068747470783203'), id='br'),
+        # `compression.zstd.compress(b'decoded by httpx2')`
+        pytest.param('zstd', bytes.fromhex('28b52ffd20118900006465636f64656420627920687474707832'), id='zstd'),
+        pytest.param('deflate', zlib.compress(b'decoded by httpx2'), id='deflate'),
+        pytest.param('gzip, deflate', zlib.compress(gzip.compress(b'decoded by httpx2')), id='gzip, deflate'),
+        pytest.param('not-a-real-coding', b'decoded by httpx2', id='not-a-real-coding'),
+    ]
+
+    @pytest.mark.parametrize(('coding', 'encoded'), _NON_GZIP_CODINGS)
     async def test_max_bytes_rejects_unsupported_content_encoding(
-        self, serve_requests: Callable[[RequestHandler], None], coding: str
+        self, serve_requests: Callable[[RequestHandler], None], coding: str, encoded: bytes
     ) -> None:
         """Brotli/zstd/deflate/stacked/unknown codings are rejected rather than decoded unsafely."""
-
-        def handle_request(request: httpx2.Request) -> httpx2.Response:
-            # Body is never read: unsupported content-coding is rejected before streaming.
-            async def stream() -> AsyncIterator[bytes]:  # pragma: no cover
-                yield b'x'
-
-            return httpx2.Response(200, content=stream(), headers={'content-encoding': coding}, request=request)
-
-        serve_requests(handle_request)
+        serve_requests(stream_response(encoded, content_encoding=coding))
 
         with pytest.raises(ValueError, match='Unsupported content-encoding for bounded download'):
             await safe_download('https://example.com/file.txt', max_bytes=64)
 
-    async def test_max_bytes_sets_bounded_accept_encoding(
-        self, serve_requests: Callable[[RequestHandler], None]
+    @pytest.mark.parametrize(('coding', 'encoded'), _NON_GZIP_CODINGS)
+    async def test_unbounded_download_leaves_content_encoding_to_httpx2(
+        self, serve_requests: Callable[[RequestHandler], None], coding: str, encoded: bytes
     ) -> None:
-        """Bounded downloads negotiate only encodings that can be size-limited while streaming."""
-        seen: dict[str, str] = {}
+        """Without `max_bytes`, codings other than a single gzip are httpx2's to decode.
+
+        httpx2 decodes what it supports on this install and passes the rest through, so the
+        download matches what httpx2 makes of the same response on its own.
+        """
+        serve_requests(stream_response(encoded, content_encoding=coding))
+
+        response = await safe_download('https://example.com/file.txt')
+
+        assert response.content == httpx2.Response(200, content=encoded, headers={'content-encoding': coding}).content
+
+    @pytest.mark.parametrize(
+        ('headers', 'expected'),
+        [
+            pytest.param(None, 'identity, gzip', id='bounded'),
+            pytest.param({'accept-encoding': 'identity'}, 'identity', id='caller-lowercase'),
+            pytest.param({'ACCEPT-ENCODING': 'gzip'}, 'gzip', id='caller-uppercase'),
+        ],
+    )
+    async def test_max_bytes_sets_bounded_accept_encoding(
+        self, serve_requests: Callable[[RequestHandler], None], headers: dict[str, str] | None, expected: str
+    ) -> None:
+        """Bounded downloads negotiate only encodings that can be size-limited while streaming.
+
+        A caller's own `Accept-Encoding`, in any case, is sent instead.
+        """
+        seen: list[str] = []
 
         def handle_request(request: httpx2.Request) -> httpx2.Response:
-            seen['accept-encoding'] = request.headers.get('accept-encoding', '')
+            seen.extend(request.headers.get_list('accept-encoding'))
             return stream_response(b'ok')(request)
 
         serve_requests(handle_request)
 
-        response = await safe_download('https://example.com/file.txt', max_bytes=64)
+        response = await safe_download('https://example.com/file.txt', headers=headers, max_bytes=64)
         assert response.content == b'ok'
-        assert seen['accept-encoding'] == 'identity, gzip'
+        assert seen == [expected]
+
+    async def test_unbounded_download_sends_the_client_default_accept_encoding(
+        self, serve_requests: Callable[[RequestHandler], None]
+    ) -> None:
+        """Without `max_bytes`, the client's default `Accept-Encoding` goes out unchanged."""
+        seen: list[str] = []
+
+        def handle_request(request: httpx2.Request) -> httpx2.Response:
+            seen.extend(request.headers.get_list('accept-encoding'))
+            return stream_response(b'ok')(request)
+
+        serve_requests(handle_request)
+
+        response = await safe_download('https://example.com/file.txt')
+        assert response.content == b'ok'
+        assert seen == [httpx2.AsyncClient().headers['accept-encoding']]
 
     async def test_max_bytes_rejects_oversized_preloaded_body(
         self, serve_requests: Callable[[RequestHandler], None]
@@ -1200,12 +1424,22 @@ class TestSafeDownload:
         with pytest.raises(ValueError, match='maximum size of 64 bytes'):
             await safe_download('https://example.com/file.txt', max_bytes=64)
 
+    @pytest.mark.parametrize(
+        ('payload', 'max_bytes'),
+        [
+            pytest.param(b'x' * 100, 100, id='decoded-size-at-cap'),
+            pytest.param(bytes(range(256)), len(gzip.compress(bytes(range(256)))), id='encoded-size-at-cap'),
+        ],
+    )
     async def test_max_bytes_accepts_gzip_body_exactly_at_cap_with_split_trailer(
-        self, serve_requests: Callable[[RequestHandler], None]
+        self, serve_requests: Callable[[RequestHandler], None], payload: bytes, max_bytes: int
     ) -> None:
-        """A valid gzip body whose size equals the cap must not fail when the trailer is a separate chunk."""
-        payload = b'x' * 100
+        """A valid gzip body whose size equals the cap must not fail when the trailer is a separate chunk.
+
+        Either size can be the one at the cap: the decoded body, or the encoded stream.
+        """
         encoded = gzip.compress(payload)
+        assert max(len(payload), len(encoded)) == max_bytes
 
         def handle_request(request: httpx2.Request) -> httpx2.Response:
             async def stream() -> AsyncIterator[bytes]:
@@ -1216,7 +1450,7 @@ class TestSafeDownload:
 
         serve_requests(handle_request)
 
-        response = await safe_download('https://example.com/file.txt', max_bytes=100)
+        response = await safe_download('https://example.com/file.txt', max_bytes=max_bytes)
         assert response.content == payload
 
     async def test_max_bytes_rejects_gzip_flush_overflow(
@@ -1229,7 +1463,9 @@ class TestSafeDownload:
             unused_data = b''
 
             def decompress(self, data: bytes, max_length: int = 0) -> bytes:
-                return b'abcd'
+                # No output for no input, like zlib: a decoder that drains until the output
+                # runs dry, as httpx2's does, would otherwise loop forever on this fake.
+                return b'abcd' if data else b''
 
             @property
             def unconsumed_tail(self) -> bytes:
@@ -1274,7 +1510,18 @@ class TestSafeDownload:
 
         assert exc_info.value.request.url.path == '/file.txt'
 
-    async def test_redirect_followed(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+    @pytest.mark.parametrize(
+        ('redirect_ip', 'allow_local'),
+        [('140.82.114.4', False), ('192.168.1.1', True)],
+        ids=['public', 'private-with-allow-local'],
+    )
+    async def test_redirect_followed(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock, redirect_ip: str, allow_local: bool
+    ) -> None:
+        """Each hop goes to its own resolved IP and TLS name, and `allow_local` applies to every hop.
+
+        Both responses are closed.
+        """
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://cdn.example.com/file.txt'}
@@ -1286,35 +1533,61 @@ class TestSafeDownload:
 
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('140.82.114.4', 0))],
+            [(2, 1, 6, '', (redirect_ip, 0))],
         ]
 
         mock_client = AsyncMock()
         mock_client.get.side_effect = [redirect_response, final_response]
         mock_ssrf_client.return_value = mock_client
 
-        response = await safe_download('https://example.com/file.txt')
+        response = await safe_download('https://example.com/file.txt', allow_local=allow_local)
         assert response.content == b'final content'
         assert mock_client.get.call_count == 2
 
-    async def test_redirect_to_private_ip_blocked(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+        second_call = mock_client.get.call_args_list[1]
+        assert second_call[0][0] == f'https://{redirect_ip}/file.txt'
+        assert second_call[1]['headers']['Host'] == 'cdn.example.com'
+        assert second_call[1]['extensions'] == {'sni_hostname': 'cdn.example.com'}
+        redirect_response.aclose.assert_awaited_once()
+        final_response.aclose.assert_awaited_once()
+
+    @pytest.mark.parametrize(
+        ('redirect_ip', 'allow_local', 'error'),
+        [
+            ('192.168.1.1', False, 'Access to private/internal IP address (192.168.1.1) is blocked.'),
+            ('169.254.169.254', False, 'Access to cloud metadata service (169.254.169.254) is blocked'),
+            ('169.254.169.254', True, 'Access to cloud metadata service (169.254.169.254) is blocked'),
+        ],
+    )
+    async def test_redirect_to_private_ip_blocked(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock, redirect_ip: str, allow_local: bool, error: str
+    ) -> None:
+        """A redirect hop is validated like the first one, before it is requested.
+
+        A metadata IP is blocked even with `allow_local=True`.
+        """
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'http://internal.local/file.txt'}
 
         mock_dns.side_effect = [
             [(2, 1, 6, '', ('93.184.215.14', 0))],
-            [(2, 1, 6, '', ('192.168.1.1', 0))],
+            [(2, 1, 6, '', (redirect_ip, 0))],
         ]
 
         mock_client = AsyncMock()
         mock_client.get.return_value = redirect_response
         mock_ssrf_client.return_value = mock_client
 
-        with pytest.raises(ValueError, match='Access to private/internal IP address'):
-            await safe_download('https://example.com/file.txt')
+        with pytest.raises(ValueError, match=re.escape(error)):
+            await safe_download('https://example.com/file.txt', allow_local=allow_local)
+        assert mock_client.get.call_count == 1
 
-    async def test_max_redirects_exceeded(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+    @pytest.mark.parametrize('max_redirects', [None, 0, 3])
+    async def test_max_redirects_exceeded(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock, max_redirects: int | None
+    ) -> None:
+        """The redirect past the limit raises without being requested; `None` leaves the default limit."""
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
         redirect_response.headers = {'location': 'https://example.com/redirect'}
@@ -1325,13 +1598,28 @@ class TestSafeDownload:
         mock_client.get.return_value = redirect_response
         mock_ssrf_client.return_value = mock_client
 
-        with pytest.raises(ValueError, match=f'Too many redirects \\({_MAX_REDIRECTS + 1}\\)'):
-            await safe_download('https://example.com/file.txt')
+        limit = _MAX_REDIRECTS if max_redirects is None else max_redirects
+        with pytest.raises(ValueError, match=rf'^Too many redirects \({limit + 1}\)\. Maximum allowed: {limit}$'):
+            if max_redirects is None:
+                await safe_download('https://example.com/file.txt')
+            else:
+                await safe_download('https://example.com/file.txt', max_redirects=max_redirects)
+        assert mock_client.get.call_count == limit + 1
 
-    async def test_relative_redirect_resolved(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
+    @pytest.mark.parametrize(
+        ('location', 'expected_url'),
+        [
+            ('/new-path/file.txt', 'https://93.184.215.14/new-path/file.txt'),
+            ('file2.txt', 'https://93.184.215.14/old-path/file2.txt'),
+        ],
+        ids=['absolute-path', 'relative-path'],
+    )
+    async def test_relative_redirect_resolved(
+        self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock, location: str, expected_url: str
+    ) -> None:
         redirect_response = AsyncMock()
         redirect_response.is_redirect = True
-        redirect_response.headers = {'location': '/new-path/file.txt'}
+        redirect_response.headers = {'location': location}
 
         final_response = AsyncMock()
         final_response.is_redirect = False
@@ -1348,7 +1636,7 @@ class TestSafeDownload:
         assert response.content == b'final content'
 
         second_call = mock_client.get.call_args_list[1]
-        assert '/new-path/file.txt' in second_call[0][0]
+        assert second_call[0][0] == expected_url
 
     async def test_missing_location_header(self, mock_dns: AsyncMock, mock_ssrf_client: MagicMock) -> None:
         redirect_response = AsyncMock()
@@ -1463,12 +1751,13 @@ class TestSafeDownload:
         assert sent_cookies == [None, 'sid=a']
 
     @pytest.mark.parametrize(
-        ('start_url', 'redirect_url', 'set_cookie', 'expected_cookie'),
+        ('start_url', 'redirect_url', 'set_cookie', 'headers', 'expected_cookie'),
         [
             pytest.param(
                 'https://a.example/start',
                 'https://a.example/download',
                 'sid=secret; Path=/',
+                None,
                 'sid=secret',
                 id='same-host',
             ),
@@ -1477,12 +1766,14 @@ class TestSafeDownload:
                 'https://cdn.example.com/download',
                 'sid=secret; Domain=example.com; Path=/',
                 None,
+                None,
                 id='domain-cookie-not-shared-between-hosts',
             ),
             pytest.param(
                 'https://attacker.co.uk/start',
                 'https://bank.co.uk/download',
                 'sid=secret; Domain=co.uk; Path=/',
+                None,
                 None,
                 id='public-suffix-cookie-not-shared-between-hosts',
             ),
@@ -1491,12 +1782,14 @@ class TestSafeDownload:
                 'https://52.184.216.34/download',
                 'sid=secret; Domain=184.216.34; Path=/',
                 None,
+                None,
                 id='ip-suffix-cookie-not-shared-between-hosts',
             ),
             pytest.param(
                 'https://evil.example.com/start',
                 'https://victim.example.com/download',
                 '__Host-sid=secret; Domain=example.com; Path=/; Secure',
+                None,
                 None,
                 id='protected-cookie-not-shared-between-hosts',
             ),
@@ -1505,6 +1798,7 @@ class TestSafeDownload:
                 'https://a.example/public/download',
                 'sid=secret; Path=/private',
                 None,
+                None,
                 id='path-mismatch',
             ),
             pytest.param(
@@ -1512,14 +1806,24 @@ class TestSafeDownload:
                 'http://a.example/download',
                 'sid=secret; Secure; Path=/',
                 None,
+                None,
                 id='secure-cookie-downgrade',
             ),
             pytest.param(
                 'https://a.example:8443/start',
                 'https://a.example:9443/download',
                 'sid=secret; Path=/',
+                None,
                 'sid=secret',
                 id='cookies-ignore-port',
+            ),
+            pytest.param(
+                'https://a.example/start',
+                'https://a.example/download',
+                'sid=secret; Path=/',
+                {'cookie': 'caller=1'},
+                'caller=1',
+                id='caller-cookie-replaces-the-jar',
             ),
         ],
     )
@@ -1529,6 +1833,7 @@ class TestSafeDownload:
         start_url: str,
         redirect_url: str,
         set_cookie: str,
+        headers: dict[str, str] | None,
         expected_cookie: str | None,
     ) -> None:
         sent_cookies: list[str | None] = []
@@ -1547,7 +1852,7 @@ class TestSafeDownload:
             return httpx2.Response(200, content=b'final', request=request)
 
         serve_requests(handler)
-        await safe_download(start_url)
+        await safe_download(start_url, headers=headers)
 
         assert sent_cookies == [expected_cookie]
 
@@ -1812,9 +2117,10 @@ class TestSensitiveHeaderStrippingOnRedirects:
     assertions are about what we send rather than what a server replies.
     """
 
+    # One spelling per case: a caller's header names are matched case-insensitively.
     _SENSITIVE_VALUES = {
-        'Authorization': 'Bearer SECRET',
-        'Cookie': 'session=abc',
+        'authorization': 'Bearer SECRET',
+        'COOKIE': 'session=abc',
         'Proxy-Authorization': 'Basic abc',
     }
 

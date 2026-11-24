@@ -7,7 +7,7 @@ import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock
 
 import anyio.to_thread
@@ -1776,7 +1776,7 @@ class TestNestedTraversal:
                 assert len(_repo_notes(messages)) == 1
                 yield 'done'
 
-        def list_dir(target: Any) -> str:
+        def list_dir(target: object) -> str:
             return 'listed'
 
         with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
@@ -1807,7 +1807,7 @@ class TestNestedTraversal:
                 assert outside.as_posix() in notes[0]
                 yield 'done'
 
-        def list_dir(target: Any) -> str:
+        def list_dir(target: object) -> str:
             return 'listed'
 
         with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):
@@ -1834,7 +1834,7 @@ class TestNestedTraversal:
             else:
                 yield 'done'
 
-        def list_dir(target: Any) -> str:
+        def list_dir(target: object) -> str:
             return 'listed'
 
         with pytest.warns(HarnessDeprecationWarning, match='Traversal detection now reacts'):

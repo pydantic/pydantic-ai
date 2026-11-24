@@ -13,31 +13,42 @@ omits the status and truncates stack traces. A channel that leaks names itself i
 
 Run metadata is deliberately not a channel here. It comes from the agent definition rather than
 from a user, and is expected to appear on spans; content in there is the caller's own doing.
+
+`ENTRY_POINT_PARAMETERS` ties the sweep to every parameter of the entry points that start a run or a
+realtime session. Each one names the channels a scenario drives through it, or is checked to be
+recorded nowhere, or says why it needs neither, so a new parameter fails until someone decides.
 """
 
 from __future__ import annotations
 
+import inspect
 import json
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import httpx
 import httpx2
 import pytest
 from opentelemetry.context import Context
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationInfo, field_validator
 
 from pydantic_ai import (
     Agent,
+    Conversation,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ExternalToolset,
     FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     RunContext,
     TextPart,
+    ToolApproved,
     ToolCallPart,
+    ToolDenied,
     UserPromptPart,
 )
 from pydantic_ai._instrumentation import (
@@ -73,9 +84,13 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, FileSearchTool, MCPServerTool
 from pydantic_ai.output import PromptedOutput
+from pydantic_ai.realtime import RealtimeModelSettings
+from pydantic_ai.realtime.codec import InputTranscript, OutputTranscript, ResponseDone, ToolCall
 from pydantic_ai.tools import Tool, ToolDefinition
 
 from .conftest import try_import
+from .manifests import assert_classified
+from .realtime.test_session import FakeRealtimeConnection, FakeRealtimeModel
 
 with try_import() as otel_sdk_installed:
     # `opentelemetry-sdk` arrives with the `logfire` extra, so it is not importable in the
@@ -88,10 +103,10 @@ with try_import() as mcp_installed:
     from fastmcp import Client, FastMCP
     from fastmcp.client.transports import StreamableHttpTransport
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai import _mcp_compat
     from pydantic_ai.mcp import MCPToolset
 
-MCP_SDK_V2 = mcp_installed() and is_mcp_sdk_v2()
+MCP_SDK_V2 = mcp_installed() and _mcp_compat.MCP_SDK_V2
 
 pytestmark = [
     pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed'),
@@ -105,6 +120,7 @@ SECRETS = {
     'system_prompt': 'SENTINEL-system-prompt',
     'message_history': 'SENTINEL-message-history',
     'tool_args': 'SENTINEL-tool-args',
+    'validated_args': 'SENTINEL-validated-args',
     'tool_return': 'SENTINEL-tool-return',
     'tool_retry': 'SENTINEL-tool-retry',
     'tool_failed': 'SENTINEL-tool-failed',
@@ -117,6 +133,15 @@ SECRETS = {
     'capability_instruction': 'SENTINEL-capability-instruction',
     'capability_data': 'SENTINEL-capability-data',
     'capability_description': 'SENTINEL-capability-description',
+    'conversation': 'SENTINEL-conversation',
+    'spec': 'SENTINEL-spec',
+    'toolset_instructions': 'SENTINEL-toolset-instructions',
+    'approval_override_args': 'SENTINEL-approval-override-args',
+    'denial_message': 'SENTINEL-denial-message',
+    'external_tool_result': 'SENTINEL-external-tool-result',
+    'model_settings': 'SENTINEL-model-settings',
+    'deps': 'SENTINEL-deps',
+    'validation_context': 'SENTINEL-validation-context',
 }
 
 
@@ -913,6 +938,135 @@ async def test_no_content_reaches_telemetry_from_message_history(include_content
     check(exporter, include_content, {'user_prompt', 'message_history', 'model_text'})
 
 
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_conversation(include_content: bool) -> None:
+    """The messages of a `Conversation` the caller continues, in place of `message_history`."""
+    settings, exporter = redacted_setup(include_content)
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)])
+    conversation = Conversation(
+        messages=[
+            ModelRequest(parts=[UserPromptPart(content=SECRETS['conversation'])]),
+            ModelResponse(parts=[TextPart('earlier reply')]),
+        ]
+    )
+    await agent.run(SECRETS['user_prompt'], conversation=conversation)
+
+    check(exporter, include_content, {'user_prompt', 'conversation', 'model_text'})
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_what_a_run_adds(include_content: bool) -> None:
+    """Instructions a run adds to the agent's: its own, an agent spec's, and a toolset's."""
+    settings, exporter = redacted_setup(include_content)
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
+
+    agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)])
+    await agent.run(
+        SECRETS['user_prompt'],
+        instructions=SECRETS['instructions'],
+        spec={'instructions': SECRETS['spec']},
+        toolsets=[FunctionToolset(instructions=SECRETS['toolset_instructions'])],
+    )
+
+    check(exporter, include_content, {'user_prompt', 'instructions', 'spec', 'toolset_instructions', 'model_text'})
+
+
+class AddAccount(AbstractCapability[Any]):
+    """A validation hook that adds a value the model never sent, so only the deferred call's `validated_args` holds it."""
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'account': SECRETS['validated_args']}
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_a_deferred_calls_validated_args(include_content: bool) -> None:
+    """The run's `DeferredToolRequests` output carries the arguments as a validation hook left them."""
+    settings, exporter = redacted_setup(include_content)
+
+    def call_tool(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('transfer', {'amount': 1})])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[AddAccount(), Instrumentation(settings=settings)],
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def transfer(amount: int) -> str:  # pragma: no cover
+        # Never approved: the run ends on the approval request.
+        return str(amount)
+
+    result = await agent.run(SECRETS['user_prompt'])
+    assert isinstance(result.output, DeferredToolRequests)
+
+    check(exporter, include_content, {'user_prompt', 'validated_args'})
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_deferred_tool_results(include_content: bool) -> None:
+    """What the caller answers deferred calls with: an approval's arguments, a denial's message, an external result."""
+    settings, exporter = redacted_setup(include_content)
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('transfer', {'account': 'model-chosen'}, tool_call_id='approved'),
+                    ToolCallPart('delete', {}, tool_call_id='denied'),
+                    ToolCallPart('lookup', {}, tool_call_id='external'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    transferred_to: list[str] = []
+
+    def transfer(account: str) -> str:
+        transferred_to.append(account)
+        return SECRETS['tool_return']
+
+    def delete() -> str:  # pragma: no cover
+        # Denied: the call never runs.
+        return 'deleted'
+
+    agent = Agent(
+        FunctionModel(respond),
+        output_type=[str, DeferredToolRequests],
+        tools=[Tool(transfer, requires_approval=True), Tool(delete, requires_approval=True)],
+        toolsets=[ExternalToolset([ToolDefinition(name='lookup')])],
+        capabilities=[Instrumentation(settings=settings)],
+    )
+    paused = await agent.run(SECRETS['user_prompt'])
+    assert isinstance(paused.output, DeferredToolRequests)
+    result = await agent.run(
+        message_history=paused.all_messages(),
+        deferred_tool_results=DeferredToolResults(
+            approvals={
+                'approved': ToolApproved(override_args={'account': SECRETS['approval_override_args']}),
+                'denied': ToolDenied(SECRETS['denial_message']),
+            },
+            calls={'external': SECRETS['external_tool_result']},
+        ),
+    )
+    assert result.output == 'done'
+    # The approved call has to have run with the overriding arguments, or their sentinel proves nothing.
+    assert transferred_to == [SECRETS['approval_override_args']]
+
+    check(
+        exporter,
+        include_content,
+        {'user_prompt', 'approval_override_args', 'denial_message', 'external_tool_result', 'tool_return'},
+    )
+
+
 @dataclass(kw_only=True)
 class _RedactedNudgePart(InstructionCapabilityPart, namespace='test_redaction', name='nudge'):
     pass
@@ -1132,6 +1286,381 @@ async def test_no_content_reaches_telemetry_when_request_parameters_cannot_be_se
     assert bool(exported_parameters) is include_content
 
     check(exporter, include_content, {'user_prompt', 'instructions'})
+
+
+class _FakeRealtimeSettings(RealtimeModelSettings, total=False):
+    """Provider realtime settings with a field for prompt text, as `openai_live_instructions` is."""
+
+    fake_instructions: str
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('seed', ['message_history', 'conversation'])
+async def test_no_content_reaches_telemetry_from_a_realtime_session(
+    include_content: bool, seed: Literal['message_history', 'conversation']
+) -> None:
+    """A realtime session's instructions, settings, toolsets, capabilities and seeded history, and what is said in it.
+
+    The session records the settings it connected with on the session span and on every `chat` span.
+    """
+    settings, exporter = redacted_setup(include_content)
+
+    def lookup(query: str) -> str:
+        return SECRETS['tool_return']
+
+    connection = FakeRealtimeConnection(
+        [
+            InputTranscript(text=SECRETS['user_prompt'], is_final=True),
+            ToolCall(tool_call_id='call-1', tool_name='lookup', args=json.dumps({'query': SECRETS['tool_args']})),
+            OutputTranscript(text=SECRETS['model_text'], is_final=True),
+            ResponseDone(),
+        ]
+    )
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content=SECRETS[seed])]),
+        ModelResponse(parts=[TextPart('earlier reply')]),
+    ]
+    agent = Agent(capabilities=[Instrumentation(settings=settings)])
+    realtime = agent.realtime(
+        FakeRealtimeModel(connection),
+        instructions=SECRETS['instructions'],
+        model_settings=_FakeRealtimeSettings(fake_instructions=SECRETS['model_settings']),
+        toolsets=[FunctionToolset([lookup], instructions=SECRETS['toolset_instructions'])],
+        capabilities=[Capability(instructions=SECRETS['capability_instruction'])],
+        message_history=history if seed == 'message_history' else None,
+        conversation=Conversation(messages=history) if seed == 'conversation' else None,
+    )
+    async with realtime.session() as session:
+        _ = [event async for event in session]
+
+    check(
+        exporter,
+        include_content,
+        {
+            'user_prompt',
+            'tool_args',
+            'tool_return',
+            'model_text',
+            'instructions',
+            'model_settings',
+            'toolset_instructions',
+            'capability_instruction',
+            seed,
+        },
+    )
+
+
+@dataclass(frozen=True)
+class Swept:
+    """A parameter a scenario in this module drives a sentinel through, so the sweep covers it."""
+
+    channels: tuple[str, ...]
+    """The `SECRETS` channels that scenario drives through the parameter."""
+
+    reason: str
+
+
+@dataclass(frozen=True)
+class NotExported:
+    """A parameter that can carry text, which no span records even with content capture on.
+
+    `probe` runs an agent with a sentinel in the parameter, and checks the sentinel reached the code that reads it.
+    `test_a_parameter_no_span_records_exports_nothing_with_content_on` runs it with content capture on.
+    """
+
+    probe: Callable[[InstrumentationSettings], Awaitable[None]]
+    reason: str
+
+
+@dataclass(frozen=True)
+class ExportedByDesign:
+    """An identity or correlation value that spans record whatever the content setting, as the cited doc or test says."""
+
+    reason: str
+
+
+@dataclass(frozen=True)
+class NotContent:
+    """A parameter that can't hold user text."""
+
+    reason: str
+
+
+async def _probe_run_model_settings(settings: InstrumentationSettings) -> None:
+    received: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.append(str(info.model_settings))
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[Instrumentation(settings=settings)])
+    await agent.run('go', model_settings={'extra_body': {'note': SECRETS['model_settings']}})
+    assert SECRETS['model_settings'] in received[0]
+
+
+class _ContextValidatedOutput(BaseModel):
+    answer: str
+
+    @field_validator('answer')
+    @classmethod
+    def requires_the_validation_context(cls, answer: str, info: ValidationInfo) -> str:
+        if info.context != SECRETS['validation_context']:
+            raise ValueError('the validation context did not reach the output validator')  # pragma: no cover
+        return answer
+
+
+async def _probe_run_validation_context(settings: InstrumentationSettings) -> None:
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('final_result', {'answer': 'done'})])
+
+    agent = Agent(
+        FunctionModel(respond),
+        output_type=_ContextValidatedOutput,
+        validation_context=SECRETS['validation_context'],
+        capabilities=[Instrumentation(settings=settings)],
+    )
+    result = await agent.run('go')
+    assert result.output.answer == 'done'
+
+
+async def _probe_run_deps(settings: InstrumentationSettings) -> None:
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('read_deps', {})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), deps_type=str, capabilities=[Instrumentation(settings=settings)])
+    read: list[str] = []
+
+    @agent.tool
+    def read_deps(ctx: RunContext[str]) -> str:
+        read.append(ctx.deps)
+        return 'read'
+
+    await agent.run('go', deps=SECRETS['deps'])
+    assert read == [SECRETS['deps']]
+
+
+async def _probe_realtime_deps(settings: InstrumentationSettings) -> None:
+    agent = Agent(deps_type=str, capabilities=[Instrumentation(settings=settings)])
+    read: list[str] = []
+
+    @agent.tool
+    def read_deps(ctx: RunContext[str]) -> str:
+        read.append(ctx.deps)
+        return 'read'
+
+    connection = FakeRealtimeConnection(
+        [ToolCall(tool_call_id='call-1', tool_name='read_deps', args='{}'), ResponseDone()]
+    )
+    async with agent.realtime(FakeRealtimeModel(connection), deps=SECRETS['deps']).session() as session:
+        _ = [event async for event in session]
+    assert read == [SECRETS['deps']]
+
+
+EntryPointGroup = Literal['run', 'realtime']
+
+ENTRY_POINTS: dict[EntryPointGroup, tuple[Callable[..., object], ...]] = {
+    'run': (
+        Agent.__init__,
+        Agent.run,
+        Agent.run_sync,
+        Agent.iter,
+        Agent.run_stream,
+        Agent.run_stream_sync,
+        Agent.run_stream_events,
+    ),
+    'realtime': (Agent.realtime,),
+}
+"""The entry points whose parameters `ENTRY_POINT_PARAMETERS` classifies, by the group that keys them."""
+
+_TOOL_DEFINITIONS_BY_DESIGN = (
+    'Tool names, descriptions and schemas go into `gen_ai.tool.definitions`, which `build_tool_definitions` in '
+    '`pydantic_ai/_instrumentation.py` records whatever the content setting.'
+)
+
+ENTRY_POINT_PARAMETERS: dict[tuple[EntryPointGroup, str], Swept | NotExported | ExportedByDesign | NotContent] = {
+    ('run', 'model'): ExportedByDesign(
+        "The model's name is the run span's `model_name` and each request span's `gen_ai.request.model`, per "
+        '`tests/test_logfire.py::test_logfire`.'
+    ),
+    ('run', 'output_type'): Swept(
+        channels=('prompted_output_template',),
+        reason='A `PromptedOutput` template, in `test_no_content_reaches_telemetry_through_a_fallback_refresh`. '
+        f'Output tools are tools: {_TOOL_DEFINITIONS_BY_DESIGN}',
+    ),
+    ('run', 'instructions'): Swept(
+        channels=('instructions',),
+        reason="The agent's in `test_no_content_reaches_telemetry_on_a_successful_run`, a run's in "
+        '`test_no_content_reaches_telemetry_from_what_a_run_adds`.',
+    ),
+    ('run', 'system_prompt'): Swept(
+        channels=('system_prompt',), reason='In `test_no_content_reaches_telemetry_on_a_successful_run`.'
+    ),
+    ('run', 'deps_type'): NotContent('A type, which only checks `deps`.'),
+    ('run', 'name'): ExportedByDesign(
+        'Names the run span and is its `gen_ai.agent.name`, per `tests/test_logfire.py::test_logfire`.'
+    ),
+    ('run', 'description'): ExportedByDesign(
+        "The run span's `gen_ai.agent.description`, per `tests/test_logfire.py::test_agent_description`; a "
+        '`TemplateStr` renders it from `deps`, per `tests/test_logfire.py::test_instrumentation_capability_template_description`.'
+    ),
+    ('run', 'model_settings'): NotExported(
+        _probe_run_model_settings,
+        'Only numeric OTel-spec settings become `gen_ai.request.*` attributes (`model_settings_attributes`); text '
+        'such as `extra_body` is recorded nowhere. The probe sends the sentinel in `extra_body`.',
+    ),
+    ('run', 'retries'): NotContent('Retry budgets: an int or `AgentRetries` counts.'),
+    ('run', 'validation_context'): NotExported(
+        _probe_run_validation_context,
+        'Handed to Pydantic validators, which no span records. The probe has an output validator require the sentinel.',
+    ),
+    ('run', 'tools'): Swept(
+        channels=('tool_return',),
+        reason='A tool passed in `tools=` returns it in `test_no_content_reaches_telemetry_from_deferred_tool_results`; '
+        'the other tool channels go through the same function toolset via `@agent.tool_plain`. '
+        f'{_TOOL_DEFINITIONS_BY_DESIGN}',
+    ),
+    ('run', 'toolsets'): Swept(
+        channels=('toolset_instructions',),
+        reason=f"A toolset's instructions, in `test_no_content_reaches_telemetry_from_what_a_run_adds`. {_TOOL_DEFINITIONS_BY_DESIGN}",
+    ),
+    ('run', 'defer_model_check'): NotContent('A bool.'),
+    ('run', 'end_strategy'): NotContent('A `Literal` saying when the run stops.'),
+    ('run', 'metadata'): ExportedByDesign(
+        "The module docstring says why; the run span's `metadata`, per "
+        '`tests/test_logfire.py::test_logfire_metadata_values`.'
+    ),
+    ('run', 'tool_timeout'): NotContent('Seconds.'),
+    ('run', 'max_concurrency'): NotContent('A concurrency limit.'),
+    ('run', 'capabilities'): Swept(
+        channels=('capability_instruction', 'capability_data', 'capability_description'),
+        reason='In `test_no_content_reaches_telemetry_from_capability_parts` and '
+        '`test_no_content_reaches_telemetry_from_a_deferred_capability_catalog`.',
+    ),
+    ('run', 'user_prompt'): Swept(channels=('user_prompt',), reason='In every scenario.'),
+    ('run', 'conversation'): Swept(
+        channels=('conversation',),
+        reason='Its messages, in `test_no_content_reaches_telemetry_from_a_conversation`. Its `conversation_id` '
+        'is exported by design, like the `conversation_id` parameter.',
+    ),
+    ('run', 'message_history'): Swept(
+        channels=('message_history',), reason='In `test_no_content_reaches_telemetry_from_message_history`.'
+    ),
+    ('run', 'deferred_tool_results'): Swept(
+        channels=('approval_override_args', 'denial_message', 'external_tool_result'),
+        reason='In `test_no_content_reaches_telemetry_from_deferred_tool_results`.',
+    ),
+    ('run', 'conversation_id'): ExportedByDesign(
+        "The run span's `gen_ai.conversation.id`, per `docs/message-history.md`."
+    ),
+    ('run', 'run_id'): ExportedByDesign(
+        "The run span's `gen_ai.agent.call.id`, per `tests/test_logfire.py::test_logfire_explicit_run_id`."
+    ),
+    ('run', 'deps'): NotExported(
+        _probe_run_deps,
+        'Handed to tools, instructions and hooks, which no span records it from; a `TemplateStr` `description` '
+        'rendered from it is the description, exported by design. The probe has a tool read the sentinel.',
+    ),
+    ('run', 'usage_limits'): NotContent('Request and token counts.'),
+    ('run', 'cancellation_token'): NotContent('A handle to cancel the run.'),
+    ('run', 'timeout'): NotContent('Seconds.'),
+    ('run', 'usage'): NotContent('Token and request counts to start from.'),
+    ('run', 'infer_name'): NotContent('A bool.'),
+    ('run', 'event_stream_handler'): NotContent(
+        'A callable the run hands its events to: it receives content rather than supplying any.'
+    ),
+    ('run', 'workspace'): ExportedByDesign(
+        "Its provider and id are the run span's `pydantic_ai.workspace.*`, per "
+        '`test_workspace_identity_is_recorded_without_content`.'
+    ),
+    ('run', 'spec'): Swept(
+        channels=('spec',),
+        reason='Its instructions, in `test_no_content_reaches_telemetry_from_what_a_run_adds`. The rest of a spec '
+        "sets the agent's other parameters, classified here under their own names.",
+    ),
+    ('realtime', 'model'): ExportedByDesign(
+        "The model's name is the session span's `model_name`, per "
+        '`tests/realtime/test_instrumentation.py::test_session_and_tool_spans_with_usage`.'
+    ),
+    ('realtime', 'deps'): NotExported(
+        _probe_realtime_deps, 'Handed to tools, which no span records it from. The probe has a tool read the sentinel.'
+    ),
+    ('realtime', 'model_settings'): Swept(
+        channels=('model_settings',),
+        reason='A provider setting holding prompt text, in `test_no_content_reaches_telemetry_from_a_realtime_session`.',
+    ),
+    ('realtime', 'instructions'): Swept(
+        channels=('instructions',), reason='In `test_no_content_reaches_telemetry_from_a_realtime_session`.'
+    ),
+    ('realtime', 'toolsets'): Swept(
+        channels=('toolset_instructions', 'tool_args', 'tool_return'),
+        reason="A toolset's instructions, and a call's arguments and result, in "
+        f'`test_no_content_reaches_telemetry_from_a_realtime_session`. {_TOOL_DEFINITIONS_BY_DESIGN}',
+    ),
+    ('realtime', 'capabilities'): Swept(
+        channels=('capability_instruction',),
+        reason="A capability's instructions, in `test_no_content_reaches_telemetry_from_a_realtime_session`.",
+    ),
+    ('realtime', 'usage'): NotContent('Token and request counts to start from.'),
+    ('realtime', 'usage_limits'): NotContent('Request and token counts.'),
+    ('realtime', 'metadata'): ExportedByDesign(
+        "The session span's `metadata`, with content capture off too, per "
+        '`tests/realtime/test_instrumentation.py::test_include_content_false_redacts_transcript_messages`.'
+    ),
+    ('realtime', 'conversation_id'): ExportedByDesign(
+        "The session span's `gen_ai.conversation.id`, per "
+        '`tests/realtime/test_instrumentation.py::test_session_span_sets_conversation_id`.'
+    ),
+    ('realtime', 'run_id'): ExportedByDesign(
+        "The session span's `gen_ai.agent.call.id`, per "
+        '`tests/realtime/test_instrumentation.py::test_session_and_tool_spans_with_usage`.'
+    ),
+    ('realtime', 'conversation'): Swept(
+        channels=('conversation',),
+        reason='Its messages seed the session, in `test_no_content_reaches_telemetry_from_a_realtime_session`.',
+    ),
+    ('realtime', 'message_history'): Swept(
+        channels=('message_history',),
+        reason='Seeds the session, in `test_no_content_reaches_telemetry_from_a_realtime_session`.',
+    ),
+}
+"""How content each entry-point parameter carries is kept out of telemetry, keyed by entry-point group and name."""
+
+
+@pytest.mark.parametrize('group', list(ENTRY_POINTS))
+def test_every_entry_point_parameter_is_classified(group: EntryPointGroup) -> None:
+    parameters: set[tuple[EntryPointGroup, str]] = {
+        (group, name)
+        for entry_point in ENTRY_POINTS[group]
+        for name in inspect.signature(entry_point).parameters
+        if name != 'self'
+    }
+    table = {key: entry for key, entry in ENTRY_POINT_PARAMETERS.items() if key[0] == group}
+    assert_classified(parameters, table, complete_walk=True, table_name='ENTRY_POINT_PARAMETERS')
+    unknown = {
+        name: entry.channels
+        for (_, name), entry in table.items()
+        if isinstance(entry, Swept) and not set(entry.channels) <= SECRETS.keys()
+    }
+    assert not unknown, f'`Swept` entries name channels `SECRETS` lacks: {unknown}'
+
+
+@pytest.mark.parametrize(
+    'entry',
+    [
+        pytest.param(entry, id=f'{group}.{name}')
+        for (group, name), entry in ENTRY_POINT_PARAMETERS.items()
+        if isinstance(entry, NotExported)
+    ],
+)
+async def test_a_parameter_no_span_records_exports_nothing_with_content_on(entry: NotExported) -> None:
+    settings, exporter = redacted_setup(include_content=True)
+    await entry.probe(settings)
+    spans = exporter.get_finished_spans()
+    assert spans, 'no spans exported: the probe proves nothing about redaction'
+    leaked = leaked_channels(spans)
+    assert not leaked, f'{sorted(leaked)} reached telemetry: classify the parameter as `Swept` and sweep it'
 
 
 def test_a_content_policy_from_another_span_is_not_trusted() -> None:

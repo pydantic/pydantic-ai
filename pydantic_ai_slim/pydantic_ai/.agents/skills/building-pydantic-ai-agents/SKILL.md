@@ -255,6 +255,12 @@ always the end of audible speech: on WebRTC sidebands, track playback with `Real
 later response for them (history keeps them). Before
 passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
 chunks carry no sample-rate metadata.
+On OpenAI GPT-Live, the agent's instructions go to the delegated backend; to change how the voice model speaks
+mid-call, use `session.append_voice_instructions(text)` (at most 500 tokens per call; other models raise `UserError`,
+their voice model takes the agent's instructions). For phone calls over Twilio Media Streams, follow
+`docs/realtime/deployment.md#twilio-media-streams`: convert the line's 8 kHz mu-law, send a `mark` after each chunk
+and pass the bytes of acknowledged marks to `interrupt(played_bytes=...)`, and drop pending marks before `clear`
+while still counting their bytes toward later positions.
 After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), await
 `session.wait_for_playback()` before closing the session or opening the microphone. It waits for the single
 device-paced `stream_audio()` view to account for all audio emitted so far — played, discarded on a barge-in or a
