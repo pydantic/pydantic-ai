@@ -306,7 +306,9 @@ def test_failed_selection_fails_the_status(tmp_path: Path) -> None:
     assert _states(github) == [(HEAD, 'failure')]
 
 
-Step = TypedDict('Step', {'name': str, 'id': str, 'if': str, 'uses': str, 'run': str, 'env': dict[str, str]}, total=False)
+Step = TypedDict(
+    'Step', {'name': str, 'id': str, 'if': str, 'uses': str, 'run': str, 'env': dict[str, str]}, total=False
+)
 PUBLISH_STEPS = TypeAdapter(list[Step]).validate_python(
     yaml.load(
         (Path(__file__).parents[1] / 'workflows' / 'pr-review-checks.yml').read_text(encoding='utf-8'),
