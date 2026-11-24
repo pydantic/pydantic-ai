@@ -367,9 +367,6 @@ navigation:
         slug: "harness"
         aliases:
           - "harness/overview"
-      - page: "Pax"
-        path: "harness/clai2.md"
-        slug: "harness/pax"
       - section: "Harnesses"
         slug: ""
         contents:
@@ -764,6 +761,14 @@ navigation:
       - page: "Third-Party Capabilities"
         path: "capabilities/third-party.md"
         slug: "capabilities/third-party"
+  - section: "Pax TUI"
+    slug: ""
+    contents:
+      - page: "Overview"
+        path: "harness/clai2.md"
+        slug: "pax"
+        aliases:
+          - "harness/pax"
   - section: "Realtime (speech-to-speech)"
     slug: ""
     contents:
