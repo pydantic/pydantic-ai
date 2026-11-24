@@ -28,7 +28,6 @@ from pydantic_ai_harness.guardrails._shared import (
     GuardOutcome,
     as_guards,
     evaluate_all,
-    guard_at,
     trace_block,
     trace_redaction,
 )
@@ -277,7 +276,8 @@ class StreamGuardrail(AbstractCapability[AgentDepsT]):
         """Run the guard chain on the complete `part` at `index`, returning the `held` events to release."""
         guards = as_guards(self.guard, capability='StreamGuardrail')
         verdict, position = await evaluate_all(guards, ctx, part, check_replacement=_replacement_check(part))
-        guard = guard_at(guards, position)
+        # The chain is evaluated live, never replayed, so `position` is always in it.
+        guard = guards[position]
         match verdict.action:
             case 'allow':
                 return _replace_part(held, index, part) if isinstance(part, ToolCallPart) else held
