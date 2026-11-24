@@ -146,7 +146,7 @@ def folder(panel: str, moment: Moment) -> str:
 
 
 BUILT_IN = [name for name, entry in PANELS.items() if isinstance(entry, Panel)]
-CASES: list[tuple[str, Moment]] = [(panel, moment) for panel in [*BUILT_IN, 'Plugin panels'] for moment in MOMENTS]
+CASES: list[tuple[str, Moment]] = [(panel, moment) for panel in [*BUILT_IN, 'Plugin panel'] for moment in MOMENTS]
 
 
 @dataclass
@@ -242,11 +242,11 @@ async def test_a_built_in_panel_catches_up(page: Page, panels_ui: PanelsUI, pane
 
 
 @pytest.mark.parametrize('moment', MOMENTS)
-async def test_every_plugin_panel_catches_up(page: Page, panels_ui: PanelsUI, moment: Moment) -> None:
-    """Each panel `/api/panels` lists shows the view its plugin gives now."""
+async def test_a_plugin_panel_catches_up(page: Page, panels_ui: PanelsUI, moment: Moment) -> None:
+    """A test plugin's side panel shows the view the plugin gives now, as `/api/panels` reports it."""
     [info] = listed(panels_ui)
     show = page.get_by_role('button', name=re.compile(rf'^Show {re.escape(info.title)}'))
-    release = await run_moment(page, panels_ui, ('Plugin panels', moment), show.click)
+    release = await run_moment(page, panels_ui, ('Plugin panel', moment), show.click)
     try:
         [now] = listed(panels_ui)
         await expect(page.get_by_role('complementary', name=now.title)).to_contain_text(now.note)

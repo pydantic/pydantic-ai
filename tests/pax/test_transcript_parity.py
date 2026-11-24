@@ -233,21 +233,11 @@ def test_a_reload_shows_what_the_turns_showed_live(make_web: MakeWeb) -> None:
     assert COMPARED.keys() & KNOWN_LIVE_ONLY.keys() == partly_live, (
         'a field live-only for every tool is not compared: remove it from COMPARED'
     )
-    unclassified = {field.name for field in fields(Item)} - COMPARED.keys() - KNOWN_LIVE_ONLY.keys()
-    assert not unclassified, (
-        f'`Item` fields {sorted(unclassified)} are unclassified: add each to `COMPARED` with what the browser shows '
-        'from it, or to `KNOWN_LIVE_ONLY` with why a reload cannot show it'
-    )
     assert_classified(
         (field.name for field in fields(Item)),
         {**COMPARED, **KNOWN_LIVE_ONLY},
         complete_walk=True,
         table_name='COMPARED | KNOWN_LIVE_ONLY',
-    )
-    unlisted = union_members(ItemMessage) - SCRIPTED.keys()
-    assert not unlisted, (
-        f'`ItemMessage` members {sorted(kind.__name__ for kind in unlisted)} are not in `SCRIPTED`: add each with '
-        'what in the session sends it, and make `turns` send it'
     )
     assert_classified(union_members(ItemMessage), SCRIPTED, complete_walk=True, table_name='SCRIPTED')
     # The pax conftest runs each test in a fresh working directory, which is the session's workspace.
@@ -301,6 +291,12 @@ def test_a_reload_shows_what_the_turns_showed_live(make_web: MakeWeb) -> None:
         'the reload differs from what the turns showed live: fix whichever of `EventTranslator` and '
         '`history_entries` drifted, or add the field to `KNOWN_LIVE_ONLY` with why a reload cannot show it'
     )
+    # Equal transcripts prove nothing if both lost the diffs: each edit must show its changed lines live.
+    edited: set[str] = set()
+    for entry in live:
+        if isinstance(entry, Item) and entry.name == 'edit_file' and isinstance(shown := compared(entry), Item):
+            edited |= {diff.path for diff in shown.diffs if diff.diff}
+    assert edited == EDITS.keys(), f'live `edit_file` cards show changed lines for {sorted(edited)} only'
 
     # Each known difference still is one: a fix that lets the reload show it must drop its entry.
     pairs = [
