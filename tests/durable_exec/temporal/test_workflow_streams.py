@@ -847,7 +847,7 @@ class ContinueAsNewEnqueueWorkflow:
         state: WorkflowStreamState | None = None,
     ) -> None:
         self.continues_as_new = continues_as_new
-        self.listener = listener
+        self.listener: Literal['mutate', 'replace'] | None = listener
         self.events = AgentEventStream(prior_state=state)
 
     @workflow.run
