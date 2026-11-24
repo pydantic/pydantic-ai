@@ -446,6 +446,12 @@ def test_a_drifted_journal_breaks_the_durable_contracts() -> None:
         )
 
     assert read(recorded) == []
+    renamed = ['a__model.request', 'a__capability__memory.write', 'a__model.request']
+    assert len(read(renamed)) == 1
+    assert len(read(['a__model.request', 'a__model.request'])) == 1, 'a dropped unit breaks them'
+    assert read(['a__capability__memory.write_memory', 'a__model.request']) == [
+        'the run recorded 1 `model.request` units, not one per call and one to answer'
+    ]
     assert read([*recorded, 'a__model.request', 'a__capability__memory.read_memory']) == [
         'the run recorded 3 `model.request` units, not one per call and one to answer',
         "the calls record `dbos=('capability__memory.write_memory', 'capability__memory.read_memory')`, not "

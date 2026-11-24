@@ -26,7 +26,6 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from tests._timeouts import READINESS_WAIT_TIMEOUT
-from tests.harness._temporal import ignore_source_reads_left_open, skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 from ..append_only import skip_unless_installed
@@ -45,12 +44,8 @@ from temporalio.workflow import ActivityConfig
 
 from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
 
-pytestmark = [
-    pytest.mark.temporal,
-    pytest.mark.xdist_group(name='harness-temporal'),
-    skip_temporal_sandbox_on_314,
-    ignore_source_reads_left_open,
-]
+# No 3.14 skip, unlike the sandboxed Temporal suites: the sandbox is what fails there, and this module runs unsandboxed.
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal')]
 
 TASK_QUEUE = 'capability-cases'
 
