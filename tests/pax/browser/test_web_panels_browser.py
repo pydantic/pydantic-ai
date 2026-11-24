@@ -240,7 +240,8 @@ SHORT_TURN = pytest.mark.xfail(
     strict=True,
     reason=(
         'The page renders socket messages once a frame, so a turn that starts and ends within one never shows as '
-        'running, and plugin panels, which ask again only as `running` changes, keep the view from before it'
+        'running, and plugin panels, which ask again only as `running` changes, keep the view from before it: '
+        'https://github.com/pydantic/pydantic-ai/issues/14408'
     ),
 )
 
