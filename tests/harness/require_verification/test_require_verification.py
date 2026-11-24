@@ -804,7 +804,8 @@ class TestRequireVerification:
     ) -> None:
         """Each doubling of a command adds fewer than three times the match steps the previous doubling added.
 
-        The steps are counted rather than timed, so the result is the same on any runner.
+        The steps are counted rather than timed, so the result is the same on any runner. A recorded run cannot show
+        how the steps grow, so the test reads the default patterns directly.
         """
         counter = StepCounter(pattern)
         steps = [counter.scan(prefix + repeated * n + suffix, budget=1_000_000).steps for n in (32, 64, 128)]
