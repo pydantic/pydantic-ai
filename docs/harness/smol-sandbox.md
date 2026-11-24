@@ -240,7 +240,7 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 | `authority` | Who wrote the VM's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are VM paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM. `working_dir` and `env` apply to every command, including after you reattach.
+`image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM. `working_dir` and `env` apply to every command. They and `desktop` also apply after you reattach.
 
 ## Limits
 
