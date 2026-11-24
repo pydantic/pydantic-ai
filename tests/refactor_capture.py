@@ -176,8 +176,10 @@ like an AG-UI message's `encryptedValue` or a web API response's event stream, t
 timestamps), attempt durations, local server ports, multipart boundaries, pytest's numbered temporary directories, the
 random suffix of the key a capability without an `id` gets, `PromptInjectionDefender`'s measured `latency_ms`,
 `Planning`'s step ids where its plan and its reply to an added step render them, the code hash a Prefect `task_key` ends
-in, which hashes the file the task function was compiled from, and the `custom_id` of each batch request
-`InMemoryBatchModel` encodes, which hashes a random token, are normalized, so two runs of the same code compare equal. A
+in, which hashes the file the task function was compiled from, the digest of a run's inputs that keys the task
+`PrefectDurability` draws the run's default ID from, which hashes the timestamps of the history the run is handed,
+and the `custom_id` of each batch request `InMemoryBatchModel` encodes, which hashes a random token, are normalized,
+so two runs of the same code compare equal. A
 step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from them, as a subtask's
 parent or a dependency. Cassette playback hands a response's headers back in a different order each run, so the
 `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are sorted where an error message renders
@@ -326,6 +328,9 @@ GENERATED_VALUES = [
     (re.compile(r'(with id: )[0-9a-f]{8}(?![0-9a-f])'), r'\1STEP_ID'),
     # Prefect ends a `task_key` in a hash of the task function's code object, which holds the file it was compiled from.
     (re.compile(r'("task_key":"[^"]*-)[0-9a-f]{8}"'), r'\1CODE_HASH"'),
+    # The task `PrefectDurability` draws a run's default ID from is keyed by a digest of the run's inputs, which hold the
+    # timestamps of the history the run is handed.
+    (re.compile(r'(pydantic_ai:default_run_id:)[0-9a-f]{32}'), r'\1DIGEST'),
     # `InMemoryBatchModel`, which `TestModel` subclasses, encodes each request as a random token, and a batch request's
     # `custom_id` hashes the encoded request. Its batches are the ones whose ID is a UUID; one of their `custom_id`s can
     # itself have matched the UUID pattern. A suffix that tells apart requests with the same hash stays.
