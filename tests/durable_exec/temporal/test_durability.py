@@ -8819,7 +8819,7 @@ async def test_durability_decide_span_in_activity(
 _content_flags_seen: list[bool] = []
 
 
-def _content_flag_agent(worker_content: bool) -> Agent[None, str]:
+def _content_flag_agent(worker_content: bool) -> Agent[object, str]:
     agent = Agent(
         TestModel(call_tools=['read_flag']),
         name=f'durability_content_flag_{worker_content}',
@@ -8828,7 +8828,7 @@ def _content_flag_agent(worker_content: bool) -> Agent[None, str]:
     agent.instrument = InstrumentationSettings(include_content=worker_content)
 
     @agent.tool
-    async def read_flag(ctx: RunContext[None]) -> str:
+    async def read_flag(ctx: RunContext[object]) -> str:
         _content_flags_seen.append(ctx.trace_include_content)
         return 'read'
 
