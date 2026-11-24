@@ -178,7 +178,7 @@ random suffix of the key a capability without an `id` gets, `PromptInjectionDefe
 `Planning`'s step ids where its plan and its reply to an added step render them, the code hash a Prefect `task_key` ends
 in, which hashes the file the task function was compiled from, the digest of a run's inputs that keys the task
 `PrefectDurability` draws the run's default ID from, which hashes the timestamps of the history the run is handed,
-and the `custom_id` of each batch request `InMemoryBatchModel` encodes, which hashes a random token, are normalized,
+the process ID a Temporal worker's identity starts with, and the `custom_id` of each batch request `InMemoryBatchModel` encodes, which hashes a random token, are normalized,
 so two runs of the same code compare equal. A
 step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from them, as a subtask's
 parent or a dependency. Cassette playback hands a response's headers back in a different order each run, so the
@@ -331,6 +331,8 @@ GENERATED_VALUES = [
     # The task `PrefectDurability` draws a run's default ID from is keyed by a digest of the run's inputs, which hold the
     # timestamps of the history the run is handed.
     (re.compile(r'(pydantic_ai:default_run_id:)[0-9a-f]{32}'), r'\1DIGEST'),
+    # A Temporal worker's default identity, which an activity failure names, starts with its process ID.
+    (re.compile(r'("identity":")\d+@'), r'\1PID@'),
     # `InMemoryBatchModel`, which `TestModel` subclasses, encodes each request as a random token, and a batch request's
     # `custom_id` hashes the encoded request. Its batches are the ones whose ID is a UUID; one of their `custom_id`s can
     # itself have matched the UUID pattern. A suffix that tells apart requests with the same hash stays.

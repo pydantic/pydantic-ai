@@ -3339,6 +3339,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'prefect_labels': {'__OTEL_TRACEPARENT': '00-01a1cb2f55a38937d7e2c3ba122f0f00-367bccfae831323d-01'},
             'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-095f908e', 'dynamic_key': '0'},
             'default_run_id_inputs': {'sequence_key': 'pydantic_ai:default_run_id:02be28f320dd3c5469019298e187e2cb'},
+            'activity_failure_info': {'identity': '8844@worker.local'},
             'in_memory_ticket': {
                 'custom_id': '52a31e60e1afe0ff4a1058d5fcf539a6-1',
                 'batch': {'id': 'batch_12345678123441238123123456789abc', 'model_name': 'test'},
@@ -3410,6 +3411,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'prefect_labels': {'__OTEL_TRACEPARENT': '00-TRACE_ID-SPAN_ID-01'},
             'prefect_task_run': {'name': 'agent Run-0', 'task_key': 'wrapped_run_flow-CODE_HASH', 'dynamic_key': '0'},
             'default_run_id_inputs': {'sequence_key': 'pydantic_ai:default_run_id:DIGEST'},
+            'activity_failure_info': {'identity': 'PID@worker.local'},
             'in_memory_ticket': {'custom_id': 'CUSTOM_ID-1', 'batch': {'id': 'batch_UUID', 'model_name': 'test'}},
             'in_memory_response': {
                 'provider_details': {'batch': {'id': 'batch_UUID', 'custom_id': 'CUSTOM_ID'}},
