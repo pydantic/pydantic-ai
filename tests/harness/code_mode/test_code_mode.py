@@ -3376,7 +3376,7 @@ class TestCodeMode:
             """Take a note."""
             return ToolReturnMsg(return_value='ok', content=text)
 
-        seen: list[list[Any]] = []
+        seen: list[list[object]] = []
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) > 1:

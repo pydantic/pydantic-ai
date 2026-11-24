@@ -518,7 +518,7 @@ def book(*, trip: Trip, travellers: int) -> str:
             """Fetch a page."""
             return ToolReturn(return_value='ok', content='page text')
 
-        seen: list[list[Any]] = []
+        seen: list[list[object]] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) > 1:
@@ -558,7 +558,7 @@ def book(*, trip: Trip, travellers: int) -> str:
             """Fetch a page."""
             return ToolReturn(return_value='ok', content='page text')
 
-        seen: list[list[Any]] = []
+        seen: list[list[object]] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) > 1:
