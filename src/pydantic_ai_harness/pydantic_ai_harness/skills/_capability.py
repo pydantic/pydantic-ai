@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import posixpath
 import warnings
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
@@ -446,11 +445,11 @@ class Skills(AbstractCapability[AgentDepsT]):
         """Read the selected skills, from each configuration's `workspace=` or else the run's workspace.
 
         Returns one deferred capability per `'operator'` skill the model may load, with the `read_skill_file` tool
-        when one of the skills the model may load has `read_files` set, plus, when skills below `'operator'` authority are among them, a copy
-        of this capability that offers those through `list_skills` and `load_skill`. Without any skills, it adds no
-        instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md` or library path, an overlong
-        description, or unsupported frontmatter. Raises `UserError` when a configuration without `workspace=` meets
-        a run without a workspace.
+        when one of the skills the model may load has `read_files` set, plus, when skills below `'operator'`
+        authority are among them, a copy of this capability that offers those through `list_skills` and
+        `load_skill`. Without any skills, it adds no instructions or tools. Emits a `UserWarning` for each skipped
+        `SKILL.md` or library path, an overlong description, or unsupported frontmatter. Raises `UserError` when a
+        configuration without `workspace=` meets a run without a workspace.
         """
         if any(source.workspace is None for source in self._sources):
             require_workspace(ctx.workspace, 'Skills', ctx.messages)
@@ -703,6 +702,6 @@ async def _skill_authority(workspace: Workspace, skill_file: str) -> Authority:
     covering it, if any, and otherwise the workspace's own; its link target gets no more than the link's location.
     The wrapper never raises a level, so a plain workspace offers its skills as before and a lowered one lowers them.
     """
-    directory = posixpath.dirname(await workspace.resolve(skill_file))
+    directory = workspace.paths.dirname(await workspace.resolve(skill_file))
     view = AuthorityWorkspace(workspace, authority='operator', path_authority={directory: 'operator'})
     return await view.authority_of(skill_file)
