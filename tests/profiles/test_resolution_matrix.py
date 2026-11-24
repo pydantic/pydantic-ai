@@ -186,6 +186,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_unsupported_model_settings': (),
     'openai_system_prompt_role': None,
     'openai_chat_supports_multiple_system_messages': True,
+    'openai_chat_streaming_cumulative_usage': False,
     'openai_chat_supports_web_search': False,
     'openai_chat_audio_input_encoding': 'base64',
     'openai_chat_supports_file_urls': False,

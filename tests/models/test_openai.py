@@ -5210,6 +5210,7 @@ async def test_compatible_api_gemini_3_tool_call_thought_signature(
         async with agent.run_stream(prompt) as streamed_result:
             output = await streamed_result.get_output()
         messages = streamed_result.all_messages()
+        assert request_capture.body('/chat/completions')['stream_options'] == snapshot({'include_usage': True})
     else:
         result = await agent.run(prompt)
         output, messages = result.output, result.all_messages()
@@ -5221,6 +5222,14 @@ async def test_compatible_api_gemini_3_tool_call_thought_signature(
         True: snapshot('The weather is currently sunny and 28°C in both Taipei and Kaohsiung.'),
     }
     assert output == expected_output[stream]
+    # Gemini repeats the running usage on every streamed chunk (74/17, 74/36, 74/36), so it must not be summed.
+    expected_usage = {
+        False: snapshot(RequestUsage(input_tokens=74, output_tokens=36, cost=Decimal('0.0000725'))),
+        True: snapshot(RequestUsage(input_tokens=74, output_tokens=36, cost=Decimal('0.0000725'))),
+    }
+    first_response = messages[1]
+    assert isinstance(first_response, ModelResponse)
+    assert first_response.usage == expected_usage[stream]
     taipei_call_id, kaohsiung_call_id, signature = IsSameStr(), IsSameStr(), IsSameStr()
     assert messages[1].parts == snapshot(
         [
@@ -8188,6 +8197,31 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None, om
                 RequestUsage(input_tokens=10, output_tokens=15),
             ]
         )
+
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+
+
+async def test_stream_cumulative_usage_profile_opt_out_sums_chunks(allow_model_requests: None):
+    """A `gemini*` name on a server that reports per-chunk deltas keeps correct usage by opting out in its profile.
+
+    A unit test because no recorded server sends deltas. The flag-on side is pinned against a real recording by
+    `test_compatible_api_gemini_3_tool_call_thought_signature`.
+    """
+    stream: list[chat.ChatCompletionChunk] = [
+        chunk_with_usage(
+            [ChoiceDelta(content='hello ', role='assistant')], completion_tokens=5, prompt_tokens=10, total_tokens=15
+        ),
+        chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=5, prompt_tokens=0, total_tokens=5),
+        chunk_with_usage([], finish_reason='stop', completion_tokens=5, prompt_tokens=0, total_tokens=5),
+    ]
+    model = OpenAIChatModel(
+        'gemini-3.1-flash-lite',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)),
+        profile=OpenAIModelProfile(openai_chat_streaming_cumulative_usage=False),
+    )
+
+    async with Agent(model).run_stream('') as result:
+        await result.get_output()
 
     assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
 
