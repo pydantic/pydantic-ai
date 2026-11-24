@@ -30,6 +30,7 @@ import os
 import signal
 import subprocess
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import IO
@@ -77,6 +78,11 @@ class FakeExecSocket:
             # `chdir` message on stdout, once the client has attached.
             argv = ['sh', '-c', 'cat >/dev/null; printf "chdir to \\`%s\\`: No such file or directory\\n" "$1"; exit 1']
             argv, cwd = [*argv, 'sh', cwd], str(sprite_transport.root)
+        elif sprite_transport.answer is not None and (reply := sprite_transport.answer(argv[5:])) is not None:
+            # Answered without running it, inside the backend's own wrapper, which is `argv[:5]`.
+            stdout, stderr, code = reply
+            argv = [*argv[:5], 'sh', '-c', 'printf %s "$1"; printf %s "$2" >&2; exit "$3"', 'sh', stdout, stderr]
+            argv.append(str(code))
         self.process = subprocess.Popen(
             argv,
             cwd=cwd,
@@ -195,6 +201,8 @@ class SpriteTransport:
         # Holds the client's stdin EOF, and with it the stream's attachment, until set.
         self.release_stdin_eof: asyncio.Event | None = None
         self.url_limit = 40_000
+        # Answers a command (without the backend's wrapper) instead of running it, unless it returns `None`.
+        self.answer: Callable[[list[str]], tuple[str, str, int] | None] | None = None
         # Seconds each exec handshake takes from now on; a live one takes about two (2026-09-28).
         self.exec_latency = 0.0
         self.fs_writes: list[str] = []
