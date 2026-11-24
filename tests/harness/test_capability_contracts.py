@@ -20,7 +20,7 @@ from typing import TypeVar
 import anyio
 import pytest
 
-from pydantic_ai import Agent, AgentRunResult, RunContext
+from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace, Toolset
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
@@ -423,10 +423,12 @@ async def test_a_nested_run_on_a_durable_case_model_is_answered_and_counted() ->
     """The durable suites count it, so a nested run's request a recovery repeats breaks them like any other."""
     REQUESTS.clear()
 
-    async def ask(ctx: RunContext[None]) -> str:
-        return (await Agent(ctx.model).run('nested')).output
+    model = one_call_per_response((('ask', {}),))
 
-    result = await Agent(one_call_per_response((('ask', {}),)), tools=[ask]).run(PROMPT)
+    async def ask() -> str:
+        return (await Agent(model).run('nested')).output
+
+    result = await Agent(model, tools=[ask]).run(PROMPT)
     assert (result.output, REQUESTS) == ('done', {UNPROMPTED_REQUEST: 1})
     REQUESTS.clear()
 

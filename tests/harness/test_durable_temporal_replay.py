@@ -37,7 +37,7 @@ from ._durable_cases import PROMPT, build_case, installed, journal_breaks, one_c
 pytest.importorskip('temporalio')
 
 from temporalio import workflow
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowFailureError
 from temporalio.common import RetryPolicy
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
@@ -126,13 +126,16 @@ async def _breaks(name: str, temporal: _Temporal) -> list[str]:
     calls = CASES[name].calls
     assert calls is not None
     workflow_id = f'{name}-{uuid.uuid4()}'
-    output = await temporal.client.execute_workflow(
-        CaseWorkflow.run,
-        name,
-        id=workflow_id,
-        task_queue=TASK_QUEUE,
-        execution_timeout=timedelta(seconds=READINESS_WAIT_TIMEOUT),
-    )
+    try:
+        output = await temporal.client.execute_workflow(
+            CaseWorkflow.run,
+            name,
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=READINESS_WAIT_TIMEOUT),
+        )
+    except WorkflowFailureError as error:
+        return [f'the workflow fails: {error.cause!r}']
     assert output == 'done'
     history = await temporal.client.get_workflow_handle(workflow_id).fetch_history()
 

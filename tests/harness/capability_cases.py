@@ -437,6 +437,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda _: Memory(store=InMemoryMemoryStore()),
             durable_steps=DurableSteps(
                 dbos=(
+                    'capability__memory.load_snapshot',
                     'capability__memory.write_memory',
                     'capability__memory.read_memory',
                     'capability__memory.search_memory',
@@ -481,7 +482,17 @@ CASES: dict[str, CapabilityCase] = {
             ),
             lambda tmp_path: Planning(store=SqlitePlanStore(database=str(tmp_path / 'plan.db'))),
             durable_steps=DurableSteps(
-                dbos=('capability__planning.set_items', 'capability__planning.add_item'),
+                dbos=(
+                    'capability__planning.read_plan',
+                    'capability__planning.read_plan',
+                    'capability__planning.set_items',
+                    'capability__planning.read_plan',
+                    'capability__planning.read_plan',
+                    'capability__planning.read_plan',
+                    'capability__planning.add_item',
+                    'capability__planning.read_plan',
+                    'capability__planning.read_plan',
+                ),
                 temporal=('toolset__planning__call_tool',) * 2,
             ),
         ),
@@ -505,10 +516,20 @@ CASES: dict[str, CapabilityCase] = {
             # Every hook that records the run is a `durable_operation` that workflow code calls.
             durable_steps=DurableSteps(
                 dbos=(
+                    'capability__step_persistence.registration_id',
                     'capability__step_persistence.register_run',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.append_event',
                     'capability__step_persistence.record_tool_effect',
+                    'capability__step_persistence.append_event',
                     'capability__step_persistence.finish_tool_effect',
+                    'capability__step_persistence.append_event',
                     'capability__step_persistence.save_snapshot',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.save_snapshot',
+                    'capability__step_persistence.append_event',
                 ),
                 temporal=(
                     'capability__step_persistence__registration_id',
@@ -586,7 +607,8 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('compact_context', {}),),
             lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
-            durable_steps=DurableSteps(temporal=('toolset__compact_on_request__call_tool',)),
+            # Temporal refuses its per-run toolset (`DURABLE_TEMPORAL` exempts it), so it records nothing there.
+            durable_steps=DurableSteps(dbos=('capability__compact_on_request.compact',)),
             moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
         ),
     ),
@@ -783,7 +805,7 @@ CASES: dict[str, CapabilityCase] = {
             (('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'})),
             _deduplicate_file_reads,
             durable_steps=DurableSteps(
-                dbos=_workspace_steps(3),
+                dbos=_workspace_steps(8),
                 temporal=('capability__workspace__call', *('toolset__file_system__call_tool',) * 2),
             ),
             moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
@@ -946,7 +968,7 @@ CASES: dict[str, CapabilityCase] = {
             ),
             _workspace(FileSystem),
             durable_steps=DurableSteps(
-                dbos=_workspace_steps(5),
+                dbos=_workspace_steps(17),
                 # `write_file` and `edit_file` run in the workflow, so their workspace calls are activities.
                 temporal=(*('capability__workspace__call',) * 14, 'toolset__file_system__call_tool'),
             ),
@@ -1005,9 +1027,21 @@ CASES: dict[str, CapabilityCase] = {
             _capability_creation,
             durable_steps=DurableSteps(
                 dbos=(
-                    *_workspace_steps(1),
+                    'capability__workspace.call',
+                    'capability__capability_creation.absolute_directory',
+                    'capability__workspace.call',
+                    'capability__workspace.call',
+                    'capability__capability_creation.absolute_directory',
+                    'capability__workspace.call',
+                    'capability__workspace.call',
                     'capability__capability_creation.write',
+                    'capability__capability_creation.absolute_directory',
+                    'capability__workspace.call',
+                    'capability__workspace.call',
                     'capability__capability_creation.list_all',
+                    'capability__capability_creation.absolute_directory',
+                    'capability__workspace.call',
+                    'capability__workspace.call',
                     'capability__capability_creation.disable',
                 ),
                 # Its tools resolve the store directory and check it through the workspace in workflow code first.
@@ -1163,7 +1197,7 @@ CASES: dict[str, CapabilityCase] = {
             (('smart_search', {'query': 'parse the config'}),),
             _smart_search,
             durable_steps=DurableSteps(
-                dbos=(*_workspace_steps(2), 'capability__smart_search.judge'),
+                dbos=(*_workspace_steps(6), 'capability__smart_search.judge'),
                 temporal=('capability__workspace__call', 'toolset__smart_search__call_tool'),
             ),
         ),
