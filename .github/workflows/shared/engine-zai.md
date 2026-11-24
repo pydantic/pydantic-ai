@@ -146,7 +146,8 @@ safe-outputs:
         continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.workflow_sha }}
+          # On a pull request event, the workflow's own commit is the PR's merge commit.
+          ref: ${{ github.event.repository.default_branch }}
           path: .gh-aw-detector
           sparse-checkout: |
             .github/actions/setup-douwebot-tools
