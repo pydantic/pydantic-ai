@@ -4332,6 +4332,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `wrap_model_request` recovered from the handler's retry.
             return None
         assert self._serving_model is not None and self._attempt_start is not None
+        # `kind` keeps its default, `'fallback'`: a replacement is not another attempt at the same model.
         reason = failed_attempt(
             self._serving_model, streamed, start=self._attempt_start, duration=self._attempt_start.elapsed()
         )
