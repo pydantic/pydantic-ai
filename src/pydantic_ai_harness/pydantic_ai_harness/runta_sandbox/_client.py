@@ -1,8 +1,9 @@
 """The parts of the Runta API the sandbox backend uses: runtime lifecycle over REST, commands over the exec WebSocket.
 
-The published `runta-sdk` runs a command to completion and returns its output, with no way to stop it
-or to tell a timeout from an exit code. The exec WebSocket it wraps streams output, takes signals, and
-ends the command when the socket closes, so the backend speaks that protocol here.
+The published `runta-sdk` (0.2.7) returns a command's buffered output once it ends, and reports a
+timeout as exit code 124, which a command can also exit with. The exec WebSocket it wraps streams
+output, takes signals, and ends the command when the socket closes, so the backend speaks that
+protocol here.
 
 A runtime is addressed by its UUID: the API refuses a name in a runtime path.
 """

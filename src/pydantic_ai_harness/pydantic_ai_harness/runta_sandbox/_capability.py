@@ -18,7 +18,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     reject_defer_loading,
 )
-from pydantic_ai_harness.runta_sandbox._backend import RuntaSandboxBackend, destroy_runtime
+from pydantic_ai_harness.runta_sandbox._backend import RuntaSandboxBackend, open_client
 
 
 @dataclass(kw_only=True)
@@ -127,7 +127,8 @@ class RuntaSandbox(AbstractCapability[AgentDepsT]):
         A runtime that no longer exists is already gone, so destroying it returns quietly.
         """
         check_provider(ref, 'runta')
-        await destroy_runtime(ref.id, token=self.token, endpoint=self.endpoint)
+        async with open_client(self.token, self.endpoint) as client:
+            await client.delete_runtime(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""

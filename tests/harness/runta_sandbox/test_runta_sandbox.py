@@ -153,6 +153,8 @@ class TestRuntaSandbox:
     async def test_a_runtime_that_never_runs_fails_after_the_ready_timeout(
         self, runta: FakeRunta, monkeypatch: pytest.MonkeyPatch
     ):
+        # The backend has no parameter for the ready deadline, so the test shortens the module constant.
+        # real-wait: the ready deadline is what the test proves
         monkeypatch.setattr('pydantic_ai_harness.runta_sandbox._backend._READY_TIMEOUT', 0.05)
         stuck = runta.create(status='pausing')
 
@@ -267,6 +269,7 @@ class TestRuntaSandbox:
 
     async def test_a_timeout_stops_the_command_and_keeps_its_output(self, runta: FakeRunta):
         with pytest.raises(WorkspaceTimeoutError) as raised:
+            # real-wait: the command deadline is what the test proves
             await RuntaSandboxBackend().run('echo started; sleep 30', shell=True, timeout=0.5)
 
         assert raised.value.stdout == 'started\n'

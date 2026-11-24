@@ -137,10 +137,6 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
     def ref(self) -> WorkspaceRef | None:
         return self._ref
 
-    def new_client(self) -> RuntaClient:
-        """A client for one operation. A handful of requests per command does not need a shared pool."""
-        return _open_client(self._token, self._endpoint)
-
     async def _get_runtime(self, client: RuntaClient) -> Runtime:
         """The running runtime, created or attached at most once per backend."""
         async with self._lock:
@@ -149,7 +145,7 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
                 runtime = await (
                     run_to_completion(lambda: self._create(client))
                     if self._ref is None
-                    else _read_runtime(client, self._ref.id)
+                    else self._read_runtime(client, self._ref.id)
                 )
                 self._runtime = await self._wait_running(client, runtime)
             if self._working_dir_pending:
@@ -178,7 +174,7 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
                         await client.set_running(runtime, action)
                         woken = True
                     await anyio.sleep(_POLL_INTERVAL)
-                    runtime = await _read_runtime(client, runtime.id)
+                    runtime = await self._read_runtime(client, runtime.id)
         except TimeoutError as error:
             raise WorkspaceError(
                 f'Runta runtime {runtime.id} is still {runtime.status} after {_READY_TIMEOUT:g} seconds.'
@@ -237,6 +233,16 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
         check_env_types(env)
         marker = f'pydantic-ai-no-working-dir-{uuid.uuid4().hex}'
         directory = (self._working_dir or '') if directory is None else directory
+        variables = {**self._env, **(env or {})}
+        for key, value in variables.items():
+            if not key or '=' in key or '\0' in key or '\0' in value:
+                raise ValueError(
+                    f'illegal environment variable {key!r}: a name is non-empty without "=" or NUL, a value without NUL'
+                )
+        # The POSIX `env` utility adds `variables` to the runtime's own environment. It runs inside the
+        # wrapper: a `sh` such as dash drops variables whose names are not shell identifiers from the
+        # environment it passes on. `--` ends its options, so a program or a name that starts with `-`
+        # is not read as one.
         args = [
             'sh',
             '-c',
@@ -244,10 +250,13 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
             'sh',
             marker,
             directory,
-            *_with_env(command_argv(command, shell), {**self._env, **(env or {})}),
+            'env',
+            '--',
+            *(f'{key}={value}' for key, value in variables.items()),
+            *command_argv(command, shell),
         ]
         require_asyncio(_ASYNCIO_ONLY)
-        async with self.new_client() as client:
+        async with open_client(self._token, self._endpoint) as client:
             if runtime is None:
                 return await self._run_args(client, await self._get_runtime(client), args, timeout, marker)
             return await self._run_args(client, runtime, args, timeout, marker, locked=True)
@@ -306,7 +315,7 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
             try:
                 current = await client.get_runtime(runtime.id)
             except RuntaAPIError as lookup_error:
-                raise _unavailable(runtime.id, lookup_error) or error from lookup_error
+                raise self._unavailable(runtime.id, lookup_error) or error from lookup_error
             if current.status == 'running':
                 raise
             if locked:
@@ -320,58 +329,38 @@ class RuntaSandboxBackend(WorkspaceBackend, SupportsCommands):
         try:
             current = await client.get_runtime(runtime.id)
         except RuntaAPIError as error:
-            if (unavailable := _unavailable(runtime.id, error)) is not None:
+            if (unavailable := self._unavailable(runtime.id, error)) is not None:
                 raise unavailable from cause
             return
         if current.status in _GONE:
             raise WorkspaceUnavailableError(f'Runta runtime {runtime.id} is {current.status}.') from cause
 
+    @classmethod
+    async def _read_runtime(cls, client: RuntaClient, runtime_id: str) -> Runtime:
+        """Read a runtime, reporting one the API no longer has as unavailable."""
+        try:
+            return await client.get_runtime(runtime_id)
+        except RuntaAPIError as error:
+            if (unavailable := cls._unavailable(runtime_id, error)) is not None:
+                raise unavailable from error
+            raise
 
-async def destroy_runtime(runtime_id: str, *, token: str | None, endpoint: str | None) -> None:
-    """Delete a runtime by UUID without attaching to it or waking it."""
-    async with _open_client(token, endpoint) as client:
-        await client.delete_runtime(runtime_id)
+    @staticmethod
+    def _unavailable(runtime_id: str, error: RuntaAPIError) -> WorkspaceUnavailableError | None:
+        """The error for a runtime the API no longer has, or `None` for any other failure."""
+        if error.status == 404:
+            return WorkspaceUnavailableError(f'Runta runtime {runtime_id} no longer exists.')
+        if error.status in (401, 403):
+            return WorkspaceUnavailableError('Runta rejected the API key.')
+        return None
 
 
-def _open_client(token: str | None, endpoint: str | None) -> RuntaClient:
+def open_client(token: str | None, endpoint: str | None) -> RuntaClient:
+    """A client for one operation. A handful of requests per command does not need a shared pool."""
     token = token or os.getenv('RUNTA_TOKEN')
     if not token:
         raise UserError(_MISSING_TOKEN)
     return RuntaClient(token=token, endpoint=endpoint or os.getenv('RUNTA_ENDPOINT') or DEFAULT_ENDPOINT)
-
-
-async def _read_runtime(client: RuntaClient, runtime_id: str) -> Runtime:
-    """Read a runtime, reporting one the API no longer has as unavailable."""
-    try:
-        return await client.get_runtime(runtime_id)
-    except RuntaAPIError as error:
-        if (unavailable := _unavailable(runtime_id, error)) is not None:
-            raise unavailable from error
-        raise
-
-
-def _unavailable(runtime_id: str, error: RuntaAPIError) -> WorkspaceUnavailableError | None:
-    """The error for a runtime the API no longer has, or `None` for any other failure."""
-    if error.status == 404:
-        return WorkspaceUnavailableError(f'Runta runtime {runtime_id} no longer exists.')
-    if error.status in (401, 403):
-        return WorkspaceUnavailableError('Runta rejected the API key.')
-    return None
-
-
-def _with_env(args: list[str], env: dict[str, str]) -> list[str]:
-    """`args` run under the POSIX `env` utility, which adds `env` to the runtime's own environment.
-
-    `env` runs inside the wrapper: a `sh` such as dash drops variables whose names are not shell
-    identifiers from the environment it passes on. `--` ends its options, so a program or a name
-    that starts with `-` is not read as one.
-    """
-    for key, value in env.items():
-        if not key or '=' in key or '\0' in key or '\0' in value:
-            raise ValueError(
-                f'illegal environment variable {key!r}: a name is non-empty without "=" or NUL, a value without NUL'
-            )
-    return ['env', '--', *(f'{key}={value}' for key, value in env.items()), *args]
 
 
 def _output(process: RuntaExec) -> tuple[str, str]:
