@@ -140,12 +140,20 @@ def cancelled_sub_agent_return(
     )
 
 
+def _user_content_items(content: str | Sequence[_messages.UserContent]) -> list[_messages.UserContent]:
+    return [content] if isinstance(content, str) else list(content)
+
+
 class NestedCallContent(list[_messages.UserContent]):
     """The `ToolReturn.content` of the tools a tool called, keeping the capability each of those tools came from.
 
     A tool that runs other tools, such as a sandbox's `run_code`, returns this as its own `ToolReturn.content`. Each
     tool's content then reaches the model held to its own capability's authority, as it would if the model had called
     that tool, and then to the calling tool's.
+
+    The capabilities travel on this object only. Content rebuilt from it, such as `list(content)` or a hook's
+    `replace(result, content=[...])`, is held to the calling tool's capability alone, and equality compares the items,
+    not their capabilities.
     """
 
     segments: tuple[tuple[str | None, str | Sequence[_messages.UserContent]], ...]
@@ -156,9 +164,7 @@ class NestedCallContent(list[_messages.UserContent]):
 
     def __init__(self, segments: Sequence[tuple[str | None, str | Sequence[_messages.UserContent]]]) -> None:
         self.segments = tuple(segments)
-        super().__init__(
-            item for _, content in self.segments for item in ([content] if isinstance(content, str) else content)
-        )
+        super().__init__(chain.from_iterable(_user_content_items(content) for _, content in self.segments))
 
     def owned_segments(self) -> Iterator[tuple[tuple[str | None, ...], str | Sequence[_messages.UserContent]]]:
         """Each called tool's content, after the run ids of the capabilities it passed through, innermost first."""
@@ -966,7 +972,21 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         capability_id = None if tool_def is None else tool_def.capability_id
         if not isinstance(content, NestedCallContent):
             return [self._within_capability_ceiling(_messages.UserPromptPart(content=content), capability_id)]
-        # Neighbouring content that stays user text shares one part.
+        parts: list[_messages.ModelRequestPart] = []
+        for run in self._nested_content_runs(content):
+            if isinstance(run, list):
+                # A lone segment keeps the shape its tool returned, such as a bridged tool's `str`; several join a list.
+                joined = (
+                    run[0] if len(run) == 1 else list(chain.from_iterable(_user_content_items(each) for each in run))
+                )
+                run = _messages.UserPromptPart(content=joined)
+            parts.append(self._within_capability_ceiling(run, capability_id))
+        return parts
+
+    def _nested_content_runs(
+        self, content: NestedCallContent
+    ) -> list[_messages.ModelRequestPart | list[str | Sequence[_messages.UserContent]]]:
+        """Each called tool's content held to the capabilities it passed through, with neighbouring user text grouped."""
         runs: list[_messages.ModelRequestPart | list[str | Sequence[_messages.UserContent]]] = []
         for capability_ids, nested_content in content.owned_segments():
             part = _messages.UserPromptPart(content=nested_content)
@@ -979,19 +999,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 unchanged.append(nested_content)
             else:
                 runs.append([nested_content])
-        return [
-            self._within_capability_ceiling(
-                _messages.UserPromptPart(
-                    content=run[0]
-                    if len(run) == 1
-                    else [item for each in run for item in ([each] if isinstance(each, str) else each)]
-                )
-                if isinstance(run, list)
-                else run,
-                capability_id,
-            )
-            for run in runs
-        ]
+        return runs
 
     def _within_capability_ceiling(
         self, part: _messages.ModelRequestPart, capability_id: str | None

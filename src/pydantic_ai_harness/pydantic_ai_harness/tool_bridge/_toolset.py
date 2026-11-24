@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field, replace
-from typing import Any, TypeGuard
+from typing import Any
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
@@ -87,10 +87,6 @@ _DISPATCHERS = {
         ToolCallArgs,
     ),
 }
-
-
-def _is_tool_return(value: object) -> TypeGuard[ToolReturn[object]]:
-    return isinstance(value, ToolReturn)
 
 
 @dataclass(kw_only=True)
@@ -266,7 +262,9 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
-        if not _is_tool_return(result) or not result.content:
-            return result
-        # Held to the bridged tool's capability's authority, as if the model had called the tool itself.
-        return replace(result, content=NestedCallContent([(target.tool_def.capability_id, result.content)]))
+        # Pyright strict reads `isinstance` on the `Any` that `handle_call` can return as `ToolReturn[Unknown]`.
+        if isinstance(result, ToolReturn) and result.content:
+            # Held to the bridged tool's capability's authority, as if the model had called the tool itself.
+            content = NestedCallContent([(target.tool_def.capability_id, result.content)])
+            return replace(result, content=content)  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+        return result  # pyright: ignore[reportUnknownVariableType]
