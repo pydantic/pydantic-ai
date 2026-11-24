@@ -1468,12 +1468,25 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             prepared_settings = self._translate_cache(cast(AnthropicModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
 
+    def _client_disallows_sampling_settings(self) -> bool:
+        """Whether the client's API version rejects sampling settings (`anthropic>=2` / `2026-10-21+`)."""
+        if isinstance(self.client, AsyncAnthropicBedrock):
+            return False
+        default_headers = getattr(self.client, 'default_headers', None)
+        if not isinstance(default_headers, Mapping):
+            return False
+        api_version = next(
+            (value for key, value in default_headers.items() if key.lower() == 'anthropic-version'),
+            None,
+        )
+        return isinstance(api_version, str) and api_version >= '2026-10-21'
+
     def _drop_rejected_sampling_settings(
         self, model_settings: ModelSettings, model_request_parameters: ModelRequestParameters
     ) -> ModelSettings | None:
         """Drop the sampling settings the model rejects alone or with the rest of the request."""
         profile = self.profile
-        if profile.get('anthropic_disallows_sampling_settings', False):
+        if profile.get('anthropic_disallows_sampling_settings', False) or self._client_disallows_sampling_settings():
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered)
             return filtered or None

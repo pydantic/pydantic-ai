@@ -2470,6 +2470,23 @@ async def test_anthropic_keeps_top_p_set_together_with_temperature_where_accepte
     assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == {'temperature': 0.5, 'top_p': 0.9}
 
 
+async def test_anthropic_drops_sampling_settings_on_2026_10_21_api_version(allow_model_requests: None):
+    """Clients sending `anthropic-version: 2026-10-21`+ drop sampling settings with a warning even on older Claude models."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    mock_client.default_headers = {'anthropic-version': '2026-10-21'}
+    agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    with pytest.warns(UserWarning, match='Sampling parameters .* are not supported'):
+        await agent.run(
+            'What is 2+2?',
+            model_settings=ModelSettings(temperature=0.5, top_p=0.9, top_k=40),
+        )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0].get('extra_body') is None
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(
