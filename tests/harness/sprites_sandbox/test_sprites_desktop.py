@@ -57,6 +57,17 @@ async def test_a_shell_command_finds_the_desktop_running(display: FakeDisplay) -
     assert len(display.starts) == 1
 
 
+async def test_a_command_with_a_bad_env_is_refused_before_the_desktop_starts(display: FakeDisplay) -> None:
+    backend = SpritesSandboxBackend(desktop=True)
+    try:
+        with pytest.raises(ValueError, match='illegal environment variable'):
+            await backend.run('true', shell=True, env={'A=B': 'x'})
+    finally:
+        await backend.aclose()
+
+    assert display.starts == []
+
+
 async def test_a_desktop_size_sets_the_display_it_starts(display: FakeDisplay) -> None:
     backend = SpritesSandboxBackend(desktop=(1440, 900))
     try:

@@ -197,7 +197,7 @@ Then delete it: `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites',
 | `authority` | Who wrote the Sprite's files. A capability that puts a file's text in the prompt gives it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
 | `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the Sprite, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. `runtime` only shapes a new Sprite.
+`client`, `working_dir`, `env`, `desktop`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. `runtime` only shapes a new Sprite.
 
 ## Limits
 
