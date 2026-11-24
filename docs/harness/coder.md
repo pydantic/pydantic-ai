@@ -279,10 +279,10 @@ a flag for the behavior it corrects:
 
 The evidence for them is weak: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'`, one run each, `Coder` scored 53.2
 with the three sentences against 51.0 without them, within that benchmark's single-run noise of about 5.6 points.
-Each is its own instruction block that follows the model handling each request: after a fallback with the
-[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without the flag,
-the model is told the sentences were withdrawn, unless the rule against unrequested delegation (see
-[Sub-agents](#sub-agents)) changed too, which sends the new model its own instructions. Models without the flags get only the shared `'max'` guidance. See
+Like the rule against unrequested delegation (see [Sub-agents](#sub-agents)), each is its own instruction block that
+follows the model handling each request: after a fallback with the
+[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability, or a later run on another
+model, the new model is sent the instructions it would have had from the start, with or without the sentences. Models without the flags get only the shared `'max'` guidance. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing

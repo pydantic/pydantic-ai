@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
-from pydantic_ai.messages import InstructionChangePolicy, InstructionPart
+from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -47,12 +47,7 @@ _DELEGATION = (
 """Overrides the instruction a `DelegationTasks` owner adds, which tells the model to delegate when it
 saves context. A delegate starts from a fresh context and re-explores the project, so unrequested
 delegation multiplies tool calls and cost. Sent only to models whose profile sets `delegates_unprompted`: other
-models don't delegate unasked, and keep the `DelegationTasks` guidance as it is.
-
-Its block rewrites the prefix when it changes, rather than appending the change: after a switch, a model on the
-other side of the flag is sent the instructions it would have had from the start. An appended withdrawal left
-Claude models delegating less than when the rule was never sent, and they repeated it to the user. The new model is
-cache-cold anyway, so the rewrite costs little."""
+models don't delegate unasked, and keep the `DelegationTasks` guidance as it is."""
 
 _TARGETS = 'Measure results against any numeric target the task states.'
 """Wherever the agent decides on its own when the work is good enough: `'high'`, `'max'`, and every delegate."""
@@ -141,22 +136,19 @@ def _profile_says(model: AbstractModel, flag: Callable[[ModelProfile], bool]) ->
 
 
 def _model_specific(
-    name: str,
-    flag: Callable[[ModelProfile], bool],
-    *,
-    flagged: str,
-    on_change: InstructionChangePolicy = 'append',
+    name: str, flag: Callable[[ModelProfile], bool], *, flagged: str
 ) -> Callable[[RunContext[AgentDepsT]], InstructionPart]:
-    """A named block whose text depends on the profile of the model handling the request.
+    """A named block, `capability:coder_instructions:<name>`, sent only to models whose profile sets `flag`.
 
-    The block, `capability:coder_instructions:<name>`, is contributed from the first request. With `'append'`, a
-    conversation that moves to a model with a different profile keeps the instructions it started with and is sent
-    the block as a change, or told it was withdrawn. With `'rewrite'`, the new model is sent instructions with the
-    block as it applies to that model, as if the conversation had started on it.
+    Its text depends only on the model handling the request, so it changes only when a conversation moves to a model
+    on the other side of the flag. It then rewrites the prefix rather than appending the change, so the new model is
+    sent the instructions it would have had from the start. An appended withdrawal left Claude models delegating less
+    than when the rule against it was never sent, and they repeated it to the user; an appended line can't undo what
+    the earlier model already said in history either. The new model is cache-cold anyway, so the rewrite costs little.
     """
 
     def instruction(ctx: RunContext[AgentDepsT]) -> InstructionPart:
-        return InstructionPart(flagged if _profile_says(ctx.model, flag) else '', name=name, on_change=on_change)
+        return InstructionPart(flagged if _profile_says(ctx.model, flag) else '', name=name)
 
     return instruction
 
@@ -166,15 +158,14 @@ def model_specific_instructions(
 ) -> list[Callable[[RunContext[AgentDepsT]], InstructionPart]]:
     """The blocks of `Coder`'s guidance that only some models get, each empty for the others.
 
-    - `delegation`, with `SubAgents` only: the rule against unrequested delegation, for `delegates_unprompted`. It
-      rewrites the prefix on a switch instead of appending a withdrawal (see `_DELEGATION`).
+    - `delegation`, with `SubAgents` only: the rule against unrequested delegation, for `delegates_unprompted`.
     - `misread`: at `'max'`, `_MISREAD_CLASSIFY`, for `reinterprets_malformed_inputs`. It refines the `_MISREAD_MAX`
       check the shared text carries for every model.
     - `handoff`: at `'max'`, `_STRUCTURED_HANDOFF`, for `omits_handoff_evidence`.
     - `runtime_constraints`: at `'max'`, `_RUNTIME_CONSTRAINTS`, for `ignores_stated_runtime_constraints`.
 
-    Below `'max'`, the last three are left out rather than sent empty, so they don't add dynamic parts to an otherwise
-    static instruction list; a block that first appears later in a conversation is still appended.
+    Each rewrites the prefix on a model switch (see `_model_specific`). Below `'max'`, the last three are left out
+    rather than sent empty, so they don't add dynamic parts to an otherwise static instruction list.
     """
     delegation = (
         [
@@ -182,7 +173,6 @@ def model_specific_instructions(
                 'delegation',
                 lambda p: p.get('delegates_unprompted', False),
                 flagged=_DELEGATION.format(tool_name=delegate_tool),
-                on_change='rewrite',
             )
         ]
         if delegate_tool is not None

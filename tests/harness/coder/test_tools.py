@@ -2,19 +2,29 @@
 
 import warnings
 from collections.abc import AsyncIterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Caching, LocalWorkspace, ModelFallback, ValidatedToolArgs
+from pydantic_ai._instructions import LoadedInstructionValues, _recorded_instruction_values, instruction_window
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Caching,
+    Capability,
+    LocalWorkspace,
+    ModelFallback,
+    ValidatedToolArgs,
+)
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
+    InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
     TextPart,
@@ -599,7 +609,7 @@ class TestCoder:
     async def test_max_guidance_follows_the_profile_flags(
         self, tmp_path: Path, autonomy: Autonomy, flag: str | None
     ) -> None:
-        """Each `'max'` sentence is a named block, present from the first request, that only its flag fills."""
+        """Each `'max'` sentence is a named block that only its flag fills."""
         profile: ModelProfile = {flag: True} if flag is not None else {}  # pyright: ignore[reportAssignmentType]
         model = TestModel(call_tools=[], profile=profile)
         coder = Coder(autonomy=autonomy, repo_context=False, sub_agents=False)
@@ -615,11 +625,9 @@ class TestCoder:
             if is_max and flag == 'ignores_stated_runtime_constraints'
             else None,
         }
-        # An empty block isn't sent; a sent one is framed as `<pyai:context id="capability:coder_instructions:...">`.
-        assert set(blocks) == {name for name, text in expected.items() if text is not None}
-        for name, text in expected.items():
-            if text is not None:
-                assert f'id="capability:coder_instructions:{name}">\n{text}\n</pyai:context>' in blocks[name]
+        # An empty block isn't sent; a sent one rewrites the prefix on a switch, so it's plain text.
+        assert blocks == {name: text for name, text in expected.items() if text is not None}
+        assert all(part.on_change == 'rewrite' for part in parts)
         if not is_max:
             # Below `'max'` the blocks aren't registered, so the instructions stay all static.
             assert not any(part.dynamic for part in parts)
@@ -693,18 +701,23 @@ Available sub-agents:
         assert _HANDOFF_TEXT in delegate
         assert _RUNTIME_CONSTRAINTS_TEXT in delegate
 
-    async def test_a_fallback_at_max_sends_the_new_model_its_own_max_instructions(self, tmp_path: Path) -> None:
-        """When a `'max'` conversation that opened on GPT falls back to Claude, the delegation rule's rewrite opens a new
-        instruction window at Claude's values, so the GPT-only `'max'` sentences are left out of it, not withdrawn."""
+    @pytest.mark.parametrize('sub_agents', [True, False])
+    async def test_a_fallback_at_max_sends_the_new_model_its_own_max_instructions(
+        self, tmp_path: Path, sub_agents: bool
+    ) -> None:
+        """When a `'max'` conversation that opened on GPT falls back to Claude, the GPT-only `'max'` sentences rewrite
+        the prefix like the delegation rule, so they're left out of Claude's instructions, not withdrawn, also
+        without `SubAgents`."""
         sent: list[_Sent] = []
         workspace = LocalWorkspaceBackend(tmp_path)
         first = await Agent(
-            _scripted('gpt', sent, delegates=True), capabilities=[Coder(autonomy='max', repo_context=False)]
+            _scripted('gpt', sent, delegates=True),
+            capabilities=[Coder(autonomy='max', repo_context=False, sub_agents=sub_agents)],
         ).run('go', workspace=workspace)
         agent = Agent(
             _scripted('gpt', sent, delegates=True, fails=True),
             capabilities=[
-                Coder(autonomy='max', repo_context=False),
+                Coder(autonomy='max', repo_context=False, sub_agents=sub_agents),
                 ModelFallback(_scripted('claude', sent, delegates=False)),
             ],
         )
@@ -718,7 +731,8 @@ Available sub-agents:
         assert _MISREAD_MAX_TEXT in opened_with
         fresh: list[_Sent] = []
         await Agent(
-            _scripted('claude', fresh, delegates=False), capabilities=[Coder(autonomy='max', repo_context=False)]
+            _scripted('claude', fresh, delegates=False),
+            capabilities=[Coder(autonomy='max', repo_context=False, sub_agents=sub_agents)],
         ).run('go', workspace=workspace)
         assert [(s.model, s.instructions) for s in sent] == [
             ('gpt', opened_with),
@@ -925,3 +939,208 @@ Available sub-agents:
         refused = await call(workspace, 'read_file', {'path': '../.env'})
         assert f'`{outside}` is outside the project root `{workspace.resolve()}`' in refused
         assert 'Create or clone it inside the project, or use a shell tool if you have one.' in refused
+
+
+@dataclass
+class _SwitchDeps:
+    state: str
+    count: int = 0
+
+
+@dataclass
+class _SwitchLog:
+    """What each request sent: the model, its instructions, and every `<pyai:context>` statement in its history."""
+
+    requests: list[tuple[str, str | None, list[str]]] = field(default_factory=list[tuple[str, str | None, list[str]]])
+
+
+def _switch_agent() -> Agent[_SwitchDeps, str]:
+    """A `'max'` `Coder` agent with an append-mode block of its own and a deferred capability whose text changes."""
+    counter = Capability[_SwitchDeps](
+        id='counter', defer_loading=True, description='Counting.', instructions='Count carefully.'
+    )
+
+    @counter.instructions
+    def count(ctx: RunContext[_SwitchDeps]) -> str:
+        return f'The count is {ctx.deps.count}.'
+
+    agent = Agent(deps_type=_SwitchDeps, capabilities=[Coder[_SwitchDeps](autonomy='max', repo_context=False), counter])
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[_SwitchDeps]) -> str:
+        return f'The state is {ctx.deps.state}.'
+
+    return agent
+
+
+def _switch_model(name: str, log: _SwitchLog, *, gpt: bool, script: Sequence[ModelResponse] = ()) -> FunctionModel:
+    """GPT sets every flag `Coder` reads; the other model none. `script` answers the first requests in order."""
+    responses = list(script)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        statements = [
+            part.content
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart) and '<pyai:context' in part.content
+        ]
+        log.requests.append((name, info.instructions, statements))
+        return responses.pop(0) if responses else ModelResponse(parts=[TextPart(name)])
+
+    profile: ModelProfile = {
+        'supports_inline_system_prompts': True,
+        'delegates_unprompted': gpt,
+        **{flag: gpt for flag in _MAX_GUIDANCE_FLAGS},  # pyright: ignore[reportAssignmentType]
+    }
+    return FunctionModel(respond, model_name=name, profile=profile)
+
+
+def _instruction_records(messages: Sequence[ModelMessage], kind: type[ModelRequestPart]) -> list[ModelRequestPart]:
+    return [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, kind)
+    ]
+
+
+def _folded(messages: list[ModelMessage]) -> tuple[dict[str, str | None], dict[str, str | None]]:
+    """The prefix blocks' values as the instruction window and its changes record them, and the loaded blocks'."""
+    baseline = instruction_window(messages)
+    assert baseline is not None
+    recorded = _recorded_instruction_values(messages, baseline)
+    assert recorded is not None
+    return {str(instruction_id): value for instruction_id, value in recorded.items()}, dict(
+        LoadedInstructionValues.of(messages).values
+    )
+
+
+def _current(state: str) -> dict[str, str | None]:
+    """What the prefix's append-mode blocks say: the agent's own and the deferred capability catalog. `Coder`'s
+    model-specific blocks rewrite, so none of them is in the window."""
+    return {
+        'agent:state': f'The state is {state}.',
+        'capability:deferred_capabilities': (
+            'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
+            "A capability's tools stay hidden until it is loaded:\n- counter: Counting."
+        ),
+    }
+
+
+_LOAD_COUNTER = ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'counter'}, tool_call_id='load')])
+
+
+class TestModelSwitches:
+    """`Coder`'s model-specific blocks rewrite the prefix on a switch, while other blocks keep appending."""
+
+    async def _fresh(self, tmp_path: Path, *, gpt: bool, deps: _SwitchDeps) -> str | None:
+        log = _SwitchLog()
+        await _switch_agent().run(
+            'go', model=_switch_model('fresh', log, gpt=gpt), deps=deps, workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        return log.requests[0][1]
+
+    async def test_switching_back_to_gpt_sends_its_original_prefix(self, tmp_path: Path) -> None:
+        """GPT → Claude → GPT: switching back opens another window, at GPT's values. With nothing else changed, GPT is
+        sent the instructions the conversation opened with, byte for byte, so its cached prefix can still be hit, and
+        the same instructions and statements as a GPT run on the same history without instruction records."""
+        log = _SwitchLog()
+        workspace = LocalWorkspaceBackend(tmp_path)
+        agent, deps = _switch_agent(), _SwitchDeps('v1')
+        messages: list[ModelMessage] = []
+        for name, gpt in [('gpt', True), ('claude', False), ('gpt', True)]:
+            result = await agent.run(
+                name,
+                model=_switch_model(name, log, gpt=gpt),
+                deps=deps,
+                workspace=workspace,
+                message_history=messages,
+            )
+            messages = result.all_messages()
+        opened_with = log.requests[0][1]
+        assert opened_with is not None and _DELEGATION_RULE in opened_with
+        assert [(name, instructions) for name, instructions, _ in log.requests] == [
+            ('gpt', opened_with),
+            ('claude', await self._fresh(tmp_path, gpt=False, deps=deps)),
+            ('gpt', opened_with),
+        ]
+        assert [statements for *_, statements in log.requests] == [[], [], []]
+        assert _instruction_records(messages, InstructionDeltaPart) == []
+        assert len(_instruction_records(messages, InstructionBaselinePart)) == 3
+
+        # A GPT run on the same history, stripped of its instruction records, is sent the same thing.
+        stripped = [
+            replace(message, parts=[p for p in message.parts if not isinstance(p, InstructionBaselinePart)])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages[:-2]
+        ]
+        replay = _SwitchLog()
+        await agent.run(
+            'gpt',
+            model=_switch_model('gpt', replay, gpt=True),
+            deps=deps,
+            workspace=workspace,
+            message_history=stripped,
+        )
+        assert replay.requests == log.requests[-1:]
+
+    async def test_other_blocks_keep_appending_across_switches(self, tmp_path: Path) -> None:
+        """Between switches, the agent's own block and a loaded capability's block append their changes. A switch opens
+        a window that carries each prefix block at its current value, as a fresh run on the new model would, and the
+        changes recorded before it stay in history without applying to the new window. A loaded capability's block
+        isn't part of any window, so its changes stay in effect and it isn't stated again."""
+        log = _SwitchLog()
+        workspace = LocalWorkspaceBackend(tmp_path)
+        agent = _switch_agent()
+        steps: list[tuple[str, bool, _SwitchDeps, Sequence[ModelResponse]]] = [
+            ('gpt', True, _SwitchDeps('v1', 0), [_LOAD_COUNTER]),
+            ('gpt', True, _SwitchDeps('v2', 1), []),
+            ('claude', False, _SwitchDeps('v2', 1), []),
+            ('claude', False, _SwitchDeps('v3', 2), []),
+            ('gpt', True, _SwitchDeps('v3', 2), []),
+        ]
+        messages: list[ModelMessage] = []
+        deltas_before: list[ModelRequestPart] = []
+        for index, (name, gpt, deps, script) in enumerate(steps):
+            result = await agent.run(
+                name,
+                model=_switch_model(name, log, gpt=gpt, script=script),
+                deps=deps,
+                workspace=workspace,
+                message_history=messages,
+            )
+            messages = result.all_messages()
+            new_deltas = _instruction_records(result.new_messages(), InstructionDeltaPart)
+            switched = index > 0 and steps[index - 1][1] != gpt
+            sent = log.requests[-1][1]
+            if switched:
+                # The new window is what a fresh run on this model gets, and no change is appended for it.
+                assert sent == await self._fresh(tmp_path, gpt=gpt, deps=deps)
+                assert new_deltas == []
+            elif index > 0:
+                assert sent == log.requests[-2][1]
+            # Earlier changes stay in history.
+            assert _instruction_records(messages, InstructionDeltaPart)[: len(deltas_before)] == deltas_before
+            deltas_before = _instruction_records(messages, InstructionDeltaPart)
+            # The fold agrees with what the model was sent: the current values, each applied once.
+            assert _folded(messages) == (
+                _current(deps.state),
+                {'counter': f'Count carefully.\n\nThe count is {deps.count}.'},
+            )
+        # What each request was sent after the prefix, by id: the loaded capability's statements are sent in every
+        # window, while the state changes from an earlier window are left out once a switch states the current value.
+        assert [
+            (name, [statement.split('"')[1] for statement in statements]) for name, _, statements in log.requests
+        ] == snapshot(
+            [
+                ('gpt', []),
+                ('gpt', ['capability:counter']),
+                ('gpt', ['capability:counter', 'agent:state', 'capability:counter']),
+                ('claude', ['capability:counter', 'capability:counter']),
+                ('claude', ['capability:counter', 'capability:counter', 'agent:state', 'capability:counter']),
+                ('gpt', ['capability:counter', 'capability:counter', 'capability:counter']),
+            ]
+        )
