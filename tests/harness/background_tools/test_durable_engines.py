@@ -7,6 +7,7 @@ changes with it. One scripted model and one set of tools run under every engine,
 from __future__ import annotations
 
 import re
+import sys
 import uuid
 import warnings
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
@@ -21,6 +22,7 @@ import pytest
 
 from pydantic_ai import Agent, FunctionToolset, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, RunContext
@@ -33,14 +35,16 @@ from ...conftest import try_import
 # module-level skip some of those helpers raise.
 with try_import() as temporal_imports:
     from temporalio import workflow
-    from temporalio.client import Client
+    from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
+    from tests.harness._temporal import ignore_source_reads_left_open
     from tests.temporal_utils import temporal_dev_server_cache_dir
 
     @workflow.defn
@@ -75,6 +79,8 @@ with try_import() as absurd_imports:
     from pydantic_ai_harness.absurd import AbsurdDurability
 
     from ..absurd._task import running_task_context
+
+    # The engine's fixtures, imported so pytest finds them outside their own directory: `absurd` and what it needs.
     from ..absurd.conftest import absurd, async_conn, db_dsn, queue_name  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 with try_import() as pgtask_imports:
@@ -83,13 +89,16 @@ with try_import() as pgtask_imports:
     from pydantic_ai_harness.pgtask import PGTaskDurability
 
     from ..pgtask._task import PGTaskDatabase, run_in_task
+
+    # The engine's fixtures, imported so pytest finds them outside their own directory: `pgtask_db` and what it needs.
     from ..pgtask.conftest import pgtask_db, pgtask_dsn  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 with try_import() as azure_imports:
-    import durabletask  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    from durabletask.client import OrchestrationFailedError
 
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
 
+    # The engine's fixture, imported so pytest finds it outside its own directory.
     from ..azure_durable_task.conftest import durable_worker  # noqa: F401  # pyright: ignore[reportUnusedImport]
     from ..azure_durable_task.worker import InMemoryWorker, registered_agent, run_agent
 
@@ -154,12 +163,19 @@ FOREGROUND = 'inline result'
 
 RESULT = 'research result'
 
+BROKEN_SIGNATURES: Mapping[int, str] = {14443: _REFUSED}
+"""How each issue of a `broken` cell shows today, as a regex its observed outcome must match.
+
+`Support` only lets a `refused` cell name what the engine raises, so a broken cell's signature lives here: once the
+issue is fixed the outcome changes, and the cell fails.
+"""
+
 
 @dataclass
 class _Gate:
     """Holds `research` until the approval is asked for, so a background call is still running across the wait."""
 
-    open: bool = True
+    open: bool
     event: anyio.Event | None = None
 
     async def wait(self) -> None:
@@ -172,24 +188,6 @@ class _Gate:
         self.open = True
         if self.event is not None:
             self.event.set()
-
-
-_gate = _Gate()
-
-
-async def research() -> str:
-    await _gate.wait()
-    return RESULT
-
-
-def delete() -> str:
-    return 'deleted'
-
-
-async def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
-    """Answer in place, so an engine that supports the wait records the answer and goes on without suspending."""
-    _gate.release()
-    return requests.build_results(approve_all=True)
 
 
 def _returns(messages: Sequence[ModelMessage], tool_name: str) -> list[ToolReturnPart]:
@@ -216,7 +214,19 @@ def _model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('waiting')])
 
 
-def _agent(durability: AbstractCapability[None], scenario: Scenario, name: str) -> Agent[None, str]:
+def _agent(durability: AbstractCapability[None], scenario: Scenario, name: str, gate: _Gate) -> Agent[None, str]:
+    async def research() -> str:
+        await gate.wait()
+        return RESULT
+
+    def delete() -> str:
+        return 'deleted'
+
+    async def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+        """Answer in place, so an engine that supports the wait records the answer and goes on without suspending."""
+        gate.release()
+        return requests.build_results(approve_all=True)
+
     approval = scenario == 'BackgroundTools.survives_approval_wait'
     return Agent(
         FunctionModel(_model),
@@ -235,23 +245,22 @@ def _agent(durability: AbstractCapability[None], scenario: Scenario, name: str) 
 
 
 def _cell(scenario: Scenario, engine: Engine) -> Support:
-    """The cell under test; an `untested` one skips. Closes the gate when the scenario needs `research` held."""
+    """The cell under test; an `untested` one skips."""
     cell = SCENARIO_SUPPORT[scenario][engine]
-    if cell.level == 'untested':  # pragma: no cover - no cell is untested today
+    if cell.level == 'untested':
         pytest.skip(f'#{cell.issue}: {cell.reason}')
-    # A foreground engine runs `research` before the model asks for approval, so the gate can't wait for it. Nor can
-    # Azure's in-memory worker, which runs one activity at a time: a held call would block the whole orchestration.
-    global _gate
-    _gate = _Gate(
-        open=scenario != 'BackgroundTools.survives_approval_wait'
-        or _foreground(engine)
-        or engine == 'azure_durable_task'
-    )
     return cell
 
 
 def _foreground(engine: Engine) -> bool:
     return SCENARIO_SUPPORT['BackgroundTools.runs_in_background'][engine].level == 'limited'
+
+
+def _gate_for(scenario: Scenario, engine: Engine) -> _Gate:
+    # A foreground engine runs `research` before the model asks for approval, so the gate can't wait for it. Nor can
+    # Azure's in-memory worker, which runs one activity at a time: a held call would block the whole orchestration.
+    held = scenario == 'BackgroundTools.survives_approval_wait'
+    return _Gate(open=not held or _foreground(engine) or engine == 'azure_durable_task')
 
 
 @contextmanager
@@ -263,14 +272,9 @@ def _foreground_warning_allowed(engine: Engine) -> Generator[None]:
         yield
 
 
-def _error_text(error: BaseException) -> str:
-    """The messages along an error's cause chain, as engines wrap the run's own error."""
-    messages: list[str] = []
-    current: BaseException | None = error
-    while current is not None:
-        messages.append(f'{type(current).__name__}: {current}')
-        current = current.__cause__
-    return ' <- '.join(messages)
+def _user_error(error: Exception) -> str | None:
+    """The message of the `UserError` the run raised, or `None` for any other error, which the test lets propagate."""
+    return str(error) if isinstance(error, UserError) else None
 
 
 def _assert_cell(scenario: Scenario, engine: Engine, cell: Support, observed: str) -> None:
@@ -281,25 +285,37 @@ def _assert_cell(scenario: Scenario, engine: Engine, cell: Support, observed: st
     elif cell.level == 'refused':
         assert cell.raises is not None and re.search(cell.raises, observed), observed
     else:
-        assert observed != BACKGROUND, f'{scenario} now passes under {engine}: update its `SCENARIO_SUPPORT` cell'
+        assert cell.issue is not None
+        assert re.search(BROKEN_SIGNATURES[cell.issue], observed), (
+            f'{scenario} no longer breaks the way #{cell.issue} describes under {engine}: update its '
+            f'`SCENARIO_SUPPORT` cell ({observed})'
+        )
+
+
+Run = Callable[[Agent[None, str], _Gate], Awaitable[str]]
+"""Runs the agent in the engine's harness and returns its output. It gets the gate to release before shutting down."""
 
 
 async def _check(
     scenario: Scenario,
     engine: Engine,
-    run: Callable[[Agent[None, str]], Awaitable[str]],
+    run: Run,
     durability: Callable[[], AbstractCapability[None]],
+    unwrap: Callable[[Exception], str | None] = _user_error,
 ) -> None:
     cell = _cell(scenario, engine)
-    agent = _agent(durability(), scenario, f'bg_{engine}_{uuid.uuid4().hex[:8]}')
+    gate = _gate_for(scenario, engine)
+    agent = _agent(durability(), scenario, f'bg_{engine}_{uuid.uuid4().hex[:8]}', gate)
     try:
         with _foreground_warning_allowed(engine):
-            observed = await run(agent)
+            observed = await run(agent, gate)
     except Exception as error:
-        observed = _error_text(error)
+        if (message := unwrap(error)) is None:
+            raise
+        observed = message
     finally:
         # A tool still holding the gate would keep its engine's worker from shutting down.
-        _gate.release()
+        gate.release()
     _assert_cell(scenario, engine, cell, observed)
 
 
@@ -308,19 +324,33 @@ def _check_sync(
     engine: Engine,
     run: Callable[[Agent[None, str]], str],
     durability: Callable[[], AbstractCapability[None]],
+    unwrap: Callable[[Exception], str | None] = _user_error,
 ) -> None:
     """`_check` for an engine whose test harness drives the run from a synchronous handler, on a loop of its own."""
     cell = _cell(scenario, engine)
-    agent = _agent(durability(), scenario, f'bg_{engine}')
+    gate = _gate_for(scenario, engine)
+    agent = _agent(durability(), scenario, f'bg_{engine}_{uuid.uuid4().hex[:8]}', gate)
     try:
         with _foreground_warning_allowed(engine):
             observed = run(agent)
     except Exception as error:
-        observed = _error_text(error)
+        if (message := unwrap(error)) is None:
+            raise
+        observed = message
+    finally:
+        gate.release()
     _assert_cell(scenario, engine, cell, observed)
 
 
 parametrize_scenarios = pytest.mark.parametrize('scenario', SCENARIOS, ids=lambda scenario: scenario.split('.')[1])
+
+
+def test_an_untested_cell_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    cells = {scenario: dict(SCENARIO_SUPPORT[scenario]) for scenario in SCENARIOS}
+    cells['BackgroundTools.runs_in_background']['render'] = Support('untested', 'no harness', issue=12291)
+    monkeypatch.setattr(sys.modules[__name__], 'SCENARIO_SUPPORT', cells)
+    with pytest.raises(pytest.skip.Exception, match='#12291: no harness'):
+        _cell('BackgroundTools.runs_in_background', 'render')
 
 
 def test_every_scenario_has_a_cell_for_every_engine() -> None:
@@ -340,10 +370,11 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
 
 @pytest.mark.temporal
 @pytest.mark.xdist_group(name='harness-temporal')
+@ignore_source_reads_left_open
 @pytest.mark.skipif(not temporal_imports(), reason='temporalio not installed')
 @parametrize_scenarios
 async def test_temporal(scenario: Scenario, temporal_env: WorkflowEnvironment) -> None:
-    async def run(agent: Agent[None, str]) -> str:
+    async def run(agent: Agent[None, str], gate: _Gate) -> str:
         BackgroundToolsWorkflow.agent = agent
         BackgroundToolsWorkflow.__pydantic_ai_agents__ = [agent]
         client = await Client.connect(
@@ -362,18 +393,35 @@ async def test_temporal(scenario: Scenario, temporal_env: WorkflowEnvironment) -
             try:
                 return await client.execute_workflow(BackgroundToolsWorkflow.run, id=queue, task_queue=queue)
             finally:
-                _gate.release()
+                # An activity still holding the gate would keep the worker from shutting down.
+                gate.release()
 
     activity_config = ActivityConfig(
         start_to_close_timeout=timedelta(seconds=30), retry_policy=RetryPolicy(maximum_attempts=1)
     )
-    await _check(scenario, 'temporal', run, lambda: TemporalDurability[None](activity_config=activity_config))
+    await _check(
+        scenario,
+        'temporal',
+        run,
+        lambda: TemporalDurability[None](activity_config=activity_config),
+        unwrap=_temporal_user_error,
+    )
 
 
+def _temporal_user_error(error: Exception) -> str | None:
+    """The `UserError` that failed the workflow, which Temporal raises to the client as an `ApplicationError`."""
+    if isinstance(error, WorkflowFailureError):
+        cause = error.cause
+        if isinstance(cause, ApplicationError) and cause.type == 'UserError':
+            return cause.message
+    return None
+
+
+@pytest.mark.xdist_group(name='harness-dbos')
 @pytest.mark.skipif(not dbos_imports(), reason='dbos not installed')
 @parametrize_scenarios
 async def test_dbos(scenario: Scenario, tmp_path: Path) -> None:
-    async def run(agent: Agent[None, str]) -> str:
+    async def run(agent: Agent[None, str], gate: _Gate) -> str:
         @DBOS.workflow(name=f'{agent.name}_workflow')
         async def workflow() -> str:
             return (await agent.run('go')).output
@@ -392,7 +440,7 @@ async def test_dbos(scenario: Scenario, tmp_path: Path) -> None:
 @pytest.mark.skipif(not prefect_imports(), reason='prefect not installed')
 @parametrize_scenarios
 async def test_prefect(scenario: Scenario, prefect_test_server: None) -> None:
-    async def run(agent: Agent[None, str]) -> str:
+    async def run(agent: Agent[None, str], gate: _Gate) -> str:
         @flow
         async def run_flow() -> str:
             return (await agent.run('go')).output
@@ -416,7 +464,7 @@ def test_aws_lambda(scenario: Scenario) -> None:
 @pytest.mark.skipif(not absurd_imports(), reason='absurd-sdk not installed')
 @parametrize_scenarios
 async def test_absurd(scenario: Scenario, absurd: absurd_sdk.AsyncAbsurd) -> None:
-    async def run(agent: Agent[None, str]) -> str:
+    async def run(agent: Agent[None, str], gate: _Gate) -> str:
         async with running_task_context(absurd):
             return (await agent.run('go')).output
 
@@ -426,14 +474,21 @@ async def test_absurd(scenario: Scenario, absurd: absurd_sdk.AsyncAbsurd) -> Non
 @pytest.mark.skipif(not pgtask_imports(), reason='pgtask not installed')
 @parametrize_scenarios
 async def test_pgtask(scenario: Scenario, pgtask_db: PGTaskDatabase) -> None:
-    async def run(agent: Agent[None, str]) -> str:
-        outputs: list[str] = []
+    async def run(agent: Agent[None, str], gate: _Gate) -> str:
+        outcomes: list[str | UserError] = []
 
         async def body(attempt: int) -> None:
-            outputs.append((await agent.run('go')).output)
+            # Caught here, so it reaches the test as itself rather than as the failed task's state.
+            try:
+                outcomes.append((await agent.run('go')).output)
+            except UserError as error:
+                outcomes.append(error)
 
         await run_in_task(pgtask_db, body)
-        return outputs[0]
+        [outcome] = outcomes
+        if isinstance(outcome, UserError):
+            raise outcome
+        return outcome
 
     await _check(scenario, 'pgtask', run, PGTaskDurability[None])
 
@@ -445,7 +500,14 @@ def test_azure_durable_task(scenario: Scenario, durable_worker: InMemoryWorker) 
         with registered_agent(durable_worker, agent):
             return run_agent(durable_worker, agent, 'go', deps=None).output
 
-    _check_sync(scenario, 'azure_durable_task', run, AzureDurableTaskDurability)
+    _check_sync(scenario, 'azure_durable_task', run, AzureDurableTaskDurability, unwrap=_azure_user_error)
+
+
+def _azure_user_error(error: Exception) -> str | None:
+    """The `UserError` that failed the orchestration, which the client sees as an `OrchestrationFailedError`."""
+    if isinstance(error, OrchestrationFailedError) and error.failure_details.is_caused_by(UserError):
+        return error.failure_details.message
+    return None
 
 
 @pytest.mark.skipif(not render_imports(), reason='render not installed')
@@ -453,7 +515,7 @@ def test_azure_durable_task(scenario: Scenario, durable_worker: InMemoryWorker) 
 async def test_render(scenario: Scenario) -> None:
     runtime = RenderWorkflows[None](Workflows())
 
-    async def run(agent: Agent[None, str]) -> str:
+    async def run(agent: Agent[None, str], gate: _Gate) -> str:
         return await run_agent_in_task(agent, runtime, RecordingTaskContext())
 
     await _check(scenario, 'render', run, lambda: runtime)
