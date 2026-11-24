@@ -77,7 +77,7 @@ _LoadedSnapshot: TypeAlias = tuple[MemoryFile | None, list[str], bool, str | Non
 type, and who wrote the snapshot."""
 
 _LoadedSnapshotWithoutSource: TypeAlias = tuple[MemoryFile | None, list[str], bool, str | None]
-"""What `Memory._load_snapshot` journaled up to v2.70.0, without the source, so a run journaled then still replays."""
+"""What `Memory._load_snapshot` journaled up to v2.73.0, without the source, so a run journaled then still replays."""
 
 _MEMORY_SOURCE: Final = ModelSource('agent in an earlier run')
 """Who wrote a memory snapshot: the agent, through its memory tools, in earlier runs: another model's text, with no
