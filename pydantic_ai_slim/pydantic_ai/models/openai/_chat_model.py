@@ -138,7 +138,7 @@ from ._reasoning import (
     resolve_openai_thinking_effort,
     supports_reasoning_effort_none,
 )
-from ._response_fields import map_usage
+from ._response_fields import add_reasoning_tokens_omitted_from_completion_tokens, map_usage
 from ._settings import (
     OpenAIChatModelSettings,
     drop_unsupported_params,
@@ -914,7 +914,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        return map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+        request_usage = map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+        if self.profile.get('openai_chat_completion_tokens_omit_reasoning', False):
+            add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
+        return request_usage
 
     def _get_tool_choice(
         self,
