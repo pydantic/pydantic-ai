@@ -43,6 +43,15 @@ The docs index and repository README tell the same story on two surfaces. Keep t
 - README snippets that cannot run in the documentation test environment are excluded by `tests/test_examples.py`, not by fence attributes, so README fences remain compatible with GitHub rendering.
 - When the shared tagline or Harness framing changes, check `docs/harness/index.md` and `src/pydantic_ai_harness/README.md` too.
 
+# Pax front pages: `docs/harness/clai2.md` and `src/pydantic_ai_pax/README.md`
+
+The Pax page and the Pax README tell the same story on two surfaces. The page was generated from the README until the beta; it is a page in its own right now, and `tests/test_pax_docs_parity.py` holds the pair together:
+
+- The page uses relative links and names models by alias, like every other docs page.
+- The README uses absolute documentation links, keeps its badges, and names models themselves, since PyPI and GitHub resolve neither relative paths nor aliases.
+- Code blocks stay identical once aliases are resolved. A command a reader copies must be the same on both.
+- Edit both. Nothing regenerates either one.
+
 # Model names
 
 - Name models with an alias from [`model_aliases/aliases.json`](model_aliases/aliases.json), never a model ID. Chat models use `<provider>:<tier>`, with the tiers `small`, `medium`, `large`, and `xlarge`; every chat provider defines all four. Realtime, image generation, and embedding models use `<provider>:realtime`, `<provider>:image`, and `<provider>:embedding`.

@@ -3,11 +3,9 @@ title: Pax
 description: "Pax is a coding agent for your terminal, built on Pydantic AI and the Pydantic AI Harness."
 ---
 
-<!-- Generated from src/pydantic_ai_pax/README.md by src/pydantic_ai_pax/scripts/sync_docs_page.py. Edit the README instead. -->
-
 # Pax
 
-A coding agent for your terminal, built on [Pydantic AI](https://pydantic.dev/docs/ai/).
+A coding agent for your terminal, built on [Pydantic AI](../index.md).
 
 Pax reads your code, edits files, and runs commands, and you see every step as it
 happens. Use the model you like: sign in with your ChatGPT or GitHub Copilot
@@ -42,11 +40,11 @@ Three packages, each built on the one before it. Start with the one that matches
 
 | Package | What it is | Start here when |
 |---|---|---|
-| [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
-| [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
+| [Pydantic AI](../index.md) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
+| [Pydantic AI Harness](index.md) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
 | [Pax](#install) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
 
-Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. Pax is not the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. Pax is not the [`clai` chat CLI](../cli.md) that ships with Pydantic AI.
 
 ## Install
 
@@ -413,7 +411,7 @@ path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
 ```
 
 The second line adds web search from
-[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
+[Pydantic AI Harness](index.md). It needs the `exa` extra and an `EXA_API_KEY`:
 
 ```bash
 uv tool install --compile-bytecode pydantic-ai-pax --with 'pydantic-ai-harness[exa]'
@@ -460,3 +458,10 @@ covers everything in detail:
 The screenshots are real Pax sessions. Only the model is scripted (`demo:tour`), so they
 need no account and cost nothing. To make them again, run
 `src/pydantic_ai_pax/scripts/screenshots/capture.sh`.
+
+## Legacy clai
+
+Pydantic AI also ships [`clai`](../cli.md), the chat CLI that came before Pax. It is not
+deprecated: it stays the quickest way to hold a conversation with a model, it serves the
+[Web Chat UI](../web.md) with `clai web`, and `agent.to_cli_sync()` opens the same chat from
+your own code. For a coding agent, use Pax.
