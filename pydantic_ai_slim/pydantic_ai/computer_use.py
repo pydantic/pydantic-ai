@@ -27,7 +27,8 @@ The summary's wording can change between releases;
 [`ComputerResult`][pydantic_ai.computer_use.ComputerResult], in the result's `metadata`, does not.
 
 A call with a [`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation] must not run until a person
-approves it. A runner that ran it after a person approved it sets
+approves it. The runner enforces this, as `ComputerUse` does: a custom runner that skips the check runs flagged
+actions without approval. A runner that ran it after a person approved it sets
 [`confirmed`][pydantic_ai.computer_use.ComputerResult.confirmed] on the result. A model adapter tells the provider that
 a person confirmed the call only when it is set, and otherwise says nobody did.
 
