@@ -1931,6 +1931,37 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
             ['<context_file path="../../AGENTS.md">repo rules</context_file>']
         )
 
+    async def test_ancestor_data_does_not_use_up_the_nested_budget(self, tmp_path: Path) -> None:
+        # The ancestor goes out as a `ContextFilePart` too, but `nested_max_chars` is for nested files alone.
+        _write(tmp_path / 'AGENTS.md', 'R' * 40)
+        working_dir = tmp_path / 'packages' / 'foo'
+        _write(working_dir / 'sub' / 'AGENTS.md', 'nested rules')
+        _write(working_dir / 'sub' / 'x.py', 'x')
+        workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(working_dir)), authority='none')
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if _tool_returns(messages) == 0:
+                yield {0: DeltaToolCall(name='read_file', json_args='{"path":"sub/x.py"}', tool_call_id='read')}
+            else:
+                yield 'done'
+
+        result = await Agent(
+            FunctionModel(stream_function=stream),
+            capabilities=[
+                FileSystem(root_dir=working_dir),
+                RepoContext(home_dir=str(tmp_path), nested_traversal=True, nested_max_chars=20),
+            ],
+        ).run('go', workspace=workspace)
+
+        parts = [
+            (type(part), part.content)
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ContextFilePart | ContextFilePathPart)
+        ]
+        assert parts == [(ContextFilePart, 'R' * 40), (ContextFilePart, 'nested rules')]
+
     async def test_an_operator_workspace_can_lower_its_own_file(self, tmp_path: Path) -> None:
         # The docs case: an `'operator'` workspace whose `path_authority` lowers the working directory's own file.
         working_dir = self._repo(tmp_path)
