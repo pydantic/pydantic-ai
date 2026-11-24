@@ -235,6 +235,28 @@ class TestToolOutputLimitsTelemetry:
             **handle,
         }
 
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_spilled_content_unit_records_its_handle_under_content_only_with_content(
+        self, include_content: bool, tmp_path: Path, instrumented: Instrumented
+    ):
+        spill = ToolOutputLimits[object](
+            bands=[Band(over=100, action=Spill())], store=LocalFileOverflowStore(base_dir=tmp_path)
+        )
+        instrumentation, exporter = instrumented(include_content)
+        await agent_with_tool(spill, ToolReturn(return_value='small', content='y' * 300), instrumentation).run('go')
+
+        attributes = limits_attributes(exporter)
+        handle = attributes.pop('tool_output_limits.content.handle', None)
+        assert isinstance(handle, str) is include_content
+        assert attributes == snapshot(
+            {
+                'tool_output_limits.content.action': 'spill',
+                'tool_output_limits.content.original_size': 300,
+                'tool_output_limits.content.reduced_size': 603,
+                'tool_output_limits.content.size_unit': 'chars',
+            }
+        )
+
     @pytest.mark.parametrize(
         ('journaled', 'error'),
         [
