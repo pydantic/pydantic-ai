@@ -293,11 +293,11 @@ sandbox = KubernetesSandbox(
 | `sandbox_timeout` | Seconds after which a newly claimed sandbox is deleted. Default: `86_400`, 24 hours. `None` keeps it until `destroy(ref)`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, sandboxd's root directory. Created on a new claim; on an attached one it must exist. |
 | `env` | Environment variables every command gets, on top of the container's own. Default: `None`. The agent's commands can read these, so leave out secrets it shouldn't see. |
-| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. Without root or passwordless `sudo` in the pod, its image must have the screen's programs. The size applies when the display first starts. Default: `False`. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. Without root or passwordless `sudo` in the pod, its image must have [the display's programs](../computer_use/#what-the-display-needs). The size applies when the display first starts. Default: `False`. |
 | `authority` | Who wrote the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`connection`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach; the other options only shape a new claim.
+`connection`, `working_dir`, `env`, `authority`, `path_authority` and `desktop` also apply when you reattach; the other options only shape a new claim.
 
 ## Limits
 
