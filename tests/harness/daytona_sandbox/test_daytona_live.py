@@ -32,12 +32,15 @@ import daytona
 import pytest
 from pytest_examples import CodeExample
 
-from pydantic_ai.workspaces import WorkspaceTimeoutError, WorkspaceUnavailableError
+from pydantic_ai.computer_use import Click, PressKeys, Scroll, TypeText
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
+from ..computer_use.display_contract_live import check_display_contract, png_size
+from ..computer_use.display_fakes import full_display
 from .conftest import LIVE_AUTO_STOP_INTERVAL
 
 pytestmark = pytest.mark.daytona_live
@@ -65,9 +68,11 @@ async def client() -> AsyncIterator[daytona.AsyncDaytona]:
 
 
 @asynccontextmanager
-async def _owned(client: daytona.AsyncDaytona) -> AsyncGenerator[DaytonaSandboxBackend]:
+async def _owned(
+    client: daytona.AsyncDaytona, desktop: bool | tuple[int, int] = False
+) -> AsyncGenerator[DaytonaSandboxBackend]:
     """Create a sandbox and delete it on the way out, even when the test deleted it already."""
-    backend = DaytonaSandboxBackend(client=client, auto_stop_interval=LIVE_AUTO_STOP_INTERVAL)
+    backend = DaytonaSandboxBackend(client=client, auto_stop_interval=LIVE_AUTO_STOP_INTERVAL, desktop=desktop)
     native = await backend.get_sandbox()
     try:
         yield backend
@@ -291,6 +296,111 @@ async def test_commands_get_a_usable_environment(client: daytona.AsyncDaytona) -
 
         result = await backend.run('echo "$FOO"; echo "$PATH"', shell=True, env={'FOO': '1'}, timeout=60)
         assert result.stdout.splitlines() == ['1', path]
+
+
+async def test_a_new_desktop_sandbox_below_1024x768_gets_that_size(client: daytona.AsyncDaytona) -> None:
+    """Creates a new sandbox. Validates the fake-encoded assumption that `VNC_RESOLUTION` gives a new sandbox a
+    display below Daytona's 1024x768 default, which the display and its screenshots then report."""
+    async with _owned(client, desktop=(800, 600)) as backend:
+        display = backend.display
+        assert display is not None
+        assert await display.display_size() == (800, 600)
+        assert png_size(await display.screenshot()) == (800, 600)
+
+
+_EVENT_LOGGER = """
+import tkinter as tk
+root = tk.Tk()
+root.geometry('400x300+0+0')
+log = open('events.txt', 'w')
+def write(line):
+    log.write(line + '\\n')
+    log.flush()
+root.bind_all('<KeyPress>', lambda event: write(f'key {event.keysym}'))
+root.bind('<ButtonPress>', lambda event: write(f'button {event.num} state {event.state}'))
+root.after(500, write, 'ready')
+root.mainloop()
+"""
+"""A window at the top left that logs to `events.txt` each key it gets and each mouse button with X's modifier state."""
+
+
+class TestLiveDaytonaDesktop:
+    """Runs the display against a sandbox started with a desktop."""
+
+    @pytest.fixture(scope='class')
+    @classmethod
+    async def backend(cls) -> AsyncIterator[WorkspaceBackend]:
+        backend = DaytonaSandboxBackend(auto_stop_interval=LIVE_AUTO_STOP_INTERVAL, desktop=True)
+        try:
+            yield backend
+        finally:
+            try:
+                if backend.ref is not None:
+                    await DaytonaSandbox().destroy(backend.ref)
+            finally:
+                await backend.aclose()
+
+    async def test_display_contract(self, backend: WorkspaceBackend) -> None:
+        """The desktop is 1280x800, and its screenshots, zoom and pointer agree with that size."""
+        display = full_display(backend)
+        assert await display.display_size() == (1280, 800)
+        await check_display_contract(display)
+
+    async def test_commands_see_the_desktop(self, backend: WorkspaceBackend) -> None:
+        """Shell commands get `DISPLAY`, so programs they start open on the desktop."""
+        assert isinstance(backend, DaytonaSandboxBackend)
+        assert (await backend.run('echo "$DISPLAY"', shell=True)).stdout == ':0\n'
+
+    async def test_modifiers_are_held_around_clicks_and_scrolls(self, backend: WorkspaceBackend) -> None:
+        """Validates the mapping the fake assumes: Daytona holds a click's or scroll's modifiers around it, and `cmd`,
+        which `super` maps to, is `Super_L`."""
+        assert isinstance(backend, DaytonaSandboxBackend)
+        display = full_display(backend)
+        await display.display_size()  # starts the desktop, so the window opens on it
+        await backend.write_bytes('log_events.py', _EVENT_LOGGER.encode())
+        await backend.run('rm -f events.txt; setsid python3 log_events.py >/dev/null 2>&1 &', shell=True)
+        await backend.run('until grep -q ready events.txt 2>/dev/null; do sleep 0.1; done', shell=True, timeout=30)
+
+        await display.act(Click(x=200, y=150))  # focuses the window, so it gets the key events
+        await display.act(Click(x=200, y=150, modifiers=('shift',)))
+        await display.act(Scroll(x=200, y=150, direction='down', amount=1, modifiers=('ctrl',)))
+        await display.act(Click(x=200, y=150, modifiers=('super',)))
+
+        # Up to 10 seconds for the window to log all four presses.
+        wait = 'i=0; until [ "$(grep -c ^button events.txt)" -ge 4 ] || [ $i -ge 100 ]; do sleep 0.1; i=$((i+1)); done'
+        logged = (await backend.run(f'{wait}; cat events.txt', shell=True)).stdout.splitlines()
+        # X's state bits: 1 is shift, 4 is control, 64 is Mod4, which Super_L is on.
+        assert [line for line in logged if line.startswith('button')] == [
+            'button 1 state 0',
+            'button 1 state 1',
+            'button 5 state 4',
+            'button 1 state 64',
+        ]
+        assert 'key Super_L' in logged
+
+    async def test_keys_and_text_reach_the_focused_window(self, backend: WorkspaceBackend) -> None:
+        """Validates the key mapping the fake assumes: a shifted symbol is shift and its key on Daytona's display."""
+        assert isinstance(backend, DaytonaSandboxBackend)
+        display = backend.display
+        assert display is not None
+        await display.display_size()  # starts the desktop, so the terminal opens on it
+        # Its own process, so a terminal already running in the session doesn't take the window and its directory.
+        # The terminal's shell writes `ready` once the window is up; Daytona's desktop has no xdotool to wait with.
+        await backend.run(
+            'rm -f ready typed.txt; setsid xfce4-terminal --disable-server --geometry 60x10+100+100 '
+            '-x sh -c "touch ready; cat > typed.txt" >/dev/null 2>&1 &',
+            shell=True,
+        )
+        waited = await backend.run('until [ -e ready ]; do sleep 0.1; done', shell=True, timeout=30)
+        assert waited.exit_code == 0
+
+        await display.act(Click(x=300, y=180))
+        await display.act(TypeText(text='hello,\tdesktop'))
+        await display.act(PressKeys(keys=('!',)))
+        await display.act(PressKeys(keys=('enter',)))
+
+        typed = await backend.run('until [ -s typed.txt ]; do sleep 0.1; done; cat typed.txt', shell=True, timeout=30)
+        assert typed.stdout == 'hello,\tdesktop!\n'
 
 
 # The README's Python blocks are the same as this page's.

@@ -1,6 +1,7 @@
-"""Fenced code stays literal and is lexed with the complete block's context."""
+"""Fenced code stays literal, streams line by line, and is lexed with the complete block's context."""
 
 import io
+from typing import IO
 
 import pytest
 from rich.color import Color
@@ -10,7 +11,9 @@ from termflow.themes import PALETTES
 
 from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart
 from pydantic_ai_pax import StreamRenderer
+from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.rendering import PartWriter
 
 
 @pytest.mark.parametrize('chunk_size', [1, 1000])
@@ -81,6 +84,24 @@ async def test_code_wraps_without_losing_content_or_interpreting_controls() -> N
     assert '\x07' not in output.getvalue()
 
 
+@pytest.mark.parametrize(
+    'lead',
+    ['instead of Ok:\n', 'instead of Ok:\n\n', '- instead of Ok\n\n'],
+    ids=['fence-under-prose', 'blank-line-in-source', 'blank-line-after-list'],
+)
+async def test_one_blank_row_separates_prose_from_a_code_block(lead: str) -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=24), stop_loading=lambda: None)
+    content = f'{lead}```rust\nOk(())\n```\n```rust\nErr(e)\n```\n'
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart(content)))
+    await renderer.finish()
+    rule = 'rust ' + '─' * 19
+    assert output.getvalue().splitlines()[1:] == [
+        *['', rule, 'Ok(())', '─' * 24],
+        *['', rule, 'Err(e)', '─' * 24, ''],
+    ]
+
+
 async def test_cancelled_fence_does_not_leak_into_next_part() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
@@ -115,3 +136,45 @@ async def test_code_uses_terminal_foreground_and_palette_syntax(name: str, think
         keyword = text.get_style_at_offset(console, text.plain.index('return'))
         assert keyword.color == Color.parse(PALETTES[name].ansi[4] if name != 'default' else 'color(4)')
     assert '\x1b]' not in output.getvalue()
+
+
+async def test_live_panel_shows_code_lines_as_they_arrive_and_lexes_the_block_at_the_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Untimed(PartWriter):
+        """Writes what it is given at once, so the rows do not depend on the drainer's timer."""
+
+        def write(self, text: str) -> int:
+            self._target.write(text)
+            return len(text)
+
+    def make_writer(self: StreamRenderer, output: IO[str]) -> PartWriter:
+        return Untimed(output, tick_interval=3600, catch_up_seconds=1, min_chars_per_tick=1)
+
+    monkeypatch.setattr(StreamRenderer, '_make_writer', make_writer)
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    console = Console(file=surface, force_terminal=True, color_system='truecolor', width=80, no_color=False)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+
+    def rows() -> list[Text]:
+        return [Text.from_ansi(row) for row in surface.transcript.frame(width=80, height=50).rows]
+
+    def color(row: Text) -> Color | None:
+        return row.get_style_at_offset(console, row.plain.index('return')).color
+
+    await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('Before\n\n' + '`' * 3 + 'python\n')))
+    assert rows()[2].plain.startswith('python ─')
+    await renderer.on_stream_event(
+        PartDeltaEvent(index=0, delta=TextPartDelta('value = """inside\nreturn False\n"""\nreturn False\n'))
+    )
+    streamed = rows()
+    assert [row.plain.rstrip() for row in streamed[3:7]] == ['value = """inside', 'return False', '"""', 'return False']
+    # Lexed alone while streaming, the line inside the string looks like code.
+    assert color(streamed[4]) == color(streamed[6])
+    await renderer.on_stream_event(PartDeltaEvent(index=0, delta=TextPartDelta('```\n')))
+    fenced = rows()
+    # The same rows, then the closing rule; only the colours of the lines inside the string change.
+    assert [row.plain for row in fenced[:7]] == [row.plain for row in streamed[:7]]
+    assert fenced[7].plain == '─' * 80
+    assert color(fenced[4]) != color(fenced[6])
+    assert color(fenced[4]) == fenced[3].get_style_at_offset(console, fenced[3].plain.index('inside')).color

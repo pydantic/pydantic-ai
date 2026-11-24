@@ -1252,6 +1252,7 @@ def test_profile_allow_seeding() -> None:
         supports_webrtc=True,
         supports_seeding_images=True,
         supports_seeding_audio=True,
+        supports_appending_voice_instructions=False,
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
         async_tool_call_mode='always',  # the realtime models keep talking through a tool call
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`

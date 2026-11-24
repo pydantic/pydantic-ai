@@ -493,7 +493,7 @@ class TestSkillCatalog:
     async def test_skills_load_beside_a_plugin_capability_function(
         self, tmp_path: Path, project: Path, supplies_workspace: bool
     ) -> None:
-        # Such a plugin may supply a sandbox, so CLAI attaches the project directory only once the run's
+        # Such a plugin may supply a sandbox, so Pax attaches the project directory only once the run's
         # capability functions resolve: after `Skills` reads its catalog.
         write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
         sandbox = tmp_path / 'sandbox'

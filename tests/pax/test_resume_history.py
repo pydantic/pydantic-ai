@@ -120,7 +120,7 @@ async def test_prompts_answers_thinking_and_tool_calls_render_like_a_live_turn()
         ModelResponse(parts=[TextPart('found it')]),
     ]
     text = await rendered(messages)
-    assert '> look\n[attachment]' in text
+    assert '> look\n  [attachment]' in text
     assert text.index('Thinking pondering') < text.index('checking') < text.index("● grep 'needle' in 'src'")
     assert text.index("● grep 'needle' in 'src'") < text.index('● lookup key="value"') < text.index('found it')
     assert 'system' not in text and 'web_search' not in text and 'output invalid' not in text

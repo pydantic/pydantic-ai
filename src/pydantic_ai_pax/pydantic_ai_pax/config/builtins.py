@@ -1,4 +1,4 @@
-"""The plugin declarations CLAI ships, kept apart from the shell so `pax plugins` reads them without importing it."""
+"""The plugin declarations Pax ships, kept apart from the shell so `pax plugins` reads them without importing it."""
 
 from pydantic_ai_pax.config import PluginSettings
 

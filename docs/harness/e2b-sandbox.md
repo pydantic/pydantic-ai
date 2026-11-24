@@ -56,6 +56,7 @@ result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summa
 - `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
 - It keeps running, and billing, after the run. See [Clean up](#clean-up).
 - It pauses after 1 hour, and the next run resumes it. That is `sandbox_timeout=3600`, the most E2B's Hobby plan allows. On a Pro plan, pass up to `sandbox_timeout=86400`.
+- Pass `idle_timeout=600` to pause it about 10 minutes after its last command or file operation instead. Each operation extends its lifetime as it starts, up to `sandbox_timeout` from the run's first use; under durable execution, from each activity's first use. Model turns count as idle, and one command must finish within it, so use minutes. A later run with `idle_timeout` shortens a longer lifetime to `idle_timeout`. On a Pro plan, `E2BSandbox(sandbox_timeout=86400, idle_timeout=600)` keeps a busy run's sandbox for up to a day and pauses a finished one after 10 minutes.
 - Commands start in `/home/user`. Pass `working_dir='/home/user/project'` to keep the project out of the home directory. It is created on a new sandbox.
 - The default template has Python and git, but not your project's dependencies or ripgrep. A template is the image a new sandbox starts from. Bake them into your own E2B [template](https://e2b.dev/docs/template/quickstart) and pass `template='my-template'`, or install them [before the run](#prepare-a-sandbox-before-the-run).
 
@@ -86,7 +87,7 @@ If the sandbox has been killed, the run raises `WorkspaceUnavailableError`. Pass
 
 The ref holds no credentials, so the process that reattaches needs `E2B_API_KEY` or a `client=` too.
 
-Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox, working_dir=..., env=...)` to a run. `E2BSandbox`'s settings don't apply to it.
+Already have an `e2b.AsyncSandbox`? Pass `workspace=E2BSandboxBackend(sandbox=sandbox, working_dir=..., env=..., idle_timeout=...)` to a run. `E2BSandbox`'s settings don't apply to it.
 
 ## Prepare a sandbox before the run
 
@@ -124,6 +125,18 @@ if __name__ == '__main__':
 ```
 
 The `finally` kills the sandbox even when setup or the run fails. To keep it, store `backend.ref` instead.
+
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](computer-use.md):
+`capabilities=[E2BSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another. The size applies when the screen first starts.
+
+A new sandbox uses E2B's `desktop` template, a desktop with a terminal and Google Chrome. Your own `template` needs [the display's programs](computer-use.md#what-the-display-needs), which the first use installs if it can, and `startxfce4`, which it doesn't. Without `startxfce4`, the screen stays black until a program opens a window.
+
+- When `sandbox_timeout` runs out, a run that is still going fails. Set it longer than your longest task.
+- The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+- The Print key opens XFCE's screenshot dialog instead of reaching the app.
 
 ## Clean up
 
@@ -166,7 +179,7 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
 agent = Agent('{{ anthropic:large }}', capabilities=[E2BSandbox(), Coder(), hooks])
 ```
 
-A sandbox you don't kill pauses when its `sandbox_timeout` runs out. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
+A sandbox you don't kill pauses when its `sandbox_timeout` runs out, or its `idle_timeout` if you set one. See [E2B's sandbox lifecycle](https://docs.e2b.dev/sandbox).
 
 ### Find a lost sandbox
 
@@ -255,6 +268,8 @@ sandbox = await capability.backend(ref).get_sandbox()
 url = f'https://{sandbox.get_host(3000)}'
 ```
 
+With `idle_timeout`, the sandbox pauses about `idle_timeout` after the run's last use, since serving the preview isn't use. Call `await sandbox.set_timeout(seconds)` to keep it up longer.
+
 The preview is public. Stop it with `stop_command` while the workspace is attached, and kill the sandbox when you're done.
 
 ## Configuration
@@ -264,12 +279,14 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 | `client` | An `e2b.E2B` for the API key and connection settings. Default: `None`, which reads `E2B_API_KEY` and the rest of the environment. |
 | `template` | E2B template name or ID for a new sandbox. Default: `None`, E2B's `base`. An unknown template fails on first use. |
 | `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. |
-| `sandbox_timeout` | Seconds until E2B pauses the sandbox, set on create and on reattach. Default: `3_600`. A value over your plan's limit raises `WorkspaceUnavailableError`. |
+| `sandbox_timeout` | Seconds until E2B pauses the sandbox, set on create and on reattach. Default: `3_600`. Without `idle_timeout`, a value over your plan's limit raises `WorkspaceUnavailableError`. With it, the limit isn't checked up front, and the sandbox pauses at your plan's limit even while busy. |
+| `idle_timeout` | Seconds without a command or file operation before E2B pauses the sandbox. Each operation extends its lifetime, up to `sandbox_timeout` from the run's first use. Model turns count as idle, so use minutes. Default: `None`, the fixed `sandbox_timeout` lifetime. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/user` on the default template. Created on a new sandbox. On an attached one, it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. The default locale is POSIX. Pass `{'LC_ALL': 'C.UTF-8'}` for tools that should count characters rather than bytes. |
 | `network` | E2B's network options for a new sandbox, passed to `Sandbox.create` unchanged. Default: `None`. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). It can't be set from an [agent spec](../agent-spec.md). |
 | `authority` | Who wrote the sandbox's files. A capability that puts a file's text in the prompt gives it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
 | `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the sandbox, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+| `desktop` | Give the sandbox a screen for [`ComputerUse`](computer-use.md): `True` for 1280x800, or a `(width, height)`. The size applies when the screen first starts. Without a `template`, a new sandbox uses E2B's `desktop` template. Default: `False`. |
 
 `template`, `allow_internet_access` and `network` only shape a new sandbox. The other options also apply when you reattach, and `destroy` uses `client`.
 

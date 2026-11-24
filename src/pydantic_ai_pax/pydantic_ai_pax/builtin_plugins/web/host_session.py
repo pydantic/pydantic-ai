@@ -1,4 +1,4 @@
-"""The plugin's own host as the one live session, for a `web` plugin built outside CLAI's loader, such as in a test."""
+"""The plugin's own host as the one live session, for a `web` plugin built outside Pax's loader, such as in a test."""
 
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -21,7 +21,7 @@ from pydantic_ai_pax.plugins.user_waits import UserWaits
 from pydantic_ai_pax.ui.prompt.prompt_queue import NOT_QUEUED
 from pydantic_ai_pax.ui.rendering.status import Status
 
-_OPENS_NONE = 'This CLAI opens no other live sessions.'
+_OPENS_NONE = 'This Pax opens no other live sessions.'
 
 
 class HostSession:

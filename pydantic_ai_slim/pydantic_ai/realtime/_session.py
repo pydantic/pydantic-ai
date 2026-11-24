@@ -144,6 +144,7 @@ from ._utils import (
     replay_recorded_system_prompts_in_place,
 )
 from .codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -803,7 +804,11 @@ class RealtimeSession:
             instructions=instructions,
             metadata=metadata,
             model_request_parameters=model_request_parameters,
-            model_settings=model_settings,
+            model_settings=(
+                model._recorded_model_settings(model_settings)  # pyright: ignore[reportPrivateUsage]
+                if model is not None and model_settings
+                else model_settings
+            ),
             output_type='speech' if output_modality == 'audio' else 'text',
         )
         self._usage_limits = usage_limits
@@ -1840,8 +1845,9 @@ class RealtimeSession:
         profile's image-input support and raises `UserError` when it is unsupported.
 
         `send()` accepts session content only. Turn-control verbs (`CommitAudio`, `ClearAudio`,
-        `CreateResponse`, `CancelResponse`, `TruncateOutput`) are driven through the dedicated methods
-        (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`), and
+        `CreateResponse`, `CancelResponse`, `TruncateOutput`) and `AppendVoiceInstructions` are driven through
+        the dedicated methods (`commit_audio()`, `clear_audio()`, `create_response()`, `interrupt()`,
+        `append_voice_instructions()`), and
         [`ToolResult`][pydantic_ai.realtime.codec.ToolResult] is sent by the session itself as each tool
         completes (see `_execute_tool`) — neither is accepted here.
         """
@@ -2115,6 +2121,38 @@ class RealtimeSession:
         self._ensure_can_send()
         self._require_capability('supports_manual_turn_control', method='create_response', feature='manual turn-taking')
         await self._send_frame(CreateResponse())
+
+    async def append_voice_instructions(self, text: str) -> None:
+        """Add to the instructions of the voice model the caller hears, steering how it speaks from now on.
+
+        For a model whose voice model takes instructions of its own, apart from the agent's: its profile sets
+        [`supports_appending_voice_instructions`][pydantic_ai.realtime.RealtimeModelProfile.supports_appending_voice_instructions].
+        OpenAI GPT-Live does: the agent's instructions go to its delegated backend, and the voice model starts with
+        `openai_live_instructions`, which this adds to. On any other model the agent's instructions are the voice
+        model's, so [changing them](../realtime/capabilities.md#instructions-that-change) is how to steer it, and this
+        raises [`UserError`][pydantic_ai.exceptions.UserError].
+
+        The instructions aren't part of the conversation, so history doesn't record them. The provider's
+        acknowledgement isn't waited for: one that refuses them reports a recoverable
+        [`RealtimeSessionErrorEvent`][pydantic_ai.messages.RealtimeSessionErrorEvent]. Send only instructions you
+        wrote: text from the caller, a tool, or a document doesn't earn the operator's authority by being sent here.
+
+        GPT-Live takes at most 500 tokens per call, and longer `text` raises `UserError` before anything is sent.
+        A [reconnect](../realtime/lifecycle.md#reconnecting) that forks a stored session keeps the instructions
+        added so far. One that starts a new session starts it with `openai_live_instructions` followed by those
+        instructions, as many of the newest as fit in the 16,384 tokens a session can start with: the oldest are
+        dropped first.
+
+        Args:
+            text: The instructions to add.
+        """
+        self._ensure_can_send()
+        self._require_capability(
+            'supports_appending_voice_instructions',
+            method='append_voice_instructions',
+            feature='voice instructions of its own',
+        )
+        await self._send_frame(AppendVoiceInstructions(text))
 
     @overload
     async def interrupt(self, *, played_ms: int | None = None) -> None: ...

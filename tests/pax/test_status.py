@@ -11,6 +11,7 @@ from typing import cast
 import anyio
 import pytest
 from rich.console import Console
+from rich.text import Text
 
 from pydantic_ai import (
     Agent,
@@ -462,16 +463,15 @@ async def test_stable_status_colors_without_spinner(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr('pydantic_ai_pax.ui.rendering.status.anyio.sleep', tick)
     async with StatusLine(
-        Console(file=output, force_terminal=True, width=40, height=24),
+        Console(file=output, force_terminal=True, width=80, height=24),
         Status(model='test\x1b\n'),
         clock=lambda: now[0],
     ):
         while len(frames) < 11:
             await original_sleep(0)
     plain = [re.sub(r'\x1b\[[0-9;]*m|\x1b8', '', frame) for frame in frames]
-    assert plain[0].startswith('test?? | context:')
+    assert plain[0] == 'test?? | context: ?/? tokens | ~0 streamed tokens | ready'
     assert all(frame == plain[0] for frame in plain)
-    assert all(len(frame) == 39 for frame in plain)
     assert frames[0] == frames[10]
     assert ('38;2;' in frames[0]) == truecolor
     assert sgr(LITHIUM) in frames[0]
@@ -641,12 +641,9 @@ async def test_plugin_segments_are_painted_muted(monkeypatch: pytest.MonkeyPatch
     assert sgr(WARNING) not in painted
 
 
-async def test_a_fragment_wider_than_the_terminal_still_mutes_only_itself() -> None:
+async def test_a_fragment_wider_than_the_terminal_gives_way_to_the_built_in_fields() -> None:
     output = io.StringIO()
     status = Status(model='m', status_segments=(lambda: 'x' * 200,))
     async with StatusLine(Console(file=output, force_terminal=True, width=60, height=24), status):
         pass
-    painted = output.getvalue()
-    assert f'{sgr(MUTED)}m' in painted
-    assert f'{sgr(LITHIUM)}~' in painted
-    assert f'{sgr(MUTED)}x' in painted
+    assert Text.from_ansi(output.getvalue()).plain.endswith('m | context: ?/? tokens | ready')

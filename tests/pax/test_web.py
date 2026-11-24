@@ -131,7 +131,7 @@ class Web:
     plugin: WebPlugin
     client: TestClient
     portal: BlockingPortal
-    """The event loop the shell and every request share, as uvicorn and CLAI do."""
+    """The event loop the shell and every request share, as uvicorn and Pax do."""
     runs: list[Future[SessionEndReason]] = field(default_factory=list[Future[SessionEndReason]])
 
     def run(self) -> Future[SessionEndReason]:
@@ -485,7 +485,7 @@ def test_input_the_browser_cannot_send(make_web: 'MakeWeb', monkeypatch: pytest.
         {'detail': 'Images go with a prompt, not with a /command or ! line.'},
     ), 'not even a command whose menu the page would show'
     response = web_.post('/api/input', {'text': 'look', 'images': [encoded(b'not an image')]})
-    assert response.status_code == 400 and response.json()['detail'].startswith('Not an image CLAI can read')
+    assert response.status_code == 400 and response.json()['detail'].startswith('Not an image Pax can read')
     assert web_.shell.images.pending == {}
     response = web_.post('/api/input', {'text': 'look', 'images': ['not base64!']})
     assert (response.status_code, response.json()) == (400, {'detail': 'Images must be base64-encoded.'})
@@ -513,7 +513,7 @@ def test_a_terminal_menu_or_prompt_fails_without_a_terminal(
     A menu would read EOF from stdin and close as cancelled, saying nothing useful, as under `pax --web` from a
     script; that is so whether the command waits for its turn or opens over a running one.
     """
-    monkeypatch.setattr(sys, 'stdin', None)  # As Python leaves it when CLAI starts with stdin closed.
+    monkeypatch.setattr(sys, 'stdin', None)  # As Python leaves it when Pax starts with stdin closed.
     started, release = anyio.Event(), anyio.Event()
     tools = Capability[None]()
 
@@ -526,7 +526,7 @@ def test_a_terminal_menu_or_prompt_fails_without_a_terminal(
 
     web_ = make_web(Agent(TestModel(call_tools=['wait']), deps_type=type(None), capabilities=[tools]))
     assert web_.shell.terminal is None
-    needs = 'opens a terminal menu or prompt, and this CLAI has no terminal: enter it in CLAI in a terminal'
+    needs = 'opens a terminal menu or prompt, and this Pax has no terminal: enter it in Pax in a terminal'
 
     def notices(texts: Sequence[str]) -> list[tuple[str, str, str | None]]:
         received: list[tuple[str, str, str | None]] = []
@@ -1019,7 +1019,7 @@ def test_sidebar_groups_sessions_by_project_then_worktree(make_web: 'MakeWeb', t
 def test_sidebar_tells_apart_projects_that_share_a_name(make_web: 'MakeWeb', tmp_path: Path) -> None:
     """Projects whose folders share a name each add the shortest end of their path that no other one shares.
 
-    A relative workspace an older CLAI saved has no more path to add, so it keeps its name.
+    A relative workspace an older Pax saved has no more path to add, so it keeps its name.
     """
     web_ = make_web(Agent(TestModel()))
     first, second, third = tmp_path / 'a' / 'scratch', tmp_path / 'b' / 'scratch', tmp_path / 'z' / 'a' / 'scratch'
@@ -1584,7 +1584,7 @@ def test_the_plugins_panel_lists_every_plugin_with_a_form_for_its_settings(make_
         'built-in',
         str(tmp_path / 'panel.py'),
     )
-    # A headless CLAI has no terminal for the plugin's own menu to open in.
+    # A headless Pax has no terminal for the plugin's own menu to open in.
     assert (sample['has_menu'], sample['terminal'], sample['serving'], sample['provides']) == (
         True,
         False,
@@ -1754,7 +1754,7 @@ def test_access_checks(make_web: 'MakeWeb') -> None:
     page = client.get('/')
     assert (page.status_code, page.text) == (
         403,
-        "Open the address CLAI printed: it carries this launch's access token.",
+        "Open the address Pax printed: it carries this launch's access token.",
     )
     assert client.get('/assets/app.js', headers={'host': 'evil.example'}).status_code == 403
     assert client.get(f'/?token={TOKEN}', headers={'host': 'evil.example'}).status_code == 403
@@ -1926,7 +1926,7 @@ async def test_stopping_the_only_interface_is_refused(tmp_path: Path) -> None:
     shell = web_shell(tmp_path, {'open_browser': False}, terminal=False)
     await shell.loader.load_all()
     await shell.commands.execute_async('/web')
-    with pytest.raises(ValueError, match='only way to drive this CLAI'):
+    with pytest.raises(ValueError, match='only way to drive this Pax'):
         await shell.commands.execute_async('/web stop')
     await shell.loader.close('exit')
 
@@ -2202,7 +2202,7 @@ def test_sessions_continue_in_their_own_directories(
 ) -> None:
     """Under `pax --web`, opening a session moves it to its directory, and a new one asks where it runs.
 
-    The process's working directory stays where CLAI started; plugins read the session's from `host.workspace`.
+    The process's working directory stays where Pax started; plugins read the session's from `host.workspace`.
     """
     launch, other, gone = tmp_path / 'launch', tmp_path / 'other', tmp_path / 'gone'
     launch.mkdir()
@@ -2324,7 +2324,7 @@ def test_a_session_moves_only_between_turns(
 
 
 def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path: Path) -> None:
-    """Without `pax --web`, CLAI works where it started: no `/workspace`, and a session saved elsewhere is read-only."""
+    """Without `pax --web`, Pax works where it started: no `/workspace`, and a session saved elsewhere is read-only."""
     web_ = make_web(Agent(TestModel()))
     shell = web_.shell
     elsewhere = saved_in(web_, tmp_path, 'Elsewhere')
@@ -2352,7 +2352,7 @@ def test_a_terminal_session_stays_where_it_started(make_web: 'MakeWeb', tmp_path
         refused = web_.post('/api/sessions/new', {'workspace': str(tmp_path)})
         assert (refused.status_code, refused.json()['detail']) == (
             400,
-            f'This CLAI works in {shell.session.workspace}. Start CLAI in {tmp_path.resolve()}.',
+            f'This Pax works in {shell.session.workspace}. Start Pax in {tmp_path.resolve()}.',
         )
         assert web_.post('/api/sessions/new', {'workspace': shell.session.workspace}).status_code == 200
         snapshot = receive_until(socket, Snapshot)[1]
