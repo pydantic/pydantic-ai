@@ -122,6 +122,15 @@ _(This example is complete, it can be run "as is")_
 
 A tool that joins the run after its first model request, however it got there, is recorded in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], unless no plainly visible tool from before is still present to keep stable. A new tool with `defer_loading=True` joins the [tool search](tools-advanced.md#tool-search) corpus instead. See [Tools that appear mid-run](tools-advanced.md#mid-run-tool-additions) for how each provider delivers it.
 
+!!! note "Sharing a `Tool` between toolsets and agents"
+    A toolset currently writes its defaults onto each [`Tool`][pydantic_ai.tools.Tool] instance it adds, so every other toolset or agent holding the same `Tool` lists it with them too ([#12617](https://github.com/pydantic/pydantic-ai/issues/12617)):
+
+    - `strict`, `include_return_schema`, `max_retries` and `durable`, when the `Tool` leaves them unset.
+    - `sequential`, `defer_loading` and `requires_approval`, when the toolset sets them to `True`.
+    - `metadata`, merged into the `Tool`'s own, whose keys take precedence.
+
+    To keep a toolset's defaults off other holders, give each toolset or agent its own `Tool`.
+
 ### Toolset Instructions
 
 A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
@@ -569,6 +578,10 @@ DeferredToolRequests(
         ),
     ],
     metadata={},
+    validated_args={
+        'pyd_ai_tool_call_id__temperature_celsius': {'city': 'a'},
+        'pyd_ai_tool_call_id__temperature_fahrenheit': {'city': 'a'},
+    },
 )
 """
 
@@ -593,7 +606,7 @@ _(This example is complete, it can be run "as is")_
 
 [`DeferredLoadingToolset`][pydantic_ai.toolsets.DeferredLoadingToolset] wraps a toolset and marks its tools for deferred loading, hiding them from the model until discovered via [tool search](tools-advanced.md#tool-search). This is useful for large toolsets (e.g. MCP servers with many endpoints) where loading all tool definitions into the model's context would be wasteful.
 
-[`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] also accepts `defer_loading=True` in its constructor to mark all tools for deferred loading. For other toolsets, call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] — pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
+[`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] also accepts `defer_loading=True` in its constructor to mark all tools for deferred loading. It applies to `Tool` instances too; only a function added with `defer_loading=False` opts out. For other toolsets, call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] — pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
 
 ```python {title="deferred_loading_toolset.py" lint="skip" test="skip"}
 from pydantic_ai import Agent
@@ -726,7 +739,7 @@ _(This example is complete, it can be run "as is")_
 
 If your agent needs to be able to call [external tools](deferred-tools.md#external-tool-execution) that are provided and executed by an upstream service or frontend, you can build an [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] from a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] containing the tool names, arguments JSON schemas, and descriptions.
 
-When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
+When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, the arguments as the model sent them, and a unique tool call ID, plus [`validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args] holding each call's arguments once validated against the tool's schema. These are expected to be passed to the upstream service or frontend that will produce the results.
 
 When the tool call results are received from the upstream service or frontend, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or an exception in case the tool call failed: a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] if the model should [try again](tools-advanced.md#tool-retries), or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] if the failure should be reported to the model as a [failed result](tools-advanced.md#tool-failed) (without consuming the tool's retry budget) so it can decide how to proceed. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 
@@ -878,7 +891,7 @@ Toolsets can be built dynamically ahead of each agent run or run step using a fu
 
 To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator.
 
-By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run.
+By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run. Either way, the toolset it returns gets the [per-run and per-step lifecycle](#per-run-and-per-step-lifecycle) hooks: `for_run` before it is entered, and `for_run_step` on every step.
 
 Instructions from the toolset the function returns are attributed to the dynamic toolset, so for them to use `on_change='append'`, give the decorator an `id`: `@agent.toolset(id='orders')`.
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness.memory._capability import Memory, WriteMetadataFunc
-from pydantic_ai_harness.memory._file import FileStore
-from pydantic_ai_harness.memory._in_memory import InMemoryStore
+from pydantic_ai_harness._warn import warn_class_renamed
+from pydantic_ai_harness.memory._capability import Memory, MemorySnapshotPart, WriteMetadataFunc
+from pydantic_ai_harness.memory._file import FileMemoryStore
+from pydantic_ai_harness.memory._in_memory import InMemoryMemoryStore
 from pydantic_ai_harness.memory._postgres import PostgresConnection, PostgresMemoryStore, PostgresPool
 from pydantic_ai_harness.memory._sqlite import SqliteMemoryStore
 from pydantic_ai_harness.memory._store import (
+    ChildListingMemoryStore,
     MemoryConflictError,
     MemoryFile,
     MemoryMutation,
@@ -30,8 +32,9 @@ from pydantic_ai_harness.memory._toolset import (
 )
 
 __all__ = [
-    'FileStore',
-    'InMemoryStore',
+    'ChildListingMemoryStore',
+    'FileMemoryStore',
+    'InMemoryMemoryStore',
     'Memory',
     'MemoryConflictError',
     'MemoryDeleteResult',
@@ -43,6 +46,7 @@ __all__ = [
     'MemorySearchMatchResult',
     'MemorySearchResponse',
     'MemorySearchResult',
+    'MemorySnapshotPart',
     'MemoryStore',
     'MemoryToolset',
     'MemoryWriteResult',
@@ -60,7 +64,14 @@ if TYPE_CHECKING:
     from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore as PixeltableMemoryStore
 
 
+_RENAMED = {'FileStore': FileMemoryStore, 'InMemoryStore': InMemoryMemoryStore}
+
+
 def __getattr__(name: str) -> object:
+    renamed = _RENAMED.get(name)
+    if renamed is not None:
+        warn_class_renamed(name, renamed.__name__, __name__)
+        return renamed
     if name == 'PixeltableMemoryStore':
         from pydantic_ai_harness.memory._pixeltable import PixeltableMemoryStore
 

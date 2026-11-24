@@ -113,7 +113,9 @@ with try_import() as google_available:
     from google.genai.types import HttpRetryOptions
 
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_decisions import GoogleDecisionsModel
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as groq_available:
     from pydantic_ai.models.groq import GroqModel
@@ -169,7 +171,7 @@ HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout', 'framing_announcement'})
-"""Fields Pydantic AI enforces or applies itself for every model, so no model sends them or declares that it ignores them."""
+"""Fields Pydantic AI applies itself for every model, so no model sends them or declares that it ignores them."""
 
 ATTEMPT_COUNTED = frozenset({'max_retries'})
 """Fields that change how many times a request is sent rather than what it carries; see `RETRY_CASES`."""
@@ -526,7 +528,8 @@ def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     return probe
 
 
-xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
+# Grok 4.20's non-reasoning models are the only ones that accept `stop_sequences`.
+xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4.20-non-reasoning', provider=XaiProvider(xai_client=client)))
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> ProbeResult:
@@ -706,7 +709,12 @@ def _cohere(client: httpx.AsyncClient) -> Model:
 
 
 def _google(client: httpx2.AsyncClient) -> Model:
-    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
+    # Google Cloud, since the Gemini API rejects `presence_penalty` and `frequency_penalty` for every model.
+    return GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(api_key=PROBE_KEY, http_client=client))
+
+
+def _google_decisions(client: httpx2.AsyncClient) -> Model:
+    return GoogleDecisionsModel('gemini-decision-1', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
 def _typesafe(client: httpx2.AsyncClient) -> Model:
@@ -792,6 +800,13 @@ CASES = [
         _needs(openai_available, 'openai'),
         DECISION_HOLDS_WITHOUT_SENDING,
     ),
+    Case(
+        'GoogleDecisionsModel',
+        ('Google Decisions',),
+        decision_probe(_google_decisions),
+        _needs(google_available, 'google'),
+        DECISION_HOLDS_WITHOUT_SENDING,
+    ),
 ]
 
 
@@ -857,6 +872,21 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
 
     warned |= (await case.probe({'max_retries': 0})).observed.warned
     assert warned == unsupported & WARNED_SETTINGS
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(case, id=case.id, marks=case.marks)
+        for case in CASES
+        if case.id in {'CerebrasModel', 'OpenRouterModel', 'SnowflakeModel', 'ZaiModel'}
+    ],
+)
+async def test_extra_body_none_sends_the_same_request(case: Case, allow_model_requests: None):
+    """`extra_body=None` means no extra body on the models whose converters merge their own fields into it."""
+    baseline = (await case.probe({})).payload
+    assert baseline is not None
+    assert (await case.probe({'extra_body': None})).payload == baseline
 
 
 def test_hand_maintained_fields_are_the_only_unprobed_ones():
@@ -1100,6 +1130,16 @@ RETRY_CASES = [
         _google_with_client_retries,
         (4, 1, 2),
         status=418,
+        marks=_needs(google_available, 'google'),
+    ),
+    # Like `GoogleModel`: no retries without the provider's `retry_options`, and the SDK's default delays apply.
+    RetryCase(
+        'GoogleDecisionsModel',
+        ('Google Decisions',),
+        _google_decisions,
+        (1, 1, 2),
+        decision=True,
+        sdk_patches=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
         marks=_needs(google_available, 'google'),
     ),
     RetryCase('MistralModel', ('Mistral',), _mistral, (1, 1, 1), marks=_needs(mistral_available, 'mistral')),

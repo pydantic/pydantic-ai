@@ -44,15 +44,18 @@ class MCPReadOnlyNoToolsWarning(UserWarning):
     """
 
 
-def warn_module_renamed(old: str, new: str) -> None:
+def warn_module_renamed(old: str, new: str, *, reason: str = '') -> None:
     """Emit a `HarnessDeprecationWarning` that `pydantic_ai_harness.<old>` is now `pydantic_ai_harness.<new>`.
 
     Called at import time from the shim package left at the old module path, so existing
-    imports keep working with a clear pointer to the new location.
+    imports keep working with a clear pointer to the new location. `reason`, one or more
+    sentences, says why, when the new name alone doesn't.
     """
+    message = f'`pydantic_ai_harness.{old}` has been renamed to `pydantic_ai_harness.{new}`.'
+    if reason:
+        message += f' {reason}'
     warnings.warn(
-        f'`pydantic_ai_harness.{old}` has been renamed to `pydantic_ai_harness.{new}`. '
-        f'Update your imports; this compatibility shim will be removed in a future release.',
+        f'{message} Update your imports; this compatibility shim will be removed in a future release.',
         category=HarnessDeprecationWarning,
         stacklevel=2,
     )
@@ -82,14 +85,15 @@ def warn_default_changed(
     )
 
 
-def warn_class_renamed(old: str, new: str, module: str) -> None:
-    """Emit a `HarnessDeprecationWarning` that class `<module>.<old>` is now `<module>.<new>`.
+def warn_class_renamed(old: str, new: str, module: str, *, new_module: str | None = None) -> None:
+    """Emit a `HarnessDeprecationWarning` that class `<module>.<old>` is now `<new_module or module>.<new>`.
 
     Called from a module-level `__getattr__` that resolves the old class name to the new
-    class, so `isinstance` checks and existing imports keep working.
+    class, so `isinstance` checks and existing imports keep working. A renamed module's shim
+    passes `new_module` so the message names the class's current home.
     """
     warnings.warn(
-        f'`{module}.{old}` has been renamed to `{module}.{new}`. '
+        f'`{module}.{old}` has been renamed to `{new_module or module}.{new}`. '
         f'Update your imports; this deprecated alias will be removed in a future release.',
         category=HarnessDeprecationWarning,
         stacklevel=3,

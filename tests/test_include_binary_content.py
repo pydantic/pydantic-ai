@@ -31,11 +31,13 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.tools import RunContext, ToolDefinition
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr, try_import
@@ -187,6 +189,36 @@ def deferring_tool_agent(settings: InstrumentationSettings) -> Agent[None, Any]:
     @agent.tool_plain
     def defer_image() -> str:
         raise CallDeferred(metadata={'img': IMAGE})
+
+    return agent
+
+
+class AttachImage(AbstractCapability[Any]):
+    """A validation hook that adds an image to a tool's arguments, so a deferred call's `validated_args` holds it."""
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'image': IMAGE}
+
+
+def approval_with_validated_image_agent(settings: InstrumentationSettings) -> Agent[None, Any]:
+    """An agent whose approval-gated tool gets an image from a validation hook, and which ends on the request."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('send_image', {'to': 'a'})])
+
+    agent = Agent(
+        FunctionModel(respond),
+        capabilities=[Instrumentation(settings=settings), AttachImage()],
+        output_type=[str, DeferredToolRequests],
+        name='agent',
+    )
+
+    @agent.tool_plain(requires_approval=True)
+    def send_image(to: str) -> str:  # pragma: no cover
+        # Never approved: the case reads the run's `DeferredToolRequests` output.
+        return to
 
     return agent
 
@@ -390,6 +422,32 @@ CASES = [
             }
         ),
     ),
+    # Omitted rather than redacted: the redacted shape leaves `validated_args` out, so nothing of the image
+    # it holds is recorded, not even its media type.
+    Case(
+        id='deferred_requests_validated_args',
+        build=approval_with_validated_image_agent,
+        span_name='invoke_agent agent',
+        attribute='final_result',
+        redacted=snapshot(
+            {
+                'calls': [],
+                'approvals': [
+                    {
+                        'tool_name': 'send_image',
+                        'args': {'to': 'a'},
+                        'tool_call_id': IsStr(),
+                        'tool_kind': None,
+                        'id': None,
+                        'provider_name': None,
+                        'provider_details': None,
+                        'part_kind': 'tool-call',
+                    }
+                ],
+                'metadata': {},
+            }
+        ),
+    ),
 ]
 
 
@@ -570,7 +628,7 @@ def test_redacted_tool_return_keeps_the_tools_it_made_available(capfire: Capture
 
 
 def test_redacted_shapes_keep_every_field_but_the_data() -> None:
-    """A field added to a redacted type has to be added to its redacted shape too.
+    """A field added to a redacted type has to be added to its redacted shape too, or be dropped on purpose.
 
     The redaction spells each type's fields out rather than dumping and dropping `data`, so a new
     field would otherwise silently stop reaching telemetry. This pins the field sets it mirrors.
@@ -579,7 +637,15 @@ def test_redacted_shapes_keep_every_field_but_the_data() -> None:
     assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
 
     assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'tools', 'kind'}
-    assert {f.name for f in fields(DeferredToolRequests)} == {'calls', 'approvals', 'metadata', '_kinds'}
+    # `validated_args` is dropped on purpose: the redacted shape leaves it out, as the
+    # `deferred_requests_validated_args` case pins.
+    assert {f.name for f in fields(DeferredToolRequests)} == {
+        'calls',
+        'approvals',
+        'metadata',
+        'validated_args',
+        '_kinds',
+    }
 
 
 def test_message_history_round_trip_preserves_binary_content() -> None:

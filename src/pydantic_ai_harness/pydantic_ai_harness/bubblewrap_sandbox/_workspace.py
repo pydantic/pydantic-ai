@@ -94,11 +94,23 @@ travels on the command line because `bwrap` may run on another host, which recei
 open files.
 """
 
-_LOGIN_PATHS = ('.ssh/', '.config/fish/', '.bashrc', '.zshenv', '.cshrc', '.tcshrc', '.pam_environment')
+_LOGIN_PATHS = (
+    '.ssh/',
+    '.config/fish/',
+    '.bashrc',
+    '.bashrc.d/',
+    '.cargo/env',
+    '.local/bin/env',
+    '.zshenv',
+    '.cshrc',
+    '.tcshrc',
+    '.pam_environment',
+)
 """Paths under `$HOME` that the host reads or runs when the next SSH connection logs in, before the command.
 
 `sshd` runs `~/.ssh/rc` and reads `~/.ssh/environment` and `~/.pam_environment`; the login shell runs the
-command with `-c`, which makes bash run `~/.bashrc`, zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
+command with `-c`, which makes bash run `~/.bashrc` (which on common setups sources `~/.bashrc.d/*`,
+`~/.cargo/env`, and `~/.local/bin/env`), zsh `~/.zshenv`, csh and tcsh `~/.cshrc` or `~/.tcshrc`,
 and fish its `~/.config/fish`. A trailing `/` marks a directory.
 """
 
@@ -254,9 +266,11 @@ class BubblewrapWorkspace(WrapperWorkspace):
     or serving any socket, including the host's Unix sockets. They share the host's processes, so a detached
     command keeps running after the call that started it, and they can signal the host user's other processes.
     `bwrap` and, without the network, `base64` are taken from a `PATH` directory outside the working
-    directory, so a command cannot replace the next launch by writing there. When that directory contains
-    files the next SSH login runs on the host, such as `~/.ssh/rc` or `~/.bashrc`, they are bind-mounted
-    read-only (and created if missing), so a command cannot run code outside the sandbox through them.
+    directory, so a command cannot replace the next launch by writing there. When the working directory
+    contains files the next SSH login runs on the host, a fixed list of them, such as `~/.ssh/rc` and
+    `~/.bashrc`, is bind-mounted read-only (and created if missing). The rest of the home directory stays
+    writable, including files they source, so give the wrapper a project working directory rather than one
+    containing `$HOME`.
 
     File methods run in the sandbox too, as shell commands, so they see what commands see and can't be
     tricked into writing outside it through a symlink. Only when the wrapped workspace is read-only (and so

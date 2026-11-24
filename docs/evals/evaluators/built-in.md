@@ -419,7 +419,8 @@ HasMatchingSpan(
 - `query` ([`SpanQuery`][pydantic_evals.otel.SpanQuery]): Query to match against spans
 - `evaluation_name` (str | None): Custom name for this evaluation in reports
 
-**Returns:** `bool` - `True` if any span matches the query
+**Returns:** `bool` - `True` if any span matches the query. To check a condition on every span, see
+[Checking every span](span-based.md#checking-every-span).
 
 **Example:**
 
@@ -441,11 +442,14 @@ dataset = Dataset(
             query={'has_status': 'error'},
             evaluation_name='had_errors',
         ),
-        # Check duration constraints
+        # Every LLM call took at most 2s (assumes the task runs inside a 'task_execution' span)
         HasMatchingSpan(
             query={
-                'name_equals': 'llm_call',
-                'max_duration': 2.0,  # seconds
+                'name_equals': 'task_execution',
+                'no_descendant_has': {
+                    'name_equals': 'llm_call',
+                    'not_': {'max_duration': 2.0},  # seconds
+                },
             },
             evaluation_name='llm_fast_enough',
         ),

@@ -4,7 +4,8 @@ A run waiting on input from outside (an approval, an answer, a review) hands a r
 `ask` function. `ask` either answers right away, as a terminal prompt or an automated policy does, or
 delivers the token to whoever will answer, by posting a Slack message, sending an email or writing a
 database row, and the run waits until code elsewhere resolves the token with the answer.
-[`RequestInput`][pydantic_ai.capabilities.RequestInput] is built on this.
+[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] is built on this, for a
+handler that takes a resume token.
 
 By default the wait happens in the current process: the token is a random ID, and
 [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event] or
@@ -195,8 +196,8 @@ class _UnsupportedWaiter(ExternalEventWaiter):
         self, name: str, *, ask: Callable[[str], Awaitable[JsonValue]], timeout: timedelta | None
     ) -> JsonValue:
         raise UserError(
-            f'{self.engine_name} does not support waiting for external events yet, such as `RequestInput` and '
-            '`AskUser` answers (https://github.com/pydantic/pydantic-ai/issues/12975). A wait in process would '
+            f'{self.engine_name} does not support waiting for external events yet, such as answers to a '
+            '`HandleDeferredToolCalls` handler that takes a resume token or to `AskUser` (https://github.com/pydantic/pydantic-ai/issues/12975). A wait in process would '
             'not be recorded: a replay would ask again and could get a different answer than the one the run '
             'already acted on, diverging from the recorded history, and a restart would lose the wait. End the '
             'run with `DeferredToolRequests` output and start a new run with the results, or use an engine that '
@@ -270,7 +271,8 @@ async def wait_for_external_event(
         raise UserError(
             '`wait_for_external_event()` was called from inside a durable unit, such as a tool call or an '
             '`ask` callback. The wait has to be recorded by the durable run itself, so resolve the call '
-            'with `RequestInput`, or call it from a `handle_deferred_tool_calls` capability hook only outside '
+            'with a `HandleDeferredToolCalls` handler that takes a resume token, or call it from a '
+            '`handle_deferred_tool_calls` capability hook only outside '
             'durable runs or on an engine that supports waiting for external events, such as AWS Lambda durable '
             'functions with `AWSLambdaDurability`.'
         )
@@ -314,8 +316,8 @@ def fail_external_event(token: str, reason: str) -> None:
     """End an in-process [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event] without a payload.
 
     The wait raises [`ExternalEventError`][pydantic_ai.external_events.ExternalEventError] with `reason`,
-    as it does when it times out. [`RequestInput`][pydantic_ai.capabilities.RequestInput] then denies
-    the pending calls with `reason` in the message to the model.
+    as it does when it times out. [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls]
+    then denies the pending calls with `reason` in the message to the model.
 
     Raises:
         UserError: No in-process wait has this token: it is wrong, from another process, or its wait

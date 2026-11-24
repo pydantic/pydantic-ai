@@ -15,7 +15,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai_harness import RenderWorkflows
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 
 from .conftest import RecordingTaskContext, RecordingWorkflows, run_agent_in_task
 

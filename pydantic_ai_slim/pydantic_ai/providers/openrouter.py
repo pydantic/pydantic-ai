@@ -212,18 +212,35 @@ Each Sonar Deep Research call runs a paid research job, so it wasn't probed, and
 effort values.
 """
 
+_FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
+    'qwen': ('qwen3.8-flash',),
+}
+"""Model-name prefixes, per upstream provider, of the OpenRouter routes that reject forcing a tool while reasoning.
+
+Every route listed here must reason by default: `OpenRouterProvider.model_profile` sets `thinking_enabled_by_default`
+for them.
+
+Live probes (2026-10-31, 2026-11-17) got a 400 for a forced `tool_choice` while Qwen3.8 Flash reasons: "The
+tool_choice parameter does not support being set to required or object in thinking mode". Alibaba, its only host on
+OpenRouter, returns it. OpenRouter's model list advertises `tool_choice` for the route, so it can't be used to find
+these routes. A route also served by a host that accepts forcing while reasoning doesn't belong here, since OpenRouter
+may send the request there: Qwen3.8 2.4T is rejected on Alibaba but accepted on Venice, and Muse Spark 1.3 is rejected
+on Meta but accepted on Google Vertex.
+"""
+
 
 _MID_CONVERSATION_EFFORT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
     'anthropic': ('claude-fable-5-1', 'claude-fable-5-2', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'),
-    'openai': ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'),
+    'openai': ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6.2-astra'),
 }
 """Model-name prefixes, per upstream provider, of the OpenRouter routes that accept a mid-conversation effort change.
 
 OpenRouter routes a request carrying a `configuration_update` only to endpoints that accept it, and rejects it with a
 400 ("Mid-conversation reasoning effort (configuration_update) is not supported") on every other model, so this lists
-the models live probes found accepting it (2026-10-26, and 2026-11-10 for Claude Fable 5.2): Claude Fable 5.1 and 5.2,
-Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5, and GPT-6 Astra, Sol and Luna and GPT-6.1 Sol. Claude Fable 5 and Sonnet 5,
-GPT-6.1 Terra and GPT-5.6 are rejected, as is every `-pro` variant, which `OpenRouterProvider.model_profile` excludes.
+the models live probes found accepting it (2026-10-26, 2026-11-10 for Claude Fable 5.2, and 2026-11-17 for GPT-6.2):
+Claude Fable 5.1 and 5.2, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5, and GPT-6 Astra, Sol and Luna, GPT-6.1 Sol, and
+GPT-6.2 Sol and Astra. Claude Fable 5 and Sonnet 5, GPT-6.1 Terra and GPT-5.6 are rejected, as is every `-pro` variant,
+which `OpenRouterProvider.model_profile` excludes.
 https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effort-mid-conversation
 """
 
@@ -312,7 +329,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://openrouter.ai/api/v1'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -356,6 +373,12 @@ class OpenRouterProvider(_OpenAISDKProvider):
             # Only GLM-5.3's schema fix, without Z.AI's native thinking settings.
             profile = _glm_5_3_schema_profile(model_name)
 
+        if provider == 'moonshotai' and model_name.lower().startswith('kimi-k3'):
+            # OpenRouter serves JSON Schema output for Kimi K3 and K3.1 Pro, and sends a `json_schema` response format
+            # only to the endpoints that support it. `moonshotai_model_profile` leaves it off, as the other hosts that
+            # share it haven't been probed: https://github.com/pydantic/pydantic-ai/issues/12078
+            profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
+
         if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
             low_floor = model_name.lower().startswith(_LOW_REASONING_FLOOR_MODEL_PREFIXES.get(provider, ()))
             profile = merge_profile(
@@ -365,6 +388,14 @@ class OpenRouterProvider(_OpenAISDKProvider):
                     openrouter_lowest_reasoning_effort='low' if low_floor else 'minimal',
                 ),
             )
+        forcing_rejected_while_reasoning = model_name.lower().startswith(
+            _FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES.get(provider, ())
+        )
+        if forcing_rejected_while_reasoning:
+            # Every route in the table reasons unless told not to (`reasoning.default_enabled` in OpenRouter's model
+            # list), so a request without a thinking setting counts as reasoning. A route that rejects forcing while
+            # reasoning but doesn't reason by default needs its own handling, not this table.
+            profile = merge_profile(profile, ModelProfile(thinking_enabled_by_default=True))
         # OpenRouter rejects the change on every pro variant, such as `openai/gpt-6-astra-pro`.
         supports_mid_conversation_effort = model_name.lower().startswith(
             _MID_CONVERSATION_EFFORT_MODEL_PREFIXES.get(provider, ())
@@ -384,7 +415,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
 
         # Three-layer merge:
         # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
-        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
+        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`), and video input
+        #    is off unless the upstream profile turns it on.
         # 2. Upstream profile — model-specific traits from the lab's profile function.
         # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
         #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
@@ -394,7 +426,13 @@ class OpenRouterProvider(_OpenAISDKProvider):
         #    It keeps mid-conversation system messages only on some routes (see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`)
         #    and moves or rewrites them on the others, so those get the deliberate `<system>`-wrapped fallback.
         return merge_profile(
-            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            OpenAIModelProfile(
+                json_schema_transformer=OpenAIJsonSchemaTransformer,
+                # OpenRouter answers 404 "No endpoints found that support input video" for a model without video
+                # input (checked live with Claude, GPT and DeepSeek routes, 2026-11-12), so video is off unless the
+                # upstream profile turns it on, as Google's and Amazon Nova's do.
+                supports_video_input=False,
+            ),
             profile,
             OpenRouterModelProfile(
                 openai_chat_send_back_thinking_parts='field',
@@ -428,7 +466,9 @@ class OpenRouterProvider(_OpenAISDKProvider):
                 # Anthropic errors on a forced `tool_choice` with thinking enabled; OpenRouter instead
                 # drops `reasoning` from the request and returns a response with no reasoning at all.
                 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
-                supports_forced_tool_choice_with_thinking=provider != 'anthropic',
+                # The routes in `_FORCED_TOOL_CHOICE_REJECTED_WHILE_REASONING_MODEL_PREFIXES` return a 400 instead.
+                supports_forced_tool_choice_with_thinking=provider != 'anthropic'
+                and not forcing_rejected_while_reasoning,
                 # OpenRouter documents cache TTLs for the providers whose cache control it passes through:
                 # Anthropic's 5-minute default (1-hour opt-in via `CachePoint`) and Gemini's 5-minute cache
                 # writes. Other routed caches have no OpenRouter-level retention commitment.
@@ -478,6 +518,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: None = None,
@@ -488,6 +529,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         app_url: str | None = None,
         app_title: str | None = None,
         openai_client: AsyncOpenAI | None = None,
@@ -498,6 +540,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
         Args:
             api_key: OpenRouter API key. Falls back to `OPENROUTER_API_KEY`
                 when omitted and required unless `openai_client` is provided.
+            base_url: The base URL to use for requests, if not provided, `https://openrouter.ai/api/v1` will be used.
             app_url: Optional url for app attribution. Falls back to
                 `OPENROUTER_APP_URL` when omitted.
             app_title: Optional title for app attribution. Falls back to
@@ -524,6 +567,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
         if x_title := app_title or os.getenv('OPENROUTER_APP_TITLE'):
             attribution_headers['X-Title'] = x_title
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://openrouter.ai/api/v1'
         if openai_client is not None:
             self._client = openai_client
         else:

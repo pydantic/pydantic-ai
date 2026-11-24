@@ -20,7 +20,12 @@ from pydantic_ai.messages import (
     WebCitationSource,
     tool_return_ta,
 )
-from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY, MCP_APPS_UI_TYPE, mcp_app_ui_payload
+from pydantic_ai.ui._utils import (
+    INTERNAL_METADATA_KEY,
+    MCP_APPS_UI_TYPE,
+    mcp_app_ui_payload,
+    without_internal_text_metadata,
+)
 from pydantic_ai.ui.vercel_ai.request_types import (
     DynamicToolApprovalRequestedPart,
     DynamicToolApprovalRespondedPart,
@@ -98,9 +103,10 @@ def tool_return_output(part: BaseToolReturnPart) -> Any:
     Vercel's `output` field is `Any`, so the full return — file data included — is always dumped inline
     and rehydrated on load through the `ToolReturnContent` union (`_validate_tool_output`). No gating.
     The same function serializes both the `dump_messages` history path and the live event stream
-    (`tool-output-available`), so files survive either round-trip.
+    (`tool-output-available`), so files survive either round-trip. The reserved `__pydantic_ai__` namespace of
+    `TextContent` metadata stays server-side.
     """
-    return tool_return_ta.dump_python(part.content, mode='json')
+    return tool_return_ta.dump_python(without_internal_text_metadata(part.content), mode='json')
 
 
 def load_provider_metadata(provider_metadata: ProviderMetadata | None) -> dict[str, Any]:

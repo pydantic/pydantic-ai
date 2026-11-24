@@ -38,7 +38,30 @@ not what this page builds. Here the agent is a Python
 the inner driver of its copilot engine (and pi on Node); it has no effect on an
 import-based engine like this one, so it is not part of the configuration below.
 
-![A new issue triggers the compiled gh-aw workflow. Its agent job runs the pydantic-ai engine in a container behind an egress firewall: the engine starts clai2 with your agent, named by PAI_AGENT, plus the workflow model and prompt. Model requests go through gh-aw's api-proxy, which holds the provider key, and the agent's GitHub and safe-output tools, such as github_issue_read and safeoutputs_add_comment, come from gh-aw's MCP gateway. After a threat-detection job checks the output, a separate add-comment job posts the comment with its own token.](../img/harness/gh-aw.svg)
+```mermaid
+flowchart TB
+    accTitle: gh-aw: your Pydantic AI agent as a GitHub Agentic Workflow
+    accDescr: An opened issue triggers the agent job, a container behind an egress firewall, where the pydantic-ai engine starts clai2 and runs your Agent named by PAI_AGENT. The agent reaches the model through the api-proxy, which holds the provider key, and calls MCP gateway tools. Its output goes to the threat detection job, then the add-comment job posts the comment with its own token.
+    issue["issue opened"]:::external
+    subgraph job["Agent job: container behind egress firewall"]
+        engine["pydantic-ai engine<br/>starts clai2"]:::capability
+        agent["your Agent<br/>named by PAI_AGENT"]
+    end
+    proxy["api-proxy<br/>holds the<br/>provider key"]:::external
+    gateway["MCP gateway<br/>github_issue_read,<br/>safeoutputs_add_comment"]:::external
+    detect["threat<br/>detection job"]:::external
+    model(["model"])
+    comment["add-comment job<br/>posts the comment<br/>with its own token"]:::external
+    issue -->|"triggers"| engine
+    engine -->|"imports and runs"| agent
+    agent -->|"placeholder token"| proxy
+    proxy -->|"model requests"| model
+    agent <-->|"tool calls"| gateway
+    agent -->|"output"| detect
+    detect --> comment
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Prerequisites
 
@@ -52,7 +75,7 @@ import-based engine like this one, so it is not part of the configuration below.
 - The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
   reads `evals.log`. Omit `evals` when using this engine.
 - The workflow summary is the canonical success/failure report. MCP startup and
-  request-limit errors keep their CLAI 2 diagnostics and nonzero exit status.
+  request-limit errors keep their Pax diagnostics and nonzero exit status.
 - Linux runners. gh-aw's sandbox needs Linux and Docker, so the `macos-*` and `windows-*`
   runner labels are
   [not supported](https://github.github.com/gh-aw/reference/frontmatter/).
@@ -181,13 +204,13 @@ def label_catalog() -> list[str]:
 - **`label_catalog` is an ordinary [function tool](../tools.md).** It is
   here to show that repository code is importable and that the agent's own tools work
   alongside the MCP tools gh-aw supplies through the engine's dynamic toolset.
-- **No third-party imports.** The engine installs `pydantic-clai2` and
+- **No third-party imports.** The engine installs `pydantic-ai-pax` and
   `pydantic-ai-harness` at the release the definition's `engine: version:` pins, plus
   `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`, so `pydantic_ai` is importable
   without setup of your own. Anything else your agent imports is installed by a
   workflow-level `steps:` block (see [Dependencies](#dependencies)).
 
-The engine resolves and imports the module once, then gives the agent to CLAI 2 with
+The engine resolves and imports the module once, then gives the agent to Pax with
 `-a`, the workflow model with `-m`, and the prompt with `-p`. Module-level work therefore
 runs once. An import error fails the step with its Python traceback.
 
@@ -388,7 +411,7 @@ steps. Your install therefore runs against the same interpreter the engine later
 
 A step can also end a run that has nothing to do by appending
 `{"type":"noop","message":"..."}` to `$GH_AW_SAFE_OUTPUTS`. The engine reads that file
-before it starts CLAI 2 and exits with status 0 when it finds a `noop`, so no model request
+before it starts Pax and exits with status 0 when it finds a `noop`, so no model request
 is made. gh-aw's
 [cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
 documents the pattern. When a search query can express the condition, `skip-if-match` or
@@ -591,7 +614,7 @@ event structure, status, or usage.
 
 ### What a working run looks like
 
-The agent step starts `clai2 -a <target> -m <provider:model> -p <prompt>` with the
+The agent step starts `pax -a <target> -m <provider:model> -p <prompt>` with the
 generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
 captures assistant messages, reasoning, tool calls and results (including native tools),
 and usage. Repository Python imported through

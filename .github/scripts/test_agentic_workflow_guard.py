@@ -29,6 +29,7 @@ from agentic_workflow_guard import (
     changed_files,
     check_ai_credits_accounting,
     check_assigned_alert_metadata_gate,
+    check_at_claude_maintainer_threads,
     check_awf_binary_version,
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
@@ -757,21 +758,21 @@ def test_compiler_versions_accepts_a_uniform_set(tmp_path: Path):
 
 
 def test_compiled_runner_contract_rejects_the_legacy_runner(tmp_path: Path):
-    """A legacy runner must not silently bypass CLAI 2 and canonical capture."""
+    """A legacy runner must not silently bypass Pax and canonical capture."""
     lock = _write(
         tmp_path / 'w.lock.yml',
         'jobs: {agent: {steps: [{id: agentic_execution, run: pydantic-ai-runner-launch}]}}',
     )
     violations = check_compiled_runner_contract(lock)
     assert [violation.check for violation in violations] == ['compiled-runner-contract']
-    assert 'public CLAI 2 harness' in violations[0].message
+    assert 'public Pax harness' in violations[0].message
 
 
 _PUBLIC_ENGINE_LOCK = """
 jobs:
   agent:
     env:
-      GH_AW_ENGINE_VERSION: '0.64.0'
+      GH_AW_ENGINE_VERSION: '0.70.0'
     steps:
       - id: agentic_execution
         run: >-
@@ -782,8 +783,9 @@ jobs:
           PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
           PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
           PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
-          PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL: glm-5.3-flash
+          PAI_MODEL: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
+          ANTHROPIC_API_KEY: ${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}
           XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
           PYTHONPATH: /tmp/gh-aw/workflow-python
           PYDANTIC_AI_TASK_ID: stable-task
@@ -798,11 +800,43 @@ def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
     assert check_compiled_runner_contract(lock) == []
 
 
-@pytest.mark.parametrize('version', ['0.59.0', '0.64.0', '0.65.1', 'invalid'])
-def test_compiled_runner_contract_allows_compatible_runtime_upgrades(tmp_path: Path, version: str):
-    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.64.0', version))
+def test_compiled_runner_contract_rejects_the_variable_of_older_locks(tmp_path: Path):
+    """`GH_AW_MODEL` stays on the model older locks are priced for, so a new lock must read `GH_AW_ZAI_MODEL`."""
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('vars.GH_AW_ZAI_MODEL', 'vars.GH_AW_MODEL'))
     violations = check_compiled_runner_contract(lock)
-    assert bool(violations) == (version in {'0.59.0', 'invalid'})
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic' in violations[0].message
+
+
+@pytest.mark.parametrize('version', ['0.64.0', '0.70.0', '0.71.1', 'invalid'])
+def test_compiled_runner_contract_allows_compatible_runtime_upgrades(tmp_path: Path, version: str):
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.70.0', version))
+    violations = check_compiled_runner_contract(lock)
+    assert bool(violations) == (version in {'0.64.0', 'invalid'})
+
+
+@pytest.mark.parametrize(
+    'credential',
+    [
+        pytest.param('${{ secrets.ZAI_API_KEY }}', id='primary-only'),
+        pytest.param(
+            "${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_API_KEY || secrets.ZAI_BACKUP_API_KEY }}",
+            id='swapped-accounts',
+        ),
+        pytest.param(
+            "${{ needs.provider_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}",
+            id='stale-gate-account',
+        ),
+    ],
+)
+def test_compiled_runner_contract_requires_the_account_selected_key(tmp_path: Path, credential: str):
+    """The proxy gets the backup key exactly when the agent-start recheck selected the backup account."""
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    workflow['jobs']['agent']['steps'][0]['env']['ANTHROPIC_API_KEY'] = credential
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    violations = check_compiled_runner_contract(lock)
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'account-selected Z.ai key' in violations[0].message
 
 
 @pytest.mark.parametrize('variable', ['GH_AW_PROTECTED_SESSION_CAPTURE', 'GH_AW_PROTECTED_CAPTURE_ID'])
@@ -823,6 +857,22 @@ def test_compiled_runner_contract_requires_policy_observability(tmp_path: Path, 
     lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
     violations = check_compiled_runner_contract(lock)
     assert [violation.check for violation in violations] == ['compiled-runner-contract']
+
+
+@pytest.mark.parametrize('fallback', [None, 'glm-5.3'])
+def test_compiled_runner_contract_requires_the_priced_overload_fallback(tmp_path: Path, fallback: str | None):
+    """An overloaded request may go only to the fallback `ai-credits-accounting` prices."""
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    env = workflow['jobs']['agent']['steps'][0]['env']
+    if fallback is None:
+        del env['PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL']
+    else:
+        env['PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL'] = fallback
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    violations = check_compiled_runner_contract(lock)
+
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'the priced overload fallback model' in violations[0].message
 
 
 @pytest.mark.parametrize('pythonpath', [None, '/tmp/other-policy'])
@@ -869,7 +919,9 @@ def test_each_workflow_exports_primary_and_detector_telemetry(lock: Path):
     )
     assert 'gh_aw_opencode_detect.py' in detector['run']
     assert detector['env']['OPENCODE_API_KEY'] == '${{ secrets.OPENCODE_API_KEY }}'
-    assert detector['env']['DEEPINFRA_API_KEY'] == '${{ secrets.DEEPINFRA_API_KEY }}'
+    assert detector['env']['ZAI_API_KEY'] == '${{ secrets.ZAI_API_KEY }}'
+    assert detector['env']['ZAI_BACKUP_API_KEY'] == '${{ secrets.ZAI_BACKUP_API_KEY }}'
+    assert 'DEEPINFRA_API_KEY' not in detector['env']
     assert detector['continue-on-error'] is True
     reporter = next(
         step
@@ -1050,30 +1102,33 @@ jobs:
 # --- AI-credits accounting (the overlay that 403'd every agent job) -----------
 
 
+@pytest.mark.parametrize('flash_priced', [False, True])
 @pytest.mark.parametrize('per_million', [False, True])
 @pytest.mark.parametrize('stale_fallback', [False, True])
-def test_ai_credits_accounting_checks_glm_overlay_units(tmp_path: Path, per_million: bool, stale_fallback: bool):
-    """The same published rates use different units in the two pricing settings."""
+def test_ai_credits_accounting_checks_glm_overlay_units(
+    tmp_path: Path, per_million: bool, stale_fallback: bool, flash_priced: bool
+):
+    """The same published rates use different units in the two pricing settings.
+
+    GLM-5.3-Flash, the overload fallback, needs its own entry: the default prices it at GLM-5.3's rates.
+    """
     unit = 1 if per_million else 1_000_000
+    models: dict[str, object] = {
+        'glm-5.4': {'cost': {'input': 1.4 / unit, 'cache_read': 0.26 / unit, 'output': 4.4 / unit}}
+    }
+    if flash_priced:
+        models['glm-5.3-flash'] = {'cost': {'input': 0.15 / unit, 'cache_read': 0.03 / unit, 'output': 0.5 / unit}}
     config: dict[str, object] = {
         'apiProxy': {
-            'defaultAiCreditsPricing': {'input': 0.6, 'cachedInput': 0.03, 'output': 2.4}
+            'defaultAiCreditsPricing': {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
             if stale_fallback
-            else {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50},
-            'providers': {
-                'anthropic': {
-                    'models': {
-                        'glm-5.3-flash': {
-                            'cost': {'input': 0.15 / unit, 'cache_read': 0.03 / unit, 'output': 0.50 / unit}
-                        }
-                    }
-                }
-            },
+            else {'input': 1.4, 'cachedInput': 0.26, 'output': 4.4},
+            'providers': {'anthropic': {'models': models}},
         }
     }
     workflow: dict[str, object] = {'jobs': {'agent': {'steps': [{'run': f"printf '%s' '{json.dumps(config)}'"}]}}}
     lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
-    assert bool(check_ai_credits_accounting(lock)) is (per_million or stale_fallback)
+    assert bool(check_ai_credits_accounting(lock)) is (per_million or stale_fallback or not flash_priced)
 
 
 def test_ai_credits_accounting_rejects_a_priced_model_in_the_awf_config(tmp_path: Path):
@@ -1880,6 +1935,7 @@ Prompt
 _GATE_ENV: dict[str, str] = {
     'GITHUB_TOKEN': '${{ github.token }}',
     'ZAI_API_KEY': '${{ secrets.ZAI_API_KEY }}',
+    'ZAI_BACKUP_API_KEY': '${{ secrets.ZAI_BACKUP_API_KEY }}',
     'GITHUB_WORKFLOW': '${{ github.workflow }}',
     'PYDANTIC_AI_RUN_ATTEMPT': '${{ github.run_attempt }}',
     'PYDANTIC_AI_TASK_KEY': '${{ github.workflow }}:${{ github.event_name }}',
@@ -1905,27 +1961,44 @@ def _agent_start_steps(
     env: dict[str, str] = _GATE_ENV,
     stop_continues: bool = False,
     stop_name: str = AGENT_START_HEALTH_STEPS[2],
+    recheck_id: str = 'agent_start_health',
 ) -> list[dict[str, object]]:
     stop: dict[str, object] = {
         'name': stop_name,
-        'if': "steps.agent_start_health.outputs.ready != 'true'",
+        'if': f"steps.{recheck_id}.outputs.ready != 'true'",
         'run': 'echo "::error::blocked"\nexit 1\n',
     }
     if stop_continues:
         stop['continue-on-error'] = True
     return [
-        {'name': AGENT_START_HEALTH_STEPS[0], 'id': 'agent_start_health', 'env': env, 'run': run},
-        {'name': AGENT_START_HEALTH_STEPS[1], 'uses': 'actions/upload-artifact', 'continue-on-error': True},
+        {'name': AGENT_START_HEALTH_STEPS[0], 'id': recheck_id, 'env': env, 'run': run},
+        {
+            'name': AGENT_START_HEALTH_STEPS[1],
+            'id': 'agent_start_health_artifact',
+            'uses': 'actions/upload-artifact',
+            'continue-on-error': True,
+        },
         stop,
+        {
+            'name': AGENT_START_HEALTH_STEPS[3],
+            'if': f"steps.agent_start_health_artifact.outcome == 'failure' && steps.{recheck_id}.outputs.account "
+            '!= needs.provider_health.outputs.account',
+            'run': 'echo "::error::hidden account"\nexit 1\n',
+        },
     ]
 
 
-def _write_agent_start_workflow(workflows: Path, agent_steps: list[dict[str, object]]) -> Path:
+def _write_agent_start_workflow(
+    workflows: Path, agent_steps: list[dict[str, object]], gate_env: dict[str, str] = _GATE_ENV
+) -> Path:
     source = _write(
         workflows / 'pydantic-ai-mini.md', '---\nname: Z.AI\nimports:\n  - shared/engine-zai.md\n---\nPrompt\n'
     )
     jobs: dict[str, object] = {
-        'provider_health': {'steps': [{'id': 'health', 'env': _GATE_ENV, 'run': 'python3 controller check'}]},
+        'provider_health': {
+            'outputs': {'account': '${{ steps.health.outputs.account }}'},
+            'steps': [{'id': 'health', 'env': gate_env, 'run': 'python3 controller check'}],
+        },
         'agent': {'needs': ['activation', 'provider_health'], 'steps': agent_steps},
     }
     return _write(source.with_suffix('.lock.yml'), yaml.safe_dump({'jobs': jobs}, sort_keys=False))
@@ -1994,6 +2067,15 @@ def test_provider_health_agent_start_catches_the_queued_ci_review_defect(tmp_pat
             ],
             id='renamed-stop-step',
         ),
+        pytest.param(
+            [*_agent_start_steps(recheck_id='provider_recheck'), *_SHIPPED_AGENT_STEPS],
+            id='recheck-id-the-engine-key-does-not-read',
+        ),
+        pytest.param([*_agent_start_steps()[:3], *_SHIPPED_AGENT_STEPS], id='hidden-account-runs'),
+        pytest.param(
+            [*_agent_start_steps()[:3], {**_agent_start_steps()[3], 'continue-on-error': True}, *_SHIPPED_AGENT_STEPS],
+            id='hidden-account-stop-continues',
+        ),
     ],
 )
 def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inference(
@@ -2007,10 +2089,36 @@ def test_provider_health_agent_start_rejects_a_recheck_that_cannot_stop_inferenc
     ]
 
 
+@pytest.mark.parametrize('key', ['ZAI_API_KEY', 'ZAI_BACKUP_API_KEY'])
+def test_provider_health_agent_start_requires_both_keys_in_the_gate(tmp_path: Path, key: str):
+    """A gate and recheck without a key cannot select that account, even when their environments agree."""
+    workflows = tmp_path / '.github' / 'workflows'
+    env = {name: value for name, value in _GATE_ENV.items() if name != key}
+    _write_agent_start_workflow(workflows, [*_agent_start_steps(env=env), *_SHIPPED_AGENT_STEPS], gate_env=env)
+
+    assert [violation.check for violation in check_provider_health_agent_start(workflows)] == [
+        'provider-health-agent-start'
+    ]
+
+
+def test_provider_health_agent_start_requires_the_gate_account_output(tmp_path: Path):
+    """Without the gate's account, the job cannot tell that a failed replacement hides the recheck's account."""
+    workflows = tmp_path / '.github' / 'workflows'
+    lock = _write_agent_start_workflow(workflows, [*_agent_start_steps(), *_SHIPPED_AGENT_STEPS])
+    workflow = yaml.safe_load(lock.read_text(encoding='utf-8'))
+    del workflow['jobs']['provider_health']['outputs']
+    _write(lock, yaml.safe_dump(workflow, sort_keys=False))
+
+    assert [violation.check for violation in check_provider_health_agent_start(workflows)] == [
+        'provider-health-agent-start'
+    ]
+
+
 _RECORD_ENV: dict[str, str] = {key: value for key, value in _GATE_ENV.items() if key != 'GITHUB_TOKEN'}
 _RECORD_RUN = (
     'python3 -I .github/scripts/agent_provider_health.py record \\\n'
     '  --agent-session agent/agent-session.jsonl \\\n'
+    '  --health-artifact provider-health/provider-health.json \\\n'
     '  --output provider-health/run-result.json\n'
 )
 # The authored condition inside gh-aw's clean-detection guard, as the compiled lock carries it.
@@ -2171,6 +2279,16 @@ def test_provider_health_host_result_accepts_the_shipped_record_job(tmp_path: Pa
         pytest.param(
             _host_result_job(env={key: value for key, value in _RECORD_ENV.items() if key != 'ZAI_API_KEY'}),
             id='no-zai-key',
+        ),
+        pytest.param(
+            _host_result_job(env={key: value for key, value in _RECORD_ENV.items() if key != 'ZAI_BACKUP_API_KEY'}),
+            id='no-backup-key',
+        ),
+        pytest.param(
+            _host_result_job(
+                run=_RECORD_RUN.replace('  --health-artifact provider-health/provider-health.json \\\n', '')
+            ),
+            id='record-without-the-engine-account',
         ),
         pytest.param(
             _host_result_job(env={**_RECORD_ENV, 'PYDANTIC_AI_TASK_KEY': '${{ github.workflow }}'}),
@@ -2503,11 +2621,13 @@ jobs:
       - if: github.event_name == 'schedule'
         env:
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
         run: python3 .github/scripts/agent_provider_health.py monitor
       - if: github.event_name == 'workflow_dispatch'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          ZAI_BACKUP_API_KEY: ${{ secrets.ZAI_BACKUP_API_KEY }}
           ISSUE_NUMBER: ${{ inputs.recover_issue }}
         run: |
           python3 .github/scripts/agent_provider_health.py monitor \
@@ -2778,3 +2898,88 @@ jobs:
     violations = check_assigned_alert_metadata_gate(workflows)
 
     assert [violation.check for violation in violations] == ['assigned-alert-metadata-gate']
+
+
+def test_at_claude_maintainer_threads_requires_author_gate_and_comment_filter(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml',
+        """name: '@claude'
+on: issue_comment
+jobs:
+  get-pr-info:
+    outputs:
+      is_fork: ${{ steps.pr-info.outputs.is_fork }}
+  at-claude:
+    needs: get-pr-info
+    if: needs.get-pr-info.outputs.is_fork != 'true'
+    steps:
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+""",
+    )
+
+    violations = check_at_claude_maintainer_threads(workflows)
+
+    assert [violation.message for violation in violations] == [
+        '`at-claude` must require `write` or `admin` permission from the thread author.',
+        '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+        'an empty value includes every commenter.',
+    ]
+
+
+_AT_CLAUDE_GATE = """needs.get-pr-info.outputs.is_fork != 'true' &&
+      contains(fromJSON('["write","admin"]'), needs.get-pr-info.outputs.thread_author_permission) &&
+      needs.get-pr-info.outputs.included_comment_authors != ''"""
+
+
+@pytest.mark.parametrize(
+    ('gate', 'expected'),
+    [
+        pytest.param(_AT_CLAUDE_GATE, [], id='compliant'),
+        pytest.param(
+            _AT_CLAUDE_GATE.replace("'true' &&", "'true' ||"),
+            [
+                '`at-claude` must require `write` or `admin` permission from the thread author.',
+                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+                'an empty value includes every commenter.',
+            ],
+            id='author-gate-ored-with-fork-check',
+        ),
+        pytest.param(
+            _AT_CLAUDE_GATE.replace(" &&\n      needs.get-pr-info.outputs.included_comment_authors != ''", ''),
+            [
+                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+                'an empty value includes every commenter.'
+            ],
+            id='empty-author-list-not-skipped',
+        ),
+    ],
+)
+def test_at_claude_maintainer_threads_checks_each_gate_conjunct(tmp_path: Path, gate: str, expected: list[str]):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml',
+        f"""name: '@claude'
+on: issue_comment
+jobs:
+  get-pr-info:
+    outputs:
+      is_fork: ${{{{ steps.pr-info.outputs.is_fork }}}}
+      thread_author_permission: ${{{{ steps.thread.outputs.author_permission }}}}
+      included_comment_authors: ${{{{ steps.thread.outputs.included_comment_authors }}}}
+  at-claude:
+    needs: get-pr-info
+    if: |
+      {gate}
+    steps:
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          include_comments_by_actor: ${{{{ needs.get-pr-info.outputs.included_comment_authors }}}}
+""",
+    )
+
+    violations = check_at_claude_maintainer_threads(workflows)
+
+    assert [violation.message for violation in violations] == expected

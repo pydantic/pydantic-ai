@@ -5,7 +5,7 @@ description: "Integrate a new durable execution engine with Pydantic AI using th
 # Building a durable execution backend
 
 Pydantic AI's durable execution builder lets an integration route model requests, tool discovery,
-tool validation, tool calls, event handling, message compaction, and
+tool validation, tool calls, event handling, message compaction, token counting, and
 [decorated capability operations](../capabilities/custom.md#durable-capability-operations) through one engine
 backend. Use it when you are integrating a durable execution system that is not already supported.
 
@@ -32,7 +32,7 @@ Use [`RegisteredOperationBackend`][pydantic_ai.durable_exec.RegisteredOperationB
 engine requires handlers to be registered before the worker starts. Implement `register` to
 create a bound caller and return its registration handles. Its `registrations()` method returns
 the collected SDK registration handles in binding order. During agent assembly, the base binds the
-four model operations before a worker can start, so these registrations are present without first
+five model operations before a worker can start, so these registrations are present without first
 running a model request. Pass the complete `registrations()` result to the engine SDK when creating
 the worker.
 
@@ -111,7 +111,9 @@ The public [`DurabilityEngineSpec`][pydantic_ai.durable_exec.DurabilityEngineSpe
 declarative engine surface in one immutable object. Its required fields name the engine, durable
 unit, and durable container. Its optional fields select the codec, wrapped toolset kinds, lifecycle
 policy, upgrade compatibility, durable discovery, sequential tool execution, unsupported runtime
-toolsets, and per-tool configuration key. The default lifecycle policy enters function and MCP
+toolsets, per-tool configuration key, and whether a run inside the container may take a
+[`CancellationToken`][pydantic_ai.CancellationToken] (only safe on a container loop that rejects
+delivery from other threads; see the field's docs). The default lifecycle policy enters function and MCP
 toolsets for every run and never enters dynamic toolsets.
 
 Define every field whose engine behavior differs from the defaults. The spec validates non-empty
@@ -153,7 +155,7 @@ Per-tool config can return
 MCP tools perform I/O and always run in their durable unit, so returning `False` for one raises a
 [`UserError`][pydantic_ai.exceptions.UserError].
 
-The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
+The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`, `ModelCountTokensId`,
 `ModelCancelSuspendedResponseId`, `EventStreamHandlerId`, `ToolsetGetToolsId`,
 `ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
 `CapabilityOperationId`. Their Python class names do not determine persisted operation names.
@@ -185,10 +187,19 @@ parameter types to the engine's wire format at dispatch and loads it back worker
 [`DynamicToolsetCallToolParams`][pydantic_ai.durable_exec.DynamicToolsetCallToolParams],
 [`CapabilityOperationParams`][pydantic_ai.durable_exec.CapabilityOperationParams], and
 [`WorkspaceCallParams`][pydantic_ai.durable_exec.WorkspaceCallParams].
+The token count ahead of a request takes the request's `ModelRequestParams` and the transport
+`model_request(result_type)` returns, so an engine that carries model requests carries counts too.
 The backend's `register` receives each [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation]
 and returns a [`BoundDurableOperation`][pydantic_ai.durable_exec.BoundDurableOperation]. Run its
 worker-side handler inside [`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope], so
 a durable operation called from inside the unit runs directly instead of scheduling another unit.
+
+With the default dynamic toolset transports, a unit gets the run's own `RunContext`, so a
+[`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] built with `per_run_step=False` is resolved
+once per run and held for the units, as a non-durable run holds it. An engine whose
+[`dynamic_get_tools`][pydantic_ai.durable_exec.ParameterTransports.dynamic_get_tools] or
+[`dynamic_call`][pydantic_ai.durable_exec.ParameterTransports.dynamic_call] returns a transport of its
+own resolves the toolset again in each unit.
 
 Every parameter type carries the run's `RunContext` (as `run_context`, or `ctx` on the toolset
 parameters; it is `None` when a suspended response is cancelled outside a run), and that context
@@ -252,8 +263,9 @@ A replayed or recovered run must also get the same identity. Inside the durable 
 replay-stable ID, such as one derived from the workflow instance ID, and return
 [`conversation_id_from_run_id(run_id)`][pydantic_ai.durable_exec.conversation_id_from_run_id] from
 [`get_default_conversation_id()`][pydantic_ai.capabilities.AbstractCapability.get_default_conversation_id],
-as the Temporal, DBOS and Prefect capabilities do. Each agent run in the same workflow needs its own
-`run_id`.
+as the Temporal and DBOS capabilities do. Each agent run in the same workflow needs its own
+`run_id`, associated with the same logical run even if concurrent calls reorder on retry. See
+[Prefect run and conversation IDs](prefect.md#run-and-conversation-ids) for its cached-ID policy.
 
 See [durable capability operations](../capabilities/custom.md#durable-capability-operations) for how
 capability authors contribute decorated methods that arrive through the same backend.
@@ -262,8 +274,9 @@ capability authors contribute decorated methods that arrive through the same bac
 
 [`wait_for_external_event`][pydantic_ai.external_events.wait_for_external_event] waits until
 something outside the run resolves a token the run handed out, unless the `ask` function it hands
-the token to answers right away, and returns the JSON payload. [`RequestInput`](../capabilities/request-input.md)
-uses it to ask for an answer on deferred tool calls without ending the run. Outside a durable run it
+the token to answers right away, and returns the JSON payload. A
+[`HandleDeferredToolCalls`](../capabilities/handle-deferred-tool-calls.md) handler that takes a resume
+token uses it to ask for an answer on deferred tool calls without ending the run. Outside a durable run it
 waits in process, and [`resolve_external_event`][pydantic_ai.external_events.resolve_external_event]
 ends the wait. In a durable run, an in-process wait would not be recorded: a replay would ask again,
 could get a different answer than the one the run already acted on and diverge from the recorded
@@ -338,6 +351,20 @@ Code inside a durable unit, such as a tool, can't wait: the wait has to be recor
 itself. `wait_for_external_event` rejects a call made inside
 [`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope] before it reaches your waiter, so
 run each unit's body in that scope.
+
+## Waiting a provider's `Retry-After`
+
+A model error can say how long to wait before the request is attempted again, in its
+[`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. When your engine retries a model
+operation that failed, wait that long instead of its configured backoff, as a durable wait the engine
+schedules rather than a sleep inside the durable unit.
+[`model_error_retry_after(error, maximum=...)`][pydantic_ai.durable_exec.model_error_retry_after] finds
+the model error in the chain of the exception the unit failed with and caps the wait at `maximum`,
+typically the engine's maximum retry interval. It returns `None` when no model error asked for a wait,
+so the configured backoff applies. Temporal sets the result as the failed activity's
+`next_retry_delay`. An engine with no way to set the delay of one retry, or no durable timer to wait
+it with, should say in its documentation that it doesn't wait `retry_after`, rather than sleep in the
+process that runs the unit.
 
 ## Replays and telemetry
 

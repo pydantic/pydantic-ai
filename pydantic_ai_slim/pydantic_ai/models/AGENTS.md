@@ -7,7 +7,7 @@ Rendering history into a request must be deterministic and must keep every messa
 ## API Design
 
 <!-- rule:912 -->
-- Silently ignore unsupported generic tuning settings (`temperature`, sampling params, penalties, …) at runtime and document them in docstrings — a model that simply no-ops an unsupported knob keeps client code portable across models; failing noisily would break that portability (provider-namespaced settings like `google_*`/`openai_*` are governed by a separate rule below, not this one). Declare every generic setting a model class ignores in its `unsupported_settings` (all but `request_timeout`, `first_event_timeout`, `thinking`, `cache` and `tool_choice`, which are resolved outside the adapter), never with an ad hoc warning: `Model.prepare_request` warns with `UnsupportedSettingWarning` for the ones that change what a request guarantees (`timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`), and stays silent for the tuning knobs
+- Silently ignore unsupported generic tuning settings (`temperature`, sampling params, penalties, …) at runtime and document them in docstrings — a model that simply no-ops an unsupported knob keeps client code portable across models; failing noisily would break that portability (provider-namespaced settings like `google_*`/`openai_*` are governed by a separate rule below, not this one). Declare every generic setting a model class ignores in its `unsupported_settings` (all but `request_timeout`, `first_event_timeout`, `framing_announcement`, `thinking`, `cache` and `tool_choice`, which are resolved outside the adapter), never with an ad hoc warning: `Model.prepare_request` warns with `UnsupportedSettingWarning` for the ones that change what a request guarantees (`timeout`, `max_retries`, `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`), and stays silent for the tuning knobs
 <!-- rule:81 -->
 - Apply identical response processing to both `request()` and `request_stream()` — if `request()` calls `_process_response()`, `request_stream()` must apply it to each chunk — Ensures streaming and non-streaming code paths support the same message types (`ToolCallPart`, `NativeToolCallPart`, `TextPart`, etc.) with consistent behavior, preventing bugs where features work in one mode but fail in the other
 <!-- rule:598 -->
@@ -66,11 +66,11 @@ most certain. Where in a request build the trim belongs stays adapter mechanics 
 resolves server-side state from the *untrimmed* history, so it keeps a separate trimmed view).
 
 An adapter whose message mapping refuses a kind of file (image, document, audio, video) declares it
-in `_unsupported_file_inputs`, and one that sends only some document media types declares those in
-`_supported_document_media_types`. `Model.profile` narrows the file-input flags to them after every
+in `_unsupported_file_inputs`, and one that sends only some media types of a kind declares those in
+`_supported_media_types` (OpenAI Chat Completions' WAV and MP3 audio, say). `Model.profile` narrows the file-input flags to them after every
 other layer, which is what lets `Model.prepare_messages` replace a tool's file the adapter would refuse
 with a note instead of failing the run. A refusal that depends on the model rather than the API belongs
-in the profile instead (`supports_video_input` in `google_model_profile`).
+in the profile instead (`supports_video_input` and `supported_image_media_types` in `google_model_profile`).
 
 ### Third-party model fallback
 

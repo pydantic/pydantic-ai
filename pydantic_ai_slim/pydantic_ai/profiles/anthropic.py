@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from contextvars import ContextVar
 from typing import Literal, TypeAlias
 
+from .._file_input import KNOWN_IMAGE_MEDIA_TYPES
 from ..native_tools import (
     AdvisorTool,
     CodeExecutionTool,
@@ -17,16 +18,14 @@ from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
-per-model in the profile below."""
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated per model in the profile below,
+and `ComputerTool`, which `AnthropicProvider` adds per model."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
-    'claude-sonnet-5-5',
-    'claude-haiku-5-5',
 )
 """Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
@@ -38,11 +37,18 @@ restriction the top-level prompt set, it refuses every time where Opus 5 complie
 a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
 entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
 
-`claude-sonnet-5-5` is published as supported and stays in although, asked to lift a restriction the
-top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
-so the entry costs nothing measurable and keeps the instruction's operator authority.
+`claude-sonnet-5-5` is published as supported but is deliberately absent: it credited the native entry to the user
+when asked who said what, and with the sealed `<system>` rendering (`needs_sealed_system_blocks`) it attributed the
+application's instructions correctly and followed steering after a tool result more reliably.
 
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
+
+`claude-haiku-5-5` is published as supported and honors the entry, but is deliberately absent: it gets the sealed
+`<system>` rendering instead (`needs_sealed_system_blocks`), which measured equal or better on every cell
+(instruction changes, a genuine change next to a lookalike, request-scoped prompts), at +1.4% cost per cached
+conversation with the prefix unchanged. The unsealed fallback was worse than the entry on instruction history, so
+it's the sealed one or neither. Request-scoped entries have their own list:
+`_REQUEST_SCOPED_SYSTEM_PROMPT_MODEL_PREFIXES` in `providers/anthropic.py`.
 
 It lives here rather than beside `AnthropicProvider` so `OpenRouterProvider` can share it without the `anthropic`
 SDK. It's a fact about Anthropic's API, not the model family, so `anthropic_model_profile()` doesn't apply it: the
@@ -67,6 +73,9 @@ model, because `models/bedrock.py` cannot import from `models/anthropic/` withou
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
+
+AnthropicComputerToolVersion: TypeAlias = Literal['computer_toolset_20260801', 'computer_20251124', 'computer_20250124']
+"""Anthropic computer use tool version to send for `ComputerTool`."""
 
 _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -151,6 +160,21 @@ class AnthropicModelProfile(ModelProfile, total=False):
     request payloads.
     """
 
+    anthropic_restricts_sampling_with_thinking: bool
+    """Whether the model takes `temperature` only at `1`, `top_p` only from `0.95`, and no `top_k` while it thinks.
+    Default: `False`.
+
+    Set for every Claude model, which rejects any other `temperature`, a lower `top_p`, or a `top_k` with a 400
+    while thinking. See
+    [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility).
+    """
+
+    anthropic_disallows_temperature_with_top_p: bool
+    """Whether the model rejects `temperature` and `top_p` set together. Default: `False`.
+
+    Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 accept one or the other, and return a 400 for both.
+    """
+
     anthropic_disallows_top_effort_when_thinking_disabled: bool
     """Whether the model rejects `xhigh`/`max` effort while thinking is explicitly disabled. Default: `False`.
 
@@ -177,6 +201,12 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports `output_config.task_budget`. Default: `False`.
 
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
+    """
+
+    anthropic_computer_tool_version: AnthropicComputerToolVersion
+    """Which Anthropic computer use tool or toolset is sent for a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]. Default: `'computer_20250124'`.
+
+    Whether `ComputerTool` is sent at all depends on `supported_native_tools`.
     """
 
     anthropic_supports_on_demand_compaction: bool
@@ -236,6 +266,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
     land. When True, `AnthropicModel` ends that user turn with a short text block saying the tool results end
     there and the system message comes from the application. Measured live, that block took Haiku 5.5 from 12 to
     64 of 64 runs following a rule change; Sonnet 5.5 and Opus 5.5 followed it without the block.
+
+    It only applies when a native entry is used. Haiku 5.5's default profile sends its lasting system messages as
+    sealed `<system>` blocks instead (`needs_sealed_system_blocks`), so that leaves its request-scoped entries.
     """
 
     anthropic_accepts_file_and_container_ids: bool
@@ -290,6 +323,31 @@ class AnthropicModelProfile(ModelProfile, total=False):
     When the provider's profile doesn't set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves
     it off for every other client. Of those, Claude Platform on AWS (`AsyncAnthropicAWS`) and Microsoft Foundry also
     send those versions, but haven't been verified to accept `allowed_callers` with citations.
+    """
+
+    anthropic_supports_inference_geo: bool
+    """Whether the endpoint takes the `inference_geo` request parameter for
+    [data residency](https://platform.claude.com/docs/en/manage-claude/data-residency). Default: `False`.
+
+    When False, [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]
+    is ignored with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    `AsyncAnthropic` client, which also serves Claude Platform on AWS and Claude on Google Cloud (Anthropic managed),
+    and leaves it off for the Bedrock, Vertex AI and Foundry clients, where the endpoint or deployment decides the
+    inference region. Set it in the provider's profile or with `profile=` for a client that forwards the parameter to
+    the Claude API. It doesn't depend on the model: models that don't support data residency reject the parameter
+    with a 400.
+    """
+
+    anthropic_supports_message_threads: bool
+    """Whether the endpoint serves Anthropic
+    [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads). Default: `False`.
+
+    When False,
+    [`anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id]
+    is ignored with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    `AsyncAnthropic` client, which also serves Claude Platform on AWS and Claude on Google Cloud (Anthropic managed),
+    and for the Foundry client, and leaves it off for the Bedrock and Vertex AI clients, where Anthropic doesn't offer
+    threads. Set it in the provider's profile or with `profile=` for a client that forwards threads to the Claude API.
     """
 
 
@@ -441,6 +499,10 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-haiku-5-5',
         )
     )
+    # Verified live 2026-11-04. The models that set `disallows_sampling_settings` take neither.
+    disallows_temperature_with_top_p = model_name.startswith(
+        ('claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', 'claude-opus-4-6')
+    )
     # Opus 5, Sonnet 5.5, and Haiku 5.5 cap effort at `high` while thinking is disabled; Opus 4.8 and earlier accept
     # every level. Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
     disallows_top_effort_when_thinking_disabled = (
@@ -526,6 +588,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # thinking off, and accepts it live on the Anthropic API and Bedrock.
     disables_thinking_with_between_tools = model_name.startswith('claude-sonnet-5-5')
     distrusts_system_after_tool_result = model_name.startswith('claude-haiku-5-5')
+    # Measured on the Anthropic API, where none gets a mid-conversation system role (Sonnet 5.5 and Haiku 5.5 are left
+    # out of `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES` for this): see the field's docstring.
+    needs_sealed_system_blocks = model_name.startswith(('claude-sonnet-4-6', 'claude-sonnet-5-5', 'claude-haiku-5-5'))
 
     # The 5.1 and 5.2 generations, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright,
     # unlike other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
@@ -620,6 +685,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
     profile = AnthropicModelProfile(
+        # The Anthropic API answers HEIC, AVIF, BMP and TIFF images with a 400, and so does Claude through
+        # OpenRouter (checked live with `claude-haiku-5-5` and `anthropic/claude-haiku-4.5`, 2026-11-04).
+        supported_image_media_types=KNOWN_IMAGE_MEDIA_TYPES,
         # Read by `OpenAIChatModel`, not by `AnthropicModel`: litellm, vercel, heroku, snowflake and
         # openrouter serve Claude through that adapter and map it onto this profile, so these tags are
         # how it splits thinking out of a Claude response. Both adapters only render them for the
@@ -648,9 +716,12 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_max_effort=not model_name.startswith('claude-opus-4-5'),
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_disallows_temperature_with_top_p=disallows_temperature_with_top_p,
+        anthropic_restricts_sampling_with_thinking=model_name.startswith('claude-'),
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
         anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
         anthropic_distrusts_system_after_tool_result=distrusts_system_after_tool_result,
+        needs_sealed_system_blocks=needs_sealed_system_blocks,
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
@@ -662,6 +733,11 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     )
     if supports_tool_search:
         profile['tool_deferral_mode'] = 'standalone'
+    if model_name.startswith('claude-sonnet-4-6'):
+        # Sonnet 4.6 follows the application's `<system verified>` blocks and its own reminder tags only once told
+        # what they mean, so it gets the announcement from the first request (see the field's docstring). It has no
+        # native mid-conversation system role on any transport, where the announcement would be a system message.
+        profile['default_framing_announcement'] = 'always'
     return profile
 
 

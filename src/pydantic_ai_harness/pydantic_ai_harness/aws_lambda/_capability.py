@@ -65,9 +65,9 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
     Step results are checkpointed through the Lambda SDK's serializer, so a checkpointed tool's
     return value must survive that round trip. Control-flow signals (`ModelRetry`,
     `ApprovalRequired`, `CallDeferred`, `ToolFailed`) cross the boundary as values rather than
-    exceptions, so approval and deferred-tool flows work inside a durable execution. With
-    `RequestInput` or harness `AskUser` attached, a call that needs an answer from outside waits on
-    a Lambda callback instead of ending the run.
+    exceptions, so approval and deferred-tool flows work inside a durable execution. With a
+    `HandleDeferredToolCalls` handler that takes a resume token or harness `AskUser` attached, a call
+    that needs an answer from outside waits on a Lambda callback instead of ending the run.
 
     Example:
         ```python {test="skip"}
@@ -142,7 +142,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """Let the run wait for external events, such as `RequestInput` answers, through Lambda callbacks."""
+        """Let the run wait for external events, such as `HandleDeferredToolCalls` answers, through Lambda callbacks."""
         if not in_durable_context():
             return await super().wrap_run(ctx, handler=handler)
         waiter = _CallbackWaiter(agent_name=self.name, ask_config=self._operation_config.base_step_config)
@@ -201,3 +201,8 @@ async def _ask_for_json(ask: Callable[[str], Awaitable[JsonValue]], token: str) 
     """Call `ask`, and record an answer as the JSON string a resolver would send, so both are read back the same way."""
     answer = await ask(token)
     return None if answer is None else to_json(answer).decode()
+
+
+def operation_config(durability: AWSLambdaDurability[Any]) -> AWSLambdaOperationConfig:
+    """The resolved config `durability` checkpoints its operations with."""
+    return durability._operation_config  # pyright: ignore[reportPrivateUsage]

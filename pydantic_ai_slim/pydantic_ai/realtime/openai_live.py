@@ -38,7 +38,7 @@ import sys
 import time
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
+from contextlib import AbstractAsyncContextManager, aclosing, asynccontextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Annotated, Any, ClassVar, Literal, assert_never, cast
@@ -132,6 +132,7 @@ from ._utils import (
     wrap_seeded_system_prompts,
 )
 from .codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -158,6 +159,7 @@ try:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import (
+        CustomVoiceParam,
         DataChannelConfigParam,
         DelegationCreatedEvent,
         ErrorEvent,
@@ -242,8 +244,11 @@ _VOICE_FLOOR = 64
 #: tool call's quiet wait would arrive as a spoken part with nothing in it.
 _MAX_FORWARDED_PAUSE_MS = 500
 
-#: The most tokens Live accepts in one `session.thinking.append`.
+#: The most tokens Live accepts in one `session.thinking.append` or `session.instructions.append`.
 _CONTEXT_TOKEN_LIMIT = 500
+#: The most tokens of `instructions` a session can start with, in the same tokenizer (checked live: 16,384 start, 16,385
+#: are refused).
+_START_INSTRUCTIONS_TOKEN_LIMIT = 16_384
 #: The tokenizer Live counts that limit in. Checked live: 500 `o200k_base` tokens are accepted, 501 refused.
 _CONTEXT_ENCODING = 'o200k_base'
 #: How a user's typed turn is put to Live as silent context, while the backend gets it as the user's message.
@@ -409,11 +414,17 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
 
     See [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] for the shared settings.
     Live has no turn-detection, truncation, token-limit, or temperature controls: it owns turn-taking
-    entirely, and voice, audio format and instructions are immutable once the session has started.
+    entirely, and voice and audio format are immutable once the session has started. Its instructions
+    can only be added to, with
+    [`append_voice_instructions`][pydantic_ai.realtime.RealtimeSession.append_voice_instructions].
     """
 
-    openai_voice: str
-    """The voice used for Live speech, e.g. `marin` (the provider default). Immutable after startup."""
+    openai_voice: str | CustomVoiceParam
+    """The voice used for Live speech, e.g. `marin` (the provider default) or `{'id': 'voice_1234'}`.
+
+    A string names a built-in voice. A custom voice created through OpenAI's voice API is selected by its ID in
+    the OpenAI SDK's `CustomVoiceParam` form (`openai.types.live.CustomVoiceParam`). Immutable after startup.
+    """
 
     openai_live_instructions: str
     """Instructions for the Live model's *spoken* behavior: persona, language, voice, pacing,
@@ -422,7 +433,8 @@ class OpenAILiveModelSettings(RealtimeModelSettings, total=False):
     The agent's own instructions and system prompt describe the work and go only to the backend
     prompt, never to the Live model, so this is where persona and conversational style belong.
     Defaults to a short prompt that tells the model to delegate anything it can't answer from the
-    conversation itself; one set here replaces it, so say when to delegate too."""
+    conversation itself; one set here replaces it, so say when to delegate too. Add to it mid-session with
+    [`append_voice_instructions`][pydantic_ai.realtime.RealtimeSession.append_voice_instructions]."""
 
     openai_live_delegation: OpenAILiveResponsesDelegation
     """Configuration for the Responses backend the Live session delegates work to."""
@@ -555,14 +567,17 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
     """
     items: list[dict[str, Any]] = []
     for message in wrap_seeded_system_prompts(messages):
-        if isinstance(message, ModelRequest):
-            seeded_parts = [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
-        else:
-            seeded_parts = [_seed_response_part(message, index) for index in range(len(message.parts))]
-        for seeded in seeded_parts:
+        for seeded in _seed_message_parts(message, provider_name=provider_name):
             if seeded is not None and (item := _seed_item(*seeded)) is not None:
                 items.append(item)
     return items
+
+
+def _seed_message_parts(message: ModelMessage, *, provider_name: str) -> list[tuple[_SeedRole, str] | None]:
+    """The role and text each part of `message` seeds as, `None` for one that carries nothing replayable."""
+    if isinstance(message, ModelRequest):
+        return [_seed_request_part(part, provider_name=provider_name) for part in message.parts]
+    return [_seed_response_part(message, index) for index in range(len(message.parts))]
 
 
 def _prompt_text(part: UserPromptPart, *, provider_name: str) -> str:
@@ -638,6 +653,17 @@ class _SessionGone(Exception):
 
 _LiveReattach = Callable[[], Awaitable['ClientConnection']]
 """Attach a new sideband to the WebRTC call's Live session, which carries on while no sideband is attached."""
+
+
+@dataclass
+class _SocketClosed:
+    """How a GPT-Live connection's socket closed, as `OpenAILiveConnection.frames` handles it."""
+
+    error: Exception
+    """What the read or send that found the socket closed raised."""
+    _: KW_ONLY
+    session_over: bool = False
+    """Whether the close ends Live's session rather than dropping it, so there is nothing to re-open."""
 
 
 @dataclass
@@ -838,11 +864,18 @@ class OpenAILiveConnection(RealtimeConnection):
         reconnect: ReconnectPolicy | None = None,
         forks: bool = False,
         backend: dict[str, Any] | None = None,
+        session_start: dict[str, Any] | None = None,
     ) -> None:
         self._ws = ws
         # The delegation backend's configuration as the session started it, which a redial starts the new session
         # with: an instruction change updates its `instructions` in place, so the new session has them too.
         self._backend: dict[str, Any] = backend if backend is not None else {}
+        # The configuration a redial starts a replacement session with, whose `instructions` (the voice model's)
+        # appended voice instructions are folded into; `None` where nothing redials.
+        self._session_start = session_start
+        self._start_instructions: str = session_start.get('instructions', '') if session_start is not None else ''
+        # The voice instructions appended so far that still fit in a replacement session's start, oldest first.
+        self._voice_instructions: list[str] = []
         self._idle_audio = idle_audio
         # Re-opening the session after a drop: by forking it, which Live can only do for a stored
         # session, or else by starting a new one seeded with the history so far.
@@ -854,7 +887,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._recent_event_ids: deque[str] = deque(maxlen=_REPLAYED_EVENTS_REMEMBERED)
         self._seen_event_ids: set[str] = set()
         # Set when a re-attach replaces the socket or is given up on, for the sends waiting on it (see `_send_event`).
-        self._socket_changed = asyncio.Event()
+        self._socket_changed = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
         self._reconnect = reconnect
         self._forks = forks
         self._message_history: Callable[[], Sequence[ModelMessage]] | None = None
@@ -996,39 +1029,7 @@ class OpenAILiveConnection(RealtimeConnection):
     async def _send_input(self, content: RealtimeInput, input_index: InputId) -> bool:
         """Send one input; `False` if it goes nowhere."""
         if isinstance(content, str):
-            # A user turn. Live has no user-message event of its own, so the text goes to the backend as the
-            # user's message and the backend is run on it, the way Live takes typed input. Live itself hears what
-            # was asked as silent context: without it, it often leaves a terse answer unsaid, not knowing the
-            # question (checked live: a bare "20" was spoken in none of six runs without it, and all six with it).
-            # The backend takes text of any length, so text too long for that context goes without it.
-            # System-prompt text is the operator's, not the user's: Live hears it as it is (`<system>`-tagged), and
-            # the backend as a developer message. Framed as typed, Live took it for something the caller had said
-            # (checked live: asked to list what they had said, 5 of 5 runs included it, and none of 5 this way).
-            operator = isinstance(content, SystemPromptText)
-            thinking = content if operator else _TYPED_TEXT_PREFIX + content
-            tells_live = await _context_tokens_over_cap(thinking) is None
-            # Live opens the delegation that answers it under this id (`session.delegation.created`).
-            event_id = f'pydantic_ai.text.{input_index}'
-            self._unacknowledged_text[event_id] = input_index
-            try:
-                if tells_live:
-                    await self._send_event(
-                        {'type': 'session.thinking.append', 'delegation_id': None, 'content': thinking}
-                    )
-                await self._send_event(
-                    {
-                        'type': 'response.item.create',
-                        'item': {
-                            'type': 'message',
-                            'role': 'developer' if operator else 'user',
-                            'content': [_text_part(content)],
-                        },
-                    }
-                )
-                await self._send_event({'type': 'response.create', 'event_id': event_id})
-            except BaseException:
-                del self._unacknowledged_text[event_id]
-                raise
+            await self._send_text(content, input_index)
             return True
         if isinstance(content, InstructionChangeContext):
             # The agent's instructions are the backend's, not Live's (see `OpenAILiveResponsesDelegation`), and only
@@ -1044,6 +1045,9 @@ class OpenAILiveConnection(RealtimeConnection):
                 }
             )
             self._backend['instructions'] = instructions
+            return True
+        if isinstance(content, AppendVoiceInstructions):
+            await self._append_voice_instructions(content.text)
             return True
         if isinstance(content, TextContext):
             # Context that `thinking` carries without prompting speech itself. The model may still
@@ -1092,6 +1096,60 @@ class OpenAILiveConnection(RealtimeConnection):
                 raise
         return True
 
+    async def _append_voice_instructions(self, text: str) -> None:
+        if (tokens := await _context_tokens_over_cap(text)) is not None:
+            raise UserError(
+                f'OpenAI GPT-Live accepts at most {_CONTEXT_TOKEN_LIMIT} tokens per `append_voice_instructions()`, '
+                f'and this is {tokens}. Add the instructions in shorter pieces.'
+            )
+        await self._send_event({'type': 'session.instructions.append', 'delegation_id': None, 'content': text})
+        # An empty append adds nothing for a replacement session to start with, and would never be dropped.
+        if self._session_start is None or not text:
+            return
+        # A replacement session starts with the voice model's own instructions and those appended since, but no more
+        # than Live's cap: the newest that fit, as the running session took them all and the newest take precedence.
+        self._voice_instructions.append(text)
+        while True:
+            instructions = '\n\n'.join(part for part in (self._start_instructions, *self._voice_instructions) if part)
+            over = await _context_tokens_over_cap(instructions, limit=_START_INSTRUCTIONS_TOKEN_LIMIT)
+            if over is None or not self._voice_instructions:
+                break
+            del self._voice_instructions[0]
+        self._session_start['instructions'] = instructions
+
+    async def _send_text(self, content: str, input_index: InputId) -> None:
+        # A user turn. Live has no user-message event of its own, so the text goes to the backend as the
+        # user's message and the backend is run on it, the way Live takes typed input. Live itself hears what
+        # was asked as silent context: without it, it often leaves a terse answer unsaid, not knowing the
+        # question (checked live: a bare "20" was spoken in none of six runs without it, and all six with it).
+        # The backend takes text of any length, so text too long for that context goes without it.
+        # System-prompt text is the operator's, not the user's: Live hears it as it is (`<system>`-tagged), and
+        # the backend as a developer message. Framed as typed, Live took it for something the caller had said
+        # (checked live: asked to list what they had said, 5 of 5 runs included it, and none of 5 this way).
+        operator = isinstance(content, SystemPromptText)
+        thinking = content if operator else _TYPED_TEXT_PREFIX + content
+        tells_live = await _context_tokens_over_cap(thinking) is None
+        # Live opens the delegation that answers it under this id (`session.delegation.created`).
+        event_id = f'pydantic_ai.text.{input_index}'
+        self._unacknowledged_text[event_id] = input_index
+        try:
+            if tells_live:
+                await self._send_event({'type': 'session.thinking.append', 'delegation_id': None, 'content': thinking})
+            await self._send_event(
+                {
+                    'type': 'response.item.create',
+                    'item': {
+                        'type': 'message',
+                        'role': 'developer' if operator else 'user',
+                        'content': [_text_part(content)],
+                    },
+                }
+            )
+            await self._send_event({'type': 'response.create', 'event_id': event_id})
+        except BaseException:
+            del self._unacknowledged_text[event_id]
+            raise
+
     def _start_idle_audio(self) -> None:
         """Stream silence whenever the application sends no audio, until the connection closes.
 
@@ -1130,7 +1188,7 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         while (delay := self._idle_frame_due() - _pump_clock()) > 0:
             # In short steps, so a schedule a redial cuts short (see `_forget_session_state`) takes effect.
-            await asyncio.sleep(min(delay, _IDLE_AUDIO_FRAME))
+            await asyncio.sleep(min(delay, _IDLE_AUDIO_FRAME))  # noqa: TID251  (not converted to anyio yet)
         # Booked from now rather than from when it was due, so a stalled loop doesn't catch up with a
         # burst of frames that would run Live's timeline ahead of the clock.
         self._next_idle_frame = max(self._idle_frame_due(), _pump_clock()) + _IDLE_AUDIO_FRAME
@@ -1233,7 +1291,7 @@ class OpenAILiveConnection(RealtimeConnection):
     def _socket_change_settled(self) -> None:
         """Wake the sends waiting for a re-attach: the sideband was replaced, or won't be."""
         self._socket_changed.set()
-        self._socket_changed = asyncio.Event()
+        self._socket_changed = asyncio.Event()  # noqa: TID251  (not converted to anyio yet)
 
     async def _end_session(self) -> AsyncIterator[SessionUsage]:
         """Send `session.close`, and read on until `session.closed` reports the session's final usage.
@@ -1261,7 +1319,7 @@ class OpenAILiveConnection(RealtimeConnection):
             await _utils.cancel_and_drain(self._idle_audio_task)
         await self._send_event({'type': 'session.close'})
         while not self._session_end.ended:
-            read = self._recv_task if self._recv_task is not None else self._start_read()
+            read = self._recv_task or self._start_read()
             self._recv_task = None
             try:
                 raw = await read
@@ -1292,112 +1350,143 @@ class OpenAILiveConnection(RealtimeConnection):
         """One frame's codec events, with the lifecycle events around them."""
         return self._lifecycle.frame_for(codec)
 
-    async def frames(self) -> AsyncIterator[RealtimeFrame]:  # noqa: C901
+    async def frames(self) -> AsyncIterator[RealtimeFrame]:
         # One read is always in flight: the next one starts before this frame is handled, so nothing
         # arrives while the consumer is busy and no frame is dropped between iterations.
-        if self._idle_audio:
-            self._start_idle_audio()
-        pending = self._start_read()
+        pending = self._start_reading()
         while True:
-            # Never cancel the pending `recv()`: a cancelled read can drop the frame it already holds,
-            # so the turn clock is a timeout on the wait rather than on the read.
-            # A pump that failed before this wait would be left out of it.
-            self._raise_if_idle_audio_failed()
-            waiting: set[asyncio.Task[Any]] = {pending}
-            if (pump := self._idle_audio_task) is not None and not pump.done():
-                # A pump that fails wakes this wait, so its failure surfaces now rather than at the next frame.
-                waiting.add(pump)
-            done, _ = await asyncio.wait(waiting, timeout=self._wait_timeout(), return_when=asyncio.FIRST_COMPLETED)
+            done = await self._wait_for_read(pending)
             if self._closed:
                 # `aclose()` cancelled the read while we were waiting on it.
                 return
             self._raise_if_idle_audio_failed()
+            closed: _SocketClosed | None = None
             if pending in done:
                 finished, pending = pending, self._start_read()
-                dropped: Exception | None = None
-                try:
-                    raw = finished.result()
-                # A cancelled read is not caught here: `aclose()` sets `_closed` before cancelling,
-                # so that path returns above rather than reaching this call.
-                except websockets.ConnectionClosed as e:
-                    # A sideband's socket isn't closed with a closing handshake when its session ends, so once
-                    # `session.closed` has said the session is over, any close is the end of it, not a drop.
-                    ended = isinstance(e, websockets.ConnectionClosedOK) or (
-                        self._reattach is not None and self._session_end.ended
-                    )
-                    if ended and not self._redial_on_close:
-                        # The read started above can no longer complete, and nothing will await it.
-                        self._cancel_read()
-                        # The session is over, so there is nothing left for `_end_session()` to ask Live for.
-                        self._session_end.ended = True
-                        # A graceful close ends whatever was in flight. Live never says a turn is over,
-                        # so without this the last reply would be settled as interrupted even though the
-                        # model had finished speaking and the session closed normally.
-                        settled = self._frame(self._settle_open_turns())
-                        self._socket_change_settled()
-                        yield [*settled, *self._lifecycle.connection_lost()]
-                        return
-                    dropped = e
-                except self.transport_errors as e:
-                    dropped = e
-                else:
-                    frame = self._frame(self._map_frame(raw))
-                    for event in frame:
-                        if isinstance(event, SessionUsage):
-                            self._hand_over(event)
-                    yield frame
-                    try:
-                        await self._send_due_continuations()
-                    except self.transport_errors as e:
-                        dropped = e
-                if dropped is not None:
-                    # A sideband has nothing to re-attach to once Live has closed the call's session.
-                    redials = self._dial is not None or (self._reattach is not None and not self._session_end.ended)
-                    if self._reconnect is None or not redials:
-                        # No reconnect policy: a dropped connection is fatal. Surface it as a non-recoverable
-                        # error and end the stream, as the other providers do, rather than raising the
-                        # `websockets` exception. The read started above is on the dead socket.
-                        self._cancel_read()
-                        self._socket_change_settled()
-                        error = RealtimeSessionErrorEvent(
-                            message=f'OpenAI GPT-Live connection closed: {dropped}', recoverable=False
-                        )
-                        yield [*self._held_lost(), *self._lifecycle.connection_lost(), error]
-                        return
-                    # Nothing under way on the dropped connection will finish when a new session replaces it. A
-                    # re-attached sideband's session is the same one, which carried on meanwhile.
-                    lost: RealtimeFrame = (
-                        [] if self._reattach is not None else [*self._held_lost(), *self._lifecycle.connection_lost()]
-                    )
-                    # The read started above is on the dead socket.
-                    self._cancel_read()
-                    try:
-                        reconnected = await self._try_reconnect()
-                    except BaseException:
-                        # Whatever stopped the re-attach, the sends waiting on it must not wait on.
-                        self._socket_change_settled()
-                        raise
-                    if not reconnected and self._reattach is not None:
-                        lost += [*self._held_lost(), *self._lifecycle.connection_lost()]
-                    lost += self._lifecycle.take_pending()
-                    if not reconnected:
-                        self._gave_up = True
-                        self._socket_change_settled()
-                        error = RealtimeSessionErrorEvent(
-                            message=f'OpenAI GPT-Live connection dropped; reconnect failed: {dropped}',
-                            recoverable=False,
-                        )
-                        yield [*lost, error]
-                        return
-                    yield [*lost, RealtimeSessionReconnectEvent(state_restored=self._restored)]
-                    pending = self._start_read()
-                    continue
+                match self._read_frame(finished):
+                    case _SocketClosed() as closed:
+                        pass
+                    case frame:
+                        yield frame
+                        closed = await self._try_send_due_continuations()
+            if closed is not None:
+                frame, reconnected = await self._handle_close(closed)
+                yield frame
+                if not reconnected:
+                    return
+                pending = self._start_read()
+                continue
             # Checked after every frame, not just when the socket goes quiet: the idle audio track
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
-            if expired := self._expire_quiet_turn():
-                yield self._frame(expired)
-            if given_up := await self._check_continuations():
-                yield self._frame(given_up)
+            async with aclosing(self._turn_check_frames()) as turn_check_frames:
+                async for frame in turn_check_frames:
+                    yield frame
+
+    def _start_reading(self) -> asyncio.Task[str | bytes]:
+        """Start the idle audio track, if the session streams one, and the first read."""
+        if self._idle_audio:
+            self._start_idle_audio()
+        return self._start_read()
+
+    async def _wait_for_read(self, pending: asyncio.Task[str | bytes]) -> set[asyncio.Task[Any]]:
+        """Wait for the read in flight to finish, the turn clock to run out, or the idle-audio pump to fail."""
+        # Never cancel the pending `recv()`: a cancelled read can drop the frame it already holds,
+        # so the turn clock is a timeout on the wait rather than on the read.
+        # A pump that failed before this wait would be left out of it.
+        self._raise_if_idle_audio_failed()
+        waiting: set[asyncio.Task[Any]] = {pending}
+        if (pump := self._idle_audio_task) is not None and not pump.done():
+            # A pump that fails wakes this wait, so its failure surfaces now rather than at the next frame.
+            waiting.add(pump)
+        done, _ = await asyncio.wait(waiting, timeout=self._wait_timeout(), return_when=asyncio.FIRST_COMPLETED)
+        return done
+
+    def _read_frame(self, finished: asyncio.Task[str | bytes]) -> RealtimeFrame | _SocketClosed:
+        """The frame a finished read makes, or how the socket it read from closed."""
+        try:
+            raw = finished.result()
+        # A cancelled read is not caught here: `aclose()` sets `_closed` before cancelling,
+        # so that path returns from `frames` rather than reaching this call.
+        except websockets.ConnectionClosed as e:
+            # A sideband's socket isn't closed with a closing handshake when its session ends, so once
+            # `session.closed` has said the session is over, any close is the end of it, not a drop.
+            ended = isinstance(e, websockets.ConnectionClosedOK) or (
+                self._reattach is not None and self._session_end.ended
+            )
+            return _SocketClosed(e, session_over=ended and not self._redial_on_close)
+        except self.transport_errors as e:
+            return _SocketClosed(e)
+        frame = self._frame(self._map_frame(raw))
+        for event in frame:
+            if isinstance(event, SessionUsage):
+                self._hand_over(event)
+        return frame
+
+    async def _try_send_due_continuations(self) -> _SocketClosed | None:
+        """Send the continuations now due, returning how the socket closed if a send found it closed."""
+        try:
+            await self._send_due_continuations()
+        except self.transport_errors as e:
+            return _SocketClosed(e)
+        return None
+
+    async def _handle_close(self, closed: _SocketClosed) -> tuple[RealtimeFrame, bool]:
+        """Re-open the session once its socket closed, if it can, returning the frame to report and whether it did."""
+        if closed.session_over:
+            # The read started in `frames` can no longer complete, and nothing will await it.
+            self._cancel_read()
+            # The session is over, so there is nothing left for `_end_session()` to ask Live for.
+            self._session_end.ended = True
+            # A graceful close ends whatever was in flight. Live never says a turn is over,
+            # so without this the last reply would be settled as interrupted even though the
+            # model had finished speaking and the session closed normally.
+            settled = self._frame(self._settle_open_turns())
+            self._socket_change_settled()
+            return [*settled, *self._lifecycle.connection_lost()], False
+        # A sideband has nothing to re-attach to once Live has closed the call's session.
+        redials = self._dial is not None or (self._reattach is not None and not self._session_end.ended)
+        if self._reconnect is None or not redials:
+            # No reconnect policy: a dropped connection is fatal. Surface it as a non-recoverable
+            # error and end the stream, as the other providers do, rather than raising the
+            # `websockets` exception. The read started in `frames` is on the dead socket.
+            self._cancel_read()
+            self._socket_change_settled()
+            error = RealtimeSessionErrorEvent(
+                message=f'OpenAI GPT-Live connection closed: {closed.error}', recoverable=False
+            )
+            return [*self._held_lost(), *self._lifecycle.connection_lost(), error], False
+        # Nothing under way on the dropped connection will finish when a new session replaces it. A
+        # re-attached sideband's session is the same one, which carried on meanwhile.
+        lost: RealtimeFrame = (
+            [] if self._reattach is not None else [*self._held_lost(), *self._lifecycle.connection_lost()]
+        )
+        # The read started in `frames` is on the dead socket.
+        self._cancel_read()
+        try:
+            reconnected = await self._try_reconnect()
+        except BaseException:
+            # Whatever stopped the re-attach, the sends waiting on it must not wait on.
+            self._socket_change_settled()
+            raise
+        if not reconnected and self._reattach is not None:
+            lost += [*self._held_lost(), *self._lifecycle.connection_lost()]
+        lost += self._lifecycle.take_pending()
+        if not reconnected:
+            self._gave_up = True
+            self._socket_change_settled()
+            error = RealtimeSessionErrorEvent(
+                message=f'OpenAI GPT-Live connection dropped; reconnect failed: {closed.error}',
+                recoverable=False,
+            )
+            return [*lost, error], False
+        return [*lost, RealtimeSessionReconnectEvent(state_restored=self._restored)], True
+
+    async def _turn_check_frames(self) -> AsyncGenerator[RealtimeFrame]:
+        """The frames that end a turn gone quiet, then those that give up on overdue continuations."""
+        if expired := self._expire_quiet_turn():
+            yield self._frame(expired)
+        if given_up := await self._check_continuations():
+            yield self._frame(given_up)
 
     def _raise_if_idle_audio_failed(self) -> None:
         """Re-raise what stopped the idle-audio pump, rather than let the session go quietly deaf to text.
@@ -1472,9 +1561,7 @@ class OpenAILiveConnection(RealtimeConnection):
             return False
         try:
             if not self._closed:
-                for delegation in self._delegations.values():
-                    for item in delegation.round_outputs:
-                        await ws.send(to_json({'type': 'response.item.create', 'item': item}).decode())
+                await self._resend_round_outputs(ws)
         except self.transport_errors:
             return False
         if self._closed:
@@ -1489,6 +1576,11 @@ class OpenAILiveConnection(RealtimeConnection):
                 delegation.continuation_resent = False
         self._socket_change_settled()
         return True
+
+    async def _resend_round_outputs(self, ws: ClientConnection) -> None:
+        for delegation in self._delegations.values():
+            for item in delegation.round_outputs:
+                await ws.send(to_json({'type': 'response.item.create', 'item': item}).decode())
 
     @property
     def _replays_instruction_changes(self) -> bool:
@@ -2234,12 +2326,13 @@ def _is_audio_or_video_url(item: DocumentUrl) -> bool:
     return media_type.startswith(('audio/', 'video/'))
 
 
-async def _context_tokens_over_cap(text: str) -> int | None:
-    """How many tokens context text is, in the tokenizer Live counts with, if that is over Live's cap; else `None`.
+async def _context_tokens_over_cap(text: str, *, limit: int = _CONTEXT_TOKEN_LIMIT) -> int | None:
+    """How many tokens text is, in the tokenizer Live counts with, if that is over `limit`; else `None`.
 
-    A token spans at least one byte, so text that short can't be over and skips loading the tokenizer.
+    `limit` defaults to Live's cap on context. A token spans at least one byte, so text that short can't be over and
+    skips loading the tokenizer.
     """
-    if len(text.encode()) <= _CONTEXT_TOKEN_LIMIT:
+    if len(text.encode()) <= limit:
         return None
     # Loading an encoding can download it on first use, so it stays off the event loop. tiktoken caches
     # the loaded encoding under a lock, so concurrent first sends load it once.
@@ -2247,7 +2340,7 @@ async def _context_tokens_over_cap(text: str) -> int | None:
     # Special-token text such as `<|endoftext|>` is counted as the one token it is, as Live counts it
     # (checked live), rather than refused as tiktoken does by default.
     tokens = len(encoding.encode(text, allowed_special='all'))
-    return tokens if tokens > _CONTEXT_TOKEN_LIMIT else None
+    return tokens if tokens > limit else None
 
 
 async def _check_context_length(text: str) -> None:
@@ -2319,6 +2412,18 @@ def _check_seeded_history(expected: list[dict[str, Any]], session: SessionResour
         'Bind the history once with `agent.realtime(model, message_history=...)` and use that for both the '
         'offer and the session, or pass the same history to `answer_webrtc_offer()` and `connect_webrtc()`.'
     )
+
+
+def _backend_reasoning(
+    delegation_settings: OpenAILiveResponsesDelegation, settings: OpenAILiveModelSettings, backend_model: str
+) -> dict[str, str]:
+    """The backend's `reasoning` settings: its effort and summary, when set."""
+    reasoning: dict[str, str] = {}
+    if (effort := _backend_reasoning_effort(delegation_settings, settings, backend_model)) is not None:
+        reasoning['effort'] = effort
+    if (summary := delegation_settings.get('reasoning_summary')) is not None:
+        reasoning['summary'] = summary
+    return reasoning
 
 
 def _backend_reasoning_effort(
@@ -2472,21 +2577,15 @@ class OpenAILiveModel(RealtimeModel):
     def system(self) -> str:
         return self._provider.name
 
-    def _session_config(
+    def _backend_config(
         self,
         *,
         instructions: str,
         tools: list[ToolDefinition] | None,
-        messages: Sequence[ModelMessage],
         settings: OpenAILiveModelSettings,
         native_tools: Sequence[AbstractNativeTool],
-        audio_format: bool = True,
     ) -> dict[str, Any]:
-        """The configuration Live starts the session with.
-
-        `audio_format=False` leaves out the audio format, which WebRTC negotiates on the media transport
-        (Live rejects one set there), so the profile's sample rates aren't consulted at all.
-        """
+        """The `responses` settings of the delegated backend: its model, instructions, tools and generation settings."""
         delegation_settings = settings.get('openai_live_delegation', OpenAILiveResponsesDelegation())
         backend_instructions = '\n\n'.join(
             text for text in (instructions, delegation_settings.get('instructions')) if text
@@ -2524,16 +2623,30 @@ class OpenAILiveModel(RealtimeModel):
         parallel_tool_calls = delegation_settings.get('parallel_tool_calls', settings.get('parallel_tool_calls'))
         if parallel_tool_calls is not None:
             responses['parallel_tool_calls'] = parallel_tool_calls
-        reasoning: dict[str, str] = {}
-        if (effort := _backend_reasoning_effort(delegation_settings, settings, responses['model'])) is not None:
-            reasoning['effort'] = effort
-        if (summary := delegation_settings.get('reasoning_summary')) is not None:
-            reasoning['summary'] = summary
-        if reasoning:
+        if reasoning := _backend_reasoning(delegation_settings, settings, responses['model']):
             responses['reasoning'] = reasoning
         if (verbosity := delegation_settings.get('verbosity')) is not None:
             responses['text'] = {'verbosity': verbosity}
+        return responses
 
+    def _session_config(
+        self,
+        *,
+        instructions: str,
+        tools: list[ToolDefinition] | None,
+        messages: Sequence[ModelMessage],
+        settings: OpenAILiveModelSettings,
+        native_tools: Sequence[AbstractNativeTool],
+        audio_format: bool = True,
+    ) -> dict[str, Any]:
+        """The configuration Live starts the session with.
+
+        `audio_format=False` leaves out the audio format, which WebRTC negotiates on the media transport
+        (Live rejects one set there), so the profile's sample rates aren't consulted at all.
+        """
+        responses = self._backend_config(
+            instructions=instructions, tools=tools, settings=settings, native_tools=native_tools
+        )
         audio = self._audio_config(settings, audio_format=audio_format)
         config: dict[str, Any] = {
             'model': self.model,
@@ -2816,6 +2929,7 @@ class OpenAILiveModel(RealtimeModel):
                 # Only a stored session can be forked. Storing it is the user's call, never made for them.
                 forks=bool(settings.get('openai_live_store')),
                 backend=session_config['delegation']['responses'],
+                session_start=session_config,
             )
             yield connection
         finally:

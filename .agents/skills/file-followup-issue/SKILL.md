@@ -83,10 +83,18 @@ Confirm labels against the [checked-in catalog](../pushing-commits-to-the-repo/l
   This explicitly requests Pydanty triage, which team-authored issues otherwise skip.
 - **Immediate work:** create with `--assignee <maintainer-login> --label pydanty:skip`.
   Assign the human maintainer who owns the work. The label suppresses Pydanty triage and `retry-pr` triggers.
+  Without triage, the issue gets no priority: add one `p:` label and its [title prefix](#priority-title-prefix).
   Carry that ownership onto the PR using the [PR skill](../pushing-commits-to-the-repo/SKILL.md#carry-maintainer-ownership-onto-the-pr).
 
 Do not apply these maintainer routes for an external contributor. External contributors cannot
 apply repository labels, so leave their issues in normal triage.
+
+### Priority title prefix
+
+Start the title of a `p:1-highest` issue with `[P1] ` and of a `p:2-high` issue with `[P2] `.
+Other priorities take no prefix.
+When you change an issue's priority label, update or remove the prefix in the same `gh issue edit`.
+Pydanty triage keeps the prefix in step with the priority it applies.
 
 ## Issue body template
 

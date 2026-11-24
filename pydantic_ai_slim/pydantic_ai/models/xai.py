@@ -1,5 +1,6 @@
 """xAI model implementation using [xAI SDK](https://github.com/xai-org/xai-sdk-python)."""
 
+import hashlib
 import json
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
@@ -56,6 +57,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
+    _document_format,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import (
     Model,
@@ -368,8 +370,6 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'max_tokens': 'max_tokens',
     'stop_sequences': 'stop',
     'parallel_tool_calls': 'parallel_tool_calls',
-    'presence_penalty': 'presence_penalty',
-    'frequency_penalty': 'frequency_penalty',
     'seed': 'seed',
     'xai_logprobs': 'logprobs',
     'xai_top_logprobs': 'top_logprobs',
@@ -387,9 +387,21 @@ class XaiModel(Model[AsyncClient]):
 
     # The xAI SDK has no audio or video content.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
+    # Every Grok model rejects `presence_penalty` and `frequency_penalty` with a 400 (verified live 2026-11-04).
     unsupported_settings = frozenset(
-        {'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'service_tier', 'timeout', 'top_k'}
+        {
+            'extra_body',
+            'extra_headers',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'presence_penalty',
+            'timeout',
+            'top_k',
+        }
     )
 
     _model_name: str
@@ -419,6 +431,10 @@ class XaiModel(Model[AsyncClient]):
 
         super().__init__(settings=settings, profile=profile)
 
+        # Uploaded document file IDs, keyed by a SHA-256 hash of the uploaded bytes,
+        # so the same document is uploaded only once per model instance.
+        self._uploaded_document_ids: dict[str, str] = {}
+
     @property
     def client(self) -> 'AsyncClient':
         return self._provider.client
@@ -436,6 +452,11 @@ class XaiModel(Model[AsyncClient]):
     @cached_property
     def profile(self) -> GrokModelProfile:
         return cast(GrokModelProfile, super().profile)
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('grok_supports_stop_sequences', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'stop_sequences'}
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -690,12 +711,13 @@ class XaiModel(Model[AsyncClient]):
                 ),
             )
         elif item.tool_name == WebSearchTool.kind:
+            function_name = (item.provider_details or {}).get('function_name', WebSearchTool.kind)
             return chat_types.chat_pb2.ToolCall(
                 id=item.tool_call_id,
                 type=chat_types.chat_pb2.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
                 status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
                 function=chat_types.chat_pb2.FunctionCall(
-                    name=WebSearchTool.kind,
+                    name=function_name,
                     arguments=item.args_as_json_str(),
                 ),
             )
@@ -755,6 +777,9 @@ class XaiModel(Model[AsyncClient]):
     async def _upload_file_to_xai(self, data: bytes, filename: str) -> str:
         """Upload a file to xAI files API and return the file ID.
 
+        Bytes this model instance already uploaded reuse the earlier file ID instead of uploading again,
+        so the file keeps the name it was first uploaded with.
+
         Args:
             data: The file content as bytes
             filename: The filename to use for the upload
@@ -762,8 +787,12 @@ class XaiModel(Model[AsyncClient]):
         Returns:
             The file ID from xAI
         """
+        cache_key = hashlib.sha256(data).hexdigest()
+        if (file_id := self._uploaded_document_ids.get(cache_key)) is not None:
+            return file_id
         with _map_api_errors(self.model_name):
             uploaded_file = await self._provider.client.files.upload(data, filename=filename)
+        self._uploaded_document_ids[cache_key] = uploaded_file.id
         return uploaded_file.id
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat_types.chat_pb2.Message | None:
@@ -841,12 +870,14 @@ class XaiModel(Model[AsyncClient]):
             raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
 
     async def _map_document_url(self, item: DocumentUrl) -> chat_types.Content:
-        # Download and upload to xAI files API
+        # Download on every request, so each one is checked against its own `force_download` permission,
+        # then upload to xAI files API (skipped when these bytes were uploaded before)
         downloaded = await download_item(item, data_format='bytes')
         filename = item.identifier or 'document'
-        # Add extension if data_type is available from download
-        if 'data_type' in downloaded and downloaded['data_type']:
-            filename = f'{filename}.{downloaded["data_type"]}'
+        # Add the document extension for the downloaded media type, when one is known
+        extension = _document_format(downloaded['data_type'])
+        if extension:
+            filename = f'{filename}.{extension}'
 
         file_id = await self._upload_file_to_xai(downloaded['data'], filename)
         return file(file_id)
@@ -961,7 +992,7 @@ class XaiModel(Model[AsyncClient]):
             response_format = _map_json_object()
 
         # Map model settings to xAI SDK parameters
-        xai_settings = _map_model_settings(model_settings)
+        xai_settings = _map_model_settings(model_settings, self._unsupported_settings())
 
         # Fall back to unified thinking when xai_reasoning_effort is not set.
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
@@ -1117,6 +1148,7 @@ class XaiModel(Model[AsyncClient]):
             canonical_system=self._canonical_system_stamp,
             provider_response_id=response.id,
             finish_reason=_map_finish_reason(response),
+            provider_details=_service_tier_details(response),
         )
 
     def _map_text_output(self, output: chat_pb2.CompletionOutput) -> TextPart:
@@ -1249,6 +1281,9 @@ class XaiStreamedResponse(StreamedResponse):
         # reason arrived, so the guard also preserves the last real value.
         if (finish_reason := _map_finish_reason(response)) is not None:
             self.finish_reason = finish_reason
+
+        if details := _service_tier_details(response):
+            self.provider_details = {**(self.provider_details or {}), **details}
 
     def _collect_reasoning_events(self, chunk: chat_types.Chunk) -> Iterator[ModelResponseStreamEvent]:
         """Collect thinking events from this chunk's output deltas, one thinking part per output.
@@ -1483,13 +1518,25 @@ def _map_json_object() -> chat_pb2.ResponseFormat:
     return chat_pb2.ResponseFormat(format_type=chat_pb2.FORMAT_TYPE_JSON_OBJECT)
 
 
-def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
-    """Map pydantic_ai ModelSettings to xAI SDK parameters."""
-    return {
+def _map_model_settings(model_settings: XaiModelSettings, unsupported: frozenset[str]) -> dict[str, Any]:
+    """Map pydantic_ai ModelSettings to xAI SDK parameters, leaving out the ones the model doesn't support."""
+    xai_settings = {
         _XAI_MODEL_SETTINGS_MAPPING[key]: value
         for key, value in model_settings.items()
-        if key in _XAI_MODEL_SETTINGS_MAPPING
+        if key in _XAI_MODEL_SETTINGS_MAPPING and key not in unsupported
     }
+    # xAI has only a standard and a priority tier: `'auto'` and `'flex'` are omitted.
+    if (service_tier := model_settings.get('service_tier')) in ('default', 'priority'):
+        xai_settings['service_tier'] = service_tier
+    return xai_settings
+
+
+def _service_tier_details(response: chat_types.Response) -> dict[str, str] | None:
+    """The `provider_details` naming the tier xAI served `response` at, or `None` if xAI didn't report one.
+
+    The SDK reads an unset tier as `'default'`, so only a tier set on the proto is recorded.
+    """
+    return {'service_tier': response.service_tier} if response.proto.service_tier else None
 
 
 def _map_tools(tool_defs: dict[str, ToolDefinition]) -> list[chat_types.chat_pb2.Tool]:
@@ -1557,7 +1604,7 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         else:  # pragma: no cover
-            supported = ', '.join(t.__name__ for t in XaiModel.supported_native_tools())
+            supported = ', '.join(sorted(t.__name__ for t in XaiModel.supported_native_tools()))
             raise UserError(
                 f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
                 f'Supported built-in tools: {supported}.'

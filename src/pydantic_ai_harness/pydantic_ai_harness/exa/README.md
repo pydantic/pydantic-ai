@@ -7,7 +7,30 @@ tasks to the Exa Agent API as deferred tool calls.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/exa/)
 
-![The model calls tools added by ExaSearch. web_search calls Exa search and returns the top five hits with title, URL and excerpts; get_page calls Exa get_contents for one URL, capped at 10,000 characters; the opt-in deep_search calls Exa search with type deep and returns one cited answer. The separate ExaAgent capability adds exa_agent, which creates an Exa Agent run and defers until it completes. Every tool returns a ToolReturn: the text goes to the model and the sources entry of its metadata holds ExaSource records for your app.](https://pydantic.dev/docs/ai/img/harness/exa-search.svg)
+```mermaid
+flowchart TB
+    accTitle: Exa Search: excerpts first, full pages on request
+    accDescr: The model calls the ExaSearch tools and gets their results: web_search gives excerpts per hit, get_page one page in full, and the opt-in deep_search one cited answer. ExaSearch calls the Exa API for search and get_contents. The model also calls exa_agent of the ExaAgent capability, which creates a run in the Exa Agent API and defers until it completes. Both pass metadata['sources'] to your app, and exa_agent also passes the run id.
+    model(["model"])
+    subgraph exa["ExaSearch()"]
+        direction LR
+        search["web_search<br/>excerpts per hit"]:::capability
+        page["get_page<br/>one page in full"]:::capability
+        deep["deep_search, opt-in<br/>one cited answer"]:::capability
+    end
+    exaagent["ExaAgent()<br/>exa_agent"]:::capability
+    api["Exa API<br/>search, get_contents"]:::external
+    runs["Exa Agent API"]:::external
+    app["your app"]
+    model <-->|"tool call, result"| exa
+    model <-->|"tool call, result"| exaagent
+    exa <--> api
+    exaagent <-->|"creates a run,<br/>defers until<br/>it completes"| runs
+    exa -.->|"metadata['sources']"| app
+    exaagent -.->|"metadata['sources'],<br/>run id"| app
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## Installation
 

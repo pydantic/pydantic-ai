@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from copy import copy, deepcopy
+from copy import deepcopy
 from datetime import datetime
 from functools import cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, NotRequired, Required, cast, overload
@@ -24,13 +24,13 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
-from ._conversation_marks import mark_stored
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
     no_workspace,
 )
+from ._run_conversation import conversation_from_state
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
 from .output import OutputDataT
@@ -38,6 +38,7 @@ from .tools import AgentDepsT, DeferredToolRequests
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
+    from .agent.abstract import EventStreamHandler
     from .result import FinalResult
     from .workspaces import Workspace
 
@@ -113,34 +114,6 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     while schema['type'] != 'dataclass-args':
         schema = cast('CoreSchema', schema['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
-
-
-_STAMPED_FIELDS = ('timestamp', 'instructions', 'run_id', 'conversation_id')
-"""The fields a run fills in on a message it sends, when the message has them but they aren't set yet."""
-
-
-def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
-    """Whether `message` differs from `original` other than by what a run adds to a request it sends.
-
-    A run fills in the fields the request lacks, and adds parts to it, like the system prompt it reinjects
-    when the request opens the history it sends, or a `ModelSettingsDeltaPart` recording a settings change.
-    Any part added around the request's own parts, by the run or a capability, is saved with the request as
-    it was sent. Changing or dropping one of the request's own parts rewrites it.
-    """
-    filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
-    if (
-        isinstance(message, _messages.ModelRequest)
-        and isinstance(original, _messages.ModelRequest)
-        and _keeps_in_order(message.parts, original.parts)
-    ):
-        filled['parts'] = message.parts
-    return message != dataclasses.replace(original, **filled)
-
-
-def _keeps_in_order(parts: Sequence[object], kept: Sequence[object]) -> bool:
-    """Whether `parts` holds each of `kept`, in the same order, with only other parts added around them."""
-    remaining = iter(parts)
-    return all(part in remaining for part in kept)
 
 
 _STATE_KEYS = (
@@ -544,6 +517,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             [_agent_graph.AgentNode[AgentDepsT, Any]],
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
+        events_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Run the post-stream portion of the node lifecycle.
 
@@ -583,6 +557,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         # runner state so agent_run.result correctly reflects whether the run is finished.
         if result is not pre_hook_result:
             self._sync_graph_state(result)
+        await self._deliver_leftover_events(result, events_handler)
 
         _utils.raise_if_cancelling()
         return result
@@ -594,11 +569,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             [_agent_graph.AgentNode[AgentDepsT, Any]],
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
+        events_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Run the complete node lifecycle inside `wrap_node_run`.
 
         The wrapped handler runs `before_node_run`, the step with `on_node_run_error` recovery,
-        and `after_node_run`.
+        and `after_node_run`. When the run ends, events emitted after the node's stream closed go to
+        `events_handler`, the handler `step_fn` streams the node's events to, if any.
         """
         # Bind before `before_node_run` awaits: when the run is driven from a different task than
         # the previous step (manual `next()` from another task), the controller must target this
@@ -645,6 +622,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = drain_pending_messages_at_end(run_context, result)
             if not self._graph_reflects(result):
                 self._sync_graph_state(result)
+            await self._deliver_leftover_events(result, events_handler)
             return result
         finally:
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
@@ -734,6 +712,38 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
             del self
 
+    async def _deliver_leftover_events(
+        self,
+        result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
+        events_handler: EventStreamHandler[AgentDepsT] | None,
+    ) -> None:
+        """When a deferred-tool pause recorded queued content, deliver the events emitted after the last node stream.
+
+        The `EnqueuedMessagesEvent` for the recorded content is one: listeners such as a capability's `@on_event`
+        method see it through the capability chain, as they see a node's events, and so does `events_handler`, the
+        run's stream handler. Without either, the events stay buffered, as a node's events do when nothing streams
+        it. A run that ends any other way, or pauses with nothing queued, leaves the buffer as it always has.
+
+        Listeners see every event before `events_handler` sees the first: `SubAgents` acknowledges a recorded
+        report on its event, so a handler that stops partway must not leave later reports unacknowledged.
+        """
+        if not (
+            isinstance(result, End)
+            and isinstance(result.data.output, DeferredToolRequests)
+            and any(isinstance(event, _messages.EnqueuedMessagesEvent) for event in self.ctx.state.event_stream_buffer)
+        ):
+            return
+        capability = self.ctx.deps.root_capability
+        if events_handler is None and not (capability.has_wrap_run_event_stream or capability.has_on_event):
+            return
+        stream = _agent_graph.leftover_event_stream(self.ctx)
+        try:
+            events = [event async for event in stream]
+        finally:
+            await _utils.aclose_if_supported(stream)
+        if events_handler is not None:
+            await events_handler(_agent_graph.build_run_context(self.ctx), _agent_graph.buffered_events(events))
+
     async def _stream_and_advance(
         self,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -774,11 +784,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def pending_messages(self) -> list[PendingMessage]:
-        """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
+        """Live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
-        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
+        While the run is live, use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
         and [`dequeue`][pydantic_ai.run.AgentRun.dequeue] or [`set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority]
-        to change them.
+        to change them. After a run pauses, it holds what the pause left undelivered, which can be read but
+        no longer changed; see [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run).
         """
         return self._graph_run.state.pending_messages
 
@@ -841,7 +852,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end).
+                    or a redirect if the agent would otherwise end; a run that pauses adds the
+                    content to the history instead, or leaves it queued; see
+                    [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run)).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
 
         Returns:
@@ -923,6 +936,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         no-op. Externally cancelling the task running the agent (`asyncio.Task.cancel()`) remains
         supported and keeps raising `asyncio.CancelledError` instead; when both happen, the external
         cancellation wins.
+
+        Raises:
+            UserError: If the run's event loop can't be reached from the calling thread or loop, as
+                with a run inside a Temporal workflow cancelled from outside it (see
+                [Temporal cancellation](../durable_execution/temporal.md#cancellation)). The run is
+                left untouched.
         """
         self.ctx.deps.cancellation.cancel()
 
@@ -1195,50 +1214,18 @@ class AgentRunResult(Generic[OutputDataT]):
         hadn't saved before the run.
         """
         output = self.output
-        conversation = Conversation(
+        return conversation_from_state(
+            self._state,
+            self._new_message_index,
             messages=list(self.all_messages()),
-            usage=copy(self.usage),
-            conversation_id=self.conversation_id,
-            deferred_tool_requests=(
-                DeferredToolRequests(
-                    calls=list(output.calls),
-                    approvals=list(output.approvals),
-                    metadata=dict(output.metadata),
-                    _kinds=dict(output._kinds),  # pyright: ignore[reportPrivateUsage]
-                )
-                if isinstance(output, DeferredToolRequests)
-                else None
-            ),
-            revision=self._state.conversation_revision,
+            deferred_tool_requests=output if isinstance(output, DeferredToolRequests) else None,
         )
-        index = self._conversation_new_message_index()
-        if index is not None and self._state.conversation_unchecked:
-            # Its store compares the messages before the index with the stored ones instead.
-            conversation.new_message_index = index
-        elif index is not None:
-            mark_stored(conversation, conversation.messages[:index])
-        return conversation
 
     def _conversation_saved(self, revision: str) -> None:
         """Record that a store saved this result's conversation, so its `conversation` continues from the new revision."""
         self._state.conversation_revision = revision
         self._state.conversation_unchecked = False
         self._state.conversation_saved = True
-
-    def _conversation_new_message_index(self) -> int | None:
-        if self._state.conversation_saved:
-            return len(self._state.message_history)
-        unsaved = self._state.conversation_unsaved
-        if unsaved is None:
-            return None
-        # The unsaved messages the run was given come just before the ones it added, unless a capability rewrote
-        # them, in which case the store compares the whole history instead. Filling in what a request it sends
-        # lacks doesn't count as a rewrite.
-        start = self._new_message_index - len(unsaved)
-        carried = self._state.message_history[start : self._new_message_index] if start >= 0 else []
-        if len(carried) != len(unsaved) or any(map(_rewritten, carried, unsaved)):
-            return None
-        return start
 
     @property
     def timestamp(self) -> datetime:
