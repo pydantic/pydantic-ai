@@ -53,7 +53,6 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._display import checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
     absolute_path,
@@ -64,8 +63,9 @@ from pydantic_ai_harness._workspace_provider import (
     require_asyncio,
     run_to_completion,
 )
-from pydantic_ai_harness._x11 import DISPLAY, x11_display
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, x11_display
 
 try:
     # The `grpc` extra, which the SDK imports only when it first runs a command.

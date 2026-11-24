@@ -32,7 +32,7 @@ from google.protobuf.message import Message
 from k8s_agent_sandbox.async_connector import AsyncSandboxConnector
 from k8s_agent_sandbox.commands.async_command_executor import AsyncCommandExecutor
 
-from .._fake_x_display import FakeDisplay
+from ..computer_use._fake_x_display import FakeDisplay
 
 _GRACE = 0.3
 """How long output pipes may stay open after the command exits (sandboxd waits about 5 seconds)."""

@@ -49,8 +49,8 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
 from tests.harness._docs_examples import documented_cleanup, python_blocks, run_block
 from tests.harness._tool_calls import call_tools
-from tests.harness.display_contract_live import check_display_contract
-from tests.harness.display_fakes import full_display
+from tests.harness.computer_use.display_contract_live import check_display_contract
+from tests.harness.computer_use.display_fakes import full_display
 
 CONTEXT = 'kind-pydantic-ai-live'
 NAMESPACE = 'default'
