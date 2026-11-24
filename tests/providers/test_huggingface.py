@@ -163,8 +163,12 @@ def test_huggingface_provider_base_url_fallback():
     mock_client.model = None
     mock_client.provider = None
     provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
-    with pytest.raises(UserError, match='Unable to determine base URL'):
-        provider.base_url
+    assert provider.base_url == 'https://router.huggingface.co/auto'
+
+
+def test_huggingface_provider_default_client_base_url():
+    provider = HuggingFaceProvider(api_key='test-api-key')
+    assert provider.base_url == 'https://router.huggingface.co/auto'
 
 
 def test_huggingface_model_profile_without_base_url():

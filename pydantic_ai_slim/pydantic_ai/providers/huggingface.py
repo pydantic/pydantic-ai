@@ -52,12 +52,7 @@ class HuggingFaceProvider(Provider[AsyncInferenceClient]):
     def base_url(self) -> str:
         if self._client.model is not None:
             return self._client.model
-        if self._client.provider is not None:
-            return INFERENCE_PROXY_TEMPLATE.format(provider=self._client.provider)
-        raise UserError(
-            'Unable to determine base URL for HuggingFace provider. '
-            'Please provide `base_url`, `provider_name`, or a pre-configured `hf_client`.'
-        )
+        return INFERENCE_PROXY_TEMPLATE.format(provider=self._client.provider or 'auto')
 
     @property
     def client(self) -> AsyncInferenceClient:
