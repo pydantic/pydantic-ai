@@ -54,7 +54,7 @@ _LOGFIRE_SCORER_PREFIX = 'logfire.scorer.'
 _ATTR_SCORE_TYPE = 'logfire.scorer.score_type'
 _ATTR_RUN_ID = 'logfire.scorer.run_id'
 
-# Baggage keys dropped from events, so baggage cannot set an attribute the event leaves unset.
+# Every attribute an event writes is `error.type` or falls under one of these prefixes, and baggage sets none of them.
 _RESERVED_BAGGAGE_PREFIXES = ('gen_ai.evaluation.', _LOGFIRE_SCORER_PREFIX)
 
 _EVENT_NAME = 'gen_ai.evaluation.result'
@@ -99,10 +99,9 @@ def emit_otel_events(
         scoring_run_id: Identifier shared by every result produced by one scoring
             pass over one target call. Written to `logfire.scorer.run_id`.
         include_baggage: When True (the default), each emitted event also carries
-            every key from the current OTel baggage as an attribute. Standard
-            `gen_ai.*` and `error.type` attributes always win on conflict, and
-            baggage keys in the reserved `gen_ai.evaluation.*` and `logfire.scorer.*`
-            namespaces, and the `error.type` key, are dropped.
+            every key from the current OTel baggage as an attribute, except keys in
+            the reserved `gen_ai.evaluation.*` and `logfire.scorer.*` namespaces and
+            the `error.type` key.
     """
     if not results and not failures:
         return

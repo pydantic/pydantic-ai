@@ -424,7 +424,7 @@ def test_baggage_cannot_set_logfire_scorer_attrs(capfire: CaptureLogfire):
 
 
 def test_baggage_cannot_set_gen_ai_evaluation_or_error_type_attrs(capfire: CaptureLogfire):
-    """Baggage keys in the `gen_ai.evaluation.*` namespace and `error.type` are dropped where the record omits them."""
+    """Baggage cannot set `gen_ai.evaluation.*` or `error.type` attributes on an event; other baggage keys still land."""
     ctx = _baggage.set_baggage('gen_ai.evaluation.score.value', '1.0')
     ctx = _baggage.set_baggage('error.type', 'ValueError', ctx)
     ctx = _baggage.set_baggage('tenant', 'acme', ctx)
