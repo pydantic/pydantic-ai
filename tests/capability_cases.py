@@ -784,7 +784,10 @@ selects only after every `for_run`."""
 PENDING_CALLS = 'pending: C0 backfill'
 """How an exemption from `declares_calls` starts when the case can have `calls`, but nobody has written them yet."""
 
-_ROUTE = f'{PENDING_CALLS}; other tools run through it, so its calls run a tool of a case beside it'
+_ROUTE = (
+    "a route other tools' calls take, which `tests/harness/test_capability_routes.py` (C1) runs every case's calls "
+    'through'
+)
 
 DECLARES_CALLS = Contract(
     'declares_calls',
@@ -803,7 +806,10 @@ DECLARES_CALLS = Contract(
         ),
         'BubblewrappedWorkspace': Exempt('needs a sandbox backend: the `bwrap` binary and user namespaces'),
         'PlaywrightBrowser': Exempt('needs a browser that Playwright launches'),
-        **dict.fromkeys(('BackgroundTools', 'CodeMode', 'IPythonCodeMode', 'ToolBridge', 'ToolSearch'), Exempt(_ROUTE)),
+        **dict.fromkeys(('BackgroundTools', 'CodeMode', 'IPythonCodeMode', 'ToolBridge'), Exempt(_ROUTE)),
+        'ToolSearch': Exempt(
+            f'{PENDING_CALLS}; other tools run through it, so its calls run a tool of a case beside it'
+        ),
         **dict.fromkeys(
             (
                 'AskUser',

@@ -602,7 +602,7 @@ def _client_messages(protocol: Literal['vercel', 'agui'], history: list[ModelMes
     )
 
 
-async def _run_through_ui(
+async def run_through_ui(
     protocol: Literal['vercel', 'agui'],
     agent: Agent[Any, Any],
     prompt: str,
@@ -659,7 +659,7 @@ async def run_conversation(
     async def run(prompt: str, **kwargs: Any) -> AgentRunResult[Any]:
         if scenario.ui_adapter is None:
             return await agent.run(prompt, **kwargs)
-        return await _run_through_ui(scenario.ui_adapter, agent, prompt, **kwargs)
+        return await run_through_ui(scenario.ui_adapter, agent, prompt, **kwargs)
 
     async with scenario.around() if scenario.around is not None else nullcontext():
         first = await run('What is the weather and the news?', **scenario.run_kwargs)
