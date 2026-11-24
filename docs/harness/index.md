@@ -95,7 +95,7 @@ agent = Agent(
 
 On a remote sandbox, `Coder` loads repo instructions at run start and may create the sandbox before the first model tool call. Use `Coder(repo_context=False)` for lazy creation.
 
-Reach for your own composition when a setting you need is not one `Coder` exposes. The most common one is an allowlist: `Coder` runs unrestricted shell commands on purpose, so a harness that may only run your test and lint commands is a harness you build yourself.
+Reach for your own composition when a setting you need is not one `Coder` exposes. A common one is narrowing what the agent reaches for by default: `Coder` deliberately takes no allowlist, so steering it towards your test and lint commands is something you assemble yourself.
 
 ```python
 from pydantic_ai import Agent
@@ -108,8 +108,8 @@ agent = Agent(
     '{{ openai:medium }}',
     capabilities=[
         LocalWorkspace('.'),
-        FileSystem(allowed_patterns=['src/**', 'tests/**', '*.md']),  # nothing outside these
-        Shell(allowed_commands=['pytest', 'ruff', 'git']),  # and nothing else
+        FileSystem(allowed_patterns=['src/**', 'tests/**', '*.md']),  # the files it edits
+        Shell(allowed_commands=['pytest', 'ruff', 'git']),  # the commands it reaches for
         RepoContext(),  # your AGENTS.md and CLAUDE.md
         ClearToolResults(keep_pairs=3),  # keeps long runs inside the window
         ToolOutputLimits(),  # one large file cannot flood the context
@@ -119,6 +119,9 @@ agent = Agent(
 ```
 
 That is the whole pattern: pick the capabilities you want, configure them, and leave out the ones you do not. Each one is documented on its own page, and swapping [`LocalWorkspace`](filesystem.md) for a [sandbox](#workspaces) moves the same harness onto a remote machine without touching the rest.
+
+!!! warning "Best-effort, not a security boundary"
+    `allowed_commands` and `allowed_patterns` are guardrails against accidents, not enforcement. Command validation checks only the first token, and an allowlisted command such as `git` can spawn arbitrary processes that the file patterns do not constrain. For untrusted work, run it in an [isolated workspace](#workspaces) instead of on the agent's machine; see [Shell](shell.md#command-controls).
 
 ## Workspaces
 
