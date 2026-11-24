@@ -426,11 +426,18 @@ class ProcessPlugins(Generic[DepsT]):
         return declared
 
     def check_launch(self, project: Mapping[str, PluginSettings], *, console: Console) -> None:
-        """Fail on a `launch` name that no declaration a session with `project` sees has, listing the ones it has."""
+        """Fail on a `launch` name that no declaration a session with `project` sees has, listing the ones it has.
+
+        A declaration the project pins also fails: only `/plugins enable` approves one, so `launch` never loads it.
+        """
         declared = self.declared(project, console=console)
-        if unknown := sorted(self.launch - declared.keys()):
-            names = ', '.join(unknown)
-            raise ValueError(f'Unknown plugin {names}; available: {", ".join(sorted(declared))}')
+        pinned = {name for name in self.launch & project.keys() if declared.get(name) is project[name]}
+        if pinned:
+            names = ', '.join(sorted(pinned))
+            raise ValueError(f'{names}: declared by the project; approve it with /plugins enable first')
+        available = sorted(name for name in declared if declared[name] is not project.get(name))
+        if unknown := sorted(self.launch - set(available)):
+            raise ValueError(f'Unknown plugin {", ".join(unknown)}; available: {", ".join(available)}')
 
     def upgrade(self, saved: PluginSettings) -> PluginSettings:
         """Resolve moved plugin paths and retired harness built-ins in stored declarations.

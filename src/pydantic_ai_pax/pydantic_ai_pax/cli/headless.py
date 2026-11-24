@@ -120,7 +120,7 @@ async def _load_plugins(loader: SessionPlugins[None]) -> None:
     """Load every enabled or launched plugin but `ask_user`, skipping one that a plugin loaded before it includes."""
     # Skip before activation, even when a saved declaration overrides the built-in.
     for entry in loader.entries():
-        if (entry.declaration.enabled or entry.name in loader.process.launch) and entry.name != 'ask_user':
+        if loader.wanted(entry) and entry.name != 'ask_user':
             # Read afresh: a plugin loaded earlier in this loop may include this one.
             current = next(other for other in loader.entries() if other.name == entry.name)
             if current.included_in is None:

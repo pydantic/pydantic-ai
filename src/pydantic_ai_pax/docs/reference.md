@@ -3355,10 +3355,11 @@ pax -x github -p "Summarize my open pull requests"
 
 `-x NAME` (long form `--plugin NAME`, repeatable) loads a plugin for this launch
 only, even when it is disabled. It works in the terminal, with `-p`, and with
-`--web`, where every session the browser opens loads it too, if that session's
-directory has it (a plugin only a project declares loads only in that project). `NAME` is any plugin
-`/plugins` lists: built-in, added, a drop-in file, or declared by the project; an
-unknown one fails before Pax starts, listing the ones there are. Nothing saved
+`--web`, where every session the browser opens loads it too. `NAME` is a plugin
+`/plugins` lists as built in, added, or a drop-in file; an unknown one fails
+before Pax starts, listing the ones there are. A plugin the project's
+`.clai/settings.json` declares isn't loaded this way: approve it with
+`/plugins enable NAME`, as usual. Nothing saved
 changes: the next `pax` without `-x` leaves a disabled plugin off, even if the
 plugin saved its settings meanwhile. `/plugins disable NAME` unloads it, saves it
 disabled as usual, and keeps it off through `/reload`; `/update` restarts the new

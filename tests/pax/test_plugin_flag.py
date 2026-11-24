@@ -1,7 +1,7 @@
 """`pax -x NAME`: load a plugin for one launch, whatever is saved, and save nothing that says it is enabled."""
 
 import io
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
@@ -11,13 +11,15 @@ from rich.console import Console
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.capabilities import Toolset
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_pax import app
 from pydantic_ai_pax.app import create_stock_agent
-from pydantic_ai_pax.cli import headless
+from pydantic_ai_pax.cli import cli, headless, web
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import AgentCapability, Plugin, SessionStart
-from pydantic_ai_pax.runtime.session_runtime import create_shell
+from pydantic_ai_pax.runtime.process import ClaiProcess
+from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from tests.pax.cli_runner import CliRunner
 
 
@@ -29,7 +31,7 @@ class Probe(Plugin[ProbeSettings]):
     """Adds a `probe` tool, and counts its starts in its saved settings."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        def probe() -> str:
+        def probe() -> str:  # pragma: no cover - only its presence among the tools is checked.
             return 'probed'
 
         return [Toolset(FunctionToolset([probe]))]
@@ -72,27 +74,85 @@ async def test_headless_loads_a_disabled_plugin_for_the_launch(
     assert saved.settings == ({'started': 1} if launched else {})
 
 
-async def test_a_launched_plugin_loads_in_every_session_until_disabled(tmp_path: Path) -> None:
-    store = SettingsStore(tmp_path / 'config.db')
-    shell = create_shell(
+def _shell(
+    store: SettingsStore, *, project: ProjectSettings | None = None, process: ClaiProcess[None] | None = None
+) -> SessionRuntime[None, str]:
+    return create_shell(
         Agent(TestModel(call_tools=[])),
         deps=None,
         plugins=(),
         usage_limits=None,
         console=Console(file=io.StringIO()),
         settings=None,
-        store=store,
-        builtin_plugins=[PROBE],
-        project=ProjectSettings(),
+        store=None if process is not None else store,
+        builtin_plugins=[] if process is not None else [PROBE],
+        project=project or ProjectSettings(),
         headless=True,
         launch_plugins=['probe'],
+        process=process,
     )
+
+
+def _loaded(shell: SessionRuntime[None, str]) -> list[str]:
+    return [entry.name for entry in shell.loader.entries() if entry.loaded is not None]
+
+
+async def test_a_launched_plugin_stays_off_through_reload_once_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    shell = _shell(store)
     await shell.loader.load_all()
-    assert [entry.name for entry in shell.loader.entries() if entry.loaded is not None] == ['probe']
+    assert _loaded(shell) == ['probe']
     # Never saved before, it is saved disabled, as it is declared, along with the settings it saved.
     assert store.plugins() == [PROBE.model_copy(update={'settings': {'started': 1}})]
     await shell.loader.disable('probe')
-    assert shell.process.plugins.launch == frozenset()
+    await shell.close('exit')
+
+    def rebuild(build: Callable[[], object]) -> object:
+        return build()
+
+    monkeypatch.setattr(app, 'reload_clai', rebuild)
+    rebuilt = app._reload_shell(  # pyright: ignore[reportPrivateUsage]
+        shell,
+        agent=Agent(TestModel(call_tools=[])),
+        rebuild_stock=None,
+        deps=None,
+        plugins=(),
+        console=Console(file=io.StringIO()),
+        builtin_plugins=[PROBE],
+        use_defaults=False,
+        use_stock_defaults=False,
+        transcript=app.TranscriptBuffer(),
+        load_plugins=True,
+    )
+    await rebuilt.loader.load_all()
+    assert _loaded(rebuilt) == []
+    await rebuilt.close('exit')
+
+
+async def test_reloading_a_launched_plugin_keeps_it_in_the_other_sessions(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    first = _shell(store)
+    await first.loader.load_all()
+    second = _shell(store, process=first.process)
+    await second.loader.load_all()
+    await first.loader.reload('probe')
+    assert _loaded(first) == _loaded(second) == ['probe']
+    await second.close('exit')
+    await first.close('exit')
+
+
+async def test_a_project_declaration_needs_approval_first(tmp_path: Path) -> None:
+    """`-x` doesn't stand in for `/plugins enable`, the approval of what a repository declares."""
+    store = SettingsStore(tmp_path / 'config.db')
+    project = ProjectSettings(plugins=(PROBE.model_copy(update={'id': 'pinned'}),))
+    shell = _shell(store, project=project)
+    shell.process.plugins.launch |= {'pinned'}
+    with pytest.raises(ValueError, match='pinned: declared by the project; approve it with /plugins enable first'):
+        shell.process.plugins.check_launch({'pinned': project.plugins[0]}, console=Console(file=io.StringIO()))
+    await shell.loader.load_all()
+    assert _loaded(shell) == ['probe']
     await shell.close('exit')
 
 
@@ -134,3 +194,22 @@ def test_plugin_flag_conflicts(tmp_path: Path, run_cli: CliRunner, args: list[st
     result = run_cli('--database', str(tmp_path / 'config.db'), *args, cwd=tmp_path)
     assert result.returncode == 2
     assert error in result.stderr
+
+
+def test_plugins_reach_headless_and_web(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[object] = []
+
+    async def launch(*, launch_plugins: Sequence[str], **_: object) -> int:
+        seen.append(launch_plugins)
+        return 0
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(headless, 'run_headless', launch)
+    monkeypatch.setattr(web, 'run_web', launch)
+    for args in (['-p', 'go'], ['--web']):
+        monkeypatch.setattr('sys.argv', ['pax', '--database', 'config.db', '-x', 'web', *args])
+        try:
+            cli.run()
+        except SystemExit as exit:
+            assert exit.code == 0
+    assert seen == [['web'], ['web']]
