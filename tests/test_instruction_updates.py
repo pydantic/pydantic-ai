@@ -1152,9 +1152,16 @@ async def test_instruction_updates_rewrite_outside_prefix_keeps_the_window():
 
 
 @pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
-@pytest.mark.parametrize('change', ['literal', 'to-rewrite', 'to-append'])
+@pytest.mark.parametrize(
+    ('first', 'second'),
+    [
+        pytest.param(('Stable.', 'append'), ('Changed.', 'append'), id='literal'),
+        pytest.param(('Stable.', 'append'), ('Stable.', 'rewrite'), id='to-rewrite'),
+        pytest.param(('Stable.', 'rewrite'), ('Stable.', 'append'), id='to-append'),
+    ],
+)
 async def test_instruction_updates_rewrite_outside_prefix_other_changes_open_a_window(
-    change: Literal['literal', 'to-rewrite', 'to-append'],
+    first: tuple[str, Literal['append', 'rewrite']], second: tuple[str, Literal['append', 'rewrite']]
 ):
     """A changed literal block or a changed policy still moves the prefix, so the request opens a new window."""
 
@@ -1171,13 +1178,15 @@ async def test_instruction_updates_rewrite_outside_prefix_other_changes_open_a_w
 
         return agent
 
-    first = await build('Stable.', 'rewrite' if change == 'to-append' else 'append').run('Continue.')
-    second = await build(
-        'Changed.' if change == 'literal' else 'Stable.', 'rewrite' if change != 'to-append' else 'append'
-    ).run('Continue.', message_history=first.all_messages())
+    first_run = await build(*first).run('Continue.')
+    second_run = await build(*second).run('Continue.', message_history=first_run.all_messages())
 
-    requests = [message for message in second.all_messages() if isinstance(message, ModelRequest)]
-    assert baseline_of(requests[1]) is not None
+    requests = [message for message in second_run.all_messages() if isinstance(message, ModelRequest)]
+    # A new baseline records the current values, so the second request leads with its own literal block.
+    assert (baseline_of(requests[1]) is not None, requests[1].instructions) == (
+        True,
+        f'{second[0]}\n\nAnchor.\n\nFlip.',
+    )
 
 
 def test_instruction_updates_recorded_prefix_with_rewrites_outside_prefix():

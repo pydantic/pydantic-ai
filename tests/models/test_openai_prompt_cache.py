@@ -27,7 +27,7 @@ import pytest
 from cassetter import Cassette
 from pydantic import BaseModel, JsonValue
 
-from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutput, RunContext
+from pydantic_ai import Agent, AgentRunResult, BinaryContent, CachePoint, ImageUrl, PromptedOutput, RunContext
 from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import UserError
@@ -1791,7 +1791,7 @@ async def test_openai_responses_stable_instructions_as_input(
     assert {'instructions': request.get('instructions'), 'input': request['input']} == expected
 
 
-async def _run_rewrite_change(model: Model, stable: str = 'Support policies.') -> list[Any]:
+async def _run_rewrite_change(model: Model, stable: str = 'Support policies.') -> list[AgentRunResult[str]]:
     """The three runs where an append block changes, and then only a rewrite-mode instruction does."""
     agent = Agent(model, instructions=stable, deps_type=str)
     date = 'D1'
