@@ -3200,6 +3200,10 @@ including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
 
+Down past the newest history entry restores a nonempty original draft, even after
+editing recalled text; undo recovers the edit. See [Input history](docs/reference.md#input-history)
+for the empty-draft behavior and queued-message editing.
+
 Completion rows remain visible while a replacement lookup runs, but stale results
 cannot be selected. Popup height changes reuse available space without adding
 blank transcript lines on each key. Completion providers should be read-only.
