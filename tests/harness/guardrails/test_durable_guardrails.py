@@ -27,14 +27,16 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.guardrails import (
     GuardrailResult,
+    InputBlocked,
     InputGuardrail,
+    OutputBlocked,
     OutputGuardrail,
     OutputGuardrailFunc,
+    ToolBlocked,
     ToolCallInfo,
     ToolGuardrail,
     ToolResultInfo,
 )
-from pydantic_ai_harness.guardrails._exceptions import InputBlocked, OutputBlocked, ToolBlocked
 from tests.harness._recording_durability import RecordingDurability
 from tests.harness.conftest import Instrumented
 
