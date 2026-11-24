@@ -153,8 +153,10 @@ Each `compute_key` call on a Prefect cache policy is one line of kind `cache_key
 target, the inputs it's handed, and the key it returns or the error it raises. The capture wraps `compute_key` where
 `CachePolicy` or a subclass defines it, whether the subclass is defined before the capture starts or after. A call made
 in another, like the one a compound policy makes on each policy it combines, comes after it, and leaves out its inputs
-when they're the ones the other was handed. A key the flow run's ID went into, the `RunId` policy's and a compound
-policy's that combines it, is recorded as `RUN_ID`. Inputs or options that can't be written as JSON, like ones that
+when they're the ones the other was handed. A key that holds a value each run draws anew is recorded as `RUN_SCOPED`,
+and so is each key computed from it: the `RunId` policy's, which is the flow run's ID, and the key of a call whose
+recorded inputs hold a value normalized below, like a generated ID. A policy handed the inputs its caller was, like
+`TaskSource`, which hashes the task's code, keeps its key. Inputs or options that can't be written as JSON, like ones that
 hold a reference cycle, as a run context does, are recorded as the error writing them raised, which the code under
 test never sees.
 
@@ -446,8 +448,8 @@ _RECORDING_LIFECYCLE_CALL: ContextVar[bool] = ContextVar('_RECORDING_LIFECYCLE_C
 _RECORDING_SESSION_CALL: ContextVar[tuple[int, int] | None] = ContextVar('_RECORDING_SESSION_CALL', default=None)
 # The package whose calls on a durable engine's decorators register the names a capture records.
 DURABLE_EXEC_PACKAGE = 'pydantic_ai.durable_exec.'
-# What a capture records for a Prefect cache key computed from the flow run's ID, which each run draws anew.
-RUN_ID_KEY = 'RUN_ID'
+# What a capture records for a Prefect cache key computed from a value each run draws anew, like the flow run's ID.
+RUN_SCOPED_KEY = 'RUN_SCOPED'
 # The sets a serialized run context sends as lists, in their own order, which `sorted_sets` sorts.
 RUN_CONTEXT_SETS = frozenset(
     {
@@ -479,6 +481,7 @@ class CacheKeyCall:
     # The records of the outermost call running and of the calls it makes, which are written together.
     records: list[dict[str, object]]
     outer: CacheKeyCall | None
+    # Whether its key, or a key it's computed from, holds a value each run draws anew.
     run_scoped: bool = False
 
 
@@ -1900,7 +1903,10 @@ class RefactorCapture:
         """Record each `compute_key` call on a Prefect cache policy, with the inputs it's handed and the key it returns.
 
         A call made in another, like the one a compound policy makes on each policy it combines, is recorded after it,
-        and one handed the same inputs leaves them out. A key the flow run's ID went into is recorded as `RUN_ID_KEY`.
+        and one handed the same inputs leaves them out. A key that holds a value each run draws anew is recorded as
+        `RUN_SCOPED_KEY`, and so is each key computed from it: one the flow run's ID went into, and one computed from
+        inputs the call records that hold such a value, like a generated ID. A policy handed the inputs its caller was,
+        like `TaskSource`, which hashes the task's code, keeps its key.
         """
         if 'compute_key' not in vars(cls):
             return
@@ -1916,9 +1922,10 @@ class RefactorCapture:
                 'node': self.node,
                 'target': method_target(type(policy), 'compute_key'),
             }
+            call = CacheKeyCall(inputs, [] if outer is None else outer.records, outer)
             if outer is None or inputs is not outer.inputs:
                 record['inputs'] = recorded_value(inputs)
-            call = CacheKeyCall(inputs, [] if outer is None else outer.records, outer)
+                call.run_scoped = holds_run_values(inputs, record['inputs'])
             call.records.append(record)
             token = _COMPUTING_CACHE_KEY.set(call)
             try:
@@ -1927,12 +1934,12 @@ class RefactorCapture:
                 record['error'] = normalized(f'{type(e).__name__}: {e}')
                 raise
             else:
-                if isinstance(policy, run_id_policy) and key is not None:
+                if call.run_scoped or (isinstance(policy, run_id_policy) and key is not None):
                     scoped: CacheKeyCall | None = call
                     while scoped is not None:
                         scoped.run_scoped, scoped = True, scoped.outer
                 # A key is a digest, which no normalization may touch.
-                record['key'] = RUN_ID_KEY if call.run_scoped else key
+                record['key'] = RUN_SCOPED_KEY if call.run_scoped else key
                 return key
             finally:
                 _COMPUTING_CACHE_KEY.reset(token)
@@ -1998,6 +2005,17 @@ def recorded_value(value: object) -> object:
         return normalized(value)
     except Exception as e:
         return {'unrecorded': normalized(f'{type(e).__name__}: {e}')}
+
+
+def holds_run_values(value: object, recorded: object) -> bool:
+    """Whether normalizing `value` into `recorded` replaced a value that changes between runs, like a generated ID.
+
+    One that can't be written as JSON is taken not to.
+    """
+    try:
+        return json.loads(to_json(value, fallback=repr, bytes_mode='base64')) != recorded
+    except Exception:
+        return False
 
 
 def registered_attribute_name(registered: object) -> object:
