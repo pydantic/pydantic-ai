@@ -560,7 +560,8 @@ _CONTEXT_WINDOW_MESSAGE = "Input length (100000) exceeds the model's maximum con
 _CONTEXT_WINDOW_RAW = json.dumps(
     {'error': {'message': _CONTEXT_WINDOW_MESSAGE, 'type': 'BadRequestError', 'param': None, 'code': 400}}
 )
-_DEEPLY_NESTED_RAW = '[' * 100_000 + ']' * 100_000
+_DEEPLY_NESTED_RAW = '[' * 1_000 + ']' * 1_000
+"""Past `pydantic_core.from_json`'s depth limit, and deep enough that `json.loads` raises `RecursionError` on Python 3.11."""
 _OpenRouterModelClass = Literal['OpenRouterModel', 'OpenAIChatModel', 'OpenAIResponsesModel']
 """A model class that talks to OpenRouter, by name: the classes aren't defined when `openai` isn't installed."""
 
@@ -599,9 +600,7 @@ async def _openrouter_status_error(
 @pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
 @pytest.mark.parametrize('raw', [_CONTEXT_WINDOW_RAW, _CONTEXT_WINDOW_MESSAGE], ids=['json', 'plain'])
 @pytest.mark.parametrize(
-    'model_class',
-    ['OpenRouterModel', 'OpenAIChatModel', 'OpenAIResponsesModel'],
-    ids=['openrouter', 'openai-chat', 'openai-responses'],
+    'model_class', ['OpenAIChatModel', 'OpenAIResponsesModel'], ids=['openai-chat', 'openai-responses']
 )
 async def test_openrouter_context_window_exceeded_via_metadata_raw(
     allow_model_requests: None,
@@ -609,10 +608,10 @@ async def test_openrouter_context_window_exceeded_via_metadata_raw(
     stream: bool,
     model_class: _OpenRouterModelClass,
 ) -> None:
-    """A generic 400 whose `metadata.raw` reports an overflow is a context window error, on any OpenRouter model.
+    """A generic 400 whose `metadata.raw` reports an overflow is a context window error with `OpenRouterProvider` too.
 
-    A mock transport stands in for a cassette: recording the overflow takes a prompt of about 60,000 characters per
-    case, and this covers both `metadata.raw` forms on every model class that talks to OpenRouter.
+    `OpenRouterModel`'s cases are in `tests/models/test_error_categories.py`. A mock transport stands in for a
+    cassette: recording the overflow takes a prompt of about 60,000 characters per case.
     """
     error = await _openrouter_status_error(
         400,
@@ -680,6 +679,8 @@ async def test_openrouter_metadata_raw_keeps_outer_error_category(
     """An error status keeps its category unless it's a generic rejection whose `metadata.raw` names an overflow.
 
     A mock transport stands in for a cassette because OpenRouter can't be made to return these errors on demand.
+    Their transport-gave-up twins differ until https://github.com/pydantic/pydantic-ai/issues/14326, so these cases
+    aren't in `tests/models/test_error_categories.py`.
     """
     error = await _openrouter_status_error(
         status_code, {'message': 'Provider returned error', **error_body}, stream=stream
