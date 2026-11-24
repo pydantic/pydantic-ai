@@ -262,7 +262,7 @@ A container shares your machine's kernel, so it is a weaker boundary than a VM, 
 <span id="how-commands-run"></span>
 
 - The machine running the agent must be Linux or macOS, like [`LocalWorkspace`](../workspace.md#platforms); on Windows, a run raises `NotImplementedError`.
-- Creating or starting the container, including pulling the image, isn't bounded by a command's `timeout`.
+- Creating or starting the container, including pulling the image, isn't bounded by a command's `timeout`. Nor is starting the desktop, including any install of its programs, the first time a command or file operation needs it.
 - File operations run as commands in the container, so large files are slow. Mount a directory for large data.
 - With Docker, a command that leaves a background process holding its output open, such as `server &`, doesn't return until that process exits. Redirect its output, as in `server > server.log 2>&1 &`.
 - On a timeout or cancellation, the command and the processes it started are stopped; one that detached into its own session, like a [Shell](shell.md) background job, keeps running.
