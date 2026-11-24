@@ -7,7 +7,6 @@ from .._file_input import KNOWN_IMAGE_MEDIA_TYPES
 from ..native_tools import (
     AdvisorTool,
     CodeExecutionTool,
-    ComputerTool,
     MCPServerTool,
     MemoryTool,
     WebFetchTool,
@@ -19,8 +18,8 @@ from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool` and `ComputerTool`, which are turned on
-per model in the profile below."""
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated per model in the profile below,
+and `ComputerTool`, which `AnthropicProvider` adds per model."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -404,17 +403,6 @@ def resolve_anthropic_effort(
     return effort
 
 
-_COMPUTER_TOOLSET_MODEL_PREFIXES = (
-    'claude-fable-5',
-    'claude-mythos-5',
-    'claude-opus-5',
-    'claude-sonnet-5',
-    'claude-haiku-5',
-    'claude-opus-4-8',
-)
-"""The models that take Anthropic's `computer_toolset_20260801`."""
-
-
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Anthropic model."""
     models_that_support_json_schema_output = (
@@ -751,38 +739,6 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         # native mid-conversation system role on any transport, where the announcement would be a system message.
         profile['default_framing_announcement'] = 'always'
     return profile
-
-
-def anthropic_computer_use_profile(model_name: str, profile: ModelProfile | None) -> AnthropicModelProfile:
-    """The computer use facts to merge onto `profile`, the model's profile on a client that sends Anthropic's API.
-
-    Only `AnthropicProvider` adds these, since the tool is part of Anthropic's own request format. The Bedrock Converse
-    API and OpenAI-compatible gateways that share `anthropic_model_profile()` get the `computer` function tool.
-    """
-    computer_tool_version = _computer_tool_version(model_name)
-    if computer_tool_version is None:
-        return AnthropicModelProfile()
-    supported_native_tools = (profile or {}).get('supported_native_tools', _ANTHROPIC_BASE_BUILTINS)
-    return AnthropicModelProfile(
-        supported_native_tools=supported_native_tools | {ComputerTool},
-        anthropic_computer_tool_version=computer_tool_version,
-    )
-
-
-def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
-    """The model's computer use tool from Anthropic's compatibility table, or `None` if it gets the function tool.
-
-    Claude 5.5 and later take only the toolset. Retired and retiring models (Opus 4 and 4.1, Sonnet 4 and 4.5) get the
-    function tool.
-    https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
-    """
-    if model_name.startswith(_COMPUTER_TOOLSET_MODEL_PREFIXES):
-        return 'computer_toolset_20260801'
-    if model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
-        return 'computer_20251124'
-    if model_name.startswith('claude-haiku-4-5'):
-        return 'computer_20250124'
-    return None
 
 
 def _code_execution_tool_versions(
