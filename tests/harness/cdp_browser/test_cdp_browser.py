@@ -384,6 +384,21 @@ class TestCDPBrowser:
         )
         assert 'Runtime.terminateExecution' in commands(chrome, PAGE_SESSION)
 
+    async def test_a_timeout_must_be_positive(self, chrome: FakeChrome):
+        """A deadline of zero would stop a page script that was never stuck."""
+        result = await Agent(
+            calls_then_reply(evaluate('document.title', timeout=0), evaluate('document.title')),
+            capabilities=[CDPBrowser()],
+        ).run('go')
+        assert tool_returns(result.all_messages()) == snapshot(
+            [
+                [{'type': 'greater_than', 'loc': ['timeout'], 'msg': 'Input should be greater than 0', 'input': 0}],
+                {'result': {'type': 'string', 'value': 'Example Domain'}},
+            ]
+        )
+        assert commands(chrome, PAGE_SESSION).count('Runtime.evaluate') == 1
+        assert 'Runtime.terminateExecution' not in commands(chrome, PAGE_SESSION)
+
     async def test_an_event_that_never_arrives_times_out(self, chrome: FakeChrome):
         """An abandoned waiter is dropped by the next event, or failed with the connection when none comes."""
         navigate: dict[str, object] = {'method': 'Page.navigate', 'params': {'url': 'https://example.com'}}

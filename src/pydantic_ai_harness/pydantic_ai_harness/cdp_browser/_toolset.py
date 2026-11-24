@@ -7,10 +7,11 @@ import base64
 from collections.abc import Sequence
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
-from typing import Self
+from typing import Annotated, Self
 from urllib.parse import urlparse
 
 import anyio
+from pydantic import Field
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
@@ -290,7 +291,7 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
         method: str,
         params: dict[str, object] | None = None,
         wait_for_event: str | None = None,
-        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        timeout: Annotated[float, Field(gt=0)] = DEFAULT_TIMEOUT_SECONDS,
     ) -> object:
         r"""Send one Chrome DevTools Protocol command to the open tab and return its result.
 
