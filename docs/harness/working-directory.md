@@ -23,7 +23,7 @@ from pydantic_ai_harness import WorkingDirectory
 agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), WorkingDirectory()])
 ```
 
-The model's instructions then include a line such as ``The working directory is `/home/me/project`.``
+The model's instructions then include the line: The working directory is `/home/me/project`.
 
 ## Starting a sandbox
 
@@ -31,7 +31,7 @@ The line asks the workspace for its directory with `working_dir()`. A sandbox th
 
 ## Composition
 
-`WorkingDirectory` has a fixed `id`, so any number of them on one agent, including the ones `FileSystem` and `Shell` bring, merge into one line. Its instructions are not deferred with a capability that is: a `Shell(defer_loading=True)` still names the directory before its tools load.
+`WorkingDirectory` has a fixed `id`, so any number of them on one agent, including the ones `FileSystem` and `Shell` bring, merge into one line. A `FileSystem` or `Shell` with `defer_loading=True` doesn't bring it, so a sandbox isn't started for tools the model may never load; add `WorkingDirectory()` yourself to name the directory anyway.
 
 See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/working_directory/).
 

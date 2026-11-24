@@ -217,8 +217,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         repo_context: Include `RepoContext`. Pass `False` when the agent binds its
             own, so the instruction files are not loaded twice. Pass a
             `RepoContext` to use it in place of the bundled
-            `RepoContext(walk_up='repo_root')`, keeping the project-directory note;
-            e.g. `RepoContext()` loads only the working directory's instruction files.
+            `RepoContext(walk_up='repo_root')`; e.g. `RepoContext()` loads only the working directory's instruction files.
         sub_agents: Add `delegate_task`, which hands a self-contained sub-task to a
             fresh run of the same agent `Coder` is bound to, including capabilities
             bound next to `Coder`. This requires binding `Coder` with

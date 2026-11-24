@@ -397,6 +397,7 @@ to stdout) so command output can never spoof the tracked directory.
 
 The instructions name the working directory through [`WorkingDirectory`](working-directory.md), which states it once however
 many capabilities bring it, and starts a sandbox that isn't running to ask for it.
+Asking is a durable step at run start, so Temporal and DBOS runs started before an upgrade that adds it no longer replay.
 
 ```python
 from pydantic_ai import Agent

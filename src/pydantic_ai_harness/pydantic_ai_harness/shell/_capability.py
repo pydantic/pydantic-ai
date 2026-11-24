@@ -176,7 +176,12 @@ class Shell(AbstractCapability[AgentDepsT]):
         require_workspace(ctx.workspace, 'Shell', ctx.messages)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        """Bring `WorkingDirectory` along; copies from other capabilities merge into one line."""
+        """Bring `WorkingDirectory` along; copies from other capabilities merge into one line.
+
+        A deferred one doesn't: naming the directory starts a sandbox the model may never load this capability for.
+        """
+        if self.defer_loading:
+            return self
         return CombinedCapability([self, WorkingDirectory()])
 
     def get_toolset(self) -> ShellToolset[AgentDepsT]:

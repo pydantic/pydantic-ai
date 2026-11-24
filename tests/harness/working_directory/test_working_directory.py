@@ -48,3 +48,20 @@ class TestWorkingDirectory:
         agent = Agent(model, deps_type=type(None), capabilities=[WorkingDirectory[None]()])
         await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path / 'gone'))
         assert _lines(model) == []
+
+    @pytest.mark.parametrize(
+        'capability',
+        [
+            pytest.param(lambda: Shell[None](id='shell', defer_loading=True), id='shell'),
+            pytest.param(lambda: FileSystem[None](id='file_system', defer_loading=True), id='file-system'),
+        ],
+    )
+    async def test_a_deferred_capability_does_not_name_it_before_it_loads(
+        self, tmp_path: Path, capability: Callable[[], AbstractCapability[None]]
+    ) -> None:
+        """Naming the directory starts a sandbox, which a deferred capability that's never loaded doesn't need."""
+        model = TestModel(call_tools=[])
+        await Agent(model, deps_type=type(None), capabilities=[capability()]).run(
+            'go', workspace=LocalWorkspaceBackend(tmp_path)
+        )
+        assert _lines(model) == []
