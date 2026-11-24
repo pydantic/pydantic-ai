@@ -813,3 +813,38 @@ def test_shared_dataclass_reference_not_treated_as_cycle():
     assert format_as_xml(parent) == (
         '<left>\n  <val>shared</val>\n</left>\n<right>\n  <val>shared</val>\n</right>'
     )
+
+
+def test_cyclic_mapping_behind_excluded_field_is_skipped():
+    """A self-referential mapping reachable only through an excluded field must not recurse.
+
+    `model_dump(mode='json')` drops the excluded field, so the cyclic dict never reaches the value
+    walk; the metadata walk reads the live object graph and must skip the repeated container rather
+    than descend into it.
+    """
+
+    class Item(BaseModel):
+        name: str
+        hidden: Any = Field(default=None, exclude=True)
+
+    hidden: dict[str, Any] = {}
+    hidden['self'] = hidden
+
+    assert format_as_xml(Item(name='visible', hidden=hidden)) == '<name>visible</name>'
+
+
+def test_cyclic_iterable_behind_excluded_field_is_skipped():
+    """A self-referential list reachable only through an excluded field must not recurse.
+
+    Same shape as the mapping case: the excluded field keeps the cycle out of the value walk, while
+    the metadata walk must skip the repeated container.
+    """
+
+    class Item(BaseModel):
+        name: str
+        hidden: Any = Field(default=None, exclude=True)
+
+    hidden: list[Any] = []
+    hidden.append(hidden)
+
+    assert format_as_xml(Item(name='visible', hidden=hidden)) == '<name>visible</name>'
