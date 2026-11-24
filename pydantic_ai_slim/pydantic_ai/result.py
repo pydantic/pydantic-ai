@@ -1,7 +1,8 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Iterator
-from contextlib import AbstractAsyncContextManager, aclosing
+from contextlib import AbstractAsyncContextManager, aclosing, suppress
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -81,6 +82,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
+    _pending_event_task: asyncio.Task[AgentStreamEvent] | None = field(default=None, init=False)
 
     # Set by `_abandon_model_stream()`: awaited for the response that replaces the abandoned model stream.
     _replacement_response: Callable[[], Awaitable[_messages.ModelResponse | None]] | None = field(
@@ -519,6 +521,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         if events_iterator is not None:
             for scope in self._pull_scopes:
                 scope.cancel()
+            pending_task = self._pending_event_task
+            self._pending_event_task = None
+            if pending_task is not None:
+                with anyio.CancelScope(shield=True):
+                    await _utils.cancel_and_drain(pending_task, msg='Cancelling shared stream event pull')
+                    with suppress(asyncio.CancelledError, StopAsyncIteration):
+                        pending_task.result()
             with anyio.CancelScope(shield=True):
                 async with self._anext_lock:
                     await _utils.aclose_if_supported(events_iterator)
@@ -574,17 +583,30 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a
         # pending `anext()` task in group_by_temporal while cleanup/drain starts iterating the same
-        # stream.
+        # stream; keeping the underlying pull task alive across shielded awaits preserves the
+        # in-flight event and keeps the shared iterator open for subsequent readers like get_output().
+        async def _pull_next() -> AgentStreamEvent:
+            return await anext(events_iterator)
+
         while True:
             async with self._anext_lock:
                 event: AgentStreamEvent | None = None
                 with anyio.CancelScope() as scope:
                     self._pull_scopes.add(scope)
                     try:
+                        if self._pending_event_task is None:
+                            self._pending_event_task = asyncio.create_task(_pull_next())
                         try:
-                            event = await anext(events_iterator)
+                            event = await asyncio.shield(self._pending_event_task)
                         except StopAsyncIteration:
+                            self._pending_event_task = None
                             return
+                        except BaseException:
+                            if self._pending_event_task.done() and not self._pending_event_task.cancelled():
+                                self._pending_event_task = None
+                            raise
+                        else:
+                            self._pending_event_task = None
                     finally:
                         self._pull_scopes.discard(scope)
                 if scope.cancel_called:

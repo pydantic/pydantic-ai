@@ -11,7 +11,7 @@ import threading
 import warnings
 import weakref
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime
@@ -7995,3 +7995,18 @@ async def test_completed_streamed_response_replays_canonical_system():
             ('part_end', 1, None),
         ]
     )
+
+
+@pytest.mark.parametrize('delta', [False, True])
+async def test_stream_text_early_close_preserves_remaining_output(delta: bool):
+    async def model(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+        for text in ['Hello', ', world']:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            yield text
+
+    async with Agent(FunctionModel(stream_function=model)).run_stream('go') as result:
+        async with aclosing(result.stream_text(delta=delta, debounce_by=0)) as chunks:
+            async for _text in chunks:
+                break
+        assert await result.get_output() == 'Hello, world'
