@@ -4306,25 +4306,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         teardown acts on it, raising any other error, once the consumer is done with the stream.
         """
         if not cut_short:
-            root_capability = ctx.deps.root_capability
-            # A retry uses up the output budget once every retry is used, and then ends the run, which leaves no
-            # next request's stream to report a retry `wrap_model_request` decides on after its handler returned.
-            last_retry_spent = (
-                root_capability._has_wrap_model_request  # pyright: ignore[reportPrivateUsage]
-                and ctx.state.output_retries_used >= ctx.deps.max_output_retries
-            )
-            if not root_capability._has_after_model_request and not last_retry_spent:  # pyright: ignore[reportPrivateUsage]
+            if not ctx.deps.root_capability._has_after_model_request:  # pyright: ignore[reportPrivateUsage]
                 # Nothing can reject the response inside the handler, so it finishes once the consumer leaves the
                 # stream, as it always has. A retry `wrap_model_request` decides on is reported from there.
                 return None
             # The consumer has seen the whole response, so let the handler finish as it would once the consumer
             # leaves the stream, and `after_model_request` pass its verdict before the stream ends. The rest of
-            # `wrap_model_request` is only waited for when the handler asked the model again, or when its retry
-            # would end the run: a wrapper can still be busy otherwise, like a parallel input guardrail, and its
-            # verdict is acted on once the consumer is done with the stream.
+            # `wrap_model_request` is only waited for when the handler asked the model again: a wrapper can still
+            # be busy otherwise, like a parallel input guardrail, and its verdict is acted on once the consumer
+            # is done with the stream.
             stream_done.set()
             await handler.finished.wait()
-            if not handler.retried and not last_retry_spent:
+            if not handler.retried:
                 return None
         elif not streamed.parts:
             # Cut short before the model produced anything, so the consumer has nothing to set apart.

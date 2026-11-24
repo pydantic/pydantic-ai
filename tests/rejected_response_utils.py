@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic_ai import ModelResponse, ModelRetry, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo
@@ -44,6 +44,19 @@ class RejectAnnouncements(AbstractCapability[Any]):
     async def after_model_request(
         self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
+        if response.text == ANNOUNCEMENT:
+            raise ModelRetry(FEEDBACK)
+        return response
+
+
+@dataclass
+class RetryAnnouncements(AbstractCapability[Any]):
+    """Rejects the announcement from `wrap_model_request`, after its handler returned."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        response = await handler(request_context)
         if response.text == ANNOUNCEMENT:
             raise ModelRetry(FEEDBACK)
         return response

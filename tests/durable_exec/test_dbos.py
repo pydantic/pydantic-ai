@@ -182,7 +182,14 @@ from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ..clock_utils import LONG_TIMEOUT, Clock
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
-from ..rejected_response_utils import ANSWER, RejectAnnouncements, announce_then_answer, reject_announcements
+from ..rejected_response_utils import (
+    ANSWER,
+    RejectAnnouncements,
+    RetryAnnouncements,
+    always_announce,
+    announce_then_answer,
+    reject_announcements,
+)
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 from .preamble_text import (
     RunAndStreamResult,
@@ -514,6 +521,13 @@ hooked_rejection_stream_agent = Agent(
     FunctionModel(stream_function=announce_then_answer),
     name='hooked_rejection_stream_agent',
     capabilities=[DBOSDurability(event_stream_handler=_collect_rejection_events), RejectAnnouncements()],
+)
+
+wrapper_rejection_stream_agent = Agent(
+    FunctionModel(stream_function=always_announce),
+    name='wrapper_rejection_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=_collect_rejection_events), RetryAnnouncements()],
+    retries={'output': 0},
 )
 
 
@@ -963,6 +977,26 @@ async def test_dbos_reports_a_rejected_streamed_response_between_the_attempts(
     assert output == ANSWER
     assert [event.event_kind for event in _rejection_events] == snapshot(
         ['part_start', 'final_result', 'part_end', 'model_response_rejected', 'part_start', 'final_result', 'part_end']
+    )
+
+
+async def test_dbos_reports_a_rejection_that_ends_the_run_before_the_error(
+    allow_model_requests: None, dbos: DBOS
+) -> None:
+    """In a DBOS workflow, a `wrap_model_request` retry that uses up the output retry budget reaches the durable
+    `event_stream_handler` before `UnexpectedModelBehavior` fails the workflow."""
+    _rejection_events.clear()
+
+    @DBOS.workflow()
+    async def run_exhausting_workflow() -> str:
+        return (await wrapper_rejection_stream_agent.run('When does the store open?')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+            await run_exhausting_workflow()
+
+    assert [event.event_kind for event in _rejection_events] == snapshot(
+        ['part_start', 'final_result', 'part_end', 'model_response_rejected']
     )
 
 

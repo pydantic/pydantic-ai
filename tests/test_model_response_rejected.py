@@ -7,7 +7,7 @@ graph and its hooks after the model has answered, so no provider behavior is inv
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -19,6 +19,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    CapabilityEvent,
     FinalResultEvent,
     ModelRequestAttempt,
     ModelResponse,
@@ -34,7 +35,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler, on_event
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models import ModelRequestContext
@@ -51,23 +52,11 @@ from .rejected_response_utils import (
     ANSWER,
     FEEDBACK,
     RejectAnnouncements,
+    RetryAnnouncements,
     always_announce,
     announce_then_answer,
     reject_announcements,
 )
-
-
-@dataclass
-class RetryAnnouncements(AbstractCapability[Any]):
-    """Rejects the announcement from `wrap_model_request`, after its handler returned."""
-
-    async def wrap_model_request(
-        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
-    ) -> ModelResponse:
-        response = await handler(request_context)
-        if response.text == ANNOUNCEMENT:
-            raise ModelRetry(FEEDBACK)
-        return response
 
 
 def summarize(events: Sequence[AgentStreamEvent | AgentRunResultEvent[Any]]) -> list[object]:
@@ -191,8 +180,8 @@ async def test_rejection_that_uses_up_the_retry_budget_is_reported_before_the_ru
 ):
     """Every rejection is reported, the one that uses up the output retry budget included, before the run fails.
 
-    A `wrap_model_request` retry decided after its handler returned has no next request to be reported from then, so
-    the stream waits for its verdict once the budget is spent.
+    A `wrap_model_request` retry decided after its handler returned has no next request's stream to be reported from
+    then, so the run delivers it before the error propagates.
     """
     agent = Agent(
         FunctionModel(stream_function=always_announce),
@@ -224,6 +213,90 @@ async def test_rejection_that_uses_up_the_retry_budget_is_reported_before_the_ru
     assert rejected.reason == RetryFeedbackPart(
         content=FEEDBACK, retry=RetryInfo(cause='model_retry'), timestamp=IsDatetime()
     )
+
+
+@dataclass
+class RejectionListener(AbstractCapability[Any]):
+    rejected: list[str] = field(default_factory=list[str])
+
+    @on_event(ModelResponseRejectedEvent)
+    async def record(self, ctx: RunContext[Any], event: ModelResponseRejectedEvent) -> None:
+        self.rejected.append(event.response.text or '')
+
+
+@pytest.mark.parametrize('consumer', ['run_stream_events', 'event_stream_handler', 'on_event under iter()'])
+async def test_wrapper_rejection_that_ends_the_run_reaches_every_consumer_before_the_error(consumer: str):
+    """A `wrap_model_request` retry decided after its handler returned waits for the next request's stream.
+
+    When it uses up the output retry budget, the run delivers it to the run's stream and its listeners before
+    `UnexpectedModelBehavior` propagates.
+    """
+    listener = RejectionListener()
+    agent = Agent(
+        FunctionModel(stream_function=always_announce),
+        capabilities=[RetryAnnouncements(), listener],
+        retries={'output': 0},
+    )
+    streamed: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        streamed.extend([event async for event in events])
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            if consumer == 'run_stream_events':
+                async with agent.run_stream_events('When does the store open?') as stream:
+                    async for event in stream:
+                        streamed.append(event)
+            elif consumer == 'event_stream_handler':
+                await agent.run('When does the store open?', event_stream_handler=handler)
+            else:
+                async with agent.iter('When does the store open?') as run:
+                    async for _ in run:
+                        pass
+
+    assert listener.rejected == [ANNOUNCEMENT]
+    if consumer != 'on_event under iter()':
+        assert summarize(streamed) == [('text', ANNOUNCEMENT), ('rejected', ANNOUNCEMENT, 1, 1)]
+
+
+@dataclass(kw_only=True)
+class GaveUpEvent(CapabilityEvent, namespace='rejection_tests'):
+    pass
+
+
+@pytest.mark.parametrize('consumer', ['event_stream_handler', 'on_event under iter()'])
+async def test_failure_without_a_rejection_leaves_buffered_events_undelivered(consumer: str):
+    """An error that ends the run with no rejection buffered delivers nothing that a run without this event got."""
+    seen: list[str] = []
+
+    @dataclass
+    class EmitThenFail(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            await handler(request_context)
+            await ctx.emit(GaveUpEvent())
+            raise RuntimeError('gave up')
+
+        @on_event(GaveUpEvent)
+        async def record(self, ctx: RunContext[Any], event: GaveUpEvent) -> None:
+            seen.append('listener')  # pragma: no cover
+
+    agent = Agent(FunctionModel(stream_function=always_announce), capabilities=[EmitThenFail()])
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        seen.extend([type(event).__name__ async for event in events])
+
+    with pytest.raises(RuntimeError, match='gave up'):
+        if consumer == 'event_stream_handler':
+            await agent.run('When does the store open?', event_stream_handler=handler)
+        else:
+            async with agent.iter('When does the store open?') as run:
+                async for _ in run:
+                    pass
+
+    assert 'GaveUpEvent' not in seen and 'listener' not in seen
 
 
 async def test_wrap_model_request_retry_is_reported_before_the_retried_response():
@@ -445,17 +518,31 @@ async def test_run_stream_usage_counts_a_hooked_response_once():
     assert streamed_usage == result.usage
 
 
+@dataclass
+class PassThrough(AbstractCapability[Any]):
+    """Has only a `wrap_model_request` hook, which returns what its handler returns."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        return await handler(request_context)
+
+
 @pytest.mark.parametrize(
     ('capabilities', 'counted_before_leaving'),
-    [([], False), ([AcceptEverything()], True)],
-    ids=['no after_model_request hook', 'after_model_request hook'],
+    [([], False), ([AcceptEverything()], True), ([PassThrough()], False)],
+    ids=['no after_model_request hook', 'after_model_request hook', 'wrap_model_request hook'],
 )
 async def test_response_usage_is_counted_when_after_model_request_passes_its_verdict(
     capabilities: list[AbstractCapability[Any]], counted_before_leaving: bool
 ):
     """With an `after_model_request` hook, the hooks pass their verdict when the model stream ends, so the run counts
-    the response's usage then; without one, it's counted when the consumer leaves the stream, as it always was."""
-    agent = Agent(FunctionModel(stream_function=always_announce), capabilities=capabilities)
+    the response's usage then; without one, it's counted when the consumer leaves the stream, as it always was.
+
+    No output retry is left, so a `wrap_model_request` retry would end the run, and the stream still doesn't wait for
+    `wrap_model_request`.
+    """
+    agent = Agent(FunctionModel(stream_function=always_announce), capabilities=capabilities, retries={'output': 0})
     counted_after_exhausting: bool | None = None
 
     async with agent.iter('When does the store open?') as run:

@@ -613,10 +613,21 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 _utils.raise_if_cancelling()
                 return result
 
-            if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
-                result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
-            else:
-                result = await lifecycle(node)
+            try:
+                if cap._has_wrap_node_run:  # pyright: ignore[reportPrivateUsage]
+                    result = await cap.wrap_node_run(run_context, node=node, handler=lifecycle)
+                else:
+                    result = await lifecycle(node)
+            except Exception:
+                # A rejection decided after the request step's stream closed waits in the buffer for the next
+                # request's stream. When the error ends the run instead, as a retry that uses up the output retry
+                # budget does, it's delivered before the error propagates. Any other failure leaves the buffer as is.
+                if any(
+                    isinstance(event, _messages.ModelResponseRejectedEvent)
+                    for event in self.ctx.state.event_stream_buffer
+                ):
+                    await self._deliver_buffered_events(events_handler)
+                raise
             # After every capability hook, `wrap_node_run` included, so a message a hook enqueued while
             # the run was ending still gets its turn instead of being lost.
             result = drain_pending_messages_at_end(run_context, result)
@@ -719,20 +730,26 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> None:
         """When a deferred-tool pause recorded queued content, deliver the events emitted after the last node stream.
 
-        The `EnqueuedMessagesEvent` for the recorded content is one: listeners such as a capability's `@on_event`
-        method see it through the capability chain, as they see a node's events, and so does `events_handler`, the
-        run's stream handler. Without either, the events stay buffered, as a node's events do when nothing streams
-        it. A run that ends any other way, or pauses with nothing queued, leaves the buffer as it always has.
-
-        Listeners see every event before `events_handler` sees the first: `SubAgents` acknowledges a recorded
-        report on its event, so a handler that stops partway must not leave later reports unacknowledged.
+        The `EnqueuedMessagesEvent` for the recorded content is one. A run that ends any other way, or pauses with
+        nothing queued, leaves the buffer as it always has.
         """
-        if not (
+        if (
             isinstance(result, End)
             and isinstance(result.data.output, DeferredToolRequests)
             and any(isinstance(event, _messages.EnqueuedMessagesEvent) for event in self.ctx.state.event_stream_buffer)
         ):
-            return
+            await self._deliver_buffered_events(events_handler)
+
+    async def _deliver_buffered_events(self, events_handler: EventStreamHandler[AgentDepsT] | None) -> None:
+        """Deliver the events buffered after the run's last node stream closed.
+
+        Listeners such as a capability's `@on_event` method see them through the capability chain, as they see a
+        node's events, and so does `events_handler`, the run's stream handler. Without either, the events stay
+        buffered, as a node's events do when nothing streams it.
+
+        Listeners see every event before `events_handler` sees the first: `SubAgents` acknowledges a recorded
+        report on its event, so a handler that stops partway must not leave later reports unacknowledged.
+        """
         capability = self.ctx.deps.root_capability
         if events_handler is None and not (capability.has_wrap_run_event_stream or capability.has_on_event):
             return

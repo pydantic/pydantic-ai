@@ -127,7 +127,14 @@ from .conftest import (
     server_history_agent,
     try_import,
 )
-from .rejected_response_utils import ANNOUNCEMENT, ANSWER, announce_then_answer, reject_announcements
+from .rejected_response_utils import (
+    ANNOUNCEMENT,
+    ANSWER,
+    RetryAnnouncements,
+    always_announce,
+    announce_then_answer,
+    reject_announcements,
+)
 
 with try_import() as otel_sdk_installed:
     # `opentelemetry-sdk` arrives with the `logfire` extra.
@@ -15248,6 +15255,37 @@ async def test_rejected_response_streams_in_a_step_of_its_own():
             {'type': 'message-metadata', 'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}}},
             {'type': 'finish-step'},
             {'type': 'finish'},
+        ]
+    )
+
+
+async def test_rejection_that_ends_the_run_is_streamed_before_the_error():
+    """A `wrap_model_request` retry that uses up the output retry budget is reported in the rejected step, before the error."""
+    agent = Agent(
+        FunctionModel(stream_function=always_announce), capabilities=[RetryAnnouncements()], retries={'output': 0}
+    )
+    request = SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])])
+    adapter = VercelAIAdapter(agent, request)
+    events: list[dict[str, Any]] = [
+        json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+        if '[DONE]' not in event
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (rejected_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': ANNOUNCEMENT, 'id': rejected_id},
+            {'type': 'text-end', 'id': rejected_id},
+            {
+                'type': 'data-model-response-rejected',
+                'data': {'run_step': 1, 'attempt': 1, 'outcome': 'retried', 'cause': 'model_retry'},
+            },
+            {'type': 'error', 'errorText': 'Exceeded maximum output retries (0)'},
+            {'type': 'finish-step'},
+            {'type': 'finish', 'finishReason': 'error'},
         ]
     )
 
