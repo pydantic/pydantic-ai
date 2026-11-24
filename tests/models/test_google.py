@@ -48,6 +48,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -8055,10 +8056,81 @@ async def test_google_tool_output_cut_off_by_max_tokens(allow_model_requests: No
             else:
                 await agent.run(prompt)
 
-    [response] = [message for message in messages if isinstance(message, ModelResponse)]
-    assert response.finish_reason == 'length'
-    assert response.provider_details is not None
-    assert response.provider_details['finish_reason'] == 'MAX_TOKENS'
-    assert response.tool_calls == []
-    assert not response.text
-    assert response.usage.output_tokens == 296
+    if stream:
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='List the 100 largest cities in the world.', timestamp=IsDatetime()),
+                        ModelSettingsDeltaPart(settings={'thinking': 'minimal'}, top_level=True),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='',
+                            provider_name='google',
+                            provider_details={
+                                'thought_signature': 'EqEBCp4BAWkUfRP7ynS1W6zbP4Tp9cpWW3iHvlW+gwxxMPouEuK+44kwIPmeHQgD3QMVR4TF47Pkyo5YnJT2e2LMzwBQV0IEeoUwAf0VgZhXjY2Elj0CY2RTio+viAJAuY9/CSNvVNent6fHRHe7qJ276p6SMv/qwVkcPLRzXVCw2rMAXwU/2OTwJr2Z2RrXtEWO79BNLfJ0rQPWKb7QeY1sCsA='
+                            },
+                        )
+                    ],
+                    usage=RequestUsage(
+                        details={'text_prompt_tokens': 93},
+                        input_tokens=93,
+                        input_text_tokens=93,
+                        output_tokens=296,
+                        cost=Decimal('0.00117975'),
+                    ),
+                    model_name='gemini-3.8-flash',
+                    model_id='google:gemini-3.8-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
+                    provider_details={'finish_reason': 'MAX_TOKENS'},
+                    provider_response_id='kv8Fa6fZEbCeqtsPmZODqAo',
+                    finish_reason='length',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+    else:
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='List the 100 largest cities in the world.', timestamp=IsDatetime()),
+                        ModelSettingsDeltaPart(settings={'thinking': 'minimal'}, top_level=True),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(
+                        details={'text_prompt_tokens': 93},
+                        input_tokens=93,
+                        input_text_tokens=93,
+                        output_tokens=296,
+                        cost=Decimal('0.00117975'),
+                    ),
+                    model_name='gemini-3.8-flash',
+                    model_id='google:gemini-3.8-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
+                    provider_details={'finish_reason': 'MAX_TOKENS'},
+                    provider_response_id='if8Fa47rLrGnmtkPt7uUmAE',
+                    finish_reason='length',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
