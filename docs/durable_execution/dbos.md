@@ -186,7 +186,7 @@ All other agents and toolsets are supported.
 
 ### Tools with Side Effects
 
-A plain function tool runs as workflow code, so it runs again whenever DBOS recovers the workflow, including after the tool's side effect happened but before the workflow recorded anything after it. A tool that charges a card, sends an email or writes to another system can therefore repeat its effect after a crash.
+A plain function tool runs as workflow code. Recovering a workflow runs its code again from the start and skips only the recorded steps, so every tool call the workflow made runs again, even one whose effect happened many steps before the crash. A tool that charges a card, sends an email or writes to another system can therefore repeat its effect each time the workflow recovers.
 
 Put the call in a `@DBOS.step`, so a recovered workflow replays its recorded result instead of calling again. A crash in the middle of the step, after the effect happened but before DBOS recorded the result, still runs the step again, so also pass the external system an idempotency key. Key it on `f'{DBOS.workflow_id}:{ctx.run_step}:{ctx.tool_call_id}'`:
 
@@ -415,12 +415,10 @@ The child workflows Pydantic AI starts don't go through a queue. If a tool enque
 ```python {title="dbos_enqueue_children.py" test="skip"}
 import asyncio
 
-from dbos import DBOS, Queue, SetWorkflowID, SetWorkflowTimeout
+from dbos import DBOS, SetWorkflowID, SetWorkflowTimeout
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.durable_exec.dbos import DBOSDurability
-
-research_queue = Queue('research', worker_concurrency=4)  # (1)!
 
 researcher = Agent('{{ openai:medium }}', name='researcher', capabilities=[DBOSDurability()])
 
@@ -440,13 +438,18 @@ async def research_topics(ctx: RunContext, topics: list[str]) -> list[str]:
     handles = []
     for index, topic in enumerate(topics):
         workflow_id = f'{ctx.run_id}:{ctx.run_step}:{ctx.tool_call_id}:{index}'
-        with SetWorkflowTimeout(None), SetWorkflowID(workflow_id):  # (2)!
-            handles.append(await research_queue.enqueue_async(research, topic))
+        with SetWorkflowTimeout(None), SetWorkflowID(workflow_id):  # (1)!
+            handles.append(await DBOS.enqueue_workflow_async('research', research, topic))
     return list(await asyncio.gather(*(handle.get_result() for handle in handles)))
+
+
+async def main():
+    DBOS.launch()
+    await DBOS.register_queue_async('research', worker_concurrency=4)  # (2)!
 ```
 
-1. A queue only for the children: the workflows running `lead` don't take its slots, so a waiting parent can't keep its children from starting.
-2. `SetWorkflowTimeout(None)` keeps the parent's deadline off the child. The run ID, run step and tool call ID are stable when the parent is recovered, so the ID is too; as in [Tools with Side Effects](#tools-with-side-effects), the run step tells apart tool calls that reuse an ID.
+1. `SetWorkflowTimeout(None)` keeps the parent's deadline off the child. The run ID, run step and tool call ID are stable when the parent is recovered, so the ID is too; as in [Tools with Side Effects](#tools-with-side-effects), the run step tells apart tool calls that reuse an ID.
+2. A queue only for the children: the workflows running `lead` don't take its slots, so a waiting parent can't keep its children from starting.
 
 ### Concurrent Agent Runs
 
