@@ -65,7 +65,7 @@
 <!-- rule:32 -->
 - Use `!r` format specifier for identifiers in error messages (e.g., `f'Tool {name!r}'` not `f'Tool `{name}`'`) — Provides consistent, unambiguous quoting that clearly delimits values and handles edge cases like empty strings or special characters.
 <!-- rule:353 -->
-- Fail fast on explicit user config conflicts without API-defined precedence. Two conflicting provider-namespaced settings are the exception: forward them and let the API decide, per `models/AGENTS.md` — Clear errors prevent arbitrary overrides
+- Fail fast on explicit user config conflicts without API-defined precedence. A conflict between model settings follows the response rule in `models/AGENTS.md` instead: it degrades a unified tuning knob and forwards provider-namespaced settings to the API — Clear errors prevent arbitrary overrides
 - Fall back gracefully on internal or automatic setting conflicts — Internal fallbacks enable cross-provider compatibility when constraints are inferred or propagated
 - Warn when API-defined precedence overrides an explicit user value. This excludes one capability's value overriding another's: the user chose the order (see [capabilities/AGENTS.md](../pydantic_ai_slim/pydantic_ai/capabilities/AGENTS.md)) — Documentation does not replace runtime feedback; warnings identify affected call sites, persist in logs and test suites, and make suppression explicit in source
 - Make override warnings actionable by naming the overridden value and what took precedence — Users must be able to change the input that triggered the warning
