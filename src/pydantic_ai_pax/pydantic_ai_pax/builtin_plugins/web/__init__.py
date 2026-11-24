@@ -214,7 +214,7 @@ def _launch_page(url: str) -> Path:
 
     It is written through the descriptor `mkstemp` opened, never reopened by path, so it stays private.
     """
-    descriptor, name = tempfile.mkstemp(prefix='clai2-web-', suffix='.html')
+    descriptor, name = tempfile.mkstemp(prefix='pax-web-', suffix='.html')
     with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
         file.write(
             f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(url)}">'
