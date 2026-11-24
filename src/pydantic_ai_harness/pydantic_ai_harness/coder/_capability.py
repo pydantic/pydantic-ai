@@ -229,7 +229,7 @@ def _coder_guidance_texts(
 def _apply_model_guidance(
     model: AbstractModel,
     *,
-    build: Callable[..., tuple[str, str]],
+    build: partial[tuple[str, str]],
     table: tuple[ModelGuidance, ...],
 ) -> tuple[str, str] | None:
     row = resolve_model_guidance(table, model)

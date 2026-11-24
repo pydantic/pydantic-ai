@@ -7,7 +7,7 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionDef, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai_harness.coder import MODEL_GUIDANCE, Autonomy, Coder, ModelGuidance
 
@@ -39,14 +39,25 @@ _ENVIRONMENT_CONSTRAINTS = (
 )
 
 
-class _NamedFunction(FunctionModel):
+class _SystemFunction(FunctionModel):
+    """A function model that reports the given provider, as `Model.system`."""
+
+    def __init__(self, function: FunctionDef, *, system: str, name: str) -> None:
+        super().__init__(function, model_name=name)
+        self._provider_system = system
+
+    @property
+    def system(self) -> str:
+        return self._provider_system
+
+
+class _NamedFunction(_SystemFunction):
     def __init__(self, system: str, name: str, seen: list[str]) -> None:
         def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             seen.append(info.instructions or '')
             return ModelResponse(parts=[TextPart(content='done')])
 
-        super().__init__(respond, model_name=name)
-        self._system = system
+        super().__init__(respond, system=system, name=name)
 
 
 async def _run_guidance(
@@ -274,13 +285,8 @@ async def test_default_table_adjustments_reach_delegate_guidance(tmp_path: Path)
             return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'Run it'})])
         return ModelResponse(parts=[TextPart(content='done')])
 
-    class _DelegateModel(FunctionModel):
-        def __init__(self) -> None:
-            super().__init__(respond, model_name='gpt-6.2-sol')
-            self._system = 'openai'
-
     agent = Agent[object](
-        _DelegateModel(),
+        _SystemFunction(respond, system='openai', name='gpt-6.2-sol'),
         capabilities=[LocalWorkspace(tmp_path), Coder[object](autonomy='max', repo_context=False)],
     )
     await agent.run('go')
