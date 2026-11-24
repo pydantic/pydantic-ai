@@ -181,7 +181,7 @@ def panels_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
 
 
 async def send(page: Page, prompt: str) -> None:
-    composer = page.get_by_role('combobox', name='Message CLAI')
+    composer = page.get_by_role('combobox', name='Message Pax')
     await expect(composer).to_be_enabled()
     await composer.fill(prompt)
     await composer.press('Enter')
