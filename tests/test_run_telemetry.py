@@ -98,14 +98,11 @@ async def test_content_is_left_out_without_include_content(instrumented: Instrum
     )
 
 
-@pytest.mark.parametrize(('parent_content', 'child_content'), [(True, False), (False, True)])
-async def test_a_sub_agent_on_its_parents_tracer_records_content_only_if_both_do(
+@pytest.mark.parametrize(('parent_content', 'child_content'), [(True, False), (False, True), (True, True)])
+async def test_a_sub_agent_on_its_parents_tracer_follows_its_own_content_setting(
     parent_content: bool, child_content: bool
 ):
-    """Agents on one tracer provider share tracers, so the parent's published telemetry matches the child's tracer.
-
-    A sub-agent's `for_run` still sees the parent's published value, so it records content only when both do.
-    """
+    """Agents on one tracer provider share tracers, but a sub-agent's `for_run` still follows the sub-agent's setting."""
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -129,9 +126,11 @@ async def test_a_sub_agent_on_its_parents_tracer_records_content_only_if_both_do
 
     await parent.run('go')
 
-    assert example_spans(exporter) == snapshot(
-        [{'name': 'example prepare', 'example.kind': 'setup'}, {'name': 'example decided', 'example.kind': 'setup'}]
-    )
+    content = [{'example.input': 'a', 'example.output': 'b'}, {'example.detail': 'c'}] if child_content else [{}, {}]
+    assert example_spans(exporter) == [
+        {'name': 'example prepare', 'example.kind': 'setup', **content[0]},
+        {'name': 'example decided', 'example.kind': 'setup', **content[1]},
+    ]
 
 
 @dataclass
