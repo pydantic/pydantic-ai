@@ -1,3 +1,5 @@
+"""`ModelRequestParameters` is built locally before any provider request, so these are unit tests: no recording can reach it."""
+
 from dataclasses import replace
 from typing import Literal
 
