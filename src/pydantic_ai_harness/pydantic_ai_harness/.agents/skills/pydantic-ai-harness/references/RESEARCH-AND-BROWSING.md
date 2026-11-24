@@ -425,8 +425,8 @@ Fields:
 
 - `settle_seconds=2`: how long, at most, to wait for the screen to stop changing after the actions run. It takes
   screenshots until two in a row match. `0` takes the screenshot at once.
-- `native=True`: adds a `ComputerTool`, so Claude and GPT get their provider's own computer tool, and `ComputerUse`
-  runs its calls. `False` sends the `computer` function tool to every model, for example so GPT can zoom.
+- `native=True`: adds a `ComputerTool`, so a model whose adapter supports one gets its provider's own computer tool,
+  and `ComputerUse` runs its calls. `False` sends the `computer` function tool to every model, for example so GPT can zoom.
 
 Every request carries every earlier screenshot, and nothing drops them. A long run reaches the provider's image limit,
 such as 100 images on Claude models with a 200k-token context.
@@ -448,6 +448,9 @@ Gotchas:
   isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test `isinstance(call, ComputerCallPart)`: a call
   whose arguments a hook repaired arrives as a plain `ToolCallPart`.
 - Screenshots are sent at the screen's full size. A 1280x800 screen suits every model.
+- If the screen changes size, a call that gives positions is refused until the model takes a new screenshot.
+- When one `computer` call in a model response fails, the response's later `computer` calls don't run, and the model
+  is told so.
 - Under durable execution, everything one `computer` call does on the screen is one durable step, so replay and
   recovery don't repeat a finished call. A call cut off before its step was recorded is retried under the engine's
   settings for capability steps. On Temporal, set `activity_config` with a longer `start_to_close_timeout` and
