@@ -45,7 +45,7 @@ def is_folder_name(value: str) -> bool:
 
 
 def is_project_relative(value: str) -> bool:
-    """Whether a path entry resolves against whichever project CLAI runs in, rather than one fixed place."""
+    """Whether a path entry resolves against whichever project Pax runs in, rather than one fixed place."""
     return not value.startswith('~') and not Path(value).is_absolute()
 
 
@@ -192,7 +192,7 @@ class FolderMenu(Generic[DepsT]):
         if is_project_relative(value):
             details = f'Relative path\n{value}\n\nIn this project\n{path}\n\n'
             details += prose(f'{problem} Skipped in this project.' if problem else 'Directory is readable.')
-            details += '\n\n' + prose('Resolved against each project CLAI runs in.')
+            details += '\n\n' + prose('Resolved against each project Pax runs in.')
         else:
             details = f'Directory path\n{value}\n\nResolved location\n{path}\n\n'
             details += prose(problem or 'Directory is readable.')

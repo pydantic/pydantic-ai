@@ -126,11 +126,12 @@ async def test_a_sub_agent_on_its_parents_tracer_follows_its_own_content_setting
 
     await parent.run('go')
 
-    content = [{'example.input': 'a', 'example.output': 'b'}, {'example.detail': 'c'}] if child_content else [{}, {}]
-    assert example_spans(exporter) == [
-        {'name': 'example prepare', 'example.kind': 'setup', **content[0]},
-        {'name': 'example decided', 'example.kind': 'setup', **content[1]},
-    ]
+    prepare: dict[str, AttributeValue] = {'name': 'example prepare', 'example.kind': 'setup'}
+    decided: dict[str, AttributeValue] = {'name': 'example decided', 'example.kind': 'setup'}
+    if child_content:
+        prepare |= {'example.input': 'a', 'example.output': 'b'}
+        decided |= {'example.detail': 'c'}
+    assert example_spans(exporter) == [prepare, decided]
 
 
 @dataclass

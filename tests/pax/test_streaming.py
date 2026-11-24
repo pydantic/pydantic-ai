@@ -44,7 +44,7 @@ async def test_intermediate_text_flushes_before_tool_arguments() -> None:
     await renderer.on_stream_event(PartStartEvent(index=1, part=ToolCallPart(tool_name='shell', args='')))
     assert 'Working on it.' in output.getvalue()
     assert output.getvalue().endswith('\n\n')
-    assert 'CLAI' not in output.getvalue()
+    assert 'Pax' not in output.getvalue()
     before = output.getvalue()
     await renderer.finish()
     assert output.getvalue() == before
@@ -78,7 +78,7 @@ deploy: staging ok
 
 ● lint path="a.py"
 
-● read_file 'a.py' offset=0 limit=2000 lines
+● read_file a.py
 
 The new code:
 

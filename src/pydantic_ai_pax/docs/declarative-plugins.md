@@ -34,7 +34,7 @@ That had four costs:
 - **State hid in closures.** Settings, clients, and caches lived in local
   variables captured by nested functions, which made them hard to reach from
   tests and easy to recreate by accident.
-- **Two hook systems.** `host.on` accepted both CLAI's four moments and every
+- **Two hook systems.** `host.on` accepted both Pax's four moments and every
   core `Hooks().on` name, re-exporting core's hook surface with a
   `Literal`-and-`@overload` table that had to be kept in parity by a test.
 
@@ -79,7 +79,7 @@ The consequences:
 - **`PluginHost` is only context.** It lost every registration method and list.
 - **Agent-run hooks are core's.** A plugin that wants `before_tool_execute` or a
   typed stream event returns a `Hooks` capability (or its own capability using
-  `@on_event`) from `get_capabilities`, exactly as any Pydantic AI user would. CLAI
+  `@on_event`) from `get_capabilities`, exactly as any Pydantic AI user would. Pax
   no longer mirrors core's hook names.
 - **Capabilities stay the unit of reuse.** A declaration can still name a bare
   capability class (`module:Class`), which is wrapped in a plugin whose only
@@ -96,7 +96,7 @@ report earlier failures through its own configured instance without changing loa
 
 A delegated task runs detached from the run that started it, and a background one
 outlives it, so the parent run's hooks and stream events never see the child's own
-events: the harness owner hands them to one observer instead, CLAI's `Tasks`, which
+events: the harness owner hands them to one observer instead, Pax's `Tasks`, which
 also drives `/tasks`. `on_task_progress` passes that same feed on to plugins.
 
 A background `/fork` runs a copy of the conversation as a separate session, so its run's
@@ -104,20 +104,20 @@ hooks are that session's, and its `on_turn_end` looks like any turn's. The termi
 its answer itself; `on_fork_end` says which fork ended and how, so a plugin with no
 terminal, such as the web UI, can show the same.
 
-`/update` installs a newer CLAI with uv, which takes a while, then restarts. Commands never
+`/update` installs a newer Pax with uv, which takes a while, then restarts. Commands never
 reach the agent, and `on_command_end` fires once uv has finished, so `on_install_progress`
 tells plugins as it goes, such as the web UI, whose page has no terminal to watch.
 
 ## Scope: one instance per live session, or one per process
 
-The web UI keeps several sessions live in one CLAI process, each with its own
+The web UI keeps several sessions live in one Pax process, each with its own
 conversation, folder, and running turn. A plugin instance holds state for the
 session it was loaded in (its console, its conversation, a connection, a task), so
 the default, `scope = 'session'`, builds one instance per live session. Each one
 loads with its session and ends with it, including when an idle session closes, so a
 plugin written for the terminal needs no change as long as it keeps its state on
 `self` and reads its folder from `host.workspace` instead of the process's working
-directory, which CLAI never changes after startup.
+directory, which Pax never changes after startup.
 
 Some plugins own something the process can only have once: `web` listens on one port,
 `observability` configures Logfire and `Agent.instrument_all` for the whole process,

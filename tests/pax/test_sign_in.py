@@ -104,7 +104,7 @@ async def test_sign_in_now_reports_success_failure_and_cancellation() -> None:
             kind='wait',
             title='Signing in to Example',
             description=(
-                'Finish signing in to Example in your browser.\n\nEsc cancels; CLAI keeps working without Example.'
+                'Finish signing in to Example in your browser.\n\nEsc cancels; Pax keeps working without Example.'
             ),
             shown=['Open https://example.test/one', 'Open https://example.test/two'],
         )
@@ -155,11 +155,11 @@ async def test_the_waiting_screen_shows_the_latest_text_and_repaints_for_it(monk
     assert first.splitlines() == [
         'Finish signing in to Example in your browser.',
         '',
-        'Esc cancels; CLAI keeps working without Example.',
+        'Esc cancels; Pax keeps working without Example.',
         '',
         f'Open {make_link("https://example.test/two", "https://example.test/two")}',
     ]
-    assert second.endswith('Esc cancels; CLAI keeps working without Example.\n\nEnter code: ABCD')
+    assert second.endswith('Esc cancels; Pax keeps working without Example.\n\nEnter code: ABCD')
 
 
 async def test_sign_out_and_the_session_start_notice() -> None:
@@ -229,7 +229,7 @@ async def oauth_server() -> AsyncIterator[str]:
 
 @pytest.fixture
 def browser(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Approve in a 'browser' by following the authorization redirects to CLAI's callback server."""
+    """Approve in a 'browser' by following the authorization redirects to Pax's callback server."""
     opened: list[str] = []
 
     def open_browser(url: str, *args: object, **kwargs: object) -> bool:
@@ -241,7 +241,7 @@ def browser(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return opened
 
 
-# The in-process MCP server, not CLAI's client, leaves a session stream for the collector (`mcp.server.streamable_http`).
+# The in-process MCP server, not Pax's client, leaves a session stream for the collector (`mcp.server.streamable_http`).
 @pytest.mark.filterwarnings(
     # Python 3.14 says "while calling deallocator"; earlier versions say "in:".
     r'ignore:Exception ignored .*MemoryObjectReceiveStream\.__del__:pytest.PytestUnraisableExceptionWarning'

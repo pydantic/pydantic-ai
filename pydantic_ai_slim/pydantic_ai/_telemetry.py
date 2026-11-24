@@ -45,13 +45,13 @@ __all__ = (
 )
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True)
 class RunTelemetry:
     """The tracer a run's spans go to, and whether they may record content.
 
     Not `InstrumentationSettings`: in a durable unit both come from the rebuilt `ctx`, whose content flag
-    the engine narrowed to the worker's setting. A published value is compared by identity, so each publish is a distinct
-    run's telemetry; one built from a `ctx` is used for a single call and never published.
+    the engine narrowed to the worker's setting. One built from a `ctx` is used for a single call and never
+    published.
     """
 
     tracer: Tracer
@@ -182,7 +182,6 @@ def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> RunTelemetry | 
         return None
     if isinstance(ctx, RunTelemetry):
         # Built by hand, as a durable worker does, it may wrap an uninstrumented run's `NoOpTracer`.
-        # Returned as given otherwise, since a published value is compared by identity.
         return None if isinstance(ctx.tracer, NoOpTracer) else ctx
     # A context rebuilt inside a durable unit has only the fields its engine carried, and reading any
     # other raises. Work in a unit that didn't carry the tracer goes untraced rather than failing.
