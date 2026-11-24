@@ -259,7 +259,7 @@ async def _ensure_desktop_image(runner: LocalWorkspaceBackend, executable: str) 
     # Podman's docs don't, but buildah's `stdinToDirectory` reads stdin there as the Dockerfile. The runner gives a
     # command no stdin, so `sh` pipes it in.
     build_script = 'printf %s "$1" | "$2" build --tag "$3" -'
-    result = await runner.run(['sh', '-c', build_script, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE_TAG])
+    result = await runner.run(['/bin/sh', '-c', build_script, 'sh', DESKTOP_DOCKERFILE, executable, _DESKTOP_IMAGE_TAG])
     if result.exit_code != 0:
         raise WorkspaceUnavailableError(f'could not build the desktop image: {result.stderr.strip()[-2000:]}')
 
