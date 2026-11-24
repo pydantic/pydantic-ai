@@ -27,7 +27,7 @@ from pydantic_ai_harness.computer_use import ComputerUse
 from tests.harness._temporal import skip_temporal_sandbox_on_314
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
-from ..display_fakes import ScreenProvider
+from .display_fakes import ScreenProvider
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), skip_temporal_sandbox_on_314]
 
