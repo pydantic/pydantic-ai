@@ -5993,17 +5993,6 @@
       "sites": [
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::<module>"
       ]
-    },
-    "InstrumentedModel.instrumentation_settings": {
-      "engines": [
-        "render"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContextCodec._resolve_instrumentation"
-      ]
     }
   },
   "pydantic_ai_slim/pydantic_ai/models/wrapper.py": {
