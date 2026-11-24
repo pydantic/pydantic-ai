@@ -132,7 +132,8 @@ class GoogleInteractionsModelSettings(ModelSettings, total=False):
     """Settings for Google's Interactions API.
 
     Sampling settings unsupported by this API (`top_k`, penalties, `logit_bias` and
-    `parallel_tool_calls`) are ignored. Explicit caching and token counting are unavailable.
+    `parallel_tool_calls`) are ignored, and so is `max_retries`: the SDK has no per-request retry option.
+    Explicit caching and token counting are unavailable.
     Models that use thinking budgets retain their default effort: Interactions exposes only thinking levels.
 
     These native Interactions settings are ignored by `GoogleModel`, except for the shared
