@@ -80,6 +80,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelRateLimitError,
     ModelRetry,
+    OutputTokenLimitExceeded,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -8020,3 +8021,44 @@ async def test_google_non_json_response_body_raises_model_api_error(
     cause = errors.UnknownApiResponseError if call == 'stream' else json.JSONDecodeError
     assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_google_tool_output_cut_off_by_max_tokens(allow_model_requests: None, gemini_api_key: str, stream: bool):
+    """An output tool call the token limit cut off raises right away instead of re-prompting the model with the same limit.
+
+    Gemini drops a function call it cut off: the response has no parts (or only an empty text part carrying a thought
+    signature when streamed), though it used up the output tokens, so it's reported as cut off before any output.
+    """
+    model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(
+        model, output_type=ToolOutput(Cities), model_settings=GoogleModelSettings(max_tokens=300, thinking='minimal')
+    )
+    prompt = 'List the 100 largest cities in the world.'
+
+    with capture_run_messages() as messages:
+        with pytest.raises(
+            OutputTokenLimitExceeded,
+            match=r'Model token limit \(300\) exceeded before any response was generated\.',
+        ):
+            if stream:
+                async with agent.run_stream(prompt) as result:
+                    await result.get_output()
+            else:
+                await agent.run(prompt)
+
+    [response] = [message for message in messages if isinstance(message, ModelResponse)]
+    assert response.finish_reason == 'length'
+    assert response.provider_details is not None
+    assert response.provider_details['finish_reason'] == 'MAX_TOKENS'
+    assert response.tool_calls == []
+    assert not response.text
+    assert response.usage.output_tokens == 296
