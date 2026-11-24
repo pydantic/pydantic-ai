@@ -862,6 +862,7 @@ A request needs exactly one `computer` tool the model can call. With none, an `o
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
+| OpenAI Responses | ✅ | On the models listed under [OpenAI](models/openai.md#computer-use). |
 | Anthropic | ✅ | On the models and clients listed under [Anthropic](models/anthropic.md#computer-use). |
 | OpenAI Chat Completions | ❌ | `OpenAIChatModel` never sends it. |
 | OpenRouter | ❌ | The model gets the function tool. |

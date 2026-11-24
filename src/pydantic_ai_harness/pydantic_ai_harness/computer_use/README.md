@@ -22,25 +22,56 @@ pip:
 pip install "pydantic-ai-harness[anthropic]"
 ```
 
-Use your model provider's extra instead of `anthropic`.
+Use your model provider's extra instead of `anthropic`. Set `ANTHROPIC_API_KEY`, and have Docker running.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness import ComputerUse
+from pydantic_ai_harness import ComputerUse, DockerContainer
 
-agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[my_desktop_sandbox, ComputerUse()])  # (1)!
+agent = Agent('anthropic:claude-sonnet-5-5', capabilities=[DockerContainer(desktop=True), ComputerUse()])
 
-result = agent.run_sync('Open the text editor and write a haiku about sandboxes.')
+result = agent.run_sync('Open Firefox and find the current Python release on python.org.')
 print(result.output)
 ```
 
-1. Any capability whose workspace has a screen. To write your own, see [Your own display](#your-own-display).
+The first run builds a desktop image with Firefox, which takes a few minutes. The agent then looks at the screen,
+clicks and types until it has the answer, and prints it. The container keeps running afterwards; to remove it, see
+[Clean up](../docker_container/#clean-up).
 
 ## Models
 
-The model must accept images. On the models listed under [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use), it gets its provider's own computer use
+The model must accept images. On the models listed under [OpenAI](https://pydantic.dev/docs/ai/models/openai/#computer-use) and [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use), it gets its provider's own computer use
 tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
 tool.
+
+## Sandboxes
+
+| Sandbox | Turn on its screen |
+|---|---|
+| Docker | [`DockerContainer(desktop=True)`](../docker_container/#give-the-agent-a-desktop) |
+| Daytona | [`DaytonaSandbox(desktop=True)`](../daytona_sandbox/#give-the-agent-a-desktop) |
+
+For any other workspace, see [Your own display](#your-own-display).
+
+### What the display needs
+
+[Daytona](../daytona_sandbox/#give-the-agent-a-desktop) starts its own desktop. Every other sandbox above runs one
+that needs these programs:
+
+- Xvfb, unless an X server is already running
+- `xdotool`
+- `xwininfo` (Debian's `x11-utils`)
+- `scrot`
+- `setsid`
+- `fluxbox`, `tint2` and `xterm`, for the windows, the panel and its terminal
+
+The first use of the display installs any that are missing with `apt-get`, as root or with passwordless `sudo`. Add
+them to your image so the first use doesn't wait for the install. If one of the first five can't be installed, the run
+ends with a `WorkspaceUnavailableError` naming what's missing. Without the last three, the screen works without the
+panel. To give the agent a browser, install one in your image, such as `firefox-esr`.
+
+Drags move the pointer in steps with short pauses, so a web page's drag-and-drop sees them. Now and then a
+page still misses one.
 
 ## Safety
 

@@ -7,11 +7,14 @@ harness display protocols to its backends.
 from __future__ import annotations as _annotations
 
 from collections.abc import Callable
-from typing import Self
+from typing import Protocol, Self, runtime_checkable
 
-from pydantic_ai.computer_use import MouseMove, Point, Region
-from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai.computer_use import ComputerReturnPart, MouseMove, Point, Region
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.computer_use import (
+    Display,
     DisplayAction,
     SupportsCursorPosition,
     SupportsDisplay,
@@ -113,3 +116,25 @@ class DisplayOnlyBackend(FilesystemOnlyWorkspaceBackend, SupportsDisplay):
 
     async def act(self, action: DisplayAction) -> None:
         await self._display.act(action)
+
+
+@runtime_checkable
+class FullDisplay(Display, SupportsZoom, SupportsCursorPosition, Protocol):
+    """A display with every optional ability, as every harness sandbox's is."""
+
+
+def full_display(backend: WorkspaceBackend) -> FullDisplay:
+    """A sandbox backend's display, checked to have every optional ability."""
+    assert isinstance(backend, SupportsDisplay)
+    display = backend.display
+    assert isinstance(display, FullDisplay)
+    return display
+
+
+def look_click_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A `FunctionModel` function: takes a screenshot, clicks on what it showed, then answers."""
+    steps = [[{'type': 'screenshot'}], [{'type': 'click', 'x': 3, 'y': 4}]]
+    done = sum(isinstance(part, ComputerReturnPart) for message in messages for part in message.parts)
+    if done == len(steps):
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('computer', {'actions': steps[done]})])
