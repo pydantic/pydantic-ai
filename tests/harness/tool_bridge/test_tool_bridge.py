@@ -29,6 +29,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -603,6 +604,49 @@ class TestToolBridge:
         await agent.run('hi')
 
         assert seen == [['run_code']]
+
+    async def test_a_bridged_tool_with_no_capability_keeps_its_content(self):
+        """A bridged tool no capability contributes returns its `ToolReturn.content` as the tool returned it.
+
+        An `after_tool_execute` hook on `tool_call` and the tool result event both see the `str`.
+        """
+
+        def note(text: str) -> ToolReturn:
+            """Take a note."""
+            return ToolReturn(return_value='ok', content=text)
+
+        hook_seen: list[object] = []
+
+        class Record(AbstractCapability[object]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[object],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+                result: object,
+            ) -> object:
+                if call.tool_name == 'tool_call':
+                    # Narrowed under its own name, so the returned `result` stays an `object`.
+                    tool_return = result
+                    assert isinstance(tool_return, ToolReturn)
+                    hook_seen.append(tool_return.content)
+                return result
+
+        model = _scripted([_call('tool_call', name='note', args_json='{"text": "page text"}')])
+        agent = Agent(model, tools=[note], capabilities=[ToolBridge(), Record()])
+        event_seen: list[object] = []
+        async with agent.iter('Take a note') as agent_run:
+            async for node in agent_run:
+                if Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as stream:
+                        async for event in stream:
+                            if isinstance(event, FunctionToolResultEvent):
+                                event_seen.append(event.content)
+
+        assert hook_seen == ['page text']
+        assert event_seen == ['page text']
 
     @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
     @pytest.mark.parametrize('from_code', [False, True], ids=['tool-call', 'run-code'])
