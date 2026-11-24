@@ -36,8 +36,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness import _x11
-from pydantic_ai_harness.computer_use import Display, DisplayAction, SupportsZoom, UnsupportedActionError
+from pydantic_ai_harness.computer_use import Display, DisplayAction, SupportsZoom, UnsupportedActionError, _x11
 from pydantic_ai_harness.docker_container import DockerContainerBackend
 
 from ._fake_x_display import FakeDisplay
@@ -413,7 +412,7 @@ def test_a_one_colour_screenshot_is_blank() -> None:
 
 def test_a_sentence_that_lists_what_a_custom_image_needs_names_every_program_the_display_runs() -> None:
     # Such a sentence, as on the E2B pages, is a build list: a program it leaves out fails on first use.
-    root = Path(__file__).parents[2]
+    root = Path(__file__).parents[3]
     pages = [*root.glob('docs/harness/*.md'), *root.glob('src/pydantic_ai_harness/pydantic_ai_harness/*/README.md')]
     wanted = [*_x11._DISPLAY_PROGRAMS.split(), 'Xvfb']  # pyright: ignore[reportPrivateUsage]
     sentences = [
