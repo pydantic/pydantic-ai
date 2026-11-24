@@ -12619,7 +12619,7 @@ async def test_rejected_run_dumps_its_history_with_the_rejected_response():
 
     assert [
         (message.role, getattr(message, 'content', None))
-        for message in AGUIAdapter.dump_messages(run_result.result.all_messages())
+        for message in AGUIAdapter.dump_messages(run_result.result.all_messages(), ag_ui_version='0.1.11')
     ] == snapshot(
         [
             ('user', 'When does the store open?'),
