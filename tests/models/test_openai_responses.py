@@ -20372,6 +20372,60 @@ async def test_promoted_tool_search_replay_item_id(
     assert input_items[0] == expected
 
 
+@pytest.mark.parametrize(
+    ('call', 'expected_id'),
+    [
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1', id='tsc_abc'),
+            None,
+            id='tsc-omitted',
+        ),
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1|tsc_abc'),
+            None,
+            id='legacy-combined-tsc-omitted',
+        ),
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1', id='fc_123'),
+            'fc_123',
+            id='fc-preserved',
+        ),
+        pytest.param(
+            ToolSearchCallPart(args={'queries': ['weather']}, tool_call_id='call_1', id='opaque_1'),
+            'opaque_1',
+            id='opaque-preserved',
+        ),
+        pytest.param(
+            ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1', id='tsc_abc'),
+            'tsc_abc',
+            id='ordinary-call-unchanged',
+        ),
+    ],
+)
+async def test_unpromoted_tool_search_replay_item_id(call: ToolCallPart, expected_id: str | None) -> None:
+    """A tool search replayed as a `function_call` never carries a `tool_search_call` (`tsc_*`) item ID.
+
+    The Responses API rejects that prefix on a `function_call` item. Every other item ID, and every
+    ordinary function call, is sent unchanged. This pins the mapped item directly because cassette
+    replay does not compare request bodies.
+    """
+    history = [
+        ModelResponse(parts=[call], provider_name='openai'),
+        ModelRequest(parts=[ToolReturnPart(tool_name=call.tool_name, content='result', tool_call_id='call_1')]),
+    ]
+    input_items = await _replay_input(
+        history,
+        group_function_calls=False,
+        model_settings=OpenAIResponsesModelSettings(openai_send_reasoning_ids=True),
+    )
+
+    assert (input_items[0]['type'], input_items[0]['call_id'], input_items[0].get('id')) == (
+        'function_call',
+        'call_1',
+        expected_id,
+    )
+
+
 async def test_openai_responses_function_call_grouping_preserves_active_tool_search() -> None:
     """Active tool search uses its specialized client-executed protocol, whose order is preserved."""
     history = [
