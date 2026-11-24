@@ -708,12 +708,8 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
     # `random.getrandbits`, as a `websockets` ping does, can't shift it.
     rng = random.Random()
     seed = random.seed
-
-    def seed_both(a: str) -> None:
-        seed(a)
-        rng.seed(a)
-
-    monkeypatch.setattr(random, 'seed', seed_both)
+    # Pyright can't infer a lambda parameter's type with nothing to infer it from.
+    monkeypatch.setattr(random, 'seed', lambda a: (seed(a), rng.seed(a)))  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
     monkeypatch.setattr(random, 'randrange', rng.randrange)
 
     def run(
@@ -809,9 +805,9 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
 def test_capture_records_each_request_per_test(run: RunCapture, tmp_path: Path):
     """A request sent over `httpx` or `httpx2` is recorded with its body, and a call on an SDK mock with its arguments.
 
-    `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture, even after
-    another thread drew from `random`. The API keys the session's requests carry, under ElevenLabs' `xi-api-key` and
-    Anthropic's `x-api-key`, are left out.
+    `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture, even after a
+    thread drew through `random.getrandbits`. The API keys the session's requests carry, under ElevenLabs' `xi-api-key`
+    and Anthropic's `x-api-key`, are left out.
     """
     run(tmp_path).assert_outcomes(passed=11)
 
