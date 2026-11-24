@@ -139,6 +139,16 @@ The `finally` deletes the box even when setup or the run fails. To keep it, stor
 
 For features the workspace API doesn't cover, such as `copy_in`, `snapshot` or `stop`, `backend.get_sandbox()` returns the SDK's `boxlite.Box`.
 
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](computer-use.md):
+`capabilities=[BoxLiteSandbox(desktop=True, allow_internet_access=True), ComputerUse()]`. The screen is 1280x800;
+pass a size such as `desktop=(1440, 900)` for another.
+
+Without an `image`, a new box runs `debian:bookworm-slim`, and its first start installs [the display's programs](computer-use.md#what-the-display-needs), with no web browser. That needs `allow_internet_access=True` ([what that lets the box reach](#network-access)), with `deb.debian.org` in any `allowed_hosts`. Creating a new box without it raises `UserError`; for a box without network access, pass an `image` that has the programs. To install a browser, pass `box_options={'disk_size_gb': 4}`: the default disk is too small.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
 ## Clean up
 
 Delete a box and its disk with the ref you stored. A box that is already gone returns quietly:
@@ -267,7 +277,7 @@ Whoever passes a ref runs commands in the box it names. BoxLite can open any box
 
 | Option | What it does |
 | --- | --- |
-| `image` | OCI image for a new box. Default: `None`, BoxLite's default, Alpine Linux. |
+| `image` | OCI image for a new box. Default: `None`, BoxLite's default, Alpine Linux, or `debian:bookworm-slim` with `desktop`. |
 | `cpus` | vCPUs for a new box. Default: `None`, BoxLite's default. |
 | `memory_mb` | Memory for a new box in MiB. Default: `None`, BoxLite's default. |
 | `allow_internet_access` | Whether a new box has outbound network access, from this machine's network. Default: `False`. |
@@ -277,6 +287,7 @@ Whoever passes a ref runs commands in the box it names. BoxLite can open any box
 | `authority` | Who wrote the box's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are box paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 | `box_options` | Other `boxlite.BoxOptions` arguments for a new box, such as `volumes`, `ports`, `secrets` or `disk_size_gb`. Default: `None`. |
+| `desktop` | Give the box a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 
 `image`, `cpus`, `memory_mb`, the network settings and `box_options` only shape a new box. `working_dir` and `env` apply to every command, including after you reattach.
 

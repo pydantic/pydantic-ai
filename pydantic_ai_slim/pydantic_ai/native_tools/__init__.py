@@ -906,7 +906,14 @@ class ComputerTool(AbstractNativeTool):
 
     It is sent only when the request has exactly one `computer` tool the model can call. With none, an
     [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional] one is left out and a required one raises
-    [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`.
+    [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`. See
+    [Computer Tool](../native-tools.md#computer-tool).
+
+    Supported by:
+
+    * Anthropic, on the models listed under [Anthropic](../models/anthropic.md#computer-use)
+    * OpenAI Responses, on the models listed under [OpenAI](../models/openai.md#computer-use)
+    * Google, on the models listed under [Google](../models/google.md#computer-use)
     """
 
     display_size: tuple[int, int]
@@ -914,7 +921,7 @@ class ComputerTool(AbstractNativeTool):
 
     `ComputerUse` fills it in from the latest screenshot, or from the display before the first one. Anthropic's
     `computer_20250124` and `computer_20251124` tools send it to the model as the display size;
-    `computer_toolset_20260801` has no size field.
+    `computer_toolset_20260801` has no size field. Gemini uses it to turn its 0-999 positions into pixels.
     """
 
     kind: str = 'computer'
