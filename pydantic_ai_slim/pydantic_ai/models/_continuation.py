@@ -47,6 +47,7 @@ import anyio
 
 from .. import _utils
 from .._fallback import request_stream_until_first_event
+from .._model_request_attempts import carried_partial_response
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior
 from ..messages import (
@@ -544,6 +545,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     )
                 )
         except BaseException as error:
+            self._keep_failed_segment(seed, error)
             if seed is not None:
                 await cancel_abandoned_job(self.model, seed, error)
                 self._job_cancelled = True
@@ -602,10 +604,27 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     yield sub
             return
         with self.segment_context():
-            async with self.model.request_stream(
-                messages, self.model_settings, self.model_request_parameters, self.run_context
-            ) as sub:
+            async with AsyncExitStack() as stack:
+                try:
+                    sub = await stack.enter_async_context(
+                        self.model.request_stream(
+                            messages, self.model_settings, self.model_request_parameters, self.run_context
+                        )
+                    )
+                except BaseException as error:
+                    self._keep_failed_segment(self._merged_response, error)
+                    raise
                 yield sub
+
+    def _keep_failed_segment(self, response: ModelResponse | None, error: BaseException) -> None:
+        """Keep what the provider billed for a segment that failed to open with `error`, on top of `response`.
+
+        A model that waits for a stream's first event before handing it over, like a `FallbackModel`, discards a
+        stream that fails before then, and its partial response rides on the error instead (see
+        `carry_partial_response`). `get()` keeps it, as it would a segment that failed once iteration had started.
+        """
+        if (partial := carried_partial_response(error)) is not None:
+            self._merged_response = partial if response is None else merge_responses(response, partial)
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         """Cancel-teardown errors to suppress, extended with the in-flight sub-stream's own.

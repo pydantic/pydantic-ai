@@ -20,10 +20,19 @@ from pydantic_ai.capabilities import (
     CapabilityOrdering,
     Hooks,
     ModelFallback,
+    RetryOnModelErrors,
     WrapModelRequestHandler,
     WrapperCapability,
 )
-from pydantic_ai.exceptions import ModelAPIError, ModelRetry, RetryModelRequest, UserError
+from pydantic_ai.exceptions import (
+    FallbackExceptionGroup,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelOverloadedError,
+    ModelRetry,
+    RetryModelRequest,
+    UserError,
+)
 from pydantic_ai.messages import AgentStreamEvent, ModelRequest, ModelRequestAttempt, UserPromptPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel
@@ -31,6 +40,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
+from .capability_models import BilledThenFailsModel
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 
@@ -1009,3 +1019,96 @@ async def test_history_changes_in_prepare_model_request_persist_across_attempts(
     request = messages[0]
     assert isinstance(request, ModelRequest)
     assert request.metadata == {'attempts': [1, 2]}
+
+
+async def _answer_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'hello'
+
+
+def _answer() -> FunctionModel:
+    return FunctionModel(stream_function=_answer_stream, model_name='answer')
+
+
+_BILLED = RequestUsage(input_tokens=100, output_tokens=5)
+
+
+@pytest.mark.parametrize('moved_on_by', ['FallbackModel', 'ModelFallback', 'RetryOnModelErrors'])
+async def test_a_streamed_attempt_billed_before_it_failed_keeps_its_usage(moved_on_by: str):
+    """A stream that failed before its first event, after the provider reported usage, was billed for it.
+
+    The attempt moved on from records that usage, and it counts in the run's usage once.
+    """
+    match moved_on_by:
+        case 'FallbackModel':
+            agent = Agent(FallbackModel(BilledThenFailsModel(_answer()), _answer()))
+        case 'ModelFallback':
+            agent = Agent(BilledThenFailsModel(_answer()), capabilities=[ModelFallback(_answer())])
+        case _:
+            agent = Agent(BilledThenFailsModel(_answer()), capabilities=[RetryOnModelErrors(initial_delay=0)])
+    result = await agent.run('x', event_stream_handler=_consume)
+    assert [(attempt.outcome, attempt.usage) for attempt in result.response.failed_attempts or []] == [
+        ('error', _BILLED)
+    ]
+    assert result.usage == RunUsage(
+        input_tokens=_BILLED.input_tokens + result.response.usage.input_tokens,
+        output_tokens=_BILLED.output_tokens + result.response.usage.output_tokens,
+        requests=1,
+    )
+
+
+async def _consume(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in events:
+        pass
+
+
+@pytest.mark.parametrize('fails_by', ['FallbackModel', 'ModelFallback'])
+async def test_streamed_attempts_billed_before_every_model_failed_are_counted(fails_by: str):
+    """When every model's stream fails after it was billed, the group lists the attempts and the run counts them."""
+    if fails_by == 'FallbackModel':
+        # Without an error hook, the stream opens once it's iterated, and `FallbackModel` falls back then.
+        agent = Agent(FallbackModel(BilledThenFailsModel(_answer()), BilledThenFailsModel(_answer())))
+    else:
+        agent = Agent(BilledThenFailsModel(_answer()), capabilities=[ModelFallback(BilledThenFailsModel(_answer()))])
+    usage = RunUsage()
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x', usage=usage, event_stream_handler=_consume)
+    assert [attempt.usage for attempt in exc_info.value.attempts] == [_BILLED, _BILLED]
+    assert usage == RunUsage(input_tokens=200, output_tokens=10)
+
+
+@pytest.mark.parametrize('model_kind', ['FallbackModel', 'ModelFallback'])
+async def test_a_streamed_failure_billed_before_it_was_not_fallen_back_from_is_counted(model_kind: str):
+    """A billed stream failure that nothing falls back from ends the run, and what the provider billed still counts."""
+    if model_kind == 'FallbackModel':
+        agent = Agent(FallbackModel(BilledThenFailsModel(_answer()), _answer(), fallback_on=lambda error: False))
+    else:
+        agent = Agent(
+            BilledThenFailsModel(_answer()), capabilities=[ModelFallback(_answer(), fallback_on=lambda error: False)]
+        )
+    usage = RunUsage()
+    with pytest.raises(ModelOverloadedError):
+        await agent.run('x', usage=usage, event_stream_handler=_consume)
+    assert usage == RunUsage(input_tokens=100, output_tokens=5)
+
+
+async def test_a_billed_attempt_before_a_stream_that_then_fails_is_counted_once():
+    """The stream that answers after a billed attempt carries it, and failing partway doesn't count it again."""
+
+    async def fails_partway(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hel'
+        raise ModelHTTPError(status_code=500, model_name='answer', body='boom')
+
+    answer = FunctionModel(stream_function=fails_partway, model_name='answer')
+    agent = Agent(BilledThenFailsModel(answer), capabilities=[ModelFallback(answer)])
+    usage = RunUsage()
+    with capture_run_messages() as messages:
+        with pytest.raises(ModelHTTPError):
+            await agent.run('x', usage=usage, event_stream_handler=_consume)
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert [attempt.usage for attempt in response.failed_attempts or []] == [_BILLED]
+    assert usage == RunUsage(
+        input_tokens=_BILLED.input_tokens + response.usage.input_tokens,
+        output_tokens=_BILLED.output_tokens + response.usage.output_tokens,
+        requests=1,
+    )

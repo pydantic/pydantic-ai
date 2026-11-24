@@ -5752,7 +5752,9 @@ class ModelRequestAttempt:
     usage: RequestUsage | None = None
     """The usage the provider reported for the attempt, including its cost where it can be calculated.
 
-    `None` when the usage is unknown, as it is for an attempt that raised before returning a response.
+    Set for an attempt whose response was rejected, and for a streamed attempt that raised after the provider reported
+    usage, like the input tokens it reports on opening the stream. `None` when the usage is unknown, as it is for an
+    attempt that raised before the provider reported any.
     """
 
     kind: Literal['retry', 'fallback'] = 'fallback'

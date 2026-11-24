@@ -2088,21 +2088,29 @@ def _billed_by_request(
     return billed_beyond(response, resumed)
 
 
-def _record_billed_usage(
-    usage: _usage.RunUsage,
-    billed: _messages.ModelResponse,
-    *,
-    described: Sequence[_messages.ModelRequestAttempt] = (),
-) -> None:
-    """Record a response's billed usage, and that of the attempts that failed before it.
+def _without_described(
+    billed: _messages.ModelResponse, described: Sequence[_messages.ModelRequestAttempt]
+) -> _messages.ModelResponse:
+    """`billed` without the `described` attempts, whose usage was committed when they failed.
 
-    `described` are attempts whose usage was already committed when they failed, so they're left out.
+    A response that isn't streamed is recorded before they're attached to it. Leaving them off a streamed one's record
+    too means neither the run's usage nor a wrapper accounting for billed responses counts them again.
     """
-    # Attempts that failed before the response, such as responses a `FallbackModel` rejected, were billed too.
-    _record_attempts_usage(
-        usage,
-        [attempt for attempt in billed.failed_attempts or () if not any(attempt is counted for counted in described)],
+    if not described or not billed.failed_attempts:
+        return billed
+    return replace(
+        billed,
+        failed_attempts=[
+            attempt for attempt in billed.failed_attempts if not any(attempt is counted for counted in described)
+        ]
+        or None,
     )
+
+
+def _record_billed_usage(usage: _usage.RunUsage, billed: _messages.ModelResponse) -> None:
+    """Record a response's billed usage, and that of the attempts that failed before it."""
+    # Attempts that failed before the response, such as responses a `FallbackModel` rejected, were billed too.
+    _record_attempts_usage(usage, billed.failed_attempts)
     _usage_attribution.record_usage(usage, billed.usage)
 
 
@@ -2515,6 +2523,22 @@ def _record_carried_attempts(
         request_context._usage_response_ledger.attempts.extend(attempts)  # pyright: ignore[reportPrivateUsage]
 
 
+def _record_lazily_opened_attempts(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+    request_context: ModelRequestContext,
+    error: BaseException,
+) -> None:
+    """Count the usage of the attempts a model made opening a stream the consumer was iterating, which `error` ended.
+
+    A model like a `FallbackModel` opens the stream only once the consumer iterates it when no error hook primes it, so
+    its attempts are on the error rather than counted by the attempt loop: on its group when every model failed, or
+    carried (see `carry_attempts`) when another error ended the request.
+    """
+    attempts = error.attempts if isinstance(error, exceptions.FallbackExceptionGroup) else carried_attempts(error)
+    _record_attempts_usage(ctx.state.usage, attempts)
+    request_context._usage_response_ledger.attempts.extend(attempts)  # pyright: ignore[reportPrivateUsage]
+
+
 async def _outside_attempts(awaitable: Awaitable[T]) -> T:
     """Await the once-per-step model request hooks, where a `RetryModelRequest` has no attempt to retry.
 
@@ -2693,6 +2717,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Set when the consumer stops the stream by raising, before the graph task cancels the handler.
         stream_error: BaseException | None = None
         _interrupted_response: _messages.ModelResponse | None = None
+        # The attempts this step's loop moved on from, whose usage was committed when they failed. Attempts the model
+        # itself carries on the stream are counted with it.
+        described_attempts: Sequence[_messages.ModelRequestAttempt] = ()
         # The pending response the request returned, which the run ends with unless a hook rejects it.
         _pending: tuple[ModelRequestContext, _messages.ModelResponse] | None = None
         time_to_first_chunk: float | None = None
@@ -2703,7 +2730,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             req_ctx: ModelRequestContext,
         ) -> _messages.ModelResponse:
             nonlocal _handler_called, _handler_response, _handler_request_context, _handler_usage_recorded
-            nonlocal _stream_cut_short, time_to_first_chunk, _interrupted_response, _pending
+            nonlocal _stream_cut_short, time_to_first_chunk, _interrupted_response, _pending, described_attempts
             if _handler_called:
                 raise exceptions.UserError('`wrap_model_request` may call its handler only once')
             _handler_called = True
@@ -2724,8 +2751,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             try:
                 async with AsyncExitStack() as stream_stack:
-                    # `described_attempts` are the attempts this step's loop moved on from, whose usage was committed
-                    # when they failed. Attempts the model itself carries on the stream are counted with it.
                     sr, req_ctx, request_start, described_attempts = await self._open_stream(
                         ctx, run_context, req_ctx, baseline=baseline, stream_stack=stream_stack, handoff=handoff
                     )
@@ -2759,9 +2784,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # response afterwards.
                     _interrupted_response = _interrupted_stream_response(stream_error, agent_stream_holder[0].response)
                     req_ctx._usage_response_ledger.responses.append(  # pyright: ignore[reportPrivateUsage]
-                        _billed_by_request(_interrupted_response, req_ctx.messages)
+                        _without_described(
+                            _billed_by_request(_interrupted_response, req_ctx.messages), described_attempts
+                        )
                     )
                     capture_model_response_span_context(req_ctx, _interrupted_response, time_to_first_chunk)
+                    _record_lazily_opened_attempts(ctx, req_ctx, stream_error)
                 raise
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.
@@ -2929,7 +2957,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
                             await _cancel_interrupted_job(wrap_request_context, partial)
                         self._commit_interrupted_response(
-                            ctx, partial, recorded, (_handler_request_context or wrap_request_context).messages
+                            ctx,
+                            partial,
+                            recorded,
+                            (_handler_request_context or wrap_request_context).messages,
+                            described=described_attempts,
                         )
                 else:
                     try:
@@ -2988,18 +3020,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         streamed: _messages.ModelResponse,
         recorded: _messages.ModelResponse,
         request_messages: Sequence[_messages.ModelMessage],
+        *,
+        described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> None:
         """Commit the response an interrupted stream produced so far, without checking usage limits.
 
         `streamed` is the stream's response so far, and `recorded` is it as `_interrupted_stream_response` recorded it.
         `request_messages` are the messages the stream was requested with, which end in the suspended response it
-        resumed, if any.
+        resumed, if any. `described` are the failed attempts whose usage was committed when they failed.
         """
         recorded.run_id = ctx.state.run_id
         recorded.conversation_id = ctx.state.conversation_id
         recorded.model_id = recorded.model_id or self._serving_model_id
         recorded.workspace_ref = ctx.deps.workspace_ref
-        _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
+        _record_billed_usage(
+            ctx.state.usage, _without_described(_billed_by_request(recorded, request_messages), described)
+        )
         if recorded.parts:
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.
@@ -4184,8 +4220,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         billed = response
         if request_context is not None:
             billed = _billed_by_request(response, request_context.messages)
+        billed = _without_described(billed, described)
+        if request_context is not None:
             request_context._usage_response_ledger.responses.append(billed)  # pyright: ignore[reportPrivateUsage]
-        _record_billed_usage(ctx.state.usage, billed, described=described)
+        _record_billed_usage(ctx.state.usage, billed)
 
     @staticmethod
     def _enforce_usage_limits(
