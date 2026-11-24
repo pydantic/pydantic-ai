@@ -907,7 +907,8 @@ async def test_request_config_filters_elevenlabs_agents_settings() -> None:
         {'max_tokens': 4096, 'elevenlabs_agents_dynamic_variables': {'name': 'Ana'}}
     )
 
-    # Settings holding only the custom-LLM request body record no `model_settings` at all.
+    # Settings holding only the custom-LLM request body and `secret__` dynamic variables record no
+    # `model_settings` at all.
     settings, exporter = _settings()
     conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), ResponseDone()])
     session = RealtimeSession(
@@ -916,7 +917,8 @@ async def test_request_config_filters_elevenlabs_agents_settings() -> None:
         instrumentation=settings,
         model_name='gpt-realtime',
         model_settings=ElevenLabsAgentsRealtimeModelSettings(
-            elevenlabs_agents_custom_llm_extra_body={'value': 'sentinel'}
+            elevenlabs_agents_custom_llm_extra_body={'value': 'sentinel'},
+            elevenlabs_agents_dynamic_variables={'secret__x': 'sentinel'},
         ),
     )
     async with session:

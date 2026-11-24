@@ -465,6 +465,8 @@ class SessionInstrumentation:
                 continue
             if key == 'elevenlabs_agents_dynamic_variables' and is_str_mapping(value):
                 value = {name: variable for name, variable in value.items() if not name.startswith('secret__')}
+                if not value:
+                    continue
             recorded[key] = value
         return recorded
 
