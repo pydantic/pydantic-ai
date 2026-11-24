@@ -2794,7 +2794,8 @@ def test_load_dump_message_id_skips_activity_messages() -> None:
     `CompactionPart` in the response that compacted; both dump as activity messages after the chat message
     the client sent. `@ag-ui/client` doesn't send activity messages back, so the id has to stay on the user
     message for a regenerate or edit after a reload to find the stored turn. A message that dumps to
-    activities alone keeps the id on the last of them.
+    activities alone keeps the id on the last of them. Loading the dump again keeps every id: an activity
+    merged after a chat message doesn't replace the id the chat message kept.
 
     Regression test for https://github.com/pydantic/pydantic-ai/issues/12691
     """
@@ -2827,6 +2828,9 @@ def test_load_dump_message_id_skips_activity_messages() -> None:
     ]
     uuid.UUID(dumped[1].id)
     uuid.UUID(dumped[3].id)
+
+    reloaded = AGUIAdapter.load_messages(dumped)
+    assert [m.metadata for m in reloaded] == [m.metadata for m in messages]
 
 
 def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:
