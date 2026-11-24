@@ -83,7 +83,8 @@ def test_version_names_the_legacy_clai2_command(
 
 
 def test_version_reads_the_installed_distribution(run_cli: CliRunner) -> None:
-    assert run_cli('--version').stdout == f'pax {self_update.installed().version}\n'
+    # A `git+` or `main` install appends its short commit, so only the start is fixed.
+    assert run_cli('--version').stdout.startswith(f'pax {self_update.installed().version}')
 
 
 def test_first_model_window_lookup_runs_off_the_event_loop(
