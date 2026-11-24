@@ -1961,6 +1961,10 @@ RetryFeedbackCause: TypeAlias = Literal['validation_error', 'no_output', 'model_
   rejects, so it goes in the user voice too, inside a `<pyai:retry_feedback>` fence.
 
 Only `'no_output'` carries fixed framework text, so only it reaches the model in the system voice.
+
+[`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the exception: it
+sends the feedback as a `developer` message whatever its cause, so the model doesn't read it as a newer
+request.
 """
 
 RetryCauseT_co = TypeVar(
