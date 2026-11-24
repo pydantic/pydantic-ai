@@ -779,7 +779,9 @@ class GoogleModel(Model[Client]):
         The Gemini API rejects `presence_penalty` and `frequency_penalty` for every model (verified live 2026-11-04),
         while Google Cloud accepts them for the models `google_model_profile` says do. Google Cloud also reads more
         image and document media types than the Gemini API.
-        On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`.
+        On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`, and `gemini-2.5-flash`
+        gets `thinking_always_enabled`, so `thinking=False` sends the minimum `thinking_budget` that its reroute target
+        accepts instead of 0.
         """
         if self._is_google_cloud:
             profile = merge_profile(
@@ -794,6 +796,13 @@ class GoogleModel(Model[Client]):
         # same minimum but is not probed, so it keeps 128: https://github.com/pydantic/pydantic-ai/issues/14206
         if self._model_name == 'gemini-2.5-flash-lite':
             profile = merge_profile(profile, GoogleModelProfile(google_minimal_thinking_budget=512))
+        # From 2026-12-01 the Gemini API routes `gemini-2.5-flash` to `gemini-3.5-flash-lite`
+        # (https://aistudio.google.com/docs/deprecations), which rejects `thinking_budget=0` with `Request contains an
+        # invalid argument` and accepts 128 (verified live 2026-11-24; `gemini-2.5-flash` accepts both). So, like
+        # Gemini 2.5 Pro, `thinking=False` sends the minimum budget. Vertex AI isn't named in the reroute and keeps 0:
+        # https://github.com/pydantic/pydantic-ai/issues/14032
+        if self._model_name == 'gemini-2.5-flash':
+            profile = merge_profile(profile, ModelProfile(thinking_always_enabled=True))
         return profile
 
     def _unsupported_settings(self) -> frozenset[str]:
