@@ -73,6 +73,15 @@ def test_version_prints_and_exits(
     assert not (tmp_path / 'config.db').exists()
 
 
+def test_version_names_the_legacy_clai2_command(
+    tmp_path: Path, run_cli: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A `uv tool install pydantic-clai2` environment runs Pax as `clai2`, so `--version` says so."""
+    monkeypatch.setattr(sys, 'prefix', str(tmp_path / 'tools' / 'pydantic-clai2'))
+    monkeypatch.setattr(self_update, 'installed', lambda: Installed(version='0.73.0'))
+    assert run_cli('--version').stdout == 'clai2 0.73.0\n'
+
+
 def test_version_reads_the_installed_distribution(run_cli: CliRunner) -> None:
     assert run_cli('--version').stdout == f'pax {self_update.installed().version}\n'
 
