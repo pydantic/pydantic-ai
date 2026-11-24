@@ -192,7 +192,7 @@ async def test_stream_cumulative_usage_profile_opt_out_sums_chunks(allow_model_r
     """A `gemini*` name on a server that reports per-chunk deltas keeps correct usage by opting out in its profile.
 
     A unit test because no recorded server sends deltas. The flag-on side is pinned against a real recording by
-    `test_compatible_api_gemini_3_tool_call_thought_signature`.
+    `test_gemini_stream_usage_replaces_running_totals`.
     """
     stream: list[chat.ChatCompletionChunk] = [
         chunk_with_usage(
