@@ -335,6 +335,10 @@ def _search_files_arguments(
         str(_MAX_MATCH_COLUMNS),
         '--max-columns-preview',
         *(['--glob', command_glob] if command_glob and not fnmatch_only else []),
+        # A glob is an override in ripgrep and wins over the hidden-file skip.
+        # Add a later override that re-excludes hidden paths unless the caller
+        # explicitly named one (in which case hidden_flag contains --hidden).
+        *(['--glob', '!.*'] if command_glob and not fnmatch_only and not hidden_flag else []),
         *hidden_flag,
         '--regexp',
         pattern,
@@ -374,6 +378,9 @@ def _grep_arguments(
     ]
     if glob is not None:
         arguments.extend(['--glob', glob])
+        # Keep a caller's glob from overriding ripgrep's hidden-file skip.
+        if not hidden_flag:
+            arguments.extend(['--glob', '!.*'])
     arguments.extend(hidden_flag)
     if file_type is not None:
         arguments.extend(['--type', file_type])
@@ -1856,6 +1863,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             '--sort',
             'path',
             *(['--glob', glob] if glob is not None else []),
+            # A glob overrides ripgrep's hidden-file skip; re-exclude hidden
+            # paths unless the caller explicitly named a hidden file/dir.
+            *(['--glob', '!.*'] if glob is not None and not hidden_flag else []),
             *hidden_flag,
         ]
         try:
