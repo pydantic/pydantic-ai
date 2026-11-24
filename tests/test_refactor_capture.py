@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -154,6 +155,7 @@ def test_no_stream():
 REQUESTS = """
 import asyncio
 import random
+import threading
 import time
 import uuid
 from contextlib import suppress
@@ -183,6 +185,11 @@ async def post(http, **content):
 
 
 def test_json_over_httpx():
+    # A thread an earlier test left running can draw from `random` after the capture seeds it, as the keepalive ping of
+    # a `websockets` connection does.
+    pinging = threading.Thread(target=random.getrandbits, args=(32,))
+    pinging.start()
+    pinging.join()
     content = dict(json=dict(text={text!r}, pick=random.randrange(1000)), headers={{'xi-api-key': 'secret'}})
     asyncio.run(post(httpx, **content))
 
@@ -694,6 +701,16 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
     """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
+    # The inner sessions share this worker's `random` with every thread an earlier test left running, and such a
+    # thread can draw from it between the capture's seed and an inner test's draw: Prefect's events client keeps a
+    # `websockets` connection open whose pings draw `random.getrandbits(32)`. So the capture's seed also seeds `rng`,
+    # and `random.randrange`, the draw the inner tests assert on, reads `rng`: a thread that draws through
+    # `random.getrandbits`, as a `websockets` ping does, can't shift it.
+    rng = random.Random()
+    seed = random.seed
+    # Pyright can't infer a lambda parameter's type with nothing to infer it from.
+    monkeypatch.setattr(random, 'seed', lambda a: (seed(a), rng.seed(a)))  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
+    monkeypatch.setattr(random, 'randrange', rng.randrange)
 
     def run(
         capture_dir: Path,
@@ -788,8 +805,9 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
 def test_capture_records_each_request_per_test(run: RunCapture, tmp_path: Path):
     """A request sent over `httpx` or `httpx2` is recorded with its body, and a call on an SDK mock with its arguments.
 
-    `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture. The API keys
-    the session's requests carry, under ElevenLabs' `xi-api-key` and Anthropic's `x-api-key`, are left out.
+    `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture, even after a
+    thread drew through `random.getrandbits`. The API keys the session's requests carry, under ElevenLabs' `xi-api-key`
+    and Anthropic's `x-api-key`, are left out.
     """
     run(tmp_path).assert_outcomes(passed=11)
 
