@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from typing import Literal, get_args
+from datetime import timedelta
+from typing import Literal, assert_never
 
 import pytest
 from genai_prices.data_snapshot import get_snapshot
 from inline_snapshot import snapshot
-from typing_extensions import assert_never
+from pytest_mock import MockerFixture
 
-from pydantic_ai import UserError
+from pydantic_ai import Agent, ModelSettings, UserError
 from pydantic_ai.models import infer_model, infer_model_profile
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import DEFAULT_PROFILE
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.providers import infer_provider_class
@@ -19,14 +21,14 @@ from ..conftest import TestEnv, try_import
 with try_import() as imports_successful:
     from openai import AsyncBedrockOpenAI
 
-    from pydantic_ai.models.bedrock import BedrockConverseModel, LatestBedrockModelNames
+    from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='bedrock not installed')]
 
 # These tests inspect local provider configuration and routing without making HTTP requests, so VCR cannot cover them.
 
@@ -202,15 +204,18 @@ def test_bedrock_mantle_model_rejects_wrong_endpoint_family() -> None:
 
 def test_bedrock_converse_rejects_proprietary_openai() -> None:
     # Proprietary GPT models Converse doesn't serve (GPT-5.4, GPT-5.5, GPT-5.6 Cyber — and future GPT
-    # generations until AWS lists them) are flagged by the profile (`bedrock_supported_on_converse=False`)
+    # generations until verified on Converse) are flagged by the profile (`bedrock_supported_on_converse=False`)
     # and `BedrockConverseModel` raises at construction with a pointer to `BedrockMantleProvider`.
-    # Exact names, not a prefix: GPT-5.6 Sol/Luna/Terra are served on Converse; `gpt-5.6-cyber` is not.
+    # Exact names, not a prefix: GPT-5.6 Sol/Luna/Terra, GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol are served on
+    # Converse; `gpt-5.6-cyber` is not.
     for model_name in (
         'openai.gpt-5.6-cyber',
         'openai.gpt-5.4',
         'openai.gpt-5.5',
     ):
-        assert BedrockProvider.model_profile(model_name) == snapshot({'bedrock_supported_on_converse': False})
+        assert BedrockProvider.model_profile(model_name) == snapshot(
+            {'bedrock_supported_on_converse': False, 'supports_video_input': False}
+        )
         with pytest.raises(UserError, match='BedrockMantleProvider'):
             infer_model(f'bedrock:{model_name}')
     # The open-weight GPT-OSS family remains available on Converse.
@@ -218,12 +223,32 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
     assert isinstance(infer_model('bedrock:openai.gpt-oss-safeguard-20b'), BedrockConverseModel)
 
 
-def test_bedrock_converse_accepts_gpt_5_6_models() -> None:
-    # #7793: AWS model cards list GPT-5.6 Sol/Luna/Terra on the Converse API — unlike every other
-    # proprietary GPT model, they construct on `BedrockConverseModel`. No Pydantic AI profile overrides
-    # have been verified for them, so the effective profile keeps the relevant defaults.
-    for base_name in ('gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'):
-        assert BedrockProvider.model_profile(f'openai.{base_name}') is None
+def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
+    # AWS serves GPT-5.6 Sol/Luna/Terra (#7793), GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol/Terra on the Converse API (see
+    # `test_bedrock_openai_converse`) — unlike every other proprietary GPT model, they construct on
+    # `BedrockConverseModel`. Converse rejects their sampling settings and takes their reasoning effort in the
+    # Responses API shape; GPT-6 Astra and GPT-6.1 Sol can't turn reasoning off. Bedrock documents a 30-minute
+    # prompt-cache TTL for all of them.
+    for base_name in (
+        'gpt-5.6-sol',
+        'gpt-5.6-luna',
+        'gpt-5.6-terra',
+        'gpt-6-sol',
+        'gpt-6-luna',
+        'gpt-6-astra',
+        'gpt-6.1-sol',
+        'gpt-6.1-terra',
+    ):
+        assert BedrockProvider.model_profile(f'openai.{base_name}') == {
+            'bedrock_disallows_sampling_settings': True,
+            'bedrock_supports_stop_sequences': False,
+            'bedrock_thinking_variant': 'openai_responses',
+            'supports_thinking': True,
+            'thinking_always_enabled': base_name in ('gpt-6-astra', 'gpt-6.1-sol'),
+            # Converse takes video only on Nova.
+            'supports_video_input': False,
+            'default_cache_retention': timedelta(minutes=30),
+        }
         model = BedrockConverseModel(f'us.openai.{base_name}', provider=BedrockProvider(region_name='us-west-2'))
         assert {
             'supports_json_schema_output': model.profile.get('supports_json_schema_output', False),
@@ -232,35 +257,60 @@ def test_bedrock_converse_accepts_gpt_5_6_models() -> None:
         } == snapshot(
             {
                 'supports_json_schema_output': False,
-                'supports_thinking': False,
-                'bedrock_thinking_variant': None,
+                'supports_thinking': True,
+                'bedrock_thinking_variant': 'openai_responses',
             }
         )
     assert isinstance(infer_model('bedrock:openai.gpt-5.6-luna'), BedrockConverseModel)
+    # GPT-6.1 Sol is served under both Converse routing prefixes.
+    assert isinstance(infer_model('bedrock:global.openai.gpt-6.1-sol'), BedrockConverseModel)
+    BedrockConverseModel('global.openai.gpt-6.1-sol', provider=BedrockProvider(region_name='us-west-2'))
+    assert isinstance(infer_model('bedrock:global.openai.gpt-6.1-terra'), BedrockConverseModel)
+    BedrockConverseModel('global.openai.gpt-6.1-terra', provider=BedrockProvider(region_name='us-west-2'))
+
+
+@pytest.mark.parametrize('model_name', ['us.openai.gpt-6.1-sol', 'us.openai.gpt-6.1-terra'])
+async def test_bedrock_converse_gpt_6_1_drops_sampling_settings(
+    allow_model_requests: None, mocker: MockerFixture, model_name: str
+) -> None:
+    model = BedrockConverseModel(model_name, provider=BedrockProvider(region_name='us-west-2'))
+    agent = Agent(model=model, model_settings=ModelSettings(temperature=1.0, top_p=0.9))
+
+    mock_converse = mocker.patch.object(model.client, 'converse')
+    mock_converse.return_value = {
+        'output': {'message': {'role': 'assistant', 'content': [{'text': 'hello'}]}},
+        'stopReason': 'end_turn',
+        'usage': {'inputTokens': 1, 'outputTokens': 1, 'totalTokens': 2},
+        'ResponseMetadata': {'HTTPStatusCode': 200},
+    }
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run('What is the capital of France?')
+
+    inference_config = mock_converse.call_args.kwargs.get('inferenceConfig', {})
+    assert 'temperature' not in inference_config
+    assert 'topP' not in inference_config
 
 
 def test_bedrock_converse_gpt_5_6_inference_id_forms() -> None:
     # AWS lists eight GPT-5.6 cross-region inference-profile IDs for Converse: Sol supports US and
     # global routing, while Luna and Terra additionally support India routing.
-    model_names = tuple(name for name in get_args(LatestBedrockModelNames) if '.openai.gpt-5.6-' in name)
-    assert model_names == snapshot(
-        (
-            'us.openai.gpt-5.6-sol',
-            'global.openai.gpt-5.6-sol',
-            'us.openai.gpt-5.6-luna',
-            'in.openai.gpt-5.6-luna',
-            'global.openai.gpt-5.6-luna',
-            'us.openai.gpt-5.6-terra',
-            'in.openai.gpt-5.6-terra',
-            'global.openai.gpt-5.6-terra',
-        )
+    model_names = (
+        'us.openai.gpt-5.6-sol',
+        'global.openai.gpt-5.6-sol',
+        'us.openai.gpt-5.6-luna',
+        'in.openai.gpt-5.6-luna',
+        'global.openai.gpt-5.6-luna',
+        'us.openai.gpt-5.6-terra',
+        'in.openai.gpt-5.6-terra',
+        'global.openai.gpt-5.6-terra',
     )
     for model_name in model_names:
         BedrockConverseModel(model_name, provider=BedrockProvider(region_name='us-west-2'))
 
     # India normalization must still route unsupported proprietary models through the OpenAI profile gate.
     assert BedrockProvider.model_profile('in.openai.gpt-5.6-cyber') == snapshot(
-        {'bedrock_supported_on_converse': False}
+        {'bedrock_supported_on_converse': False, 'supports_video_input': False}
     )
     with pytest.raises(UserError, match='BedrockMantleProvider'):
         BedrockConverseModel('in.openai.gpt-5.6-cyber', provider=BedrockProvider(region_name='ap-south-1'))
@@ -292,7 +342,7 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_chat_supports_web_search': False,
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
-            'openai_reasoning_enabled_by_default': True,
+            'thinking_enabled_by_default': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_reasoning_mode': True,
             'openai_responses_supports_reasoning_context': True,
@@ -300,8 +350,8 @@ def test_bedrock_mantle_profiles() -> None:
             'openai_supports_prompt_cache_breakpoints': True,
             'bedrock_mantle_interface': 'openai-responses',
             'openai_supports_minimal_reasoning_effort': False,
-            'openai_responses_tool_call_ids_are_response_scoped': True,
-            'supported_native_tools': frozenset(),
+            'tool_call_ids_are_response_scoped': True,
+            'supported_native_tools': frozenset({ComputerTool}),
         }
     )
     # Compare against a direct genai-prices query so the test doesn't pin a data value.
@@ -312,22 +362,17 @@ def test_bedrock_mantle_profiles() -> None:
     # Every GPT-5.x model on Mantle's `/openai/v1` Responses endpoint resets tool-call IDs across
     # separate responses (verified live on 5.5 and 5.6), so response-scoping keys on the interface,
     # not the model version.
-    assert (
-        infer_model_profile('bedrock-mantle:openai.gpt-5.4').get('openai_responses_tool_call_ids_are_response_scoped')
-        is True
-    )
-    assert (
-        infer_model_profile('bedrock-mantle:openai.gpt-5.5').get('openai_responses_tool_call_ids_are_response_scoped')
-        is True
-    )
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.4').get('tool_call_ids_are_response_scoped') is True
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.5').get('tool_call_ids_are_response_scoped') is True
     # GPT-OSS on `/v1/responses` keeps globally-unique IDs, so it is not response-scoped.
     assert (
-        infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get(
-            'openai_responses_tool_call_ids_are_response_scoped', False
-        )
+        infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('tool_call_ids_are_response_scoped', False)
         is False
     )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('bedrock_mantle_interface') == 'responses'
+    assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supported_native_tools') == frozenset()
+    # GPT-5.2 is on the Responses interface but OpenAI doesn't offer it the computer tool.
+    assert infer_model_profile('bedrock-mantle:openai.gpt-5.2').get('supported_native_tools') == frozenset()
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-safeguard-20b').get('bedrock_mantle_interface') == 'chat'
     # Non-OpenAI and unknown models fall back to the default profile (best-effort).
     assert infer_model_profile('bedrock-mantle:anthropic.claude-sonnet-5') == DEFAULT_PROFILE

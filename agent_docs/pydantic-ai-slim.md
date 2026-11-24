@@ -22,8 +22,9 @@ Before editing, identify which contracts can change:
 
 - Public API: constructor kwargs, decorators, settings, output types, tool/toolset APIs, imports, and documented names.
 - Provider API compatibility: request parameters, response parts, streaming chunks, native tools, structured output, thinking/reasoning, prompt caching, token counting, usage, and provider metadata.
-- Message/event protocol: persisted message history, partial responses, tool-call parts, output events, native tool parts, retry prompts, and UI event streams.
+- Message/event protocol: persisted message history, partial responses, tool-call parts, output events, native tool parts, retries, and UI event streams.
 - Durable execution: context propagation, dependency serialization, tool ordering, retries, message replay, toolset lifecycle, activity/task boundaries, and deterministic behavior.
+  - A core definition listed in `scripts/durable_exec_contract.json` is an engine contract. See "Core changes that engines depend on" in [durable_exec/AGENTS.md](../pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md).
 - Agent specs/config: whether new state is serializable, safe to load, and representable without runtime-only closures.
 
 ## Design Rules
@@ -31,6 +32,7 @@ Before editing, identify which contracts can change:
 - Keep provider facts in providers/profiles/model adapters. Do not scatter provider-name checks through graph, tool, output, or UI code.
 - Preserve provider-specific data in structured metadata/provider-details fields. Do not overload normalized IDs, text content, or tool args.
 - Prefer general primitives over one-off flags: capabilities for cross-cutting behavior, wrapper toolsets for tool collection behavior, profiles for capability facts, and typed settings for provider API knobs.
+- Identify a tool by what it is, never by its name. Tool names are user-facing and can be renamed or prefixed. Match framework tools with `isinstance` on their typed parts (`ToolSearchCallPart`, `LoadCapabilityReturnPart`, ...) or `ToolDefinition.tool_kind`; a tool that others need to recognize gets a `ToolKind` declaring its namespace, name and shapes (`foo = ToolKind('my_capability', 'foo', args=FooArgs, content=FooResult)`), typed parts registered for it (`class FooCallPart(ToolCallPart[FooArgs], kind=foo)`), and declares it with `tool_kind=foo`. Native tool parts are the exception by design: their `tool_name` is the native tool's `kind`. The only other exception is recognizing history written by earlier versions, whose parts may lack a `tool_kind`; keep such name checks in the legacy-history code and say why there.
 - Keep local tools and provider-native tools conceptually separate. If a feature can use either, make the fallback/selection behavior explicit and test the message history it produces.
 - When changing tool/output execution, check ordering, retry semantics, deferred calls, output finalization, streaming events, and durable wrappers together.
 - When removing deprecated APIs, distinguish public surface cleanup from persisted-data compatibility. Old constructors/imports may be removed in a major version; old serialized histories may still need to deserialize.

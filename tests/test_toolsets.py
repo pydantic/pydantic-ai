@@ -1,22 +1,16 @@
 from __future__ import annotations
 
 import re
-import sys
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from datetime import timezone
-from typing import Any, TypeVar
+from datetime import UTC
+from importlib.util import find_spec
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 from unittest.mock import AsyncMock
 
 import anyio
 import pytest
 from pydantic import ValidationError
-from typing_extensions import Self
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
-else:
-    BaseExceptionGroup = BaseExceptionGroup  # pragma: lax no cover
 
 from pydantic_ai import (
     AbstractToolset,
@@ -46,7 +40,6 @@ from pydantic_ai.messages import (
     InstructionPart,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolReturnPart,
     ToolsetInstructionSource,
@@ -57,11 +50,20 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, Tool, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr, iter_message_parts
 
-pytestmark = pytest.mark.anyio
+has_mcp = find_spec('mcp') is not None
+if TYPE_CHECKING or has_mcp:  # pragma: lax no cover
+    # Imported at collection, outside the event loop: first imported inside an async test, BlockBuster blocks the
+    # `importlib.metadata` scans this import runs, and `importlib.metadata` caches the empty result for the process.
+    from fastmcp.client.transports import FastMCPTransport
+
+    from pydantic_ai.mcp import MCPToolset
+
+    from .mcp_server import mcp as test_mcp_server
 
 T = TypeVar('T')
 
@@ -750,42 +752,41 @@ async def test_comprehensive_toolset_composition():
     )
 
 
+def in_process_mcp_toolset(transport: FastMCPTransport | None = None) -> MCPToolset:
+    """An `MCPToolset` connected in-process to `tests.mcp_server`, with a handshake deadline no runner stall reaches.
+
+    The default 5-second `init_timeout` is shorter than a stalled CI worker can take to finish the `initialize`
+    handshake. These tests are about how `CombinedToolset` enters and exits its members, not about the transport or
+    the handshake timing, so the deadline is the module's hang guard instead.
+    """
+    return MCPToolset(transport or FastMCPTransport(test_mcp_server), init_timeout=READINESS_WAIT_TIMEOUT)
+
+
+@pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 async def test_context_manager():
-    try:
-        from fastmcp.client.transports import StdioTransport
-
-        from pydantic_ai.mcp import MCPToolset
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('mcp is not installed')
-
-    transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
-    server1 = MCPToolset(transport)
-    server2 = MCPToolset(transport)
+    transport = FastMCPTransport(test_mcp_server)
+    server1 = in_process_mcp_toolset(transport)
+    server2 = in_process_mcp_toolset(transport)
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
 
-    async with toolset:
-        assert server1.is_running
-        assert server2.is_running
-
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with toolset:
             assert server1.is_running
             assert server2.is_running
+
+            async with toolset:
+                assert server1.is_running
+                assert server2.is_running
 
 
 class InitializationError(Exception):
     pass
 
 
+@pytest.mark.skipif(not has_mcp, reason='mcp is not installed')
 async def test_context_manager_failed_initialization():
     """Test if MCP servers stop if any MCP server fails to initialize."""
-    try:
-        from fastmcp.client.transports import StdioTransport
-
-        from pydantic_ai.mcp import MCPToolset
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('mcp is not installed')
-
-    server1 = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+    server1 = in_process_mcp_toolset()
     server2 = AsyncMock()
     # `CombinedToolset` reads each member's `id` when it is constructed, and an auto-created
     # `AsyncMock` attribute would answer that with a coroutine. This server stands in for one that
@@ -795,7 +796,7 @@ async def test_context_manager_failed_initialization():
 
     toolset = CombinedToolset([server1, server2])
 
-    with pytest.raises(InitializationError):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT), pytest.raises(InitializationError):
         async with toolset:
             pass
 
@@ -1280,7 +1281,7 @@ async def test_toolset_max_retries_inherits_from_agent():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='call always_fails', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1288,6 +1289,7 @@ async def test_toolset_max_retries_inherits_from_agent():
                 parts=[ToolCallPart(tool_name='always_fails', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1295,7 +1297,7 @@ async def test_toolset_max_retries_inherits_from_agent():
             ),
             ModelRequest(
                 parts=[],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1334,7 +1336,7 @@ async def test_toolset_explicit_max_retries_overrides_agent():
             'ModelRequest',
         ]
     )
-    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    retry_parts = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.outcome == 'retried']
     assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails'])
 
 
@@ -1356,7 +1358,7 @@ async def test_tool_explicit_retries_overrides_toolset_and_agent():
 
     # Initial call + 3 retries = 4 attempts.
     assert len(attempts) == 4
-    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    retry_parts = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.outcome == 'retried']
     assert [p.content for p in retry_parts] == snapshot(['Always fails', 'Always fails', 'Always fails'])
 
 
@@ -1386,7 +1388,7 @@ async def test_prepare_function_sees_agent_max_retries():
         [
             ModelRequest(
                 parts=[UserPromptPart(content='call my_tool', timestamp=IsDatetime())],
-                timestamp=IsNow(tz=timezone.utc),
+                timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
@@ -1394,6 +1396,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
                 usage=RequestUsage(input_tokens=52, output_tokens=4),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1416,6 +1419,7 @@ async def test_prepare_function_sees_agent_max_retries():
                 parts=[TextPart(content='{"my_tool":0}')],
                 usage=RequestUsage(input_tokens=53, output_tokens=7),
                 model_name='test',
+                model_id='test:test',
                 timestamp=IsDatetime(),
                 provider_name='test',
                 run_id=IsStr(),
@@ -1449,7 +1453,7 @@ async def test_toolset_tool_max_retries_none_uses_tool_retries_not_output_retrie
     assert [type(m).__name__ for m in messages] == snapshot(
         ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse', 'ModelRequest']
     )
-    retry_parts = [p for m in messages for p in getattr(m, 'parts', []) if isinstance(p, RetryPromptPart)]
+    retry_parts = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.outcome == 'retried']
     assert [p.content for p in retry_parts] == snapshot(['Always fails'])
 
 
@@ -2000,24 +2004,25 @@ async def test_combined_toolset_instructions_empty():
 async def test_combined_toolset_collects_instructions_concurrently_in_child_order():
     """Instruction collection starts all children together without changing their declared order."""
     started: list[str] = []
-    all_started = anyio.Event()
+    started_when_resumed: list[list[str]] = []
 
     class SynchronizingToolset(MockToolsetWithInstructions):
         async def get_instructions(self, ctx: RunContext[object]) -> str:
             assert self.custom_instructions is not None
             started.append(self.custom_instructions)
-            if len(started) == 2:
-                all_started.set()
-            await all_started.wait()
+            # Concurrent children all start before the first one resumes; sequential ones don't.
+            await anyio.lowlevel.checkpoint()
+            started_when_resumed.append(list(started))
             return self.custom_instructions
 
     combined = CombinedToolset(
         [SynchronizingToolset('First.', id='first'), SynchronizingToolset('Second.', id='second')]
     )
 
-    with anyio.fail_after(1):
-        instructions = await combined.get_instructions(build_run_context(None))
+    instructions = await combined.get_instructions(build_run_context(None))
 
+    # Either child may start first (Trio picks its own order); concurrency means both started before either resumed.
+    assert sorted(started_when_resumed[0]) == ['First.', 'Second.']
     assert instructions == [
         InstructionPart(content='First.', dynamic=True, id=InstructionId(ToolsetInstructionSource('first'))),
         InstructionPart(content='Second.', dynamic=True, id=InstructionId(ToolsetInstructionSource('second'))),
@@ -2865,7 +2870,7 @@ async def test_concurrent_runs_dont_share_state():
 
         @property
         def id(self) -> str | None:
-            return 'counting'
+            return 'counting'  # pragma: no cover
 
         async def for_run(self, ctx: RunContext) -> AbstractToolset:
             return CountingToolset()

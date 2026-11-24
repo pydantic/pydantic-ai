@@ -1,10 +1,12 @@
 ---
 # Logfire OTLP observability shared import
 # Exports gh-aw distributed traces (agent GenAI spans, setup/conclusion spans)
-# to Pydantic Logfire via OTLP/HTTP.
+# and gh-aw's job metrics to Pydantic Logfire via OTLP/HTTP.
 #
-# gh-aw POSTs OTLP/HTTP JSON to {endpoint}/v1/traces, so this endpoint must be
-# the bare Logfire ingest base URL (no /v1/traces path).
+# gh-aw POSTs OTLP/HTTP JSON to {endpoint}/v1/traces and {endpoint}/v1/metrics,
+# so this endpoint must be the bare Logfire ingest base URL (no /v1/ path).
+# gh-aw sends the metrics unless the repository variable GH_AW_OTEL_METRICS is
+# set to false.
 #
 # Use vars.LOGFIRE_URL to avoid hardcoding endpoints in each workflow. Keep
 # network allowlists in sync with the possible hosts for this variable.
@@ -23,4 +25,12 @@ observability:
     headers:
       Authorization: ${{ secrets.LOGFIRE_TOKEN }}
     if-missing: warn
+network:
+  allowed:
+    - logfire-api.pydantic.dev
+    - logfire-eu.pydantic.dev
+    - logfire-us.pydantic.dev
+    - logfire-api.pydantic.info
+    - logfire-eu.pydantic.info
+    - logfire-us.pydantic.info
 ---

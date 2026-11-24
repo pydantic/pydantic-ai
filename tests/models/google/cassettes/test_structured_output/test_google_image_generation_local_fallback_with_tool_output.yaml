@@ -1,0 +1,206 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "700"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Generate an image of an axolotl, then report its color.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Generate an image from a text prompt.
+            name: generate_image
+            parameters_json_schema:
+              additionalProperties: false
+              properties:
+                prompt:
+                  type: string
+              required:
+              - prompt
+              type: object
+          - description: The final response which ends this conversation
+            name: final_result
+            parameters_json_schema:
+              properties:
+                color:
+                  type: string
+              required:
+              - color
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: ANY
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1319
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - functionCall:
+                name: generate_image
+                args:
+                  prompt: an axolotl
+              thoughtSignature: >-
+                CtoGAWkUfROVLBE11zG5LgfjRnCpxAesDKR8HeOL4ZBMRJx3Zbm//MvatajBMDAGP9HvfgeL2q2rNhmu3T4gPGXUf0GIt+EOnz675ES04BIrVMI6hLlIwJj7dKBOD7LKQbjPQ9gJQr73xucOsISs/jGq8KS6vdsruCkd3K2dkEnGatGUb+wKUfeyhLF8wW7P6lFM7MtYjqM4pIRocknp44LdzDQFmP6B3ZJ/lQFt/XfAXWLEgh1+SQvQUPf8wogRYS2z/TYvO8TW9Ggx/h3vRdGTPvjWXWd5RoWCU1TCjyzMiPPuNNx978gpcWVX+yrv5VcDwcWkeGquvOAaVcPoma9hnEaX241yaocht02/M/JGALCyIgyIT10uW9yfZF8+RpHfVsM58Ed77sH7OpfiONMgJqaZ9RyZARPFtYSMCe7IlOGT0dpVxMGxASVBN9jeabhd0FAbxOsnuq3jPq3o15oTucPQ8OXRB2RfFv3fcYqghJMsiTekcRfkSbmkCxv4tBbFTSBoX+wuZhY9S26148WvmGw0/zTBacZH/k7Z+0Pb8vcPKteIGoxLZRSGIE7zuRmDvHjfmzozSYm9F7iqfaXW/0WUmybLihovac1NvbFzxDU45UyVbyyyVI6HIz6dN8XW6oDeDaqAVBKounFUD75p2AqZlvechyNdE/1petTd6549RqBdS0H5Kkoxi2/jj2dw0UG2qXbng3ghQhDYh11L7EXNJI/58dKxSFXFVd5qYzvHEWXRWWuZ7Ji2AzOoOs7ytKnjC9AIGLu8tRrXS+JuFweExX7KScV4cF4BzkgM3fA75I4R+KlSuNRVzWodln7iyOatm2KkeDwcdBqImyF69JDxSb37hF5/jqjLPVNnnvj3f5R2seBkT4wtCeSBKBy42k1OIQu5IlOk5hTW9ioy4Sxgn2AA18yY5o1eEqYS+BQ5Y9sSrNi2oQxjJ9D7FFkEK5LJM2/i7bTd7jI51/nEIMmNS+2I7diYu29JJOM3r7dUbshUOqhn841sKfQG4d0t9yYlT4FZ/DnFKo9Of3P3GRKCwIzPSaBo/re86+HfMIyhdILEa7dMj6hsBdSRn82Vc+2tRE5LXXu93YGpcPkNVSfMcxX7PHhvwKuecTrRDwxx3zMMjRP5mUlM
+            role: model
+          finishReason: STOP
+          index: 0
+          finishMessage: Model generated function call(s).
+        usageMetadata:
+          promptTokenCount: 94
+          candidatesTokenCount: 18
+          totalTokenCount: 308
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 94
+          thoughtsTokenCount: 196
+          serviceTier: standard
+        modelVersion: gemini-2.5-flash
+        responseId: nIm-aq2GAdKcz7IP7cHlkAQ
+  recorded_at: 2026-10-01T16:26:05.265838+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "2257"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Generate an image of an axolotl, then report its color.
+          role: user
+        - parts:
+          - functionCall:
+              id: pyd_ai_56b057d33a55412d8b01491a110317e6
+              args:
+                prompt: an axolotl
+              name: generate_image
+            thoughtSignature: >-
+              CtoGAWkUfROVLBE11zG5LgfjRnCpxAesDKR8HeOL4ZBMRJx3Zbm__MvatajBMDAGP9HvfgeL2q2rNhmu3T4gPGXUf0GIt-EOnz675ES04BIrVMI6hLlIwJj7dKBOD7LKQbjPQ9gJQr73xucOsISs_jGq8KS6vdsruCkd3K2dkEnGatGUb-wKUfeyhLF8wW7P6lFM7MtYjqM4pIRocknp44LdzDQFmP6B3ZJ_lQFt_XfAXWLEgh1-SQvQUPf8wogRYS2z_TYvO8TW9Ggx_h3vRdGTPvjWXWd5RoWCU1TCjyzMiPPuNNx978gpcWVX-yrv5VcDwcWkeGquvOAaVcPoma9hnEaX241yaocht02_M_JGALCyIgyIT10uW9yfZF8-RpHfVsM58Ed77sH7OpfiONMgJqaZ9RyZARPFtYSMCe7IlOGT0dpVxMGxASVBN9jeabhd0FAbxOsnuq3jPq3o15oTucPQ8OXRB2RfFv3fcYqghJMsiTekcRfkSbmkCxv4tBbFTSBoX-wuZhY9S26148WvmGw0_zTBacZH_k7Z-0Pb8vcPKteIGoxLZRSGIE7zuRmDvHjfmzozSYm9F7iqfaXW_0WUmybLihovac1NvbFzxDU45UyVbyyyVI6HIz6dN8XW6oDeDaqAVBKounFUD75p2AqZlvechyNdE_1petTd6549RqBdS0H5Kkoxi2_jj2dw0UG2qXbng3ghQhDYh11L7EXNJI_58dKxSFXFVd5qYzvHEWXRWWuZ7Ji2AzOoOs7ytKnjC9AIGLu8tRrXS-JuFweExX7KScV4cF4BzkgM3fA75I4R-KlSuNRVzWodln7iyOatm2KkeDwcdBqImyF69JDxSb37hF5_jqjLPVNnnvj3f5R2seBkT4wtCeSBKBy42k1OIQu5IlOk5hTW9ioy4Sxgn2AA18yY5o1eEqYS-BQ5Y9sSrNi2oQxjJ9D7FFkEK5LJM2_i7bTd7jI51_nEIMmNS-2I7diYu29JJOM3r7dUbshUOqhn841sKfQG4d0t9yYlT4FZ_DnFKo9Of3P3GRKCwIzPSaBo_re86-HfMIyhdILEa7dMj6hsBdSRn82Vc-2tRE5LXXu93YGpcPkNVSfMcxX7PHhvwKuecTrRDwxx3zMMjRP5mUlM
+          role: model
+        - parts:
+          - functionResponse:
+              id: pyd_ai_56b057d33a55412d8b01491a110317e6
+              name: generate_image
+              response:
+                return_value: The image of a pink axolotl was generated and shown to the user.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Generate an image from a text prompt.
+            name: generate_image
+            parameters_json_schema:
+              additionalProperties: false
+              properties:
+                prompt:
+                  type: string
+              required:
+              - prompt
+              type: object
+          - description: The final response which ends this conversation
+            name: final_result
+            parameters_json_schema:
+              properties:
+                color:
+                  type: string
+              required:
+              - color
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: ANY
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=840
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - functionCall:
+                name: final_result
+                args:
+                  color: pink
+              thoughtSignature: >-
+                CvYCAWkUfRNSI+UWHTfcBpym5h1OZQCE5D+QHRlGaEnVkGeTwLX7sh5FJsCGPNOxIw7yMISSadmZFH6NY/RePb1VES0aoZj1GFnYwOUf2F7KUpI9TzPe6SpL5VtGiT3F7lpmgY0Aanw6E4dXIM8iKHNHC6Rf7ySx3M7j31+FNg/20vhOpguzZeLLU+k9LKUZz9U0xawvAAvR4CIDlIjLPJobY1IBsodcN9uMzm+9HtcVhFeRPQypRO5Sp3CE+2/9UrpP3Eh3p6VgdkoFNlVG4l3JlBMQk2cOXLxRfwbLnvVoeIjVY3hUcDZjO27dyW9EJepBP46G98ZfYQwLGRqoP72dlaYECpHJkJ+toGOkKlhOTyANmIqSs4CVLh3ADmEwn+u4t9tfW4qDZXCDPLq57si40ThrZCCRFbBN2MVh16+hkBRSW8lpdH6xGFLvgb1qJbCCq3ohQy0rIzRN6btzoNB0bfdyCX0Zpl8neMgsR7NMc9F8AGgx+Ew=
+            role: model
+          finishReason: STOP
+          index: 0
+          finishMessage: Model generated function call(s).
+        usageMetadata:
+          promptTokenCount: 144
+          candidatesTokenCount: 15
+          totalTokenCount: 243
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 144
+          thoughtsTokenCount: 84
+          serviceTier: standard
+        modelVersion: gemini-2.5-flash
+        responseId: nYm-apDFG9zRz7IP2oTgkAQ
+  recorded_at: 2026-10-01T16:26:06.240672+00:00

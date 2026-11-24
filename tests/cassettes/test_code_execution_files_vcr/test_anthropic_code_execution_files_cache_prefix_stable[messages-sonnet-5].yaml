@@ -1,7 +1,8 @@
+version: 1
 interactions:
 - request:
-    body: "--390a21cb7beeda823243e739226551ca\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type:
-      text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--390a21cb7beeda823243e739226551ca--\r\n"
+    method: DELETE
+    uri: https://api.anthropic.com/v1/files/file_01HrqVpwEHGt6Cq7Arpfj9MY?beta=true
     headers:
       accept:
       - application/json
@@ -9,44 +10,85 @@ interactions:
       - gzip, deflate, br, zstd
       connection:
       - keep-alive
-      content-length:
-      - '198'
       content-type:
-      - multipart/form-data; boundary=390a21cb7beeda823243e739226551ca
+      - application/json
       host:
       - api.anthropic.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=238
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        id: file_01HrqVpwEHGt6Cq7Arpfj9MY
+        type: file_deleted
+  recorded_at: 2026-09-29T16:32:10.496681+00:00
+- request:
     method: POST
     uri: https://api.anthropic.com/v1/files?beta=true
-  response:
     headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '190'
+      - "198"
+      content-type:
+      - multipart/form-data; boundary=7d160b6d8ffe63c49b1326d5d643ffe2
+      host:
+      - api.anthropic.com
+    body:
+      type: text
+      content: "--7d160b6d8ffe63c49b1326d5d643ffe2\r\nContent-Disposition: form-data; name=\"file\"; filename=\"data.csv\"\r\nContent-Type: text/csv\r\n\r\nitem,value\napple,30\nbanana,70\n\r\n--7d160b6d8ffe63c49b1326d5d643ffe2--\r\n"
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
       server-timing:
-      - x-originResponse;dur=224
+      - x-originResponse;dur=289
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      created_at: '2026-08-28T00:16:37.128343Z'
-      downloadable: false
-      filename: data.csv
-      id: file_01BwTkmNMW3RrNxJxSLGgeBH
-      mime_type: text/csv
-      size_bytes: 30
-      type: file
-    status:
-      code: 200
-      message: OK
+    body:
+      type: json
+      content:
+        type: file
+        id: file_01HrqVpwEHGt6Cq7Arpfj9MY
+        size_bytes: 30
+        created_at: 2026-09-29T16:32:01.830255Z
+        filename: data.csv
+        mime_type: text/csv
+        downloadable: false
+  recorded_at: 2026-09-29T16:32:02.037555+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -55,192 +97,178 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '10586'
+      - "10555"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - cache_control:
-            ttl: 5m
-            type: ephemeral
-          text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
-          type: text
-        - file_id: file_01BwTkmNMW3RrNxJxSLGgeBH
-          type: container_upload
-        role: user
-      model: claude-sonnet-5
-      stream: false
-      system:
-      - text: 'You are a meticulous data analyst. Always use the code execution tool to read and compute over any attached
-          CSV file before answering. Guideline 0: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          1: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 2: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 3: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 4: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 5: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 6: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 7: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          8: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 9: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 10: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 11: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 12: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 13: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 14: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          15: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 16: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 17: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 18: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 19: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 20: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 21: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          22: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 23: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 24: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 25: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 26: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 27: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 28: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          29: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 30: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 31: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 32: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 33: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 34: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 35: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          36: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 37: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 38: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 39: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 40: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 41: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 42: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          43: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 44: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 45: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 46: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 47: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 48: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 49: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          50: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 51: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 52: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 53: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 54: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 55: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 56: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          57: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 58: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 59: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 60: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 61: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 62: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 63: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          64: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 65: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 66: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 67: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 68: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 69: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 70: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          71: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 72: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 73: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 74: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 75: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 76: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 77: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          78: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 79: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 80: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 81: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 82: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 83: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 84: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          85: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 86: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 87: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 88: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 89: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 90: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 91: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          92: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 93: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 94: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 95: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 96: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 97: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 98: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          99: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 100: prefer exact arithmetic
-          over estimation when analyzing tabular data. Guideline 101: prefer exact arithmetic over estimation when analyzing
-          tabular data. Guideline 102: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 103:
-          prefer exact arithmetic over estimation when analyzing tabular data. Guideline 104: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 105: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 106: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 107: prefer
-          exact arithmetic over estimation when analyzing tabular data. Guideline 108: prefer exact arithmetic over estimation
-          when analyzing tabular data. Guideline 109: prefer exact arithmetic over estimation when analyzing tabular data.
-          Guideline 110: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 111: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 112: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 113: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          114: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 115: prefer exact arithmetic
-          over estimation when analyzing tabular data. Guideline 116: prefer exact arithmetic over estimation when analyzing
-          tabular data. Guideline 117: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 118:
-          prefer exact arithmetic over estimation when analyzing tabular data. Guideline 119: prefer exact arithmetic over
-          estimation when analyzing tabular data.'
-        type: text
-      tools:
-      - name: code_execution
-        type: code_execution_20260120
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use the code execution tool to read the uploaded CSV file and report the sum of
+              the `value` column.
+            type: text
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+          - type: container_upload
+            file_id: file_01HrqVpwEHGt6Cq7Arpfj9MY
+        model: claude-sonnet-5
+        stream: true
+        system:
+        - type: text
+          text: "You are a meticulous data analyst. Always use the code execution tool to read and compute over any attached CSV file before answering. Guideline 0: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 1: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 2: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 3: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 4: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 5: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 6: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 7: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 8: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 9: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 10: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 11: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 12: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 13: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 14: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 15: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 16: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 17: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 18: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 19: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 20: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 21: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 22: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 23: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 24: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 25: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 26: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 27: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 28: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 29: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 30: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 31: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 32: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 33: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 34: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 35: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 36: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 37: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 38: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 39: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 40: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 41: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 42: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 43: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 44: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 45: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 46: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 47: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 48: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 49: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 50: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 51: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 52: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 53: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 54: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 55: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 56: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 57: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 58: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 59: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 60: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 61: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 62: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 63: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 64: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 65: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 66: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 67: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 68: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 69: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 70: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 71: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 72: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 73: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 74: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 75: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 76: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 77: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 78: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 79: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 80: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 81: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 82: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 83: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 84: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 85: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 86: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 87: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 88: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 89: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 90: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 91: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 92: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 93: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 94: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 95: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 96: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 97: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 98: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 99: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 100: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 101: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 102: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 103: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 104: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 105: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 106: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 107: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 108: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 109: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 110: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 111: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 112: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 113: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 114: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 115: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 116: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 117: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 118: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 119: prefer exact arithmetic over estimation when analyzing tabular data."
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1265'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-589ed6bb30ae15af98dbaa8a3b059e51-2710e23054f5ff56-01
+      - 00-f35590772fb18d2fa171efc198c04d29-12f3ac252cd785f5-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      container:
-        expires_at: '2026-08-28T01:16:41.958160Z'
-        id: container_01UWbt8KwD4R8F5DoJDK3CKk
-      content:
-      - id: srvtoolu_01E6BnxGLVTUbkswKn1BmFGL
-        input:
-          command: |
-            python3 -c "
-            import pandas as pd
-            df = pd.read_csv('$INPUT_DIR/data.csv')
-            print(df.columns.tolist())
-            print(df['value'].sum())
-            "
-        name: bash_code_execution
-        type: server_tool_use
-      - content:
-          content: []
-          return_code: 0
-          stderr: ''
-          stdout: |
-            ['item', 'value']
-            100
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_01E6BnxGLVTUbkswKn1BmFGL
-        type: bash_code_execution_tool_result
-      - text: The sum of the `value` column in **data.csv** is **100**.
-        type: text
-      id: msg_011CeUBeZN7v1UbEDy8os3Z5
-      model: claude-sonnet-5
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 6870
-        cache_creation_input_tokens: 6870
-        cache_read_input_tokens: 6719
-        inference_geo: global
-        input_tokens: 14
-        output_tokens: 139
-        output_tokens_details:
-          thinking_tokens: 0
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CfY3uw2LXE4wkNdvg4qj1","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":12,"cache_creation_input_tokens":6719,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":6719,"ephemeral_1h_input_tokens":0},"output_tokens":19,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_01KE33Jvnx79VpBtQXbJpXen","name":"bash_code_execution","input":{}}        }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"nd\": \"p"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ython3 "}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"-c \\\"\\n"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"import "}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"pandas "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"as pd\\n"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"df = pd"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":".read_c"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"sv('$IN"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"PUT_DIR"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"/data.c"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"sv')\\np"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"rint(df"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":".column"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"s.tolis"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"t())\\np"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"rint(le"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"n(df))\\"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"nprint("}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"df['val"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"ue'].su"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"m())\\n\\"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"\\n\"}"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_01KE33Jvnx79VpBtQXbJpXen","content":{"type":"bash_code_execution_result","stdout":"['item', 'value']\n2\n100\n","stderr":"","return_code":0,"content":[]}}              }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"The s"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"um of the `value` column in"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":" data.csv is **100**"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"."}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_015ZwqWAVYDrmbXqMZwHVPYU","expires_at":"2026-09-29T17:32:05.278380Z"}},"usage":{"input_tokens":14,"cache_creation_input_tokens":6869,"cache_read_input_tokens":6729,"output_tokens":144,"output_tokens_details":{"thinking_tokens":0},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}       }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-09-29T16:32:06.130505+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -249,258 +277,224 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '11470'
+      - "11410"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      container: container_01UWbt8KwD4R8F5DoJDK3CKk
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Use the code execution tool to read the uploaded CSV file and report the sum of the `value` column.
-          type: text
-        - file_id: file_01BwTkmNMW3RrNxJxSLGgeBH
-          type: container_upload
-        role: user
-      - content:
-        - id: srvtoolu_01E6BnxGLVTUbkswKn1BmFGL
-          input:
-            command: |
-              python3 -c "
-              import pandas as pd
-              df = pd.read_csv('$INPUT_DIR/data.csv')
-              print(df.columns.tolist())
-              print(df['value'].sum())
-              "
-          name: bash_code_execution
-          type: server_tool_use
-        - content:
-            content: []
-            return_code: 0
-            stderr: ''
-            stdout: |
-              ['item', 'value']
-              100
-            type: bash_code_execution_result
-          tool_use_id: srvtoolu_01E6BnxGLVTUbkswKn1BmFGL
-          type: bash_code_execution_tool_result
-        - text: The sum of the `value` column in **data.csv** is **100**.
-          type: text
-        role: assistant
-      - content:
-        - cache_control:
-            ttl: 5m
-            type: ephemeral
-          text: Use the code execution tool again to report the average of the `value` column.
-          type: text
-        - file_id: file_01BwTkmNMW3RrNxJxSLGgeBH
-          type: container_upload
-        role: user
-      model: claude-sonnet-5
-      stream: false
-      system:
-      - text: 'You are a meticulous data analyst. Always use the code execution tool to read and compute over any attached
-          CSV file before answering. Guideline 0: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          1: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 2: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 3: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 4: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 5: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 6: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 7: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          8: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 9: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 10: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 11: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 12: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 13: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 14: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          15: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 16: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 17: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 18: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 19: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 20: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 21: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          22: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 23: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 24: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 25: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 26: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 27: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 28: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          29: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 30: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 31: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 32: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 33: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 34: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 35: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          36: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 37: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 38: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 39: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 40: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 41: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 42: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          43: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 44: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 45: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 46: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 47: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 48: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 49: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          50: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 51: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 52: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 53: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 54: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 55: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 56: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          57: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 58: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 59: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 60: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 61: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 62: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 63: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          64: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 65: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 66: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 67: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 68: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 69: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 70: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          71: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 72: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 73: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 74: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 75: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 76: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 77: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          78: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 79: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 80: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 81: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 82: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 83: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 84: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          85: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 86: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 87: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 88: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 89: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 90: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 91: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          92: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 93: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 94: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 95: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 96: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 97: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 98: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          99: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 100: prefer exact arithmetic
-          over estimation when analyzing tabular data. Guideline 101: prefer exact arithmetic over estimation when analyzing
-          tabular data. Guideline 102: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 103:
-          prefer exact arithmetic over estimation when analyzing tabular data. Guideline 104: prefer exact arithmetic over
-          estimation when analyzing tabular data. Guideline 105: prefer exact arithmetic over estimation when analyzing tabular
-          data. Guideline 106: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 107: prefer
-          exact arithmetic over estimation when analyzing tabular data. Guideline 108: prefer exact arithmetic over estimation
-          when analyzing tabular data. Guideline 109: prefer exact arithmetic over estimation when analyzing tabular data.
-          Guideline 110: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 111: prefer exact
-          arithmetic over estimation when analyzing tabular data. Guideline 112: prefer exact arithmetic over estimation when
-          analyzing tabular data. Guideline 113: prefer exact arithmetic over estimation when analyzing tabular data. Guideline
-          114: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 115: prefer exact arithmetic
-          over estimation when analyzing tabular data. Guideline 116: prefer exact arithmetic over estimation when analyzing
-          tabular data. Guideline 117: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 118:
-          prefer exact arithmetic over estimation when analyzing tabular data. Guideline 119: prefer exact arithmetic over
-          estimation when analyzing tabular data.'
-        type: text
-      tools:
-      - name: code_execution
-        type: code_execution_20260120
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use the code execution tool to read the uploaded CSV file and report the sum of
+              the `value` column.
+            type: text
+          - type: container_upload
+            file_id: file_01HrqVpwEHGt6Cq7Arpfj9MY
+        - role: assistant
+          content:
+          - id: srvtoolu_01KE33Jvnx79VpBtQXbJpXen
+            type: server_tool_use
+            name: bash_code_execution
+            input:
+              command: |
+                python3 -c "
+                import pandas as pd
+                df = pd.read_csv('$INPUT_DIR/data.csv')
+                print(df.columns.tolist())
+                print(len(df))
+                print(df['value'].sum())
+                "
+          - tool_use_id: srvtoolu_01KE33Jvnx79VpBtQXbJpXen
+            type: bash_code_execution_tool_result
+            content:
+              content: []
+              return_code: 0
+              stderr: ""
+              stdout: |
+                ['item', 'value']
+                2
+                100
+              type: bash_code_execution_result
+          - text: The sum of the `value` column in data.csv is **100**.
+            type: text
+        - role: user
+          content:
+          - text: Use the code execution tool again to report the average of the `value` column.
+            type: text
+            cache_control:
+              type: ephemeral
+              ttl: 5m
+          - type: container_upload
+            file_id: file_01HrqVpwEHGt6Cq7Arpfj9MY
+        model: claude-sonnet-5
+        container: container_015ZwqWAVYDrmbXqMZwHVPYU
+        stream: true
+        system:
+        - type: text
+          text: "You are a meticulous data analyst. Always use the code execution tool to read and compute over any attached CSV file before answering. Guideline 0: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 1: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 2: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 3: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 4: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 5: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 6: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 7: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 8: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 9: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 10: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 11: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 12: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 13: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 14: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 15: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 16: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 17: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 18: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 19: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 20: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 21: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 22: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 23: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 24: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 25: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 26: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 27: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 28: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 29: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 30: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 31: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 32: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 33: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 34: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 35: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 36: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 37: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 38: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 39: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 40: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 41: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 42: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 43: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 44: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 45: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 46: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 47: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 48: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 49: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 50: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 51: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 52: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 53: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 54: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 55: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 56: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 57: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 58: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 59: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 60: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 61: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 62: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 63: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 64: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 65: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 66: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 67: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 68: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 69: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 70: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 71: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 72: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 73: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 74: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 75: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 76: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 77: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 78: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 79: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 80: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 81: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 82: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 83: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 84: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 85: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 86: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 87: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 88: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 89: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 90: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 91: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 92: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 93: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 94: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 95: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 96: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 97: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 98: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 99: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 100: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 101: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 102: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 103: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 104: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 105: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 106: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 107: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 108: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 109: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 110: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 111: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 112: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 113: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 114: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 115: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 116: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 117: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 118: prefer exact arithmetic over estimation when analyzing tabular data. Guideline 119: prefer exact arithmetic over estimation when analyzing tabular data."
+        tools:
+        - name: code_execution
+          type: code_execution_20260120
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1224'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a1cd7816d0dc8d719ee2c8c87460a495-4e458af4e148c793-01
+      - 00-31195170f3f865e55938c25e04ce973e-1cc7f0fdc2a4534d-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      container:
-        expires_at: '2026-08-28T01:16:45.471633Z'
-        id: container_01UWbt8KwD4R8F5DoJDK3CKk
-      content:
-      - id: srvtoolu_015LBBVjmNvuVFqb6BnHZ1mH
-        input:
-          command: |
-            python3 -c "
-            import pandas as pd
-            df = pd.read_csv('$INPUT_DIR/data.csv')
-            print(df['value'].mean())
-            "
-        name: bash_code_execution
-        type: server_tool_use
-      - content:
-          content: []
-          return_code: 0
-          stderr: ''
-          stdout: |
-            50.0
-          type: bash_code_execution_result
-        tool_use_id: srvtoolu_015LBBVjmNvuVFqb6BnHZ1mH
-        type: bash_code_execution_tool_result
-      - text: The average of the `value` column in **data.csv** is **50.0**.
-        type: text
-      id: msg_011CeUBewVdsmqjo2CNxkmJ8
-      model: claude-sonnet-5
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 178
-        cache_creation_input_tokens: 178
-        cache_read_input_tokens: 13785
-        inference_geo: global
-        input_tokens: 14
-        output_tokens: 128
-        output_tokens_details:
-          thinking_tokens: 0
-        server_tool_use:
-          web_fetch_requests: 0
-          web_search_requests: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-- request:
-    body: ''
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-type:
-      - application/json
-      host:
-      - api.anthropic.com
-    method: DELETE
-    uri: https://api.anthropic.com/v1/files/file_01BwTkmNMW3RrNxJxSLGgeBH?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '63'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      server-timing:
-      - x-originResponse;dur=198
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      id: file_01BwTkmNMW3RrNxJxSLGgeBH
-      type: file_deleted
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CfY3vFJgTRTnsQPAs1uTy","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":12,"cache_creation_input_tokens":43,"cache_read_input_tokens":6879,"cache_creation":{"ephemeral_5m_input_tokens":43,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"EosCCpABCBIYAipAq6TkJ9wJtz/yBT0adJRg4OE4ruk+z/dK+jDeMNdmDu4tKoVfkLgFDXT6uI7GTuctscjWYtl2NKYyTiGTE77q2DIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAYfQ79UGEgwq0xNFXbg6VgGtfG8aDHFDD9o7mhNoTFw4GyIw1Zk6igCT5dmLsmD9rTseGWGx/AY6rjPzs39LCw0zZ35GnFRQ3Yt6exWGVgHx7waIKihQy+26ipx/6wI+ByA3usXsQRz7TRh9iiKKe8oL9JbChEPtCcYwM4xVGAE="}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_016h5BkV1gYLLJRcGKfBf49u","name":"bash_code_execution","input":{}}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nd\": \"p"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ython3 "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"-c \\\"\\n"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"import "}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"pandas "}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"as pd\\n"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"df = pd"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":".read_c"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"sv('$IN"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"PUT_DIR"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"/data.c"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"sv')\\np"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"rint(df"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"['value"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"'].toli"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"st())\\n"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"print(d"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"f['valu"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"e'].mea"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"n())\\n\\"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"\\n\"}"}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":2,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_016h5BkV1gYLLJRcGKfBf49u","content":{"type":"bash_code_execution_result","stdout":"[30, 70]\n50.0\n","stderr":"","return_code":0,"content":[]}}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":2    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":3,"content_block":{"type":"text","text":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"The average of the `value` column"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" in data.csv is **50"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":".0**"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" (values are"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":" 30 and 70, s"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"um "}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"100 divided by 2 "}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":3,"delta":{"type":"text_delta","text":"rows)."}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":3             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":{"id":"container_015ZwqWAVYDrmbXqMZwHVPYU","expires_at":"2026-09-29T17:32:09.274444Z"}},"usage":{"input_tokens":14,"cache_creation_input_tokens":206,"cache_read_input_tokens":13801,"output_tokens":172,"output_tokens_details":{"thinking_tokens":10},"server_tool_use":{"web_search_requests":0,"web_fetch_requests":0}}}
+
+        event: message_stop
+        data: {"type":"message_stop"         }
+
+  recorded_at: 2026-09-29T16:32:10.166259+00:00

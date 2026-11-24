@@ -1,0 +1,306 @@
+--- expected
++++ actual
+@@ -137,0 +138,115 @@
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "text": "Noted the background result.",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 2",
++     "type": "text"
++    }
++   ]
++  }
++ ],
++ "tools": [
++  {
++   "name": "start_job",
++   "description": "",
++   "input_schema": {
++    "additionalProperties": false,
++    "properties": {},
++    "type": "object"
++   }
++  }
++ ]
++}
++{
++ "system": "<Omit>",
++ "messages": [
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 1",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "id": "job-1",
++     "type": "tool_use",
++     "name": "start_job",
++     "input": {}
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "tool_use_id": "job-1",
++     "type": "tool_result",
++     "content": [
++      {
++       "text": "started",
++       "type": "text"
++      }
++     ],
++     "is_error": false
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "text": "Noted the background result.",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 2",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "id": "job-5",
++     "type": "tool_use",
++     "name": "start_job",
++     "input": {}
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "tool_use_id": "job-5",
++     "type": "tool_result",
++     "content": [
++      {
++       "text": "started",
++       "type": "text"
++      }
++     ],
++     "is_error": false
+@@ -162,173 +277,14 @@
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "Noted the background result.",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 2",
+-     "type": "text"
+-    }
+-   ]
+-  }
+- ],
+- "tools": [
+-  {
+-   "name": "start_job",
+-   "description": "",
+-   "input_schema": {
+-    "additionalProperties": false,
+-    "properties": {},
+-    "type": "object"
+-   }
+-  }
+- ]
+-}
+-{
+- "system": "<Omit>",
+- "messages": [
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 1",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "id": "job-1",
+-     "type": "tool_use",
+-     "name": "start_job",
+-     "input": {}
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "tool_use_id": "job-1",
+-     "type": "tool_result",
+-     "content": [
+-      {
+-       "text": "started",
+-       "type": "text"
+-      }
+-     ],
+-     "is_error": false
+-    },
+-    {
+-     "text": "Background result: 42",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "Synthetic reply",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Synthetic follow-up",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "Noted the background result.",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 2",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "id": "job-7",
+-     "type": "tool_use",
+-     "name": "start_job",
+-     "input": {}
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "tool_use_id": "job-7",
+-     "type": "tool_result",
+-     "content": [
+-      {
+-       "text": "started",
+-       "type": "text"
+-      }
+-     ],
+-     "is_error": false
+-    },
+-    {
+-     "text": "Background result: 42",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "Synthetic reply",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Synthetic follow-up",
+-     "type": "text"
+-    }
+-   ]
+-  }
+- ],
+- "tools": [
+-  {
+-   "name": "start_job",
+-   "description": "",
+-   "input_schema": {
+-    "additionalProperties": false,
+-    "properties": {},
+-    "type": "object"
+-   }
+-  }
+- ]
+-}
++  }
++ ],
++ "tools": [
++  {
++   "name": "start_job",
++   "description": "",
++   "input_schema": {
++    "additionalProperties": false,
++    "properties": {},
++    "type": "object"
++   }
++  }
++ ]
++}

@@ -8,13 +8,16 @@ the wire (the methodology that surfaced the OpenRouter `enabled: True` miss).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent
+from pydantic_ai.direct import model_request
+from pydantic_ai.messages import ModelRequest, ThinkingPart
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from .cassette_utils import single_request_body
@@ -36,10 +39,15 @@ with try_import() as mistral_imports:
     from pydantic_ai.models.mistral import MistralModel
     from pydantic_ai.providers.mistral import MistralProvider
 
+with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 # Per-provider skip mark, keyed by a case's `provider`. A case naming a provider missing from this
 # map fails loudly at collection (KeyError) rather than silently skipping on the wrong SDK's presence.
@@ -48,6 +56,7 @@ _PROVIDER_SKIP_MARKS: dict[str, pytest.MarkDecorator] = {
     'cerebras': pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),
     'google': pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),
     'mistral': pytest.mark.skipif(not mistral_imports(), reason='mistral not installed'),
+    'deepinfra': pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
 }
 
 
@@ -68,6 +77,9 @@ class WireCase:
     """Keys that must NOT appear in the request body."""
     expect_warning: str | None = None
     """If set, a `UserWarning` matching this regex must be emitted during the run."""
+    thinks: bool | None = None
+    """Whether the response must carry a `ThinkingPart`, to show the setting changed what the model did; `None` skips
+    the check."""
     match_body: bool = False
     """Make the request body part of the cassette match.
 
@@ -179,13 +191,14 @@ CASES = [
         present={'reasoning_effort': 'medium', 'reasoning_format': 'parsed'},
     ),
     WireCase(
-        id='groq-gpt-oss-thinking-false-noop',
+        id='groq-gpt-oss-thinking-false-lowest-effort',
         provider='groq',
         model_name='openai/gpt-oss-120b',
         thinking=False,
         # gpt-oss always reasons and can't disable via effort (none/default → 400), so `thinking=False`
-        # is silently ignored: no `reasoning_effort` and (since it's stripped as always-on) no `reasoning_format`.
-        absent=('reasoning_effort', 'reasoning_format'),
+        # sends its lowest effort, `low`, and `reasoning_format='hidden'` keeps the reasoning out of the response.
+        present={'reasoning_effort': 'low', 'reasoning_format': 'hidden'},
+        match_body=True,
     ),
     WireCase(
         id='groq-gpt-oss-explicit-effort-overrides-thinking',
@@ -233,6 +246,43 @@ CASES = [
         present={'generationConfig.thinkingConfig.thinking_budget': 0},
     ),
     WireCase(
+        id='google-gemini-25-pro-false-min-budget',
+        provider='google',
+        model_name='gemini-2.5-pro',
+        thinking=False,
+        # Gemini 2.5 Pro can't turn thinking off (`thinking_budget=0` → 400 "This model only works in thinking
+        # mode"), so `thinking=False` sends its minimum budget, without asking for the thoughts back.
+        present={'generationConfig.thinkingConfig.thinking_budget': 128},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-25-flash-minimal-budget',
+        provider='google',
+        model_name='gemini-2.5-flash',
+        thinking='minimal',
+        present={'generationConfig.thinkingConfig.thinking_budget': 128},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-25-flash-lite-minimal-budget',
+        provider='google',
+        model_name='gemini-2.5-flash-lite',
+        thinking='minimal',
+        # Gemini 2.5 Flash-Lite 400s on a budget below 512 ("Please choose a value between 512 and 24576"), so
+        # `minimal` sends 512 there rather than the 128 the other Gemini 2.5 models get.
+        present={'generationConfig.thinkingConfig.thinking_budget': 512},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-31-pro-false-lowest-level',
+        provider='google',
+        model_name='gemini-3.1-pro-preview',
+        thinking=False,
+        # Gemini 3.1 Pro can't turn thinking off and rejects `MINIMAL`, so `thinking=False` sends `LOW`.
+        present={'generationConfig.thinkingConfig.thinking_level': 'LOW'},
+        match_body=True,
+    ),
+    WireCase(
         id='google-gemini-38-flash-disable',
         provider='google',
         model_name='gemini-3.8-flash',
@@ -260,8 +310,101 @@ CASES = [
         present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
         match_body=True,
     ),
-    # Mistral: adjustable-reasoning models take the binary `reasoning_effort` ('high'/'none');
-    # always-on magistral must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
+    WireCase(
+        id='google-gemini-31-flash-image-low-snaps-down',
+        provider='google',
+        model_name='gemini-3.1-flash-image',
+        thinking='low',
+        # Documented levels are `minimal, high` only; the Gemini API 400s on `LOW`.
+        present={'generationConfig.thinkingConfig.thinking_level': 'MINIMAL'},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-31-flash-image-medium-snaps-up',
+        provider='google',
+        model_name='gemini-3.1-flash-image',
+        thinking='medium',
+        # The Gemini API 400s on `MEDIUM`; it snaps up to `high`.
+        present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-3-flash-xhigh-snaps-to-high',
+        provider='google',
+        model_name='gemini-3-flash-preview',
+        thinking='xhigh',
+        # No documented level set, so `xhigh` snaps to `HIGH`; the Gemini API 400s on `XHIGH` here.
+        present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-4-hydrogen-xhigh',
+        provider='google',
+        model_name='gemini-4-hydrogen',
+        thinking='xhigh',
+        present={'generationConfig.thinkingConfig.thinking_level': 'XHIGH'},
+        # `google-genai`'s `ThinkingLevel` enum doesn't list `XHIGH` yet; it warns and sends the value.
+        expect_warning='XHIGH is not a valid ThinkingLevel',
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-4-neon-xhigh',
+        provider='google',
+        model_name='gemini-4-neon',
+        thinking='xhigh',
+        present={'generationConfig.thinkingConfig.thinking_level': 'XHIGH'},
+        expect_warning='XHIGH is not a valid ThinkingLevel',
+        match_body=True,
+    ),
+    # Gemma 4 on the Gemini API takes only `MINIMAL` and `HIGH`, and 400s on any `thinking_budget` or other level.
+    WireCase(
+        id='google-gemma-4-disable-sends-minimal',
+        provider='google',
+        model_name='gemma-4-31b-it',
+        thinking=False,
+        present={'generationConfig.thinkingConfig.thinking_level': 'MINIMAL'},
+        thinks=False,
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemma-4-low-snaps-to-minimal',
+        provider='google',
+        model_name='gemma-4-31b-it',
+        thinking='low',
+        present={'generationConfig.thinkingConfig.thinking_level': 'MINIMAL'},
+        thinks=False,
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemma-4-high',
+        provider='google',
+        model_name='gemma-4-31b-it',
+        thinking='high',
+        present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
+        thinks=True,
+        match_body=True,
+    ),
+    # Gemma 4 on an OpenAI-compatible host, through the Google family profile: `thinking` becomes `reasoning_effort`.
+    WireCase(
+        id='deepinfra-gemma-4-disable',
+        provider='deepinfra',
+        model_name='google/gemma-4-31B-it',
+        thinking=False,
+        present={'reasoning_effort': 'none'},
+        thinks=False,
+        match_body=True,
+    ),
+    WireCase(
+        id='deepinfra-gemma-4-high',
+        provider='deepinfra',
+        model_name='google/gemma-4-31B-it',
+        thinking='high',
+        present={'reasoning_effort': 'high'},
+        thinks=True,
+        match_body=True,
+    ),
+    # Mistral: Small 4 and Medium 3.5 take the binary `reasoning_effort` ('high'/'none');
+    # dated (always-on) magistral ids must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
     WireCase(
         id='mistral-small-thinking-high',
         provider='mistral',
@@ -284,18 +427,58 @@ CASES = [
         absent=('reasoning_effort',),
     ),
     WireCase(
-        id='mistral-magistral-always-on-no-effort',
+        id='mistral-magistral-latest-thinking-true',
         provider='mistral',
         model_name='magistral-small-latest',
         thinking=True,
-        # magistral reasons always-on; `reasoning_effort` must stay off the wire.
+        # `magistral-small-latest` aliases Small 4, which reasons only with `reasoning_effort='high'`.
+        present={'reasoning_effort': 'high'},
+        match_body=True,
+    ),
+    WireCase(
+        id='mistral-magistral-latest-disable',
+        provider='mistral',
+        model_name='magistral-medium-latest',
+        thinking=False,
+        present={'reasoning_effort': 'none'},
+        match_body=True,
+    ),
+    # Mistral Large 4 accepts `'low'`/`'medium'`/`'high'` and rejects `'none'`, so `thinking=False` sends its
+    # lowest effort.
+    WireCase(
+        id='mistral-large-4-disable',
+        provider='mistral',
+        model_name='mistral-large-4',
+        thinking=False,
+        present={'reasoning_effort': 'low'},
+        match_body=True,
+    ),
+    WireCase(
+        id='mistral-large-4-thinking-medium',
+        provider='mistral',
+        model_name='mistral-large-4',
+        thinking='medium',
+        present={'reasoning_effort': 'medium'},
+        match_body=True,
+    ),
+    WireCase(
+        id='mistral-large-4-unset-omits-effort',
+        provider='mistral',
+        model_name='mistral-large-4',
         absent=('reasoning_effort',),
+        match_body=True,
     ),
 ]
 
 
 def _build_model(
-    case: WireCase, *, groq_api_key: str, cerebras_api_key: str, gemini_api_key: str, mistral_api_key: str
+    case: WireCase,
+    *,
+    groq_api_key: str,
+    cerebras_api_key: str,
+    gemini_api_key: str,
+    mistral_api_key: str,
+    deepinfra_api_key: str,
 ) -> Model:
     if case.provider == 'groq':
         return GroqModel(case.model_name, provider=GroqProvider(api_key=groq_api_key))
@@ -305,6 +488,11 @@ def _build_model(
         return GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
     if case.provider == 'mistral':
         return MistralModel(case.model_name, provider=MistralProvider(api_key=mistral_api_key))
+    if case.provider == 'deepinfra':
+        provider = OpenAICompatibleProvider(
+            'deepinfra', base_url='https://api.deepinfra.com/v1/openai', api_key=deepinfra_api_key
+        )
+        return OpenAIChatModel(case.model_name, provider=provider)
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 
 
@@ -316,6 +504,7 @@ async def test_reasoning_wire_contract(
     cerebras_api_key: str,
     gemini_api_key: str,
     mistral_api_key: str,
+    deepinfra_api_key: str,
     vcr: Cassette,
 ):
     """Reasoning settings produce the correct request wire body: a `thinking` disable signal where the model
@@ -326,6 +515,7 @@ async def test_reasoning_wire_contract(
         cerebras_api_key=cerebras_api_key,
         gemini_api_key=gemini_api_key,
         mistral_api_key=mistral_api_key,
+        deepinfra_api_key=deepinfra_api_key,
     )
     if case.groq_reasoning_effort is not None:
         settings = GroqModelSettings(groq_reasoning_effort=case.groq_reasoning_effort)
@@ -338,9 +528,11 @@ async def test_reasoning_wire_contract(
     agent = Agent(model, model_settings=settings)
     if case.expect_warning is not None:
         with pytest.warns(UserWarning, match=case.expect_warning):
-            await agent.run('What is 2+2? Reply with just the number.')
+            result = await agent.run('What is 2+2? Reply with just the number.')
     else:
-        await agent.run('What is 2+2? Reply with just the number.')
+        result = await agent.run('What is 2+2? Reply with just the number.')
+    if case.thinks is not None:
+        assert any(isinstance(part, ThinkingPart) for part in result.response.parts) is case.thinks
 
     body = single_request_body(vcr)
     for path, value in case.present.items():
@@ -352,3 +544,71 @@ async def test_reasoning_wire_contract(
         assert node == value, f'expected {path}={value!r} on the wire, got {node!r}'
     for key in case.absent:
         assert key not in body, f'expected {key!r} absent from the wire, got {body[key]!r}'
+
+
+# A provider-specific effort from a broader scope still wins over a narrower `thinking`, as documented, and the
+# caller is told which setting took precedence. Each scope records its own exchange, matched on the body so the
+# recording pins that the explicit effort is what goes out.
+
+_OVERRIDE_PROMPT = 'What is 2+2? Reply with just the number.'
+
+
+def _openai_responses_model(api_key: str, settings: ModelSettings | None = None) -> OpenAIResponsesModel:
+    return OpenAIResponsesModel('gpt-5-mini', provider=OpenAIProvider(api_key=api_key), settings=settings)
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_model_reasoning_effort_overrides_run_thinking_with_warning(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    model = _openai_responses_model(openai_api_key, OpenAIResponsesModelSettings(openai_reasoning_effort='low'))
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` from the "
+            "run's `model_settings`. Set `openai_reasoning_effort` in the run's `model_settings` instead of "
+            "`thinking`, or remove it from the model's `settings`."
+        ),
+    ):
+        await Agent(model).run(_OVERRIDE_PROMPT, model_settings=ModelSettings(thinking='high'))
+    assert single_request_body(vcr)['reasoning'] == {'effort': 'low'}
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_agent_reasoning_effort_overrides_run_thinking_with_warning(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    agent = Agent(
+        _openai_responses_model(openai_api_key),
+        model_settings=OpenAIResponsesModelSettings(openai_reasoning_effort='low'),
+    )
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            "`openai_reasoning_effort` from the agent's `model_settings` takes precedence over `thinking='high'` "
+            "from the run's `model_settings`."
+        ),
+    ):
+        await agent.run(_OVERRIDE_PROMPT, model_settings=ModelSettings(thinking='high'))
+    assert single_request_body(vcr)['reasoning'] == {'effort': 'low'}
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_model_reasoning_effort_overrides_direct_request_thinking_with_warning(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    model = _openai_responses_model(openai_api_key, OpenAIResponsesModelSettings(openai_reasoning_effort='low'))
+    with pytest.warns(
+        UserWarning,
+        match=re.escape(
+            "`openai_reasoning_effort` from the model's `settings` takes precedence over `thinking='high'` from the "
+            "request's `model_settings`."
+        ),
+    ):
+        await model_request(
+            model, [ModelRequest.user_text_prompt(_OVERRIDE_PROMPT)], model_settings=ModelSettings(thinking='high')
+        )
+    assert single_request_body(vcr)['reasoning'] == {'effort': 'low'}

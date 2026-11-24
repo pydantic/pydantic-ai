@@ -1,114 +1,463 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '501'
+      - "466"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Review `def add(a, b): return a + b`.'
-          type: text
-        role: user
-      - content:
-        - text: Looks fine.
-          type: text
-        role: assistant
-      - content:
-        - text: Review it again.
-          type: text
-        role: user
-      - content:
-        - text: From now on, every suggestion must include explicit type annotations.
-          type: text
-        role: system
-      model: claude-opus-4-8
-      stream: false
-      system: You are a code reviewer.
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: "Review `def add(a, b): return a + b`."
+            type: text
+        - role: assistant
+          content:
+          - text: Looks fine.
+            type: text
+        - role: user
+          content:
+          - text: Review it again.
+            type: text
+        - role: system
+          content:
+          - text: From now on, every suggestion must include explicit type annotations.
+            type: text
+        model: claude-opus-5-5
+        stream: true
+        system: You are a code reviewer.
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1621'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=101
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-6907a5457af1c3f9e3d1ef53c9286122-359863d40c558153-01
+      - 00-921813959f86169a2f35df8e7309ac91-09b2b8cd04a32c56-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: |-
-          I'll follow that guidance going forward. Here's the review with explicit type annotations:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CghCGfjbYWTk5Eb9PHRBV","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":69,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
 
-          ```python
-          def add(a: int, b: int) -> int:
-              return a + b
-          ```
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}             }
 
-          A couple of notes on this suggestion:
+        event: ping
+        data: {"type": "ping"}
 
-          - I annotated with `int`, but if you actually intend this function to handle floats or other numeric types, you'd want something broader. For example:
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}          }
 
-          ```python
-          from numbers import Number
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSuwkKEAgTGAI4AUIIdGhpbmtpbmcSDOUD2eVlzqjySiMcmBoMCTrqD9vyD3M3GHVcIjCJAbVL6e/w9JlD/Lm+l2lu+lQRKGSwCh1BzhPfwhG/gdr8nx+kSROlGQWcElbuDXQq2AgR9QgcHSgsVN/1MI4Q/cUFlqR83iGkX5nIWtTarLHP1zlSHlqVV496Gs1qTcHR2SWo27LV1+7+GqMbVaPyjfXcvPt6mH0nsb5rUDSSP3BY+MrX1V+bK3c0R5tbbKN8cWahNay6+WX4JcvaRakwBzz2lNEuPcgunSbBTLfKySspFHx5jGvI+Lciwl14Dn//Txxr26MUQcYzCNKCygtcZuWib6Jh3EN4plRFrRit+as1QBJitmg7r+4jQBk2U9vbUPJlo2CSvmoNrnmOPOWHBvOz3fRCGteckfKUrh3suHo7cUzpDm4dnojiPGp9He2fI5asOaoAJOJOnjsrxdbi5UD6IxaZ+Hr/hpjsUGeglR6BBCF/9cIjca9MlznqXy6cLblyYXW47x7ZC2jCo8YiyklK1FdV6VQrTJf+UxbAklIEoy4TKVzi9Eh9YxUxu15td5LHjJ2RE0qmGde84unV13qOWv0nTTWJb/GNH42Z+TpZCNzwZRFPENvKM3Y617BdIUb/N1m4O8JtB+0IChmGKNws6SOhvx7XAm6kX7aWVq6PnLR+aYAknlKbhwE3XKicTzwmM18T8YSIie7KPjOzBgXyF0YT98DXxiSPIfxwkAyUgb442eMEhwLpL+3WrPuYJJmGpz8vdPmfJgqeDbDwqz64W8JYsLCLcakaCksfTZkQEQcIQjt/CflnzEjjzo3THevVFvmW7jJgTXvNDj8EGXmwRuG4wp3gJ2ZGBHjeZtKuEX6w2ouMsTvfXPjCkbVHqCdNK2HJq3Gnp2Jdi9+VAUvQP8soDd+QdoY3mH8T+HRxseflYxIs+deoKh3K688CZ1GsI2EU/YTqt05ptznP37eLnCPNfMA07ud7uH8fjo2b5sz+rl8cvCVMFM2wTDEj4I8AQTYGHtCSXmstBRD4x2uqrIp8N9ezhPwQgTv2VjLgnnDGRhuPwPf32kAZudfJ46/UgIEAVxQ83s7QpQWPufUKHdJCUpCOnVWAvqcPBeLTVKZm67ALRFyYqDkVQv8+NyKGtVgDDf6ZWiC3+C0xWmAIY/S7LuWo1pPYk8OJ0HT1u8zRAieB6a9G1PYKXuLIyWrCLkz9+KOzxz1X9DxGPpzOWcyvYtBGYWERCSGJ3WdBdh7vO++gPYIASyMIRb6Jm43t/2hvjNslda4BNGPxlc0d65kqbAJlHnker0GnkP+2VrpXIHNd5T/LRgBh96qYxuEVPYTowFvfFUI6/HeH01x4J9EworH/H5YFgnIsmFMEeq4zUq7dwDfgSUHVSzecHoZfoxhiRxGIBZHUqOLEbXWM1DP94QCskCrWZVSpl/lKh1C+FbroxvxChZKI1QwIRB/A7oQ6KE1f5D9+UkDeIBRMtSMT91rgZ8+D7TFGpNbDcJ1GLyZmVsN7xSqBzR+32YDqAQGVv31ZhRaXvSAbwjtHcgyLW3cX1dmyDX9S0Ki+N9rE45YtNels7TMxSxESE29tLTNVo0XHGhgB"}      }
 
-          def add(a: Number, b: Number) -> Number:
-              return a + b
-          ```
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0             }
 
-          - Or, if you want to support any type with a `+` operator (including strings, lists, etc.), the annotations don't capture that well without generics:
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}            }
 
-          ```python
-          from typing import TypeVar
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"My"} }
 
-          T = TypeVar("T")
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" first p"}       }
 
-          def add(a: T, b: T) -> T:
-              return a + b
-          ```
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ass was too brief. Here"}  }
 
-          One caveat: I've added type annotations here, but I can't actually know your intended types just from the signature. The original `def add(a, b)` works for any type supporting `+`, so pinning it to `int` narrows the behavior. Pick the version that matches your real intent--if you tell me the use case, I'll give you the correct annotation rather than guessing.
-        type: text
-      id: msg_011CdX6eJkWCV9gbFZnUbGtK
-      model: claude-opus-4-8
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 68
-        output_tokens: 355
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'s a f"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"uller review.\n\n```"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"python\ndef add(a,"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" b): return a + b\n```"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n**Correctness:**"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" The function corre"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ctly returns `a + b"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"`. There"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" are no bugs for"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" num"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"eric inputs.\n\n**"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Issues and"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" suggestions:**\n\n1"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":". **Missing type ann"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"otations.** Without them,"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" callers and static checkers can"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"'t tell what the function exp"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ects. It"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" curr"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ently accepts an"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ything that supports `+`,"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" including `"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"str`, `list`, and"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" `tuple`, so `"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"add(\"1"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\", "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"2)` f"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ails only at runtime with a"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" `TypeError`."}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n2. **One"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-line"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" compound statement.** PE"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"P 8 discourages put"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ting the body on the same line as"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" `def`. Spl"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"itting it impro"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ves readability and mak"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"es di"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ffs cleaner."}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\n3. **No docstring."}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"** A one-liner expl"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"aining intent helps,"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" especially to"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" clarify whether non"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-numeric inputs are"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" supported.\n\n**Sugg"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ested version (numeric only):"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**\n\n```python\ndef add("}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"a: float, b: float)"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" -> float:\n    \"\"\""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Return the sum of two numb"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ers.\"\"\"\n    return a +"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" b\n```\n\nNote that `"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"float"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"` also"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" accepts `int` under type"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" checkers, per PEP"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 484's"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" numeric tower.\n\n**"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"If"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you want to preserve the input"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" type** (e.g., `"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"int + int -"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"> int`):\n\n```python"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\nfrom typing import TypeV"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ar"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nNumber = TypeVar(\""}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Number\", int, float,"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" complex)\n\ndef add(a"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":": Number, b: Number"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":") -> Number:\n    "}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\"\"\"Return the sum of two"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" numbers of the same type.\""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\"\"\n    return a + b"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n```\n\n**If gener"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ic `"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"+` behavior is intent"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ional** (strings, lists"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", etc.):\n\n```python"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\nfrom typing import Protoc"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ol, TypeVar"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nT = TypeVar(\""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"T\","}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" bound=\"S"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"upportsAdd\")"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nclass SupportsAdd"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"(Protocol):\n    "}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"def __add__(self: T"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", other: T,"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" /) -> T: ..."}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\ndef add(a: T,"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" b: T) -> T:"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n    \"\"\"Return a"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" + b for any type"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" sup"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"porting addition.\"\"\"\n    "}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"return a + b\n```\n\n**"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Opt"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ional:** Add a"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cou"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ple of tests, e.g"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"., `ass"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ert add(2"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", 3) == 5`"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" and `assert add(0."}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"1, "}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"0.2) == p"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ytest.approx(0."}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"3)`.\n\n**Ver"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"dict:** The"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" logic is fine. Add"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" type hints, a docstring"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", and stand"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ard formatting."}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" Choose the ann"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"otation str"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ategy based on whether non"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"-numeric addition is int"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ended."}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":69,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":924,"output_tokens_details":{"thinking_tokens":188}}               }
+
+        event: message_stop
+        data: {"type":"message_stop"}
+
+  recorded_at: 2026-11-04T03:41:35.192036+00:00

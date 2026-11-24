@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Any, get_args
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, messages as messages_module, realtime as realtime_module
 from pydantic_ai.exceptions import UserError
@@ -25,18 +26,21 @@ with try_import() as imports_successful:
     import google.genai  # noqa: F401  # pyright: ignore[reportUnusedImport]
     import xai_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime.azure import (
         LatestAzureRealtimeModelNames,
         LatestAzureRealtimeTranscriptionModelNames,
     )
+    from pydantic_ai.realtime.elevenlabs import ElevenLabsRealtimeModel, LatestElevenLabsRealtimeModelNames
     from pydantic_ai.realtime.google import LatestGoogleRealtimeModelNames
     from pydantic_ai.realtime.model import KnownRealtimeModelName
     from pydantic_ai.realtime.openai import (
         LatestOpenAIRealtimeModelNames,
         LatestOpenAIRealtimeTranscriptionModelNames,
     )
+    from pydantic_ai.realtime.openai_live import LatestOpenAILiveModelNames
     from pydantic_ai.realtime.settings import KnownRealtimeTranscriptionModelName
     from pydantic_ai.realtime.xai import LatestXaiRealtimeModelNames, LatestXaiRealtimeTranscriptionModelNames
 
@@ -52,8 +56,10 @@ def test_known_realtime_model_names() -> None:  # pragma: lax no cover
 
     generated_names = sorted(
         [f'openai:{name}' for name in get_model_names(LatestOpenAIRealtimeModelNames)]
+        + [f'openai:{name}' for name in get_model_names(LatestOpenAILiveModelNames)]
         + [f'azure:{name}' for name in get_model_names(LatestAzureRealtimeModelNames)]
         + [f'xai:{name}' for name in get_model_names(LatestXaiRealtimeModelNames)]
+        + [f'elevenlabs:{name}' for name in get_model_names(LatestElevenLabsRealtimeModelNames)]
         + [f'google:{name}' for name in get_model_names(LatestGoogleRealtimeModelNames)]
     )
     assert generated_names == sorted(get_args(KnownRealtimeModelName.__value__))
@@ -67,6 +73,7 @@ def test_known_realtime_model_names() -> None:  # pragma: lax no cover
     assert generated_transcription_names == sorted(get_args(KnownRealtimeTranscriptionModelName.__value__))
 
 
+@pytest.mark.subprocess(reason='asserts what a fresh interpreter imports')
 def test_star_import_does_not_load_optional_providers() -> None:
     code = """
 import sys
@@ -139,6 +146,31 @@ def test_infer_realtime_models(env: TestEnv) -> None:
     assert type(azure_model).__name__ == 'AzureRealtimeModel'
     assert azure_model.model_name == 'gpt-realtime'
 
+    env.set('ELEVENLABS_API_KEY', 'test')
+    elevenlabs_model = infer_realtime_model('elevenlabs:eleven_realtime_v1_mini')
+    assert type(elevenlabs_model).__name__ == 'ElevenLabsRealtimeModel'
+    assert elevenlabs_model.model_name == 'eleven_realtime_v1_mini'
+
+
+def test_infer_realtime_model_elevenlabs_agents(env: TestEnv) -> None:
+    # ElevenLabs' "model name" is a hosted agent id: the suffix is carried through as-is.
+    env.set('ELEVENLABS_API_KEY', 'test')
+
+    model = infer_realtime_model('elevenlabs-agents:agent_0101test')
+    assert type(model).__name__ == 'ElevenLabsAgentsRealtimeModel'
+    assert model.model_name == 'agent_0101test'
+    # The model string names the model class; the provider is ElevenLabs' own.
+    assert getattr(model, '_provider').name == 'elevenlabs'
+    assert getattr(model, '_provider').base_url == 'https://api.elevenlabs.io'
+
+
+def test_infer_realtime_model_elevenlabs_agents_with_a_provider_factory() -> None:
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+
+    provider = ElevenLabsProvider(api_key='test')
+    model = infer_realtime_model('elevenlabs-agents:agent_0101test', provider_factory=lambda name: provider)
+    assert getattr(model, '_provider') is provider
+
 
 def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     # `gateway/openai:...` routes the OpenAI realtime protocol through the Pydantic AI Gateway: an
@@ -159,6 +191,11 @@ def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
 
     direct_model = OpenAIRealtimeModel('gpt-realtime')
     assert direct_model._realtime_url().split('?', 1)[0] == 'wss://api.openai.com/v1/realtime'  # pyright: ignore[reportPrivateUsage]
+
+    # A GPT-Live model name picks the GPT-Live protocol through the gateway as it does without it.
+    live_model = infer_realtime_model('gateway/openai:gpt-live-1')
+    assert type(live_model).__name__ == 'OpenAILiveModel'
+    assert (live_model.model_name, live_model.base_url) == ('gpt-live-1', 'https://gateway.pydantic.dev/proxy/openai/')
 
 
 @pytest.mark.skipif(not imports_successful(), reason='xai-sdk / google-genai not installed')
@@ -185,12 +222,20 @@ def test_infer_realtime_model_provider_factory(env: TestEnv) -> None:
     # `provider:` prefix exactly as written (gateway routes un-normalized), and every branch — not just
     # `openai` — uses the provider it returns. Nothing is read from the environment, so credentials
     # can come from the application (e.g. per-user keys) rather than `*_API_KEY` variables.
-    for name in ('OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'XAI_API_KEY', 'GOOGLE_API_KEY'):
+    for name in (
+        'OPENAI_API_KEY',
+        'AZURE_OPENAI_ENDPOINT',
+        'AZURE_OPENAI_API_KEY',
+        'XAI_API_KEY',
+        'ELEVENLABS_API_KEY',
+        'GOOGLE_API_KEY',
+    ):
         env.remove(name)
     providers: dict[str, Provider[Any]] = {
         'openai': OpenAIProvider(api_key='factory-key'),
         'azure': AzureProvider.for_realtime(azure_endpoint='https://factory.openai.azure.com', api_key='factory-key'),
         'xai': XaiProvider(api_key='factory-key'),
+        'elevenlabs': ElevenLabsProvider(api_key='factory-key'),
         'google': GoogleProvider(api_key='factory-key'),
         'gateway/openai': gateway_provider(
             'openai', api_key='factory-key', base_url='https://gateway.pydantic.dev/proxy'
@@ -209,15 +254,18 @@ def test_infer_realtime_model_provider_factory(env: TestEnv) -> None:
         ('openai:gpt-realtime', 'OpenAIRealtimeModel'),
         ('azure:gpt-realtime', 'AzureRealtimeModel'),
         ('xai:grok-voice-latest', 'XaiRealtimeModel'),
+        ('elevenlabs:eleven_realtime_v1_mini', 'ElevenLabsRealtimeModel'),
         ('google:gemini-live-2.5-flash', 'GoogleRealtimeModel'),
         ('gateway/openai:gpt-realtime', 'OpenAIRealtimeModel'),
         ('gateway/google:gemini-live-2.5-flash', 'GoogleRealtimeModel'),
     ]:
         model = infer_realtime_model(model_id, provider_factory)
         assert type(model).__name__ == expected_class, model_id
-        # Identity: the factory's provider is used as-is, not re-inferred from its name.
-        assert getattr(model, '_provider') is providers[model_id.partition(':')[0]], model_id
-    assert seen == ['openai', 'azure', 'xai', 'google', 'gateway/openai', 'gateway/google']
+        # Identity: the factory's provider is used as-is, not re-inferred from its name. ElevenLabs wraps it in
+        # an OpenAI SDK provider, since its realtime API speaks the OpenAI protocol.
+        provider = getattr(model, '_elevenlabs_provider' if isinstance(model, ElevenLabsRealtimeModel) else '_provider')
+        assert provider is providers[model_id.partition(':')[0]], model_id
+    assert seen == ['openai', 'azure', 'xai', 'elevenlabs', 'google', 'gateway/openai', 'gateway/google']
 
     # The Azure realtime URL comes from the factory's endpoint, with no `AZURE_OPENAI_ENDPOINT` set.
     azure_model = infer_realtime_model('azure:gpt-realtime', provider_factory)
@@ -258,19 +306,24 @@ def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
 
 
 def test_infer_realtime_model_unknown_provider() -> None:
-    with pytest.raises(
-        UserError, match='Supported providers are `openai`, `azure`, `xai`, `google`, and `google-cloud`'
-    ):
-        infer_realtime_model('anthropic:voice')
+    """An identifier without a model name is refused as such before its provider is: `gateway/groq` included."""
+    messages: list[str] = []
+    for model in ('anthropic:voice', 'openai', 'openai:', 'gateway/groq'):
+        with pytest.raises(UserError) as exc_info:
+            infer_realtime_model(model)
+        messages.append(str(exc_info.value))
+    assert messages == snapshot(
+        [
+            "Unknown realtime model provider 'anthropic'. Supported providers are `openai`, `azure`, `xai`, "
+            '`elevenlabs`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / `gateway/google` '
+            'to route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.',
+            "Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got 'openai'.",
+            "Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got 'openai:'.",
+            "Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got 'gateway/groq'.",
+        ]
+    )
 
-    with pytest.raises(UserError, match=r'use the `provider:model` format .*; got \'openai\''):
-        infer_realtime_model('openai')
 
-    with pytest.raises(UserError, match=r'use the `provider:model` format .*; got \'openai:\''):
-        infer_realtime_model('openai:')
-
-
-@pytest.mark.anyio
 async def test_agent_realtime_session_infers_string_model() -> None:
     agent: Agent[None, str] = Agent()
     with pytest.raises(UserError, match='Unknown realtime model'):

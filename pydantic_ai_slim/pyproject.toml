@@ -30,11 +30,11 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
@@ -46,7 +46,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
@@ -63,39 +63,52 @@ dependencies = [
     "httpx2>=2.7",
     "pydantic>=2.12",
     "pydantic-graph=={{ version }}",
-    "exceptiongroup>=1.2.2; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    # 0.1.6 fixes the xAI Realtime usage extraction root and OpenAI's inclusive long-context boundary.
-    "genai-prices>=0.1.6",
+    # `genai-prices>=0.2.3` has Anthropic's fast mode price variants, which `provider_details['speed'] == 'fast'` selects.
+    "genai-prices>=0.2.3",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
 logfire = ["logfire[httpx]>=4.39.0", "opentelemetry-instrumentation-httpx>=0.65b0"]
 # Models
-openai = ["openai>=3.8.0", "tiktoken>=0.12.0"]
-cohere = ["cohere>=5.20.6; platform_system != 'Emscripten'"]
-google = ["google-genai>=2.18.0"]
+# Provider SDKs are capped below the next major we haven't tested (#11919); raise a cap once a new major has been
+# tested.
+# `openai>=3.50.0` is the first release that types `Response.input_transformations`, which the Responses model
+# reports in `provider_details`. Every extra below that installs `openai` shares this floor, since importing any
+# OpenAI model class imports that type.
+openai = ["openai>=3.50.0,<4", "tiktoken>=0.12.0"]
+cohere = ["cohere>=5.20.6,<8; platform_system != 'Emscripten'"]
+# `google-genai>=2.30.0` continues a long decode past the per-request output cap itself (`automatic_continuation`)
+# and reports the first request's prompt size (`initial_prompt_token_count`). Google's long-decode page names 2.30.1,
+# which only fixes the Interactions API's `output_text` (googleapis/python-genai@180c345).
+# `<3` until we migrate: 3.0.0 moves the Gemini API default from `v1beta` to `v1`, which `GoogleProvider` does not
+# pin, and its `types.py` has an invalid `\/` escape whose `SyntaxWarning` fails any import under `-W error`.
+# https://github.com/googleapis/python-genai/releases/tag/v3.0.0
+google = ["google-genai>=2.30.0,<3"]
 # `anthropic>=1` is built on `httpx2` and drops legacy HTTPX entirely; it also removes
 # `temperature`/`top_p`/`top_k` from `messages.create()`, which the model sends via `extra_body`.
-anthropic = ["anthropic>=1.3.0"]
+anthropic = ["anthropic>=1.15.0,<3"]
 # `xai-sdk>=1.16.0` adds the `image_file_id`/`image_file_ids` arguments to `image.sample()` and
 # `image.sample_batch()`, which carry `UploadedFile` reference images to the image generation API.
-xai = ["xai-sdk>=1.16.0"]
-groq = ["groq>=0.25.0"]
-openrouter = ["openai>=3.8.0"]
-# `mistralai>=2.9.2` accepts `httpx2.AsyncClient` and no longer caps OpenTelemetry semantic conventions.
-mistral = ["mistralai>=2.9.2"]
-bedrock = ["boto3>=1.42.63"]
+# `xai-sdk>=1.17.0` adds the `service_tier` argument to `chat.create()` and `Response.service_tier`.
+# 1.21.0 is the first release that allows protobuf 7, which other extras (such as the harness's
+# `kubernetes`) require, so the lowest-versions CI job can still install this floor.
+xai = ["xai-sdk>=1.21.0,<2"]
+groq = ["groq>=0.25.0,<2"]
+openrouter = ["openai>=3.50.0,<4"]
+# `mistralai>=3.0` is built on `httpx2` only; 3.1.0 adds the `ResourceChunk` and `ResourceLinkChunk` content types `_map_content` imports.
+mistral = ["mistralai>=3.1.0,<4"]
+bedrock = ["boto3>=1.42.63,<2"]
 # Amazon Bedrock Mantle serves OpenAI models through an OpenAI-compatible API via `AsyncBedrockOpenAI`,
 # which needs `openai` and (for AWS SigV4 auth) `botocore`; the bearer-token path needs `openai` alone.
-bedrock-mantle = ["openai>=3.8.0", "botocore>=1.42.63"]
-zai = ["openai>=3.8.0"]
-snowflake = ["openai>=3.8.0"]
-crusoe = ["openai>=3.8.0"]
-cerebras = ["openai>=3.8.0"]
-typesafe = ["typesafe-sdk>=0.6.0"]
+bedrock-mantle = ["openai>=3.50.0,<4", "botocore>=1.42.63,<2"]
+zai = ["openai>=3.50.0,<4"]
+snowflake = ["openai>=3.50.0,<4"]
+crusoe = ["openai>=3.50.0,<4"]
+cerebras = ["openai>=3.50.0,<4"]
+typesafe = ["typesafe-sdk>=0.6.0,<1"]
 huggingface = [
     "huggingface-hub>=1.3.4,<2.0.0",
     # huggingface_hub 1.3.x still calls the deprecated hf_xet.download_files() API.
@@ -103,7 +116,7 @@ huggingface = [
 ]
 sentence-transformers = ["sentence-transformers>=5.2.0; python_version < '3.14'"]
 # 3.14 pin removable once voyageai 0.3.8 drops: https://pypi.org/project/voyageai/#history
-voyageai = ["voyageai>=0.3.7; python_version < '3.14'"]
+voyageai = ["voyageai>=0.3.7,<1; python_version < '3.14'"]
 # Tools
 duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
@@ -127,19 +140,23 @@ realtime = ["websockets>=14.0"]
 openai-realtime = ["pydantic-ai-slim[openai,realtime]"]
 google-realtime = ["pydantic-ai-slim[google,realtime]"]
 xai-realtime = ["pydantic-ai-slim[xai,openai,realtime]"]
+# ElevenLabs needs no provider SDK: its REST preflight uses the built-in HTTP client, so the extra
+# is just the realtime transport deps.
+elevenlabs-agents-realtime = ["pydantic-ai-slim[realtime]"]
+# `openai` supplies the event types of the OpenAI Realtime codec the ElevenLabs realtime model reuses.
+elevenlabs-realtime = ["pydantic-ai-slim[openai,realtime]"]
 # MCP — `fastmcp-slim[client]` is the lightweight client-only distribution (no Starlette /
 # Uvicorn server stack). Pulls the `mcp` SDK transitively. For an in-process FastMCP server,
-# install the full `fastmcp` package directly alongside `[mcp]`. FastMCP 4 (MCP SDK v2) is
-# supported concurrently with FastMCP 3; resolvers only select FastMCP 4 with a pre-release opt-in
-# until 4.0.0 ships (#6661).
+# install the full `fastmcp` package directly alongside `[mcp]`. FastMCP 3 (MCP SDK v1) and
+# FastMCP 4 (MCP SDK v2) are both supported (#6661).
 mcp = ["fastmcp-slim[client]>=3.3.0,<5"]
 # Explicit task execution (`use_task=True`) on FastMCP 4, where tasks live in the separate
 # `fastmcp-tasks` extension. Kept out of `[mcp]` mirroring fastmcp's own opt-in `tasks` extra:
 # it pulls the full FastMCP server stack, and ordinary calls drive task-only tools to
-# completion without it. `<5` matches the `[mcp]` cap. The direct `fastmcp-slim` floor spells
-# out that this extra implies FastMCP 4 and opts resolvers into the pre-release, which
-# `fastmcp-tasks`'s transitive pin alone does not.
-mcp-tasks = ["fastmcp-tasks>=4.0.0b1,<5", "fastmcp-slim[client]>=4.0.0b1,<5"]
+# completion without it. `<5` matches the `[mcp]` cap. `fastmcp-tasks` only requires
+# `fastmcp-slim[server]`, so the client half is required here. The floors are stable releases
+# because a pre-release floor opts resolvers into FastMCP pre-releases.
+mcp-tasks = ["fastmcp-tasks>=4.0.0,<5", "fastmcp-slim[client]>=4.0.0,<5"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # UI
@@ -158,9 +175,13 @@ retries = ["tenacity>=8.2.3", "httpx>=0.27"]
 # Temporal
 temporal = ["temporalio>=1.27.0"]
 # DBOS
-dbos = ["dbos>=2.10.0"]
+# 3.4.0 is the first DBOS with `DBOS.reserve_step`, and its `DBOS.patch_async` no longer requires `enable_patching`.
+dbos = ["dbos>=3.4.0"]
 # Prefect
-prefect = ["prefect>=3.7.5"]
+# 3.9.0 is the first Prefect to cap `fastapi<0.151` (PrefectHQ/prefect#23478) and drop the `min_items`
+# keyword FastAPI 0.155 rejects (PrefectHQ/prefect#23476); earlier ones fail to import their server on
+# a current FastAPI.
+prefect = ["prefect>=3.9.0"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 

@@ -1,0 +1,78 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "223"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is 2+2? Reply with just the number.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+          thinkingConfig:
+            include_thoughts: true
+            thinking_level: HIGH
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1399
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: |+
+                **The Simplest of Calculations**
+
+                Right, a straightforward one. The user's asking for the sum of 2 and 2, and the *only* requirement is the numerical answer. No need to overthink this. It's a fundamental arithmetic problem, a basic operation. No complex formulae, no hidden variables, just a direct request for the solution to 2 + 2. The solution, of course, is 4. I'll provide the response as requested.
+
+
+              thought: true
+            - text: "4"
+              thoughtSignature: >-
+                EuoBCucBAWkUfRMpNhe4JqS9MA7d//N49XQnxxbolRePCIQ2cOjCm0K9Afzep2pP1e/vr5zreYrf8pov3M+EWXEFOcg0gdKiivdscnnghHF5pGCuafXZvWZsco5PtyGVuC/gunQa6koVHxVQdMHYVz6mRKje9eGUZ+MRimrO72elnbPu/abneFMttFYPAJZhsbAmlZybBaDRBDmEgjRicrjKmdxQ/fjjHf9SZWe+sIs5Ezk2wtaUPWrBLKTlJoSZweLpjWvGu2lw3JL/gzhZTN+KjKk31G1mOLjS/xXopVJJ7P7zA/Veps6Y8+TC
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 14
+          candidatesTokenCount: 1
+          totalTokenCount: 57
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 14
+          thoughtsTokenCount: 42
+          serviceTier: standard
+        modelVersion: gemini-3-flash-preview
+        responseId: 5j_2av2jJICR3boPwJeQkQo
+  recorded_at: 2026-11-12T22:38:31.839280+00:00

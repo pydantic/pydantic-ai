@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI RAG example that answers questions about documentation using vector search with pgvector and OpenAI embeddings, exposed to the agent as a tool."
+---
+
 # RAG
 
 RAG search example. This demo allows you to ask questions about an October 2024 snapshot of the [Logfire](https://pydantic.dev/logfire) documentation.

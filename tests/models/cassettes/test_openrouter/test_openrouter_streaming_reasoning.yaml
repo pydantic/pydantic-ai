@@ -1,74 +1,42 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       content-length:
-      - '176'
+      - "243"
       content-type:
       - application/json
       host:
       - openrouter.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: What is 2+2?
-        role: user
-      model: anthropic/claude-sonnet-4.5
-      reasoning:
-        enabled: true
-      stream: true
-      stream_options:
-        include_usage: true
-    uri: https://openrouter.ai/api/v1/chat/completions
-  response:
     body:
-      string: |+
-        : OPENROUTER PROCESSING
-
-        : OPENROUTER PROCESSING
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[{"type":"reasoning.text","text":"","signature":"","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":"This","reasoning_details":[{"type":"reasoning.text","text":"This","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        : OPENROUTER PROCESSING
-
-        : OPENROUTER PROCESSING
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":" is a simple arithmetic question. ","reasoning_details":[{"type":"reasoning.text","text":" is a simple arithmetic question. ","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":"2+2 equals 4.","reasoning_details":[{"type":"reasoning.text","text":"2+2 equals 4.","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[{"type":"reasoning.text","text":"","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[{"type":"reasoning.text","signature":"Et0BCkgIChACGAIqQA2s7h7tA7IG35fbwVkou9PM2hANVJNUwcEM4q12fTRDK6y3v6YoEvJ+7bko8wnW/GLsQFXadaJPAEMCpLkhI9ISDLjFkeR1aVUIvdCtyBoMrUTovh0jwk+wpnZWIjANV3e6VVdgbGSsEyyTHO6KMmVtqqs79f9blnVdJmmMIwMyTi6bEtG59+jTU7v1zlsqQ2IKGZILOlr6adh0Aam7zYttvisys+wjyZZXU1y/Srz0nmp1cFgVOJe1BLKQI3SSRrjsqQC0uAEUZy0GX0Rq1AXjvIcYAQ==","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"2 ","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"+ 2 = 4","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":null,"native_finish_reason":null,"logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning":null,"reasoning_details":[]},"finish_reason":"stop","native_finish_reason":"stop","logprobs":null}]}
-
-        data: {"id":"gen-1765226419-AGrwjunAftQIAgweibL8","provider":"Google","model":"anthropic/claude-sonnet-4.5","object":"chat.completion.chunk","created":1765226419,"choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null,"native_finish_reason":null,"logprobs":null}],"usage":{"prompt_tokens":43,"completion_tokens":36,"total_tokens":79,"cost":0.000669,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":null,"upstream_inference_prompt_cost":0.000129,"upstream_inference_completions_cost":0.00054},"completion_tokens_details":{"reasoning_tokens":13,"image_tokens":0}}}
-
-        data: [DONE]
-
+      type: json
+      content:
+        model: anthropic/claude-sonnet-5
+        stream: true
+        messages:
+        - role: user
+          content: >-
+            How many prime numbers are there between 100 and 150? Reply with just the
+            number.
+        stream_options:
+          include_usage: true
+        reasoning:
+          enabled: true
+  response:
+    status: 200
     headers:
       access-control-allow-origin:
-      - '*'
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
       cache-control:
       - no-cache
       connection:
@@ -76,16 +44,58 @@ interactions:
       content-type:
       - text/event-stream
       permissions-policy:
-      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com"
-        "https://hooks.stripe.com")
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
       referrer-policy:
       - no-referrer, strict-origin-when-cross-origin
       transfer-encoding:
       - chunked
-      vary:
-      - Accept-Encoding
-    status:
-      code: 200
-      message: OK
-version: 1
-...
+    body:
+      type: text
+      content: |+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        : OPENROUTER PROCESSING
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"Listing out","reasoning_details":[{"type":"reasoning.text","text":"Listing out","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":" primes between 100 ","reasoning_details":[{"type":"reasoning.text","text":" primes between 100 ","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"and 150, I count","reasoning_details":[{"type":"reasoning.text","text":"and 150, I count","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":" ","reasoning_details":[{"type":"reasoning.text","text":" ","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"ten total: 101, 103","reasoning_details":[{"type":"reasoning.text","text":"ten total: 101, 103","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":", 107, 109, ","reasoning_details":[{"type":"reasoning.text","text":", 107, 109, ","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"113, 127, 131,","reasoning_details":[{"type":"reasoning.text","text":"113, 127, 131,","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":" 137, 139, 149","reasoning_details":[{"type":"reasoning.text","text":" 137, 139, 149","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":".","reasoning_details":[{"type":"reasoning.text","text":".","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":"\n\n","reasoning_details":[{"type":"reasoning.text","text":"\n\n","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning_details":[{"type":"reasoning.text","signature":"Ep4ECuQCCBMYAipA7tdZQtDS3of6+DqMe+LVvjPwBJejG27qrfusDTA/SBo+x0x2/3jWCPIb2hp+2Stw2mPICZPI9vDh6/8t/FW08zIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0YzBmMDQ2Zi0yNWZkLTQ1ZmItYmZiMy1hMDhhOGUyNDljYTd6HnVwcm9mXzAxMUNmV0xtdjlGeVFOcGF6WUtxRVNxepoBEQoPY2xhdWRlLXNvbm5ldC01qAHBofbWBsIBOggEEAAaDALaigNPNwX4fQQmrSABMgQScc8lOgQ4MyOKQgQ4MyOKSgQ4MyOKUABaBNkF4VZgAmgBcADaAWAKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIH8heLMmd810iLLi0ur1ezD0AYmV/SUDIjTk2DjWHXPfIgAyIMLAE8hqnJLiL5ZvPYYXdo+LekTJAq3MCXv6HgmK+04fSAMSDAvygw0KBw80IraDwRoMOxE2nmn9NwrV6xiYIjDZKm9Xcrp/abUT83qL0Sv+beRJcr8tTqlV0sc9AYC+3Q1mny2579xE1c7/pNkkNYIqZ9HyfHYbrsBHGiyoOORmBg+OAlOqhlTfgUZlaggi+GmGf4Rr0rcuoVa2VfAK6rfKQMBNHsReBh+EOCwFvU/WfuGa4mzdWMS+s1AkhuneLDno97IGoQnE8IJXi0JvaLzXns62MO9h5yIYAQ==.eyJlbmRwb2ludF9zbHVnIjoiYW50aHJvcGljL2NsYXVkZS1zb25uZXQtNS0yMDI2MDYzMHxjbGF1ZGUtb24tYXdzIn0","format":"anthropic-claude-v1","index":0}]},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"10","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","choices":[{"index":0,"delta":{"content":"","role":"assistant","reasoning":null},"finish_reason":"stop","native_finish_reason":"end_turn"}]}
+
+        data: {"id":"gen-1792905405-rN7KMuI03Jalmp4aLmJq","object":"chat.completion.chunk","created":1792905405,"model":"anthropic/claude-sonnet-5","provider":"Claude Platform on AWS","service_tier":"default","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"end_turn"}],"usage":{"prompt_tokens":31,"completion_tokens":52,"total_tokens":83,"cost":0.000582,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.000582,"upstream_inference_prompt_cost":0.000062,"upstream_inference_completions_cost":0.00052},"completion_tokens_details":{"reasoning_tokens":48,"image_tokens":0,"audio_tokens":0}}}
+
+        data: [DONE]
+
+  recorded_at: 2026-10-25T05:16:49.490962+00:00

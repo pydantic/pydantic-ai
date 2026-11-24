@@ -1,0 +1,135 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "194"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: o4-mini
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the capital of France? Answer in one word.
+        reasoning:
+          effort: low
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1033"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0d4e6eed60afd019006ada3ee90bb887d187975974557f583c
+        object: response
+        created_at: 1792687849
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1792687849
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: o4-mini-2025-04-16
+        moderation: null
+        output:
+        - id: rs_0d4e6eed60afd019006ada3ee98e8487d1a58c160ed052e2d0
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABq2j7q9lo7jOPtgDEycQpPn8gunjVyowAS7FkjuC_-1mkgLOFTEqfh7Fx2Zmt_o2BQ8l6hb2f4-psta3K3cnhRpBJMehU9m5JiVVrRoP0mmxLtgpKFH8Lq6gUdg43oSAsqDuqOGNwnL0hSxz7p1C856pBSHj5KdQmlYKEfZDyizEAHNHM3UajcyOkwE3-fWVUZyLi7KCgHUPOe-P8_hu-ol10NkOFlUmwkpjV-1_hrOmZNzwK_3Lwb7Ry5eZMDc8laJfTdy7Q220fINSDItbJB2M--mVBzkB9qkA7lB5ds0tl53UNASoATuAdY2M5onTOOgyUnRBeTZwBfsoj5AJ4Ggc-mO6zN7-Nj5wV4AONZqJQXSg40Un8WDlwhV1NVP0LkCamTLkrYaKeAJpgeiY0WV0zl2G1E2chhL4vOzRzIpOPJi6GCgJvn6mGQigkfePd7L1D83jthypN7_8fxmKAk13oDubaZnX9twNr-BLjzjlBd4Dnr64M9VIvBRq_ve5TOkndXlaKtBxfCU2qTis4h1g-Jua6uzqPg5hbAh24E2d8GbtF43Opd1z_O1AYkmYBspqaBhgqeToeAb3K7g_FjKlvHfABCPQxG32Uk044PAZET2bqAFK5INyP34JLriLZJE7xn7P_Psgv4KwMwfGFCtSoQL0YZZisHEaJi_vmrTBYFCgks6TIV1vlA3cRJ_YU0BJ7aRvaJ03pgRFO1ZKCexfDj8jf4WAfD4FILNGiPCPMLYRh3oPjuXmYe7ugBfU5h4szbKpgbg--XFwlZi4UHxyOsN75F8QGJ5A0J6iTESaeoT5HexLmxzTwRWknVlFOIDP5t4yvFEb-8LUvunEE0wirbkxZI2yAFZBCsAa1aDzsF7GEe36Jhneaw8W--A4oyK9xBsJ6ce_zI5zluRu4Usk-V4XUZ6DA1qT17x02eF3mv11brSqi3RwR7AW1eFPNCg6S6gUKAruKkKqDGDRxg-lcrYHCNUF0PeqzmjlhjDUc_src1Gir8XKQZPpTYFPzQDLvnocMZBmL3dJEzd5om3nOA3EC9K7IKBELiUXxOCGQwxdTgyMqGtmipvIDLa9C8NBiaW4Lf6NURtmS7RJr6wFhMZeN6q28AbZsgwj79IdZWwMcgFl-x5swnFAMqgqASPyJRbpH7ciadT2ilmkrLo_N2VovPOwvLBRH-ELW4CxOfb9gHPsCND-wRLj1yquJUaFTgnHLwltjo0Fn8zUP1GJdmHPEpn5gmLmvR5VnAobgwBrX2alB8uDK3OwL9I-TD19OnrZWuhtNZGnOIIc6EjDUMaA8ABeHqUkdSz5I4UclPWj3zBTOqkat0aBVLTTyZrjt5d5aRrk0d6kiRzk8Ig6S2KNa6dW1OlUq34DCL4f1CgRxrckJ4X_D4qMfBxRKYNg24FK0HLor28CWx-lhMxW3MnsE8aA0uze4HB2NnE60ymOxJbx1ZC8oylruYpWDvWdyiWjcZPxIGefaEtJyVIJsiL7Nqgm9dlJnLryv1hOpDsGBnVIgGd9GB0PNJlpRb_vEgK31V_lFAnaJHl6tQbc8GWgxFnkxOE0mppmNt1l0kJITfvuM1LOKwewmKAUU0RJJunMcHfCGOADhxJtW7rLL0N5-JtI3neEyyoMP2Dyr8H0TuyMiNTYT9ew9z6suMxFi4
+          summary: []
+        - id: msg_0d4e6eed60afd019006ada3ee9b5c887d1a179b911e9061d4c
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Paris
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: in_memory
+        reasoning:
+          context: current_turn
+          effort: low
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 18
+          input_tokens_details:
+            cache_write_tokens: 0
+            cached_tokens: 0
+          output_tokens: 22
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 40
+        user: null
+        metadata: {}
+  recorded_at: 2026-10-22T16:50:50.097430+00:00

@@ -1,0 +1,5 @@
+{
+  "against": "v2.64.0",
+  "reason": "`ModelFallback`'s default `fallback_on` adds `ContentFilterError`, so it falls back when a model refuses. Anthropic's refusals guide says to discard a refused response's partial output and retry on a fallback model, which is the fallback this capability exists for; `ModelFallback` shipped in v2.64.0 days earlier, and `fallback_on=(ModelAPIError,)` restores the previous default. `FallbackModel` and the core agent's content-filter behavior are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12039"
+}

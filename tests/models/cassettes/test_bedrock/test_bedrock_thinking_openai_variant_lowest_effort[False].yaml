@@ -1,0 +1,55 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/openai.gpt-oss-120b-1%3A0/converse
+    headers:
+      amz-sdk-invocation-id:
+      - 04347fa2-b6ea-4049-8e2a-f1369c98c17b
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "187"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: "Reply with the single word: ok"
+        system: []
+        inferenceConfig: {}
+        additionalModelRequestFields:
+          reasoning_effort: low
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "308"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 502
+        output:
+          message:
+            content:
+            - reasoningContent:
+                reasoningText:
+                  text: We just need to reply "ok".
+            - text: ok
+            role: assistant
+        stopReason: end_turn
+        usage:
+          inputTokens: 74
+          outputTokens: 19
+          serverToolUsage: {}
+          totalTokens: 93
+  recorded_at: 2026-10-22T17:02:32.138908+00:00

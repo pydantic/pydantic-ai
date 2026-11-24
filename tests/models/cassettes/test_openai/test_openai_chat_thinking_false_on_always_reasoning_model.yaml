@@ -1,0 +1,78 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "151"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: o4-mini
+        stream: false
+        messages:
+        - role: user
+          content: What is the capital of France? Answer in one word.
+        reasoning_effort: low
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "847"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: chatcmpl-EbqIZO81ZgiIFfj15lz6ASvYpaght
+        object: chat.completion
+        created: 1792687879
+        model: o4-mini-2025-04-16
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: Paris
+            refusal: null
+            annotations: []
+          finish_reason: stop
+        usage:
+          prompt_tokens: 18
+          completion_tokens: 19
+          total_tokens: 37
+          prompt_tokens_details:
+            cached_tokens: 0
+            audio_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+            audio_tokens: 0
+            accepted_prediction_tokens: 0
+            rejected_prediction_tokens: 0
+        service_tier: default
+        system_fingerprint: null
+  recorded_at: 2026-10-22T16:51:20.583747+00:00

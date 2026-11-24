@@ -2,19 +2,29 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from typing import TYPE_CHECKING, TypeAlias, TypeVar
 
-# Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
-# I/O if that happens inside the event loop.
-import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 import httpx2
+
+# Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
+# I/O if that happens inside the event loop. Since 2.10, httpx2 does not install httpcore2 on
+# Emscripten (Pyodide), where it sends requests through the browser's `fetch` instead, so the
+# preload is skipped there. The check is on the platform rather than on `ImportError` so that a
+# broken install elsewhere still fails loudly here.
+if sys.platform != 'emscripten':
+    import httpcore2  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 from ._warnings import PydanticAIDeprecationWarning
 
 __all__ = (
+    'DEFAULT_HTTP_LIMITS',
     'DEFAULT_HTTP_TIMEOUT',
+    'DEFAULT_MAX_CONNECTIONS',
+    'DEFAULT_MAX_KEEPALIVE_CONNECTIONS',
     'AsyncHTTPClient',
+    'ConnectPoolTimeoutCap',
     'HTTPAuth',
     'HTTPTimeout',
     'create_async_httpx2_client',
@@ -59,18 +69,108 @@ else:
 _NotGivenT = TypeVar('_NotGivenT')
 
 
-def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx2.AsyncClient:
-    """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts and user agent.
+# The OpenAI and Anthropic SDKs' own connection pool limits, rather than HTTPX's 100 and 20.
+DEFAULT_MAX_CONNECTIONS = 1000
+DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 100
+DEFAULT_HTTP_LIMITS = httpx2.Limits(
+    max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+)
 
-    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
-    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
+
+def create_async_httpx2_client(
+    *,
+    timeout: float | httpx2.Timeout = httpx2.Timeout(DEFAULT_HTTP_TIMEOUT, connect=5),
+    limits: httpx2.Limits = DEFAULT_HTTP_LIMITS,
+    transport: httpx2.AsyncBaseTransport | None = None,
+) -> httpx2.AsyncClient:
+    """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts, connection limits and user agent.
+
+    This is the client a provider creates when you don't pass your own `http_client`; the Google
+    providers create it with a 20-minute timeout instead. Call it yourself to adjust the timeouts or
+    connection pool limits, or to send requests through your own transport, such as a
+    [retrying transport](../retries.md#transport-retries), and pass the result to the provider as
+    `http_client`. A client you create this way is yours to close.
+
+    Args:
+        timeout: The client's timeout, in seconds or as an `httpx2.Timeout` that sets each phase
+            separately. Defaults to 600 seconds, with a 5-second connect timeout.
+        limits: The connection pool limits. Defaults to 1000 connections, of which up to 100 are kept
+            alive while idle, matching the OpenAI and Anthropic SDKs' own clients. Not used with
+            `transport`, whose own pool limits apply.
+        transport: The transport to send requests through, such as an
+            [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport]. It replaces
+            the transport the client would otherwise build, so it owns the connection pool: set pool limits
+            on it, or on the transport it wraps (an `AsyncHTTPX2TenacityTransport` without `wrapped` uses
+            these defaults). With a transport, HTTPX also stops reading proxies from the
+            `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables; give the transport a `proxy`
+            to use one, and its `limits` too, since an `httpx2.AsyncHTTPTransport` you build has HTTPX's
+            default pool of 100 connections, 20 kept alive. The timeouts and user agent still apply.
+
+    A request timeout whose phases are all equal, such as a number of seconds, can shorten the
+    client's connect and pool timeouts but never lengthen them; see
+    [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout].
     """
     from .models import get_user_agent
 
+    client_timeout = httpx2.Timeout(timeout)
     return httpx2.AsyncClient(
-        timeout=httpx2.Timeout(timeout=timeout, connect=connect),
+        timeout=client_timeout,
+        limits=limits,
+        transport=transport,
         headers={'User-Agent': get_user_agent()},
+        event_hooks={'request': [ConnectPoolTimeoutCap(connect=client_timeout.connect, pool=client_timeout.pool)]},
     )
+
+
+class ConnectPoolTimeoutCap:
+    """Request hook that keeps a per-request timeout from lengthening a client's connect and pool timeouts.
+
+    Provider SDKs send a timeout with every request: their own default, a number of seconds from
+    [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout], or (for google-genai) the
+    scalar the provider pins on `HttpOptions`. A scalar sets every phase, so a 600-second read
+    timeout would also allow 600 seconds to connect or to wait for a pooled connection. Installed on
+    the clients Pydantic AI creates, this hook takes the shorter of the requested and the client's own
+    connect and pool timeouts when all four phases of the requested timeout are equal, as a scalar or
+    `None` makes them. A timeout whose phases differ was set phase by phase and is left as it is, and
+    a client phase without a timeout (`None`) caps nothing.
+
+    It is a request event hook rather than a custom transport because passing `transport=` to an HTTPX
+    client turns off the proxies it would otherwise pick up from the environment. Event hooks run for
+    every redirect hop, after the client has applied its default timeout to the request.
+    """
+
+    def __init__(self, *, connect: float | None, pool: float | None) -> None:
+        self._connect = connect
+        self._pool = pool
+
+    async def __call__(self, request: httpx2.Request | httpx.Request) -> None:
+        requested: dict[str, float | None] | None = request.extensions.get('timeout')
+        if requested is None:
+            # `AsyncClient.send` sets one before hooks run; only a request handed to the hook directly lacks it.
+            return
+        # A hand-built request may carry a partial mapping; HTTPX treats a missing phase as no limit.
+        phases = {requested.get(phase) for phase in ('connect', 'read', 'write', 'pool')}
+        if len(phases) > 1:
+            # Phases set separately, e.g. `httpx.Timeout(60, connect=30)`, are what the caller asked for.
+            return
+        (scalar,) = phases
+        request.extensions = {
+            **request.extensions,
+            'timeout': {
+                **requested,
+                'connect': _shorter_timeout(scalar, self._connect),
+                'pool': _shorter_timeout(scalar, self._pool),
+            },
+        }
+
+
+def _shorter_timeout(requested: float | None, cap: float | None) -> float | None:
+    # `None` disables a timeout, so any other value is shorter.
+    if requested is None:
+        return cap
+    if cap is None:
+        return requested
+    return min(requested, cap)
 
 
 def to_httpx2_timeout(timeout: float | LegacyTimeout | _NotGivenT) -> float | httpx2.Timeout | _NotGivenT:

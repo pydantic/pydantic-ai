@@ -1,0 +1,5 @@
+{
+  "against": "v2.63.0",
+  "reason": "Adds `CapabilityLoadDeltaPart` to `ModelRequestPart`, the record `RunContext.load_capability` leaves for a capability loaded from code; the version policy permits new message parts, and every existing member is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10090"
+}

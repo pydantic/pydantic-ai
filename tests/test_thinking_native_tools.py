@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -37,7 +37,7 @@ with try_import() as google_imports:
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
 @dataclass(frozen=True)

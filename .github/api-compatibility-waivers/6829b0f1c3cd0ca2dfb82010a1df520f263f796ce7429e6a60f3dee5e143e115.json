@@ -1,0 +1,5 @@
+{
+  "against": "v2.61.0",
+  "reason": "`clai2` imports Codex's responses under the `openai-codex` provider, which round-trips their encrypted reasoning and compaction summaries; the constant only names the provider imported histories use.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/11388"
+}

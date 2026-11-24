@@ -1,0 +1,210 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/decisions
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1357"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-decision-1
+        input: Your heater caught fire in my kitchen. My lawyer will be in touch.
+        questions:
+          q0:
+            type: noul
+            instructions: "{\"field\": \"refund\", \"premise\": \"If the user's request calls for Ticket: Triage a support ticket.\", \"question\": \"Do they want a refund?\"}"
+            criteria:
+              true_description: They ask for their money back.
+              false_description: They do not.
+          q1:
+            type: choice
+            instructions: "{\"field\": \"area\", \"premise\": \"If the user's request calls for Ticket: Triage a support ticket.\", \"question\": \"Which team owns it?\"}"
+            criteria:
+              billing: null
+              product defect: null
+          q2:
+            type: score
+            instructions: "{\"field\": \"urgency\", \"premise\": \"If the user's request calls for Ticket: Triage a support ticket.\", \"question\": \"How urgent is it?\"}"
+            criteria:
+            - Can wait a week
+            - Should be handled today
+            - Needs a reply within the hour
+          q3:
+            type: choice
+            instructions: "{\"field\": \"reason\", \"premise\": \"If the user's request calls for escalate_to_human: Hand the ticket to a person.\"}"
+            criteria:
+              legal threat: null
+              safety issue: null
+          q4:
+            type: choice
+            instructions: Which of these does this call for?
+            criteria:
+              Ticket: Triage a support ticket.
+              escalate_to_human: Hand the ticket to a person.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=321
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        answers:
+          q3:
+            confidence: 0.6922947109192421
+            choice: legal threat
+            probabilities:
+              safety issue: 0.30770528908075784
+              legal threat: 0.6922947109192421
+            type: choice
+          q2:
+            confidence: 0.899864234368411
+            score: 1.890037238218175
+            probabilities:
+              "1": 0.09030876948135295
+              "2": 0.899864234368411
+              "0": 0.00982699615023598
+            legend:
+              "2": Needs a reply within the hour
+              "0": Can wait a week
+              "1": Should be handled today
+            type: score
+          q4:
+            confidence: 0.9813419372969718
+            choice: escalate_to_human
+            probabilities:
+              escalate_to_human: 0.9813419372969718
+              Ticket: 0.018658062703028166
+            type: choice
+          q0:
+            confidence: 0.7837167043967413
+            noul: 0.21628329560325868
+            type: noul
+          q1:
+            confidence: 0.9850129827537564
+            choice: product defect
+            probabilities:
+              product defect: 0.9850129827537564
+              billing: 0.014987017246243493
+            type: choice
+        usage:
+          total_tokens: 468
+          total_input_tokens: 468
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 468
+          total_output_tokens: 0
+  recorded_at: 2026-11-11T16:49:10.507544+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/decisions
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1036"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-decision-1
+        input: "{\"text\": \"Your heater caught fire in my kitchen. My lawyer will be in touch.\", \"done\": [{\"tool_call\": {\"name\": \"escalate_to_human\", \"args\": {\"reason\": \"legal threat\"}}}, {\"tool_return\": {\"name\": \"escalate_to_human\", \"content\": \"escalated: legal threat\"}}]}"
+        questions:
+          q0:
+            type: noul
+            instructions: "{\"field\": \"refund\", \"question\": \"Do they want a refund?\", \"goal\": \"Triage a support ticket.\"}"
+            criteria:
+              true_description: They ask for their money back.
+              false_description: They do not.
+          q1:
+            type: choice
+            instructions: "{\"field\": \"area\", \"question\": \"Which team owns it?\", \"goal\": \"Triage a support ticket.\"}"
+            criteria:
+              billing: null
+              product defect: null
+          q2:
+            type: score
+            instructions: "{\"field\": \"urgency\", \"question\": \"How urgent is it?\", \"goal\": \"Triage a support ticket.\"}"
+            criteria:
+            - Can wait a week
+            - Should be handled today
+            - Needs a reply within the hour
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=192
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        answers:
+          q0:
+            confidence: 0.5877508471709669
+            noul: 0.412249152829033
+            type: noul
+          q1:
+            confidence: 0.9717889989563624
+            choice: product defect
+            probabilities:
+              billing: 0.02821100104363764
+              product defect: 0.9717889989563624
+            type: choice
+          q2:
+            confidence: 0.816772602246879
+            score: 1.7925599187357373
+            probabilities:
+              "0": 0.024212683511141555
+              "1": 0.15901471424197935
+              "2": 0.816772602246879
+            legend:
+              "2": Needs a reply within the hour
+              "0": Can wait a week
+              "1": Should be handled today
+            type: score
+        usage:
+          total_tokens: 364
+          total_input_tokens: 364
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 364
+          total_output_tokens: 0
+  recorded_at: 2026-11-11T16:49:10.707462+00:00

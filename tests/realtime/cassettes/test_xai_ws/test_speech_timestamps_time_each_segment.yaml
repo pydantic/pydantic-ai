@@ -1,0 +1,769 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: session.created
+    event_id: dc948261-b93e-4c5b-b1fd-e893a753840e
+    session:
+      id: 4c395ae2ba404f298ff26de20e0073ea
+      object: realtime.session
+      instructions: ''
+      voice: xai_ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-3.0
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: Answer in two sentences.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    type: conversation.created
+    event_id: b1ca1a58-406d-40be-8e4a-50ff781e0ec6
+    conversation:
+      id: bd560cb9-c3d9-4156-a4ca-c0c851ffcbb4
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.001
+  data:
+    type: ping
+    event_id: 59e38ca9-0111-4936-be77-541eae0139d2
+    timestamp: 1793224998502
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.478
+  data:
+    session:
+      instructions: Answer in two sentences.
+      enable_noise_suppression: false
+      turn_detection:
+        type: server_vad
+        create_response: true
+      model: grok-voice-3.0
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: 8cd2a7ba-3288-4716-9287-f3c3dbe8d18b
+    previous_item_id: null
+- kind: message
+  direction: sent
+  at: 0.479
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      id: pydantic_ai_item_0
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Tell me about the history of the bicycle.
+- kind: message
+  direction: sent
+  at: 0.479
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+    response:
+      metadata:
+        pydantic_ai_inputs: '0'
+- kind: message
+  direction: received
+  at: 0.568
+  data:
+    type: conversation.item.added
+    event_id: c327c476-d83f-425d-8b77-8623485defbf
+    item:
+      id: pydantic_ai_item_0
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Tell me about the history of the bicycle.
+      replayed: false
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.568
+  data:
+    type: response.created
+    event_id: 641a343e-e83c-4812-bb65-7d36b74230cd
+    response:
+      id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+      object: realtime.response
+      output: []
+      status: in_progress
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.745
+  data:
+    type: response.output_item.added
+    event_id: a043c51c-6fe1-4c9a-9131-f12eae1252d0
+    item:
+      id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      replayed: false
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.745
+  data:
+    type: conversation.item.added
+    event_id: eb26520b-ba45-478b-9a95-0b96c21db86b
+    item:
+      id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+      replayed: false
+    previous_item_id: pydantic_ai_item_0
+- kind: message
+  direction: received
+  at: 0.745
+  data:
+    type: response.content_part.added
+    event_id: 039dac2e-1ac7-4124-a4fd-4edbd369aaab
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  at: 0.982
+  data:
+    type: response.output_audio.delta
+    event_id: cb91cc50-750c-490d-ab7a-8e82500dc3c1
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: BwANABIAEQAMAAgABgAGAAkAEAAWABYAEwAPAAsABwAD
+    content_index: 0
+    output_index: 0
+    rid: ce259ae0-1686-4361-8c17-97dc5bc37b03
+    latency: '0.35'
+    audio_duration_ms: 489
+    ts: 1793224999425
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.982
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: ce259ae0-1686-4361-8c17-97dc5bc37b03
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: The bicycle evolved from early 1800s
+    content_index: 0
+    output_index: 0
+    rid: ce259ae0-1686-4361-8c17-97dc5bc37b03
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 0.982
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 9ea6c2af-5525-461e-a3bf-385ead6ec755
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: ' German and French designs like the Draisine, a wooden'
+    content_index: 0
+    output_index: 0
+    rid: 9ea6c2af-5525-461e-a3bf-385ead6ec755
+    start_time: 2.24
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.085
+  data:
+    type: response.output_audio.delta
+    event_id: 7a541763-b04d-4459-a675-39d4c7f78b83
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: y/tg+zH7IfuU+jv6yPnf+en56fkN+vv5Kvpy+kf66voJ
+    content_index: 0
+    output_index: 0
+    rid: ce259ae0-1686-4361-8c17-97dc5bc37b03
+    audio_duration_ms: 918
+    ts: 1793224999528
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.121
+  data:
+    type: response.output_audio.delta
+    event_id: c26b5aad-22dd-4539-89c1-e29304fe8644
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: e/d69g72Qvbp9iL47fk3/Gj+XAAsAsUDJwUBBkwGUQYr
+    content_index: 0
+    output_index: 0
+    rid: ce259ae0-1686-4361-8c17-97dc5bc37b03
+    audio_duration_ms: 765
+    ts: 1793224999600
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.121
+  data:
+    type: response.output_audio.delta
+    event_id: d125372f-6946-48a5-88f5-d5eb4b2375e3
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: i/fC9/r3N/hu+J/40PgH+UT5g/nK+Rb6a/rH+iH7ffvN
+    content_index: 0
+    output_index: 0
+    rid: 9ea6c2af-5525-461e-a3bf-385ead6ec755
+    audio_duration_ms: 214
+    ts: 1793224999607
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.477
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: c6b21ccf-c96e-4f63-aa6b-b36229fc0e53
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: ' running machine, into pedal-powered versions in the 1860s with the'
+    content_index: 0
+    output_index: 0
+    rid: c6b21ccf-c96e-4f63-aa6b-b36229fc0e53
+    start_time: 5.44
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.628
+  data:
+    type: response.output_audio.delta
+    event_id: d872d65c-d9a5-40b2-a9ef-ebd1c77a86bf
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: yv7Q/tL+0P7S/tL+z/7P/tH+yv7M/s7+zv7V/tj+3/7u
+    content_index: 0
+    output_index: 0
+    rid: 9ea6c2af-5525-461e-a3bf-385ead6ec755
+    audio_duration_ms: 1284
+    ts: 1793225000070
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.829
+  data:
+    type: response.output_audio.delta
+    event_id: e89edfc5-5463-4833-8f3d-51acf7c8e241
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: WgBqAGYAawBlAGQAYQBtAHIAfQCDAIAAhwB6AHcAaABn
+    content_index: 0
+    output_index: 0
+    rid: 9ea6c2af-5525-461e-a3bf-385ead6ec755
+    audio_duration_ms: 1682
+    ts: 1793225000337
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 1.83
+  data:
+    type: response.output_audio.delta
+    event_id: 8dc76af8-73da-43c8-955a-111434d06936
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: WABbAFAAXQBmAHEAYwBLADMAIQATAAMA9v/r/9//2P/l
+    content_index: 0
+    output_index: 0
+    rid: c6b21ccf-c96e-4f63-aa6b-b36229fc0e53
+    audio_duration_ms: 214
+    ts: 1793225000342
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.007
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 7e26513c-b5c5-43e4-9e72-04ddc073cd67
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: ' boneshaker.'
+    content_index: 0
+    output_index: 0
+    rid: 7e26513c-b5c5-43e4-9e72-04ddc073cd67
+    start_time: 9.28
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.029
+  data:
+    type: response.output_audio.delta
+    event_id: ccaed80b-ef81-41fe-ab61-1ffa40b32c56
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: vf/S/UT8wvqJ+Vv4Rfd69tn1TvUL9a70ffRx9Ij0FPWu
+    content_index: 0
+    output_index: 0
+    rid: c6b21ccf-c96e-4f63-aa6b-b36229fc0e53
+    audio_duration_ms: 1957
+    ts: 1793225000536
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.411
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 0db95404-d1b8-440e-b3ba-c68310108e67
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: ' By the 1880s the safety bicycle with equal-sized wheels and'
+    content_index: 0
+    output_index: 0
+    rid: 0db95404-d1b8-440e-b3ba-c68310108e67
+    start_time: 10.56
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.502
+  data:
+    type: response.output_audio.delta
+    event_id: 41a6c656-7c7c-41a6-b391-6bb129159b6c
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: W/Tq9Kn1n/Zi9xb4u/gF+Wj5d/kd+lb7Xv0wAMQDegiz
+    content_index: 0
+    output_index: 0
+    rid: c6b21ccf-c96e-4f63-aa6b-b36229fc0e53
+    audio_duration_ms: 1682
+    ts: 1793225001010
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.569
+  data:
+    type: response.output_audio.delta
+    event_id: be76d8c4-9ecb-4b85-9afa-0705467d3cf2
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: Yv5N/mIEB/0EAKgC/P50AWL8oQQgArj5rwPmBKX7/v/4
+    content_index: 0
+    output_index: 0
+    rid: 7e26513c-b5c5-43e4-9e72-04ddc073cd67
+    audio_duration_ms: 1162
+    ts: 1793225001031
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.569
+  data:
+    type: response.output_audio.delta
+    event_id: e22f5d48-be03-4c57-adcf-5bdf6945e482
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: /P/8//v/+//7//v//P/8//3//f/+//7//v///////v/+
+    content_index: 0
+    output_index: 0
+    rid: 7e26513c-b5c5-43e4-9e72-04ddc073cd67
+    audio_duration_ms: 92
+    ts: 1793225001037
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.587
+  data:
+    type: response.output_audio.delta
+    event_id: d6bc7b5d-d868-4d67-8343-5e11afee3a71
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: /v/+//7//v/+//3//f/9//3//P/8//z//P/7//v/+//7
+    content_index: 0
+    output_index: 0
+    rid: 0db95404-d1b8-440e-b3ba-c68310108e67
+    audio_duration_ms: 581
+    ts: 1793225001099
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.648
+  data:
+    type: response.output_audio.delta
+    event_id: 0f6aa580-38af-46a4-bdb6-98764d480f48
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: xf7X/jb+Wf12/Tb+1f4X/07/Wv86/+n+6v5+/xgAbwC5
+    content_index: 0
+    output_index: 0
+    rid: 0db95404-d1b8-440e-b3ba-c68310108e67
+    audio_duration_ms: 948
+    ts: 1793225001159
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.664
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 8836e90a-b99e-407c-b9e5-d31df5698a26
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: ' a chain drive made cycling practical and popular, and in the 1900s'
+    content_index: 0
+    output_index: 0
+    rid: 8836e90a-b99e-407c-b9e5-d31df5698a26
+    start_time: 14.08
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 2.743
+  data:
+    type: response.output_audio.delta
+    event_id: ef7da222-8278-490e-85ea-540955b2ac5d
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: kftSAWEAU/8XASD+DgIX/0f/zACpAI3+kgBVAer9JgHt
+    content_index: 0
+    output_index: 0
+    rid: 0db95404-d1b8-440e-b3ba-c68310108e67
+    audio_duration_ms: 918
+    ts: 1793225001254
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.06
+  data:
+    type: response.output_audio.delta
+    event_id: 0695f444-ff71-4611-8727-94680b0527b5
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: +f/5//n/+v/7//3//v8AAAAAAAAAAAAAAAAAAAAA///+
+    content_index: 0
+    output_index: 0
+    rid: 0db95404-d1b8-440e-b3ba-c68310108e67
+    audio_duration_ms: 1040
+    ts: 1793225001571
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.066
+  data:
+    type: response.output_audio.delta
+    event_id: ad42cfbf-5832-4e9a-afe5-74c3d109aece
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: rfoH+nP5OfnJ+Eb4C/ge+Jz4HfnF+QT7cPzO/d/+1v8a
+    content_index: 0
+    output_index: 0
+    rid: 8836e90a-b99e-407c-b9e5-d31df5698a26
+    audio_duration_ms: 918
+    ts: 1793225001578
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.102
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 5bf4b360-cbca-4060-a3d8-e5c217953eb2
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: ' derailleurs and lighter materials turned it into the machine we know'
+    content_index: 0
+    output_index: 0
+    rid: 5bf4b360-cbca-4060-a3d8-e5c217953eb2
+    start_time: 18.56
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.185
+  data:
+    type: response.output_audio.delta
+    event_id: bc1db1aa-86d7-4958-b916-2b4d87b009c0
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: 2/sJ/ST+6/68/5EAfwFpAioD7ANIBIsEKwSiAwwDdQLz
+    content_index: 0
+    output_index: 0
+    rid: 8836e90a-b99e-407c-b9e5-d31df5698a26
+    audio_duration_ms: 1927
+    ts: 1793225001693
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.372
+  data:
+    type: response.output_audio.delta
+    event_id: 792849c2-2d36-422a-871f-3ae2fb84ad3e
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: 6f1AAIoCLgR7BakGMQcWB58GZAVaAzEBDf/c/B37AfpF
+    content_index: 0
+    output_index: 0
+    rid: 8836e90a-b99e-407c-b9e5-d31df5698a26
+    audio_duration_ms: 1682
+    ts: 1793225001880
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.377
+  data:
+    type: response.output_audio.delta
+    event_id: 61b57d80-eb60-473b-8fb9-9eea22f52261
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: hv08/YP8cgBNBq8EXgGPA1cCUfwo+6f+ggLFAKT//QO6
+    content_index: 0
+    output_index: 0
+    rid: 5bf4b360-cbca-4060-a3d8-e5c217953eb2
+    audio_duration_ms: 214
+    ts: 1793225001890
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.397
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: 06709ee8-ed2c-49e1-b058-cbcd73c02b9d
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: ' today.'
+    content_index: 0
+    output_index: 0
+    rid: 06709ee8-ed2c-49e1-b058-cbcd73c02b9d
+    start_time: 21.76
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.621
+  data:
+    type: response.output_audio.delta
+    event_id: 425c0f3a-6f3c-42bb-992d-73c5c2954513
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: rf51/iQHtfhJAvwA/P+0/yP+OgN2/l3/Q/9JBB/6MwM0
+    content_index: 0
+    output_index: 0
+    rid: 5bf4b360-cbca-4060-a3d8-e5c217953eb2
+    audio_duration_ms: 1927
+    ts: 1793225002129
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.731
+  data:
+    type: response.output_audio.delta
+    event_id: d449f632-26b2-405e-8dcd-49ef4d02ae05
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: pvYe+cX7VABoBLoI6AxBEHwTGhWrFDwUHRI/EZMPyQ1w
+    content_index: 0
+    output_index: 0
+    rid: 5bf4b360-cbca-4060-a3d8-e5c217953eb2
+    audio_duration_ms: 1040
+    ts: 1793225002241
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.736
+  data:
+    type: response.output_audio.delta
+    event_id: 23b805f3-ac38-433d-adae-b6d0a25c5277
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: gf7E/dH8ZPzY+2D7+/pN+kL6vvnG+nT7rPz0/GP7cvwK
+    content_index: 0
+    output_index: 0
+    rid: 06709ee8-ed2c-49e1-b058-cbcd73c02b9d
+    audio_duration_ms: 887
+    ts: 1793225002248
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.741
+  data:
+    type: response.output_audio.delta
+    event_id: a8820812-b111-48d3-a858-0b51b9ccbda3
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: /P/8//z//P/8//v/+//7//v/+//7//v/+//7//v/+//7
+    content_index: 0
+    output_index: 0
+    rid: 06709ee8-ed2c-49e1-b058-cbcd73c02b9d
+    audio_duration_ms: 92
+    ts: 1793225002255
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.745
+  data:
+    type: response.output_audio.delta
+    event_id: 3e976448-6ec2-4316-8e94-0eb547483a03
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    delta: /P/7//r/+f/5//j/+P/5//n/+v/7//z//f/+////AAAA
+    content_index: 0
+    output_index: 0
+    rid: 06709ee8-ed2c-49e1-b058-cbcd73c02b9d
+    audio_duration_ms: 68
+    ts: 1793225002257
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.745
+  data:
+    type: response.output_audio_transcript.done
+    event_id: eedcfa69-14be-4af4-baf0-54b8d7a78518
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    transcript: The bicycle evolved from early 1800s German and French designs like
+      the Draisine, a wooden running machine, into pedal-powered versions in the 1860s
+      with the boneshaker. By the 1880s the safety bicycle with equal-sized wheels
+      and a chain drive made cycling practical and popular, and in the 1900s derailleurs
+      and lighter materials turned it into the machine we know today.
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.745
+  data:
+    type: response.content_part.done
+    event_id: a59d76ec-78d7-4ebd-b087-c2cdbfdca6c5
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.745
+  data:
+    type: response.output_audio.done
+    event_id: 455b1a1b-d577-4ee3-96a2-a88110ba589b
+    item_id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.746
+  data:
+    type: response.output_item.done
+    event_id: 39456802-d38b-4756-96e2-2c0068b63b4a
+    item:
+      id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      replayed: false
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  at: 3.746
+  data:
+    type: response.done
+    event_id: 06cf9777-bf59-4f4a-a0fc-77b76ba4e083
+    response:
+      id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+      object: realtime.response
+      output:
+      - id: 17e8fd2e-86a2-45c7-95bc-b946837e69f6
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: The bicycle evolved from early 1800s German and French designs
+            like the Draisine, a wooden running machine, into pedal-powered versions
+            in the 1860s with the boneshaker. By the 1880s the safety bicycle with
+            equal-sized wheels and a chain drive made cycling practical and popular,
+            and in the 1900s derailleurs and lighter materials turned it into the
+            machine we know today.
+        replayed: false
+      status: completed
+      metadata:
+        pydantic_ai_inputs: '0'
+      status_details: unimplemented
+      usage: {}
+    response_id: 6ea6ee38-ecbd-4a7b-9f10-2c97f0259170
+    usage:
+      input_tokens: 9
+      input_token_details:
+        text_tokens: 9
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 1218
+      output_token_details:
+        text_tokens: 86
+        audio_tokens: 1132
+        grok_tokens: 0
+      total_tokens: 1227
+      output_audio_seconds: 22.64
+      billable_audio_seconds: 3
+    previous_item_id: null

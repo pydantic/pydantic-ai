@@ -1,0 +1,101 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "143"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: x-ai/grok-build-0.1
+        stream: false
+        messages:
+        - role: user
+          content: "Reply with exactly: OK"
+        reasoning:
+          effort: minimal
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1794001745-Uprh5LtklwV0ro4BVap7
+        object: chat.completion
+        created: 1794001745
+        model: x-ai/grok-build-0.1
+        provider: xAI
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: completed
+          message:
+            role: assistant
+            content: OK
+            refusal: null
+            reasoning: The user requested a reply of exactly "OK".
+            reasoning_details:
+            - type: reasoning.summary
+              summary: The user requested a reply of exactly "OK".
+              format: xai-responses-v1
+              index: 0
+            - type: reasoning.encrypted
+              data: >-
+                c9WzzTj5XScpHJ3pqBGPwJR5+isWgG+KOS+9A8Ew0K7Nb3vQRN3LyY5u3Kcw8x/nXouh7UElXTgT/E84qynD96AQ+H49X/Cc82OsliMuIneema6LFAutcIBxSdLkUs/h2MwWYe8NPxFSEpvBQWR7aOr1I25loZYZbks/0yfE70QeC+MZE9SAGsEqeC73vssH/bmYM0w4fxHCOYCtViFxs18TkHBtLwhUoQAsE30a5Va3OlGanD5mS4UNdHMFV4qe3N5q4lpauALVYrTt8WEpQ++fxmTdm02GcJGs5gDvykxfH56ULmHACavMMB8eS13VdsbvKQRSBhUS+t6e1zMwtghQygWrwIr2CduG6FGwCiMNOKYddkdmhFs7yt0uy4ul1T/DV+Fx8/X99/DXhi6M1NhiegCkq31EzsrlIcer+0q7JLhq88Q0YuRlwxErTFoQZhwihMO3lxIwNh0qsTYQGC/bL4z/svFsgkpS6wz3FkNa/OnO1xuU7GVGCMiLS3hp/tGbXOc0R2v07RS1z5c9YRVH2L85kMSKtGADcw.eyJlbmRwb2ludF9zbHVnIjoieC1haS9ncm9rLWJ1aWxkLTAuMS0yMDI2MDUyMHx4YWkifQ
+              format: xai-responses-v1
+              id: rs_cab17b2a-439b-9d13-95ed-ea1ae3d166ed
+              index: 1
+        usage:
+          prompt_tokens: 191
+          completion_tokens: 163
+          total_tokens: 354
+          cost: 0.0004146
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 128
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0004146
+            upstream_inference_prompt_cost: 0.0000886
+            upstream_inference_completions_cost: 0.000326
+          completion_tokens_details:
+            reasoning_tokens: 162
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-06T21:49:07.326182+00:00

@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Iterator, Sequence
-from typing import Literal
-
-from typing_extensions import assert_never
+from typing import assert_never
 
 from . import exceptions, messages
 from ._mcp_compat import mcp_field, mcp_field_value, mcp_optional_field
+from .models import (
+    _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
+    _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
+    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
+)
 
 try:
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
@@ -28,32 +32,13 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
     response_parts: list[messages.ModelResponsePart] = []
     tool_names: dict[str, str] = {}
     for msg in params.messages:
-        contents = msg.content if isinstance(msg.content, list) else [msg.content]
         if msg.role == 'user':
             # if there are any response parts, add a response message wrapping them
             if response_parts:
                 pai_messages.append(messages.ModelResponse(parts=response_parts))
                 response_parts = []
 
-            for content in contents:
-                if isinstance(content, mcp_types.TextContent):
-                    user_part_content: str | Sequence[messages.UserContent] = content.text
-                elif isinstance(content, (mcp_types.ImageContent, mcp_types.AudioContent)):
-                    user_part_content = [
-                        messages.BinaryContent(
-                            data=base64.b64decode(content.data),
-                            media_type=mcp_field(content, 'mime_type', str),
-                        )
-                    ]
-                elif isinstance(content, mcp_types.ToolResultContent):
-                    request_parts.append(_map_sampling_tool_result(content, tool_names))
-                    continue
-                elif isinstance(content, mcp_types.ToolUseContent):
-                    raise NotImplementedError(f'{type(content).__name__} cannot be used as user content')
-                else:
-                    assert_never(content)
-
-                request_parts.append(messages.UserPromptPart(content=user_part_content))
+            request_parts.extend(_map_sampling_user_message(msg, tool_names))
         else:
             # role is assistant
             # if there are any request parts, add a request message wrapping them
@@ -61,14 +46,49 @@ def map_from_mcp_params(params: mcp_types.CreateMessageRequestParams) -> list[me
                 pai_messages.append(messages.ModelRequest(parts=request_parts))
                 request_parts = []
 
-            for content in contents:
-                response_parts.append(_map_sampling_response_part(content, tool_names))
+            response_parts.extend(_map_sampling_assistant_message(msg, tool_names))
 
     if response_parts:
         pai_messages.append(messages.ModelResponse(parts=response_parts))
     if request_parts:
         pai_messages.append(messages.ModelRequest(parts=request_parts))
     return pai_messages
+
+
+def _sampling_contents(msg: mcp_types.SamplingMessage) -> list[mcp_types.SamplingMessageContentBlock]:
+    return msg.content if isinstance(msg.content, list) else [msg.content]
+
+
+def _map_sampling_user_message(
+    msg: mcp_types.SamplingMessage, tool_names: dict[str, str]
+) -> list[messages.ModelRequestPart]:
+    request_parts: list[messages.ModelRequestPart] = []
+    for content in _sampling_contents(msg):
+        if isinstance(content, mcp_types.TextContent):
+            user_part_content: str | Sequence[messages.UserContent] = content.text
+        elif isinstance(content, (mcp_types.ImageContent, mcp_types.AudioContent)):
+            user_part_content = [
+                messages.BinaryContent(
+                    data=base64.b64decode(content.data),
+                    media_type=mcp_field(content, 'mime_type', str),
+                )
+            ]
+        elif isinstance(content, mcp_types.ToolResultContent):
+            request_parts.append(_map_sampling_tool_result(content, tool_names))
+            continue
+        elif isinstance(content, mcp_types.ToolUseContent):
+            raise NotImplementedError(f'{type(content).__name__} cannot be used as user content')
+        else:
+            assert_never(content)
+
+        request_parts.append(messages.UserPromptPart(content=user_part_content))
+    return request_parts
+
+
+def _map_sampling_assistant_message(
+    msg: mcp_types.SamplingMessage, tool_names: dict[str, str]
+) -> list[messages.ModelResponsePart]:
+    return [_map_sampling_response_part(content, tool_names) for content in _sampling_contents(msg)]
 
 
 def _map_sampling_response_part(
@@ -110,61 +130,72 @@ def map_from_pai_messages(pai_messages: list[messages.ModelMessage]) -> tuple[st
         A tuple containing the system prompt and a list of sampling messages.
     """
     sampling_msgs: list[mcp_types.SamplingMessage] = []
-
-    def add_msg(
-        role: Literal['user', 'assistant'],
-        content: mcp_types.SamplingMessageContentBlock | list[mcp_types.SamplingMessageContentBlock],
-    ):
-        sampling_msgs.append(mcp_types.SamplingMessage(role=role, content=content))
-
     system_prompt: list[str] = []
     for pai_message in pai_messages:
         if isinstance(pai_message, messages.ModelRequest):
-            request_start = len(sampling_msgs)
-            tool_results: list[mcp_types.SamplingMessageContentBlock] = []
             if pai_message.instructions is not None:
                 system_prompt.append(pai_message.instructions)
-
-            for part in pai_message.parts:
-                if isinstance(part, messages.SystemPromptPart):
-                    system_prompt.append(part.content)
-                elif isinstance(part, messages.UserPromptPart):
-                    for content in _map_user_prompt(part):
-                        add_msg('user', content)
-                elif isinstance(part, messages.ToolReturnPart):
-                    if part.files:
-                        raise NotImplementedError('Multimodal tool results in MCP sampling are not yet supported')
-                    tool_results.append(
-                        mcp_types.ToolResultContent(
-                            type='tool_result',
-                            toolUseId=part.tool_call_id,
-                            content=[
-                                mcp_types.TextContent(type='text', text=part.model_response_str(wrap_if_error=False))
-                            ],
-                            isError=part.outcome == 'failed',
-                        )
-                    )
-                elif isinstance(part, messages.RetryPromptPart):
-                    content = mcp_types.TextContent(type='text', text=part.model_response())
-                    if part.tool_name is None:
-                        add_msg('user', content)
-                    else:
-                        tool_results.append(
-                            mcp_types.ToolResultContent(
-                                type='tool_result', toolUseId=part.tool_call_id, content=[content], isError=True
-                            )
-                        )
-                elif isinstance(part, (messages.SpeechPart, messages.ToolAvailabilityDeltaPart)):
-                    # These parts are not currently sent to MCP sampling.
-                    continue
-                else:
-                    assert_never(part)
-            if tool_results:
-                # MCP requires all results from a turn in one message, before ordinary user content.
-                sampling_msgs.insert(request_start, mcp_types.SamplingMessage(role='user', content=tool_results))
+            request_msgs, request_system_prompts = _map_request_history(pai_message)
+            system_prompt.extend(request_system_prompts)
+            sampling_msgs.extend(request_msgs)
         else:
-            add_msg('assistant', _map_response_history(pai_message))
-    return ''.join(system_prompt), sampling_msgs
+            sampling_msgs.append(
+                mcp_types.SamplingMessage(role='assistant', content=_map_response_history(pai_message))
+            )
+    return '\n\n'.join(system_prompt), sampling_msgs
+
+
+def _map_request_history(
+    request: messages.ModelRequest,
+) -> tuple[list[mcp_types.SamplingMessage], list[str]]:
+    """Map a request's parts to sampling messages, and collect its system prompts."""
+    sampling_msgs: list[mcp_types.SamplingMessage] = []
+    system_prompts: list[str] = []
+    tool_results: list[mcp_types.SamplingMessageContentBlock] = []
+    for part in _sendable_request_parts(request.parts):
+        if isinstance(part, (messages.InstructionBaselinePart, messages.InstructionDeltaPart)):
+            raise _unprojected_instruction_delta_error()
+        if isinstance(part, messages.SystemPromptPart):
+            system_prompts.append(part.content)
+        elif isinstance(part, messages.UserPromptPart):
+            for content in _map_user_prompt(part):
+                sampling_msgs.append(mcp_types.SamplingMessage(role='user', content=content))
+        elif isinstance(part, messages.ToolReturnPart):
+            tool_results.append(_map_tool_return(part))
+        elif isinstance(
+            part,
+            (
+                messages.SpeechPart,
+                messages.ToolAvailabilityDeltaPart,
+                messages.CapabilityLoadDeltaPart,
+                messages.ModelSettingsDeltaPart,
+            ),
+        ):
+            # These parts are not currently sent to MCP sampling.
+            continue
+        elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+            raise _unprepared_part_error(part)
+        else:
+            assert_never(part)
+    if tool_results:
+        # MCP requires all results from a turn in one message, before ordinary user content.
+        sampling_msgs.insert(0, mcp_types.SamplingMessage(role='user', content=tool_results))
+    return sampling_msgs, system_prompts
+
+
+def _map_tool_return(part: messages.ToolReturnPart) -> mcp_types.ToolResultContent:
+    if part.files:
+        raise NotImplementedError('Multimodal tool results in MCP sampling are not yet supported')
+    # Built from the camelCase wire keys, which both SDK generations validate: SDK v2 renamed
+    # the fields to snake_case but still accepts their wire aliases.
+    return mcp_types.ToolResultContent.model_validate(
+        {
+            'type': 'tool_result',
+            'toolUseId': part.tool_call_id,
+            'content': [mcp_types.TextContent(type='text', text=part.model_response_str(wrap_if_error=False))],
+            'isError': part.outcome in messages.ERROR_OUTCOMES,
+        }
+    )
 
 
 def _map_user_prompt(part: messages.UserPromptPart) -> Iterator[mcp_types.TextContent | mcp_types.ImageContent]:
@@ -173,7 +204,9 @@ def _map_user_prompt(part: messages.UserPromptPart) -> Iterator[mcp_types.TextCo
         if isinstance(chunk, str):
             yield mcp_types.TextContent(type='text', text=chunk)
         elif isinstance(chunk, messages.BinaryContent) and chunk.is_image:
-            yield mcp_types.ImageContent(type='image', data=chunk.base64, mimeType=chunk.media_type)
+            yield mcp_types.ImageContent.model_validate(
+                {'type': 'image', 'data': chunk.base64, 'mimeType': chunk.media_type}
+            )
         # TODO(Marcelo): Add support for audio content.
         else:
             raise NotImplementedError(f'Unsupported content type: {type(chunk)}')

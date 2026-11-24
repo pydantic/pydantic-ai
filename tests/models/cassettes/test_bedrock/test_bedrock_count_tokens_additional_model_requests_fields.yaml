@@ -1,32 +1,42 @@
+version: 1
 interactions:
 - request:
-    body: '{"input": {"converse": {"messages": [{"role": "user", "content": [{"text": "Hello, world!"}]}], "system": [], "additionalModelRequestFields":
-      {"anthropic_beta": ["context-1m-2025-08-07"]}}}}'
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-6/count-tokens
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        YTEzNTA0MmQtYzgwMS00OWZkLTljOTctZWU1OGZlNzU0YmRi
+      - 8400dbd9-48fd-4758-8e72-5945c087a268
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
-      - '190'
+      - "190"
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-sonnet-4-20250514-v1%3A0/count-tokens
+      - application/json
+    body:
+      type: json
+      content:
+        input:
+          converse:
+            messages:
+            - role: user
+              content:
+              - text: Hello, world!
+            system: []
+            additionalModelRequestFields:
+              anthropic_beta:
+              - context-1m-2025-08-07
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
       content-length:
-      - '19'
+      - "19"
       content-type:
       - application/json
-    parsed_body:
-      inputTokens: 11
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        inputTokens: 28
+  recorded_at: 2026-10-26T00:09:08.540580+00:00

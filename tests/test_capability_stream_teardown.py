@@ -17,8 +17,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_graph import End
 
-pytestmark = pytest.mark.anyio
-
 
 class _TrackingStream(AsyncIterator[AgentStreamEvent]):
     def __init__(

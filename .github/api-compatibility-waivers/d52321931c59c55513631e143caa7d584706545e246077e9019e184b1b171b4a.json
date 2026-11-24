@@ -1,0 +1,5 @@
+{
+  "against": "v2.64.0",
+  "reason": "Intentional default change: `TemporalDurability(non_retryable_model_errors=...)` now defaults to `ModelRequestRejectedError`, `ModelQuotaExceededError` and `ModelRequestTimeout`, so Temporal stops retrying, without limit by default, model errors another attempt can't fix. `non_retryable_model_errors=()` restores the previous behavior.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/12107"
+}

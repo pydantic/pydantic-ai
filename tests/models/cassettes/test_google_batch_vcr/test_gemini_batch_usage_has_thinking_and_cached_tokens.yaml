@@ -1,0 +1,1312 @@
+version: 1
+interactions:
+- request:
+    method: DELETE
+    uri: https://generativelanguage.googleapis.com/v1beta/files/otcqlbflx6ul
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=258
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content: {}
+  recorded_at: 2026-10-22T00:32:29.412764+00:00
+- request:
+    method: DELETE
+    uri: https://generativelanguage.googleapis.com/v1beta/files/yaw2agji6hae
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=250
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content: {}
+  recorded_at: 2026-10-22T00:31:08.325581+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=207
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          createTime: 2026-10-22T00:28:48.644252682Z
+          updateTime: 2026-10-22T00:28:48.644252682Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:29:06.354845+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=188
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          createTime: 2026-10-22T00:28:48.644252682Z
+          updateTime: 2026-10-22T00:28:48.644252682Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:29:21.608670+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=190
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          createTime: 2026-10-22T00:28:48.644252682Z
+          updateTime: 2026-10-22T00:28:48.644252682Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:29:36.866967+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=188
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          createTime: 2026-10-22T00:28:48.644252682Z
+          updateTime: 2026-10-22T00:28:48.644252682Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:29:52.121147+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=59
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          createTime: 2026-10-22T00:28:48.644252682Z
+          updateTime: 2026-10-22T00:28:48.644252682Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:30:07.247240+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=93
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          createTime: 2026-10-22T00:28:48.644252682Z
+          updateTime: 2026-10-22T00:28:48.644252682Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:30:22.409731+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=181
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          createTime: 2026-10-22T00:28:48.644252682Z
+          updateTime: 2026-10-22T00:28:48.644252682Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:30:37.667216+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=83
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          createTime: 2026-10-22T00:28:48.644252682Z
+          updateTime: 2026-10-22T00:28:48.644252682Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:30:52.819185+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=65
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          output:
+            responsesFile: files/batch-apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+          createTime: 2026-10-22T00:28:48.644252682Z
+          endTime: 2026-10-22T00:30:57.683768068Z
+          updateTime: 2026-10-22T00:30:57.683768098Z
+          batchStats:
+            requestCount: "1"
+            successfulRequestCount: "1"
+          state: BATCH_STATE_SUCCEEDED
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        done: true
+        response:
+          "@type": >-
+            type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatchOutput
+          responsesFile: files/batch-apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:31:07.953409+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=97
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          output:
+            responsesFile: files/batch-apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+          createTime: 2026-10-22T00:28:48.644252682Z
+          endTime: 2026-10-22T00:30:57.683768068Z
+          updateTime: 2026-10-22T00:30:57.683768098Z
+          batchStats:
+            requestCount: "1"
+            successfulRequestCount: "1"
+          state: BATCH_STATE_SUCCEEDED
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        done: true
+        response:
+          "@type": >-
+            type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatchOutput
+          responsesFile: files/batch-apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:31:08.066145+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=218
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/otcqlbflx6ul
+          createTime: 2026-10-22T00:31:09.559097391Z
+          updateTime: 2026-10-22T00:31:09.559097391Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+  recorded_at: 2026-10-22T00:31:28.128727+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=85
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/otcqlbflx6ul
+          createTime: 2026-10-22T00:31:09.559097391Z
+          updateTime: 2026-10-22T00:31:09.559097391Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+  recorded_at: 2026-10-22T00:31:43.280939+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=230
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/otcqlbflx6ul
+          createTime: 2026-10-22T00:31:09.559097391Z
+          updateTime: 2026-10-22T00:31:09.559097391Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+  recorded_at: 2026-10-22T00:31:58.579254+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=116
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/otcqlbflx6ul
+          createTime: 2026-10-22T00:31:09.559097391Z
+          updateTime: 2026-10-22T00:31:09.559097391Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_RUNNING
+          name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+  recorded_at: 2026-10-22T00:32:13.765891+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=216
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/otcqlbflx6ul
+          output:
+            responsesFile: files/batch-cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+          createTime: 2026-10-22T00:31:09.559097391Z
+          endTime: 2026-10-22T00:32:19.144196535Z
+          updateTime: 2026-10-22T00:32:19.144196565Z
+          batchStats:
+            requestCount: "1"
+            successfulRequestCount: "1"
+          state: BATCH_STATE_SUCCEEDED
+          name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+        done: true
+        response:
+          "@type": >-
+            type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatchOutput
+          responsesFile: files/batch-cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+  recorded_at: 2026-10-22T00:32:29.049074+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=88
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/otcqlbflx6ul
+          output:
+            responsesFile: files/batch-cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+          createTime: 2026-10-22T00:31:09.559097391Z
+          endTime: 2026-10-22T00:32:19.144196535Z
+          updateTime: 2026-10-22T00:32:19.144196565Z
+          batchStats:
+            requestCount: "1"
+            successfulRequestCount: "1"
+          state: BATCH_STATE_SUCCEEDED
+          name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+        done: true
+        response:
+          "@type": >-
+            type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatchOutput
+          responsesFile: files/batch-cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+  recorded_at: 2026-10-22T00:32:29.146218+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/files/batch-apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm:download?alt=media
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private, max-age=0
+      content-disposition:
+      - attachment
+      content-length:
+      - "456"
+      content-type:
+      - application/jsonl
+      expires:
+      - Thu, 22 Oct 2026 00:31:08 GMT
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: "{\"response\": {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"289\"}], \"role\": \"model\"}, \"finishReason\": \"STOP\", \"index\": 0}], \"usageMetadata\": {\"promptTokenCount\": 9331, \"candidatesTokenCount\": 3, \"totalTokenCount\": 9440, \"promptTokensDetails\": [{\"modality\": \"TEXT\", \"tokenCount\": 9331}], \"thoughtsTokenCount\": 106, \"serviceTier\": \"SERVICE_TIER_STANDARD\"}, \"modelVersion\": \"gemini-2.5-flash\", \"responseId\": \"OFnZarfGOcCHqtsPsNOwiAk\"}, \"key\": \"usage-first\"}"
+  recorded_at: 2026-10-22T00:31:08.560930+00:00
+- request:
+    method: GET
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/files/batch-cbmwg42snye5ztr54dyfd118pdsi0w97s8ut:download?alt=media
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: none
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      cache-control:
+      - private, max-age=0
+      content-disposition:
+      - attachment
+      content-length:
+      - "556"
+      content-type:
+      - application/jsonl
+      expires:
+      - Thu, 22 Oct 2026 00:32:29 GMT
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: "{\"response\": {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"289\"}], \"role\": \"model\"}, \"finishReason\": \"STOP\", \"index\": 0}], \"usageMetadata\": {\"promptTokenCount\": 9331, \"candidatesTokenCount\": 3, \"totalTokenCount\": 9436, \"cachedContentTokenCount\": 9181, \"promptTokensDetails\": [{\"modality\": \"TEXT\", \"tokenCount\": 9331}], \"cacheTokensDetails\": [{\"modality\": \"TEXT\", \"tokenCount\": 9181}], \"thoughtsTokenCount\": 102, \"serviceTier\": \"SERVICE_TIER_STANDARD\"}, \"modelVersion\": \"gemini-2.5-flash\", \"responseId\": \"ilnZarGLJrfoz7IPiIbt4Qw\"}, \"key\": \"usage-second\"}"
+  recorded_at: 2026-10-22T00:32:29.670121+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/files
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "102"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        file:
+          display_name: pydantic-ai-batch
+          mime_type: application/jsonl
+          size_bytes: 16092
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "0"
+      content-type:
+      - text/plain; charset=utf-8
+      x-goog-upload-status:
+      - active
+      x-goog-upload-url:
+      - >-
+        https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AP6rU83z8B7zKcKd0Rg7VIHh3hKCjtrbvoMeDv4V7B3MFvhx5IwBFRCP61YtxcWljaKhN6T0RGZEBJfLA0KlKN3zffCDpETM6_0mutY5DbLP2TA&upload_protocol=resumable
+    body:
+      type: none
+  recorded_at: 2026-10-22T00:28:47.844587+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/upload/v1beta/files
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "102"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        file:
+          display_name: pydantic-ai-batch
+          mime_type: application/jsonl
+          size_bytes: 16093
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "0"
+      content-type:
+      - text/plain; charset=utf-8
+      x-goog-upload-status:
+      - active
+      x-goog-upload-url:
+      - >-
+        https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AP6rU82lCfeltRBo-KtivYXrocIiZy7iceLEuXtdWwRunf6MT4Yb39YIRzVf4On0BqYQOh0iswAKlV7VYsZMDJJoFIDFDZGeb1XTCo26YeAC_yY&upload_protocol=resumable
+    body:
+      type: none
+  recorded_at: 2026-10-22T00:31:08.948151+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AP6rU82lCfeltRBo-KtivYXrocIiZy7iceLEuXtdWwRunf6MT4Yb39YIRzVf4On0BqYQOh0iswAKlV7VYsZMDJJoFIDFDZGeb1XTCo26YeAC_yY&upload_protocol=resumable
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "16093"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        key: usage-second
+        request:
+          contents:
+          - parts:
+            - text: What is 17 squared? Reply with the number.
+            role: user
+          systemInstruction:
+            parts:
+            - text: "Fact 0: 0 squared is 0. Fact 1: 1 squared is 1. Fact 2: 2 squared is 4. Fact 3: 3 squared is 9. Fact 4: 4 squared is 16. Fact 5: 5 squared is 25. Fact 6: 6 squared is 36. Fact 7: 7 squared is 49. Fact 8: 8 squared is 64. Fact 9: 9 squared is 81. Fact 10: 10 squared is 100. Fact 11: 11 squared is 121. Fact 12: 12 squared is 144. Fact 13: 13 squared is 169. Fact 14: 14 squared is 196. Fact 15: 15 squared is 225. Fact 16: 16 squared is 256. Fact 17: 17 squared is 289. Fact 18: 18 squared is 324. Fact 19: 19 squared is 361. Fact 20: 20 squared is 400. Fact 21: 21 squared is 441. Fact 22: 22 squared is 484. Fact 23: 23 squared is 529. Fact 24: 24 squared is 576. Fact 25: 25 squared is 625. Fact 26: 26 squared is 676. Fact 27: 27 squared is 729. Fact 28: 28 squared is 784. Fact 29: 29 squared is 841. Fact 30: 30 squared is 900. Fact 31: 31 squared is 961. Fact 32: 32 squared is 1024. Fact 33: 33 squared is 1089. Fact 34: 34 squared is 1156. Fact 35: 35 squared is 1225. Fact 36: 36 squared is 1296. Fact 37: 37 squared is 1369. Fact 38: 38 squared is 1444. Fact 39: 39 squared is 1521. Fact 40: 40 squared is 1600. Fact 41: 41 squared is 1681. Fact 42: 42 squared is 1764. Fact 43: 43 squared is 1849. Fact 44: 44 squared is 1936. Fact 45: 45 squared is 2025. Fact 46: 46 squared is 2116. Fact 47: 47 squared is 2209. Fact 48: 48 squared is 2304. Fact 49: 49 squared is 2401. Fact 50: 50 squared is 2500. Fact 51: 51 squared is 2601. Fact 52: 52 squared is 2704. Fact 53: 53 squared is 2809. Fact 54: 54 squared is 2916. Fact 55: 55 squared is 3025. Fact 56: 56 squared is 3136. Fact 57: 57 squared is 3249. Fact 58: 58 squared is 3364. Fact 59: 59 squared is 3481. Fact 60: 60 squared is 3600. Fact 61: 61 squared is 3721. Fact 62: 62 squared is 3844. Fact 63: 63 squared is 3969. Fact 64: 64 squared is 4096. Fact 65: 65 squared is 4225. Fact 66: 66 squared is 4356. Fact 67: 67 squared is 4489. Fact 68: 68 squared is 4624. Fact 69: 69 squared is 4761. Fact 70: 70 squared is 4900. Fact 71: 71 squared is 5041. Fact 72: 72 squared is 5184. Fact 73: 73 squared is 5329. Fact 74: 74 squared is 5476. Fact 75: 75 squared is 5625. Fact 76: 76 squared is 5776. Fact 77: 77 squared is 5929. Fact 78: 78 squared is 6084. Fact 79: 79 squared is 6241. Fact 80: 80 squared is 6400. Fact 81: 81 squared is 6561. Fact 82: 82 squared is 6724. Fact 83: 83 squared is 6889. Fact 84: 84 squared is 7056. Fact 85: 85 squared is 7225. Fact 86: 86 squared is 7396. Fact 87: 87 squared is 7569. Fact 88: 88 squared is 7744. Fact 89: 89 squared is 7921. Fact 90: 90 squared is 8100. Fact 91: 91 squared is 8281. Fact 92: 92 squared is 8464. Fact 93: 93 squared is 8649. Fact 94: 94 squared is 8836. Fact 95: 95 squared is 9025. Fact 96: 96 squared is 9216. Fact 97: 97 squared is 9409. Fact 98: 98 squared is 9604. Fact 99: 99 squared is 9801. Fact 100: 100 squared is 10000. Fact 101: 101 squared is 10201. Fact 102: 102 squared is 10404. Fact 103: 103 squared is 10609. Fact 104: 104 squared is 10816. Fact 105: 105 squared is 11025. Fact 106: 106 squared is 11236. Fact 107: 107 squared is 11449. Fact 108: 108 squared is 11664. Fact 109: 109 squared is 11881. Fact 110: 110 squared is 12100. Fact 111: 111 squared is 12321. Fact 112: 112 squared is 12544. Fact 113: 113 squared is 12769. Fact 114: 114 squared is 12996. Fact 115: 115 squared is 13225. Fact 116: 116 squared is 13456. Fact 117: 117 squared is 13689. Fact 118: 118 squared is 13924. Fact 119: 119 squared is 14161. Fact 120: 120 squared is 14400. Fact 121: 121 squared is 14641. Fact 122: 122 squared is 14884. Fact 123: 123 squared is 15129. Fact 124: 124 squared is 15376. Fact 125: 125 squared is 15625. Fact 126: 126 squared is 15876. Fact 127: 127 squared is 16129. Fact 128: 128 squared is 16384. Fact 129: 129 squared is 16641. Fact 130: 130 squared is 16900. Fact 131: 131 squared is 17161. Fact 132: 132 squared is 17424. Fact 133: 133 squared is 17689. Fact 134: 134 squared is 17956. Fact 135: 135 squared is 18225. Fact 136: 136 squared is 18496. Fact 137: 137 squared is 18769. Fact 138: 138 squared is 19044. Fact 139: 139 squared is 19321. Fact 140: 140 squared is 19600. Fact 141: 141 squared is 19881. Fact 142: 142 squared is 20164. Fact 143: 143 squared is 20449. Fact 144: 144 squared is 20736. Fact 145: 145 squared is 21025. Fact 146: 146 squared is 21316. Fact 147: 147 squared is 21609. Fact 148: 148 squared is 21904. Fact 149: 149 squared is 22201. Fact 150: 150 squared is 22500. Fact 151: 151 squared is 22801. Fact 152: 152 squared is 23104. Fact 153: 153 squared is 23409. Fact 154: 154 squared is 23716. Fact 155: 155 squared is 24025. Fact 156: 156 squared is 24336. Fact 157: 157 squared is 24649. Fact 158: 158 squared is 24964. Fact 159: 159 squared is 25281. Fact 160: 160 squared is 25600. Fact 161: 161 squared is 25921. Fact 162: 162 squared is 26244. Fact 163: 163 squared is 26569. Fact 164: 164 squared is 26896. Fact 165: 165 squared is 27225. Fact 166: 166 squared is 27556. Fact 167: 167 squared is 27889. Fact 168: 168 squared is 28224. Fact 169: 169 squared is 28561. Fact 170: 170 squared is 28900. Fact 171: 171 squared is 29241. Fact 172: 172 squared is 29584. Fact 173: 173 squared is 29929. Fact 174: 174 squared is 30276. Fact 175: 175 squared is 30625. Fact 176: 176 squared is 30976. Fact 177: 177 squared is 31329. Fact 178: 178 squared is 31684. Fact 179: 179 squared is 32041. Fact 180: 180 squared is 32400. Fact 181: 181 squared is 32761. Fact 182: 182 squared is 33124. Fact 183: 183 squared is 33489. Fact 184: 184 squared is 33856. Fact 185: 185 squared is 34225. Fact 186: 186 squared is 34596. Fact 187: 187 squared is 34969. Fact 188: 188 squared is 35344. Fact 189: 189 squared is 35721. Fact 190: 190 squared is 36100. Fact 191: 191 squared is 36481. Fact 192: 192 squared is 36864. Fact 193: 193 squared is 37249. Fact 194: 194 squared is 37636. Fact 195: 195 squared is 38025. Fact 196: 196 squared is 38416. Fact 197: 197 squared is 38809. Fact 198: 198 squared is 39204. Fact 199: 199 squared is 39601. Fact 200: 200 squared is 40000. Fact 201: 201 squared is 40401. Fact 202: 202 squared is 40804. Fact 203: 203 squared is 41209. Fact 204: 204 squared is 41616. Fact 205: 205 squared is 42025. Fact 206: 206 squared is 42436. Fact 207: 207 squared is 42849. Fact 208: 208 squared is 43264. Fact 209: 209 squared is 43681. Fact 210: 210 squared is 44100. Fact 211: 211 squared is 44521. Fact 212: 212 squared is 44944. Fact 213: 213 squared is 45369. Fact 214: 214 squared is 45796. Fact 215: 215 squared is 46225. Fact 216: 216 squared is 46656. Fact 217: 217 squared is 47089. Fact 218: 218 squared is 47524. Fact 219: 219 squared is 47961. Fact 220: 220 squared is 48400. Fact 221: 221 squared is 48841. Fact 222: 222 squared is 49284. Fact 223: 223 squared is 49729. Fact 224: 224 squared is 50176. Fact 225: 225 squared is 50625. Fact 226: 226 squared is 51076. Fact 227: 227 squared is 51529. Fact 228: 228 squared is 51984. Fact 229: 229 squared is 52441. Fact 230: 230 squared is 52900. Fact 231: 231 squared is 53361. Fact 232: 232 squared is 53824. Fact 233: 233 squared is 54289. Fact 234: 234 squared is 54756. Fact 235: 235 squared is 55225. Fact 236: 236 squared is 55696. Fact 237: 237 squared is 56169. Fact 238: 238 squared is 56644. Fact 239: 239 squared is 57121. Fact 240: 240 squared is 57600. Fact 241: 241 squared is 58081. Fact 242: 242 squared is 58564. Fact 243: 243 squared is 59049. Fact 244: 244 squared is 59536. Fact 245: 245 squared is 60025. Fact 246: 246 squared is 60516. Fact 247: 247 squared is 61009. Fact 248: 248 squared is 61504. Fact 249: 249 squared is 62001. Fact 250: 250 squared is 62500. Fact 251: 251 squared is 63001. Fact 252: 252 squared is 63504. Fact 253: 253 squared is 64009. Fact 254: 254 squared is 64516. Fact 255: 255 squared is 65025. Fact 256: 256 squared is 65536. Fact 257: 257 squared is 66049. Fact 258: 258 squared is 66564. Fact 259: 259 squared is 67081. Fact 260: 260 squared is 67600. Fact 261: 261 squared is 68121. Fact 262: 262 squared is 68644. Fact 263: 263 squared is 69169. Fact 264: 264 squared is 69696. Fact 265: 265 squared is 70225. Fact 266: 266 squared is 70756. Fact 267: 267 squared is 71289. Fact 268: 268 squared is 71824. Fact 269: 269 squared is 72361. Fact 270: 270 squared is 72900. Fact 271: 271 squared is 73441. Fact 272: 272 squared is 73984. Fact 273: 273 squared is 74529. Fact 274: 274 squared is 75076. Fact 275: 275 squared is 75625. Fact 276: 276 squared is 76176. Fact 277: 277 squared is 76729. Fact 278: 278 squared is 77284. Fact 279: 279 squared is 77841. Fact 280: 280 squared is 78400. Fact 281: 281 squared is 78961. Fact 282: 282 squared is 79524. Fact 283: 283 squared is 80089. Fact 284: 284 squared is 80656. Fact 285: 285 squared is 81225. Fact 286: 286 squared is 81796. Fact 287: 287 squared is 82369. Fact 288: 288 squared is 82944. Fact 289: 289 squared is 83521. Fact 290: 290 squared is 84100. Fact 291: 291 squared is 84681. Fact 292: 292 squared is 85264. Fact 293: 293 squared is 85849. Fact 294: 294 squared is 86436. Fact 295: 295 squared is 87025. Fact 296: 296 squared is 87616. Fact 297: 297 squared is 88209. Fact 298: 298 squared is 88804. Fact 299: 299 squared is 89401. Fact 300: 300 squared is 90000. Fact 301: 301 squared is 90601. Fact 302: 302 squared is 91204. Fact 303: 303 squared is 91809. Fact 304: 304 squared is 92416. Fact 305: 305 squared is 93025. Fact 306: 306 squared is 93636. Fact 307: 307 squared is 94249. Fact 308: 308 squared is 94864. Fact 309: 309 squared is 95481. Fact 310: 310 squared is 96100. Fact 311: 311 squared is 96721. Fact 312: 312 squared is 97344. Fact 313: 313 squared is 97969. Fact 314: 314 squared is 98596. Fact 315: 315 squared is 99225. Fact 316: 316 squared is 99856. Fact 317: 317 squared is 100489. Fact 318: 318 squared is 101124. Fact 319: 319 squared is 101761. Fact 320: 320 squared is 102400. Fact 321: 321 squared is 103041. Fact 322: 322 squared is 103684. Fact 323: 323 squared is 104329. Fact 324: 324 squared is 104976. Fact 325: 325 squared is 105625. Fact 326: 326 squared is 106276. Fact 327: 327 squared is 106929. Fact 328: 328 squared is 107584. Fact 329: 329 squared is 108241. Fact 330: 330 squared is 108900. Fact 331: 331 squared is 109561. Fact 332: 332 squared is 110224. Fact 333: 333 squared is 110889. Fact 334: 334 squared is 111556. Fact 335: 335 squared is 112225. Fact 336: 336 squared is 112896. Fact 337: 337 squared is 113569. Fact 338: 338 squared is 114244. Fact 339: 339 squared is 114921. Fact 340: 340 squared is 115600. Fact 341: 341 squared is 116281. Fact 342: 342 squared is 116964. Fact 343: 343 squared is 117649. Fact 344: 344 squared is 118336. Fact 345: 345 squared is 119025. Fact 346: 346 squared is 119716. Fact 347: 347 squared is 120409. Fact 348: 348 squared is 121104. Fact 349: 349 squared is 121801. Fact 350: 350 squared is 122500. Fact 351: 351 squared is 123201. Fact 352: 352 squared is 123904. Fact 353: 353 squared is 124609. Fact 354: 354 squared is 125316. Fact 355: 355 squared is 126025. Fact 356: 356 squared is 126736. Fact 357: 357 squared is 127449. Fact 358: 358 squared is 128164. Fact 359: 359 squared is 128881. Fact 360: 360 squared is 129600. Fact 361: 361 squared is 130321. Fact 362: 362 squared is 131044. Fact 363: 363 squared is 131769. Fact 364: 364 squared is 132496. Fact 365: 365 squared is 133225. Fact 366: 366 squared is 133956. Fact 367: 367 squared is 134689. Fact 368: 368 squared is 135424. Fact 369: 369 squared is 136161. Fact 370: 370 squared is 136900. Fact 371: 371 squared is 137641. Fact 372: 372 squared is 138384. Fact 373: 373 squared is 139129. Fact 374: 374 squared is 139876. Fact 375: 375 squared is 140625. Fact 376: 376 squared is 141376. Fact 377: 377 squared is 142129. Fact 378: 378 squared is 142884. Fact 379: 379 squared is 143641. Fact 380: 380 squared is 144400. Fact 381: 381 squared is 145161. Fact 382: 382 squared is 145924. Fact 383: 383 squared is 146689. Fact 384: 384 squared is 147456. Fact 385: 385 squared is 148225. Fact 386: 386 squared is 148996. Fact 387: 387 squared is 149769. Fact 388: 388 squared is 150544. Fact 389: 389 squared is 151321. Fact 390: 390 squared is 152100. Fact 391: 391 squared is 152881. Fact 392: 392 squared is 153664. Fact 393: 393 squared is 154449. Fact 394: 394 squared is 155236. Fact 395: 395 squared is 156025. Fact 396: 396 squared is 156816. Fact 397: 397 squared is 157609. Fact 398: 398 squared is 158404. Fact 399: 399 squared is 159201. Fact 400: 400 squared is 160000. Fact 401: 401 squared is 160801. Fact 402: 402 squared is 161604. Fact 403: 403 squared is 162409. Fact 404: 404 squared is 163216. Fact 405: 405 squared is 164025. Fact 406: 406 squared is 164836. Fact 407: 407 squared is 165649. Fact 408: 408 squared is 166464. Fact 409: 409 squared is 167281. Fact 410: 410 squared is 168100. Fact 411: 411 squared is 168921. Fact 412: 412 squared is 169744. Fact 413: 413 squared is 170569. Fact 414: 414 squared is 171396. Fact 415: 415 squared is 172225. Fact 416: 416 squared is 173056. Fact 417: 417 squared is 173889. Fact 418: 418 squared is 174724. Fact 419: 419 squared is 175561. Fact 420: 420 squared is 176400. Fact 421: 421 squared is 177241. Fact 422: 422 squared is 178084. Fact 423: 423 squared is 178929. Fact 424: 424 squared is 179776. Fact 425: 425 squared is 180625. Fact 426: 426 squared is 181476. Fact 427: 427 squared is 182329. Fact 428: 428 squared is 183184. Fact 429: 429 squared is 184041. Fact 430: 430 squared is 184900. Fact 431: 431 squared is 185761. Fact 432: 432 squared is 186624. Fact 433: 433 squared is 187489. Fact 434: 434 squared is 188356. Fact 435: 435 squared is 189225. Fact 436: 436 squared is 190096. Fact 437: 437 squared is 190969. Fact 438: 438 squared is 191844. Fact 439: 439 squared is 192721. Fact 440: 440 squared is 193600. Fact 441: 441 squared is 194481. Fact 442: 442 squared is 195364. Fact 443: 443 squared is 196249. Fact 444: 444 squared is 197136. Fact 445: 445 squared is 198025. Fact 446: 446 squared is 198916. Fact 447: 447 squared is 199809. Fact 448: 448 squared is 200704. Fact 449: 449 squared is 201601. Fact 450: 450 squared is 202500. Fact 451: 451 squared is 203401. Fact 452: 452 squared is 204304. Fact 453: 453 squared is 205209. Fact 454: 454 squared is 206116. Fact 455: 455 squared is 207025. Fact 456: 456 squared is 207936. Fact 457: 457 squared is 208849. Fact 458: 458 squared is 209764. Fact 459: 459 squared is 210681. Fact 460: 460 squared is 211600. Fact 461: 461 squared is 212521. Fact 462: 462 squared is 213444. Fact 463: 463 squared is 214369. Fact 464: 464 squared is 215296. Fact 465: 465 squared is 216225. Fact 466: 466 squared is 217156. Fact 467: 467 squared is 218089. Fact 468: 468 squared is 219024. Fact 469: 469 squared is 219961. Fact 470: 470 squared is 220900. Fact 471: 471 squared is 221841. Fact 472: 472 squared is 222784. Fact 473: 473 squared is 223729. Fact 474: 474 squared is 224676. Fact 475: 475 squared is 225625. Fact 476: 476 squared is 226576. Fact 477: 477 squared is 227529. Fact 478: 478 squared is 228484. Fact 479: 479 squared is 229441. Fact 480: 480 squared is 230400. Fact 481: 481 squared is 231361. Fact 482: 482 squared is 232324. Fact 483: 483 squared is 233289. Fact 484: 484 squared is 234256. Fact 485: 485 squared is 235225. Fact 486: 486 squared is 236196. Fact 487: 487 squared is 237169. Fact 488: 488 squared is 238144. Fact 489: 489 squared is 239121. Fact 490: 490 squared is 240100. Fact 491: 491 squared is 241081. Fact 492: 492 squared is 242064. Fact 493: 493 squared is 243049. Fact 494: 494 squared is 244036. Fact 495: 495 squared is 245025. Fact 496: 496 squared is 246016. Fact 497: 497 squared is 247009. Fact 498: 498 squared is 248004. Fact 499: 499 squared is 249001."
+            role: user
+          generationConfig:
+            responseModalities:
+            - TEXT
+            thinkingConfig:
+              thinking_budget: 512
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "498"
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-goog-upload-status:
+      - final
+    body:
+      type: json
+      content:
+        file:
+          name: files/otcqlbflx6ul
+          displayName: pydantic-ai-batch
+          mimeType: application/jsonl
+          sizeBytes: "16093"
+          createTime: 2026-10-22T00:31:09.364337Z
+          updateTime: 2026-10-22T00:31:09.364337Z
+          expirationTime: 2026-10-24T00:31:09.214849336Z
+          sha256Hash: >-
+            M2VlZGQxMzI0NDY2YTFlYzYxM2Y3Zjk1MTFhNTVkNzQ1NzQyYmE2MGI3OTgwMjA4YjkzMzhmNGNjY2IwNDMzNA==
+          uri: https://generativelanguage.googleapis.com/v1beta/files/otcqlbflx6ul
+          state: ACTIVE
+          source: UPLOADED
+  recorded_at: 2026-10-22T00:31:09.390238+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AP6rU83z8B7zKcKd0Rg7VIHh3hKCjtrbvoMeDv4V7B3MFvhx5IwBFRCP61YtxcWljaKhN6T0RGZEBJfLA0KlKN3zffCDpETM6_0mutY5DbLP2TA&upload_protocol=resumable
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "16092"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        key: usage-first
+        request:
+          contents:
+          - parts:
+            - text: What is 17 squared? Reply with the number.
+            role: user
+          systemInstruction:
+            parts:
+            - text: "Fact 0: 0 squared is 0. Fact 1: 1 squared is 1. Fact 2: 2 squared is 4. Fact 3: 3 squared is 9. Fact 4: 4 squared is 16. Fact 5: 5 squared is 25. Fact 6: 6 squared is 36. Fact 7: 7 squared is 49. Fact 8: 8 squared is 64. Fact 9: 9 squared is 81. Fact 10: 10 squared is 100. Fact 11: 11 squared is 121. Fact 12: 12 squared is 144. Fact 13: 13 squared is 169. Fact 14: 14 squared is 196. Fact 15: 15 squared is 225. Fact 16: 16 squared is 256. Fact 17: 17 squared is 289. Fact 18: 18 squared is 324. Fact 19: 19 squared is 361. Fact 20: 20 squared is 400. Fact 21: 21 squared is 441. Fact 22: 22 squared is 484. Fact 23: 23 squared is 529. Fact 24: 24 squared is 576. Fact 25: 25 squared is 625. Fact 26: 26 squared is 676. Fact 27: 27 squared is 729. Fact 28: 28 squared is 784. Fact 29: 29 squared is 841. Fact 30: 30 squared is 900. Fact 31: 31 squared is 961. Fact 32: 32 squared is 1024. Fact 33: 33 squared is 1089. Fact 34: 34 squared is 1156. Fact 35: 35 squared is 1225. Fact 36: 36 squared is 1296. Fact 37: 37 squared is 1369. Fact 38: 38 squared is 1444. Fact 39: 39 squared is 1521. Fact 40: 40 squared is 1600. Fact 41: 41 squared is 1681. Fact 42: 42 squared is 1764. Fact 43: 43 squared is 1849. Fact 44: 44 squared is 1936. Fact 45: 45 squared is 2025. Fact 46: 46 squared is 2116. Fact 47: 47 squared is 2209. Fact 48: 48 squared is 2304. Fact 49: 49 squared is 2401. Fact 50: 50 squared is 2500. Fact 51: 51 squared is 2601. Fact 52: 52 squared is 2704. Fact 53: 53 squared is 2809. Fact 54: 54 squared is 2916. Fact 55: 55 squared is 3025. Fact 56: 56 squared is 3136. Fact 57: 57 squared is 3249. Fact 58: 58 squared is 3364. Fact 59: 59 squared is 3481. Fact 60: 60 squared is 3600. Fact 61: 61 squared is 3721. Fact 62: 62 squared is 3844. Fact 63: 63 squared is 3969. Fact 64: 64 squared is 4096. Fact 65: 65 squared is 4225. Fact 66: 66 squared is 4356. Fact 67: 67 squared is 4489. Fact 68: 68 squared is 4624. Fact 69: 69 squared is 4761. Fact 70: 70 squared is 4900. Fact 71: 71 squared is 5041. Fact 72: 72 squared is 5184. Fact 73: 73 squared is 5329. Fact 74: 74 squared is 5476. Fact 75: 75 squared is 5625. Fact 76: 76 squared is 5776. Fact 77: 77 squared is 5929. Fact 78: 78 squared is 6084. Fact 79: 79 squared is 6241. Fact 80: 80 squared is 6400. Fact 81: 81 squared is 6561. Fact 82: 82 squared is 6724. Fact 83: 83 squared is 6889. Fact 84: 84 squared is 7056. Fact 85: 85 squared is 7225. Fact 86: 86 squared is 7396. Fact 87: 87 squared is 7569. Fact 88: 88 squared is 7744. Fact 89: 89 squared is 7921. Fact 90: 90 squared is 8100. Fact 91: 91 squared is 8281. Fact 92: 92 squared is 8464. Fact 93: 93 squared is 8649. Fact 94: 94 squared is 8836. Fact 95: 95 squared is 9025. Fact 96: 96 squared is 9216. Fact 97: 97 squared is 9409. Fact 98: 98 squared is 9604. Fact 99: 99 squared is 9801. Fact 100: 100 squared is 10000. Fact 101: 101 squared is 10201. Fact 102: 102 squared is 10404. Fact 103: 103 squared is 10609. Fact 104: 104 squared is 10816. Fact 105: 105 squared is 11025. Fact 106: 106 squared is 11236. Fact 107: 107 squared is 11449. Fact 108: 108 squared is 11664. Fact 109: 109 squared is 11881. Fact 110: 110 squared is 12100. Fact 111: 111 squared is 12321. Fact 112: 112 squared is 12544. Fact 113: 113 squared is 12769. Fact 114: 114 squared is 12996. Fact 115: 115 squared is 13225. Fact 116: 116 squared is 13456. Fact 117: 117 squared is 13689. Fact 118: 118 squared is 13924. Fact 119: 119 squared is 14161. Fact 120: 120 squared is 14400. Fact 121: 121 squared is 14641. Fact 122: 122 squared is 14884. Fact 123: 123 squared is 15129. Fact 124: 124 squared is 15376. Fact 125: 125 squared is 15625. Fact 126: 126 squared is 15876. Fact 127: 127 squared is 16129. Fact 128: 128 squared is 16384. Fact 129: 129 squared is 16641. Fact 130: 130 squared is 16900. Fact 131: 131 squared is 17161. Fact 132: 132 squared is 17424. Fact 133: 133 squared is 17689. Fact 134: 134 squared is 17956. Fact 135: 135 squared is 18225. Fact 136: 136 squared is 18496. Fact 137: 137 squared is 18769. Fact 138: 138 squared is 19044. Fact 139: 139 squared is 19321. Fact 140: 140 squared is 19600. Fact 141: 141 squared is 19881. Fact 142: 142 squared is 20164. Fact 143: 143 squared is 20449. Fact 144: 144 squared is 20736. Fact 145: 145 squared is 21025. Fact 146: 146 squared is 21316. Fact 147: 147 squared is 21609. Fact 148: 148 squared is 21904. Fact 149: 149 squared is 22201. Fact 150: 150 squared is 22500. Fact 151: 151 squared is 22801. Fact 152: 152 squared is 23104. Fact 153: 153 squared is 23409. Fact 154: 154 squared is 23716. Fact 155: 155 squared is 24025. Fact 156: 156 squared is 24336. Fact 157: 157 squared is 24649. Fact 158: 158 squared is 24964. Fact 159: 159 squared is 25281. Fact 160: 160 squared is 25600. Fact 161: 161 squared is 25921. Fact 162: 162 squared is 26244. Fact 163: 163 squared is 26569. Fact 164: 164 squared is 26896. Fact 165: 165 squared is 27225. Fact 166: 166 squared is 27556. Fact 167: 167 squared is 27889. Fact 168: 168 squared is 28224. Fact 169: 169 squared is 28561. Fact 170: 170 squared is 28900. Fact 171: 171 squared is 29241. Fact 172: 172 squared is 29584. Fact 173: 173 squared is 29929. Fact 174: 174 squared is 30276. Fact 175: 175 squared is 30625. Fact 176: 176 squared is 30976. Fact 177: 177 squared is 31329. Fact 178: 178 squared is 31684. Fact 179: 179 squared is 32041. Fact 180: 180 squared is 32400. Fact 181: 181 squared is 32761. Fact 182: 182 squared is 33124. Fact 183: 183 squared is 33489. Fact 184: 184 squared is 33856. Fact 185: 185 squared is 34225. Fact 186: 186 squared is 34596. Fact 187: 187 squared is 34969. Fact 188: 188 squared is 35344. Fact 189: 189 squared is 35721. Fact 190: 190 squared is 36100. Fact 191: 191 squared is 36481. Fact 192: 192 squared is 36864. Fact 193: 193 squared is 37249. Fact 194: 194 squared is 37636. Fact 195: 195 squared is 38025. Fact 196: 196 squared is 38416. Fact 197: 197 squared is 38809. Fact 198: 198 squared is 39204. Fact 199: 199 squared is 39601. Fact 200: 200 squared is 40000. Fact 201: 201 squared is 40401. Fact 202: 202 squared is 40804. Fact 203: 203 squared is 41209. Fact 204: 204 squared is 41616. Fact 205: 205 squared is 42025. Fact 206: 206 squared is 42436. Fact 207: 207 squared is 42849. Fact 208: 208 squared is 43264. Fact 209: 209 squared is 43681. Fact 210: 210 squared is 44100. Fact 211: 211 squared is 44521. Fact 212: 212 squared is 44944. Fact 213: 213 squared is 45369. Fact 214: 214 squared is 45796. Fact 215: 215 squared is 46225. Fact 216: 216 squared is 46656. Fact 217: 217 squared is 47089. Fact 218: 218 squared is 47524. Fact 219: 219 squared is 47961. Fact 220: 220 squared is 48400. Fact 221: 221 squared is 48841. Fact 222: 222 squared is 49284. Fact 223: 223 squared is 49729. Fact 224: 224 squared is 50176. Fact 225: 225 squared is 50625. Fact 226: 226 squared is 51076. Fact 227: 227 squared is 51529. Fact 228: 228 squared is 51984. Fact 229: 229 squared is 52441. Fact 230: 230 squared is 52900. Fact 231: 231 squared is 53361. Fact 232: 232 squared is 53824. Fact 233: 233 squared is 54289. Fact 234: 234 squared is 54756. Fact 235: 235 squared is 55225. Fact 236: 236 squared is 55696. Fact 237: 237 squared is 56169. Fact 238: 238 squared is 56644. Fact 239: 239 squared is 57121. Fact 240: 240 squared is 57600. Fact 241: 241 squared is 58081. Fact 242: 242 squared is 58564. Fact 243: 243 squared is 59049. Fact 244: 244 squared is 59536. Fact 245: 245 squared is 60025. Fact 246: 246 squared is 60516. Fact 247: 247 squared is 61009. Fact 248: 248 squared is 61504. Fact 249: 249 squared is 62001. Fact 250: 250 squared is 62500. Fact 251: 251 squared is 63001. Fact 252: 252 squared is 63504. Fact 253: 253 squared is 64009. Fact 254: 254 squared is 64516. Fact 255: 255 squared is 65025. Fact 256: 256 squared is 65536. Fact 257: 257 squared is 66049. Fact 258: 258 squared is 66564. Fact 259: 259 squared is 67081. Fact 260: 260 squared is 67600. Fact 261: 261 squared is 68121. Fact 262: 262 squared is 68644. Fact 263: 263 squared is 69169. Fact 264: 264 squared is 69696. Fact 265: 265 squared is 70225. Fact 266: 266 squared is 70756. Fact 267: 267 squared is 71289. Fact 268: 268 squared is 71824. Fact 269: 269 squared is 72361. Fact 270: 270 squared is 72900. Fact 271: 271 squared is 73441. Fact 272: 272 squared is 73984. Fact 273: 273 squared is 74529. Fact 274: 274 squared is 75076. Fact 275: 275 squared is 75625. Fact 276: 276 squared is 76176. Fact 277: 277 squared is 76729. Fact 278: 278 squared is 77284. Fact 279: 279 squared is 77841. Fact 280: 280 squared is 78400. Fact 281: 281 squared is 78961. Fact 282: 282 squared is 79524. Fact 283: 283 squared is 80089. Fact 284: 284 squared is 80656. Fact 285: 285 squared is 81225. Fact 286: 286 squared is 81796. Fact 287: 287 squared is 82369. Fact 288: 288 squared is 82944. Fact 289: 289 squared is 83521. Fact 290: 290 squared is 84100. Fact 291: 291 squared is 84681. Fact 292: 292 squared is 85264. Fact 293: 293 squared is 85849. Fact 294: 294 squared is 86436. Fact 295: 295 squared is 87025. Fact 296: 296 squared is 87616. Fact 297: 297 squared is 88209. Fact 298: 298 squared is 88804. Fact 299: 299 squared is 89401. Fact 300: 300 squared is 90000. Fact 301: 301 squared is 90601. Fact 302: 302 squared is 91204. Fact 303: 303 squared is 91809. Fact 304: 304 squared is 92416. Fact 305: 305 squared is 93025. Fact 306: 306 squared is 93636. Fact 307: 307 squared is 94249. Fact 308: 308 squared is 94864. Fact 309: 309 squared is 95481. Fact 310: 310 squared is 96100. Fact 311: 311 squared is 96721. Fact 312: 312 squared is 97344. Fact 313: 313 squared is 97969. Fact 314: 314 squared is 98596. Fact 315: 315 squared is 99225. Fact 316: 316 squared is 99856. Fact 317: 317 squared is 100489. Fact 318: 318 squared is 101124. Fact 319: 319 squared is 101761. Fact 320: 320 squared is 102400. Fact 321: 321 squared is 103041. Fact 322: 322 squared is 103684. Fact 323: 323 squared is 104329. Fact 324: 324 squared is 104976. Fact 325: 325 squared is 105625. Fact 326: 326 squared is 106276. Fact 327: 327 squared is 106929. Fact 328: 328 squared is 107584. Fact 329: 329 squared is 108241. Fact 330: 330 squared is 108900. Fact 331: 331 squared is 109561. Fact 332: 332 squared is 110224. Fact 333: 333 squared is 110889. Fact 334: 334 squared is 111556. Fact 335: 335 squared is 112225. Fact 336: 336 squared is 112896. Fact 337: 337 squared is 113569. Fact 338: 338 squared is 114244. Fact 339: 339 squared is 114921. Fact 340: 340 squared is 115600. Fact 341: 341 squared is 116281. Fact 342: 342 squared is 116964. Fact 343: 343 squared is 117649. Fact 344: 344 squared is 118336. Fact 345: 345 squared is 119025. Fact 346: 346 squared is 119716. Fact 347: 347 squared is 120409. Fact 348: 348 squared is 121104. Fact 349: 349 squared is 121801. Fact 350: 350 squared is 122500. Fact 351: 351 squared is 123201. Fact 352: 352 squared is 123904. Fact 353: 353 squared is 124609. Fact 354: 354 squared is 125316. Fact 355: 355 squared is 126025. Fact 356: 356 squared is 126736. Fact 357: 357 squared is 127449. Fact 358: 358 squared is 128164. Fact 359: 359 squared is 128881. Fact 360: 360 squared is 129600. Fact 361: 361 squared is 130321. Fact 362: 362 squared is 131044. Fact 363: 363 squared is 131769. Fact 364: 364 squared is 132496. Fact 365: 365 squared is 133225. Fact 366: 366 squared is 133956. Fact 367: 367 squared is 134689. Fact 368: 368 squared is 135424. Fact 369: 369 squared is 136161. Fact 370: 370 squared is 136900. Fact 371: 371 squared is 137641. Fact 372: 372 squared is 138384. Fact 373: 373 squared is 139129. Fact 374: 374 squared is 139876. Fact 375: 375 squared is 140625. Fact 376: 376 squared is 141376. Fact 377: 377 squared is 142129. Fact 378: 378 squared is 142884. Fact 379: 379 squared is 143641. Fact 380: 380 squared is 144400. Fact 381: 381 squared is 145161. Fact 382: 382 squared is 145924. Fact 383: 383 squared is 146689. Fact 384: 384 squared is 147456. Fact 385: 385 squared is 148225. Fact 386: 386 squared is 148996. Fact 387: 387 squared is 149769. Fact 388: 388 squared is 150544. Fact 389: 389 squared is 151321. Fact 390: 390 squared is 152100. Fact 391: 391 squared is 152881. Fact 392: 392 squared is 153664. Fact 393: 393 squared is 154449. Fact 394: 394 squared is 155236. Fact 395: 395 squared is 156025. Fact 396: 396 squared is 156816. Fact 397: 397 squared is 157609. Fact 398: 398 squared is 158404. Fact 399: 399 squared is 159201. Fact 400: 400 squared is 160000. Fact 401: 401 squared is 160801. Fact 402: 402 squared is 161604. Fact 403: 403 squared is 162409. Fact 404: 404 squared is 163216. Fact 405: 405 squared is 164025. Fact 406: 406 squared is 164836. Fact 407: 407 squared is 165649. Fact 408: 408 squared is 166464. Fact 409: 409 squared is 167281. Fact 410: 410 squared is 168100. Fact 411: 411 squared is 168921. Fact 412: 412 squared is 169744. Fact 413: 413 squared is 170569. Fact 414: 414 squared is 171396. Fact 415: 415 squared is 172225. Fact 416: 416 squared is 173056. Fact 417: 417 squared is 173889. Fact 418: 418 squared is 174724. Fact 419: 419 squared is 175561. Fact 420: 420 squared is 176400. Fact 421: 421 squared is 177241. Fact 422: 422 squared is 178084. Fact 423: 423 squared is 178929. Fact 424: 424 squared is 179776. Fact 425: 425 squared is 180625. Fact 426: 426 squared is 181476. Fact 427: 427 squared is 182329. Fact 428: 428 squared is 183184. Fact 429: 429 squared is 184041. Fact 430: 430 squared is 184900. Fact 431: 431 squared is 185761. Fact 432: 432 squared is 186624. Fact 433: 433 squared is 187489. Fact 434: 434 squared is 188356. Fact 435: 435 squared is 189225. Fact 436: 436 squared is 190096. Fact 437: 437 squared is 190969. Fact 438: 438 squared is 191844. Fact 439: 439 squared is 192721. Fact 440: 440 squared is 193600. Fact 441: 441 squared is 194481. Fact 442: 442 squared is 195364. Fact 443: 443 squared is 196249. Fact 444: 444 squared is 197136. Fact 445: 445 squared is 198025. Fact 446: 446 squared is 198916. Fact 447: 447 squared is 199809. Fact 448: 448 squared is 200704. Fact 449: 449 squared is 201601. Fact 450: 450 squared is 202500. Fact 451: 451 squared is 203401. Fact 452: 452 squared is 204304. Fact 453: 453 squared is 205209. Fact 454: 454 squared is 206116. Fact 455: 455 squared is 207025. Fact 456: 456 squared is 207936. Fact 457: 457 squared is 208849. Fact 458: 458 squared is 209764. Fact 459: 459 squared is 210681. Fact 460: 460 squared is 211600. Fact 461: 461 squared is 212521. Fact 462: 462 squared is 213444. Fact 463: 463 squared is 214369. Fact 464: 464 squared is 215296. Fact 465: 465 squared is 216225. Fact 466: 466 squared is 217156. Fact 467: 467 squared is 218089. Fact 468: 468 squared is 219024. Fact 469: 469 squared is 219961. Fact 470: 470 squared is 220900. Fact 471: 471 squared is 221841. Fact 472: 472 squared is 222784. Fact 473: 473 squared is 223729. Fact 474: 474 squared is 224676. Fact 475: 475 squared is 225625. Fact 476: 476 squared is 226576. Fact 477: 477 squared is 227529. Fact 478: 478 squared is 228484. Fact 479: 479 squared is 229441. Fact 480: 480 squared is 230400. Fact 481: 481 squared is 231361. Fact 482: 482 squared is 232324. Fact 483: 483 squared is 233289. Fact 484: 484 squared is 234256. Fact 485: 485 squared is 235225. Fact 486: 486 squared is 236196. Fact 487: 487 squared is 237169. Fact 488: 488 squared is 238144. Fact 489: 489 squared is 239121. Fact 490: 490 squared is 240100. Fact 491: 491 squared is 241081. Fact 492: 492 squared is 242064. Fact 493: 493 squared is 243049. Fact 494: 494 squared is 244036. Fact 495: 495 squared is 245025. Fact 496: 496 squared is 246016. Fact 497: 497 squared is 247009. Fact 498: 498 squared is 248004. Fact 499: 499 squared is 249001."
+            role: user
+          generationConfig:
+            responseModalities:
+            - TEXT
+            thinkingConfig:
+              thinking_budget: 512
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "498"
+      content-type:
+      - application/json; charset=UTF-8
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+      x-goog-upload-status:
+      - final
+    body:
+      type: json
+      content:
+        file:
+          name: files/yaw2agji6hae
+          displayName: pydantic-ai-batch
+          mimeType: application/jsonl
+          sizeBytes: "16092"
+          createTime: 2026-10-22T00:28:48.299803Z
+          updateTime: 2026-10-22T00:28:48.299803Z
+          expirationTime: 2026-10-24T00:28:48.124883788Z
+          sha256Hash: >-
+            NTZjMjE0NzZiMmQ2ZGFjMTE3MGUxMTRjNGZhM2EyOWZmNDk3NjAyOGIxZmE2YjMwMjc2ZDJhYmIzMjZjN2IzZQ==
+          uri: https://generativelanguage.googleapis.com/v1beta/files/yaw2agji6hae
+          state: ACTIVE
+          source: UPLOADED
+  recorded_at: 2026-10-22T00:28:48.328076+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:batchGenerateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "98"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        batch:
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          displayName: pydantic-ai-batch
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=2726
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/yaw2agji6hae
+          createTime: 2026-10-22T00:28:48.644252682Z
+          updateTime: 2026-10-22T00:28:48.644252682Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_PENDING
+          name: batches/apsjxmxyu8qbvjqdabcxbncp2pp1vxpgvrmm
+  recorded_at: 2026-10-22T00:28:51.071399+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:batchGenerateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "98"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        batch:
+          inputConfig:
+            fileName: files/otcqlbflx6ul
+          displayName: pydantic-ai-batch
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3443
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+        metadata:
+          "@type": type.googleapis.com/google.ai.generativelanguage.v1main.GenerateContentBatch
+          model: models/gemini-2.5-flash
+          displayName: pydantic-ai-batch
+          inputConfig:
+            fileName: files/otcqlbflx6ul
+          createTime: 2026-10-22T00:31:09.559097391Z
+          updateTime: 2026-10-22T00:31:09.559097391Z
+          batchStats:
+            requestCount: "1"
+            pendingRequestCount: "1"
+          state: BATCH_STATE_PENDING
+          name: batches/cbmwg42snye5ztr54dyfd118pdsi0w97s8ut
+  recorded_at: 2026-10-22T00:31:12.842119+00:00

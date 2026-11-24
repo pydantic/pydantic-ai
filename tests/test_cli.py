@@ -22,7 +22,7 @@ from rich.text import Text
 from pydantic_ai import Agent, ModelMessage, ModelResponse, ModelRetry, TextPart, ToolCallPart, __version__, _display
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.messages import RetryPromptPart, ToolReturnPart
+from pydantic_ai.messages import ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import FunctionToolset, WrapperToolset
@@ -86,7 +86,7 @@ def test_invalid_model_suggestion(capfd: CaptureFixture[str]):
     assert capfd.readouterr().out.splitlines() == snapshot(
         [
             'Error initializing claude:sonnet-5:',
-            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5'?",
+            "Unknown model: claude:sonnet-5. Did you mean 'anthropic:claude-sonnet-5-5'?",
         ]
     )
 
@@ -187,6 +187,7 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
     assert 'Could not load agent from bad_path' in capfd.readouterr().out
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio from an MCP config file')
 @pytest.mark.parametrize('stream', [False, True])
 def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, stream: bool):
     """`--mcp-config` parses a Claude-Desktop-style config and connects to the MCP server.
@@ -213,6 +214,7 @@ def test_mcp_config(capfd: CaptureFixture[str], env: TestEnv, tmp_path: Path, st
     assert ('Called tool temp_get_weather_forecast' in output) is stream
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio from an MCP config file')
 def test_mcp_config_interactive(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """Interactive `clai --mcp-config` can invoke a configured server tool before exiting."""
     env.set('OPENAI_API_KEY', 'test')
@@ -235,6 +237,7 @@ def test_mcp_config_interactive(capfd: CaptureFixture[str], mocker: MockerFixtur
     assert 'The weather in a is sunny and 26 degrees Celsius.' in ' '.join(output.split())
 
 
+@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio from an MCP config file')
 def test_mcp_config_banner_omits_the_tool_count(
     capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, tmp_path: Path
 ):
@@ -356,6 +359,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'deepseek',
         'gateway/',
         'heroku',
+        'meta',
         'moonshotai',
         'xai',
         'huggingface',
@@ -378,7 +382,6 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
 
 
-@pytest.mark.anyio
 async def test_streaming_with_tool_calls():
     """The streaming CLI render loop interleaves streamed model text with tool-call indicators.
 
@@ -439,7 +442,6 @@ def live_frames(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return frames
 
 
-@pytest.mark.anyio
 async def test_streaming_with_concurrent_tool_calls(live_frames: list[str]):
     """Every in-flight tool call keeps its own indicator until its own result arrives.
 
@@ -501,7 +503,6 @@ class _City:
     name: str
 
 
-@pytest.mark.anyio
 async def test_streaming_ignores_output_tool_calls():
     """The internal output tool is not reported as a tool call.
 
@@ -520,19 +521,48 @@ async def test_streaming_ignores_output_tool_calls():
     assert 'Called tool' not in rendered
 
 
-@pytest.mark.anyio
+async def test_streaming_ignores_skipped_tool_calls(live_frames: list[str]):
+    """A function tool skipped because an output tool already produced the final result is not reported.
+
+    Under `end_strategy='early'` the skipped call still streams `FunctionToolCallEvent(args_valid=None)` and
+    a `FunctionToolResultEvent` with its stub return, but the tool never ran.
+    """
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name='get_weather', json_args='{"city": "Lisbon"}', tool_call_id='call_1'),
+            1: DeltaToolCall(name='final_result', json_args='{"name": "Lisbon"}', tool_call_id='call_2'),
+        }
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=_City, end_strategy='early')
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        # Skipped: the output tool already produced the final result.
+        raise NotImplementedError  # pragma: no cover
+
+    console = Console(file=StringIO(), force_terminal=False, width=80)
+    await ask_agent(agent, 'name a city', stream=True, console=console, code_theme='monokai')
+
+    assert not any('Calling tool' in frame or 'Called tool' in frame for frame in _distinct_frames(live_frames))
+
+
 async def test_streaming_clears_indicator_for_retried_tool(live_frames: list[str]):
     """A call that comes back as a retry drops its in-flight indicator instead of pinning it.
 
-    `pending_calls` is popped for any `FunctionToolResultEvent`, not only a `ToolReturnPart`.
-    Popping on success alone left `> _Calling tool ...` on screen for the rest of the run. A retry
-    still renders no `Called tool` line — surfacing retries is a separate feature.
+    `pending_calls` is popped for any `FunctionToolResultEvent`. Popping on success alone left
+    `> _Calling tool ...` on screen for the rest of the run. The retried call reports `Called tool`
+    like any other: it is a call that ran and returned, and the run continues from there.
     """
 
     async def retrying_tool_stream(
         messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str | DeltaToolCalls]:
-        if any(isinstance(part, RetryPromptPart) for message in messages for part in message.parts):
+        if any(
+            isinstance(part, ToolReturnPart) and part.outcome == 'retried'
+            for message in messages
+            for part in message.parts
+        ):
             yield 'Recovered without the tool.'
         else:
             yield 'Trying a tool.'
@@ -556,9 +586,15 @@ Trying a tool.
 
 > _Calling tool `flaky`…_\
 """,
-            'Trying a tool.',
             """\
 Trying a tool.
+
+> Called tool `flaky`.\
+""",
+            """\
+Trying a tool.
+
+> Called tool `flaky`.
 
 Recovered without the tool.\
 """,
@@ -586,7 +622,6 @@ class _LifetimeToolset(WrapperToolset[Any]):
         return result
 
 
-@pytest.mark.anyio
 async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """Run-scoped toolsets survive between turns instead of being torn down after each one.
 
@@ -613,7 +648,6 @@ async def test_chat_holds_toolsets_open_for_the_session(mocker: MockerFixture, e
     assert toolset.full_releases == snapshot(1)
 
 
-@pytest.mark.anyio
 async def test_chat_keeps_toolsets_open_after_failed_turn(mocker: MockerFixture, env: TestEnv, tmp_path: Path):
     """A failed turn is reported without releasing session toolsets or ending the REPL."""
     env.set('OPENAI_API_KEY', 'test')
@@ -857,7 +891,6 @@ def test_handle_slash_command_usage_not_a_flag():
     assert io.getvalue() == snapshot('Unknown command `/usagejson`\n')
 
 
-@pytest.mark.anyio
 async def test_ask_agent_accumulates_usage(env: TestEnv):
     # `ask_agent` increments the shared session usage on both the streaming and non-streaming paths,
     # including tool calls, and threading a turn's history into the next must not re-count prior usage.
@@ -878,10 +911,9 @@ async def test_ask_agent_accumulates_usage(env: TestEnv):
 
     # Usage is the sum of both runs: the first turn calls the tool (2 requests, 1 tool call), the second
     # replays that history without re-calling it (1 request). Prior usage is not re-counted from history.
-    assert session_usage == snapshot(RunUsage(input_tokens=156, output_tokens=14, requests=3, tool_calls=1))
+    assert session_usage == snapshot(RunUsage(input_tokens=156, output_tokens=15, requests=3, tool_calls=1))
 
 
-@pytest.mark.anyio
 async def test_ask_agent_counts_usage_on_failed_turn(env: TestEnv):
     # A turn that makes a billed request and then raises must still be counted, so a later `/usage`
     # does not under-report tokens that were actually spent. The merge happens in `ask_agent`'s `finally`.
@@ -947,7 +979,6 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -966,7 +997,6 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -1048,7 +1078,7 @@ def test_clai_web_generic_agent(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=['web_search'],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1071,7 +1101,7 @@ def test_clai_web_success(mocker: MockerFixture, create_test_module: Callable[..
         models=[],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1109,7 +1139,7 @@ def test_clai_web_with_models(mocker: MockerFixture, create_test_module: Callabl
         models=['openai:gpt-5', 'anthropic:claude-sonnet-4-6'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1138,7 +1168,7 @@ def test_clai_web_with_tools(mocker: MockerFixture, create_test_module: Callable
         models=[],
         tools=['web_search', 'code_execution'],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1159,7 +1189,7 @@ def test_clai_web_generic_with_instructions(mocker: MockerFixture, env: TestEnv)
         models=['openai:gpt-5'],
         tools=[],
         instructions='You are a helpful coding assistant',
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1186,7 +1216,7 @@ def test_clai_web_with_custom_port(mocker: MockerFixture, create_test_module: Ca
         models=[],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=[],
     )
@@ -1220,7 +1250,7 @@ def test_run_web_command_generic_agent_no_model(mocker: MockerFixture, capfd: Ca
     mock_uvicorn_run.assert_called_once()
     # Verify default model was passed
     call_kwargs = mock_create_app.call_args.kwargs
-    assert call_kwargs['models'] == ['openai:gpt-5']
+    assert call_kwargs['models'] == ['openai:gpt-6.1-sol']
 
 
 def test_run_web_command_generic_agent_with_instructions(mocker: MockerFixture, capfd: CaptureFixture[str]):
@@ -1392,7 +1422,6 @@ def test_agent_to_cli_sync_with_model(mocker: MockerFixture, env: TestEnv):
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -1416,7 +1445,6 @@ async def test_agent_to_cli_async_with_args(mocker: MockerFixture, env: TestEnv)
     )
 
 
-@pytest.mark.anyio
 async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
@@ -1437,7 +1465,6 @@ async def test_agent_to_cli_async_with_model(mocker: MockerFixture, env: TestEnv
     )
 
 
-@pytest.mark.anyio
 async def test_ask_agent_non_stream_forwards_run_kwargs(mocker: MockerFixture):
     from pydantic_ai._cli import ask_agent
 
@@ -1490,7 +1517,7 @@ def test_clai_web_with_html_source(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=custom_url,
         allowed_hosts=[],
     )
@@ -1511,7 +1538,7 @@ def test_clai_web_with_allowed_hosts(mocker: MockerFixture, env: TestEnv):
         models=['openai:gpt-5'],
         tools=[],
         instructions=None,
-        default_model='openai:gpt-5',
+        default_model='openai:gpt-6.1-sol',
         html_source=None,
         allowed_hosts=['ui.example.com', '*.corp.example'],
     )
@@ -1573,9 +1600,25 @@ def _plain(output: str) -> str:
     return Text.from_ansi(output).plain
 
 
-def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv, terminal_clai: None):
+@pytest.mark.parametrize(
+    ('uvx_path', 'expected'),
+    [('/usr/bin/uvx', 'uvx logfire-cli wizard --task pydantic-ai'), (None, 'https://pydantic.dev/ai-setup.md')],
+)
+def test_clai_intro_shows_banner(
+    capfd: CaptureFixture[str],
+    mocker: MockerFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    env: TestEnv,
+    terminal_clai: None,
+    uvx_path: str | None,
+    expected: str,
+):
     env.set('OPENAI_API_KEY', 'test')
     mocker.patch('pydantic_ai._cli.ask_agent')
+    mocker.patch('pydantic_ai._cli.shutil.which', return_value=uvx_path)
+    # Earlier tests run the module-level `cli_agent`, and its first run names it `agent`. A fresh `clai`
+    # process has no name to show, and the extra `agent: agent • ` wraps the line asserted below.
+    monkeypatch.setattr(cli_agent, 'name', None)
 
     assert cli(['hello']) == 0
 
@@ -1584,11 +1627,12 @@ def test_clai_intro_shows_banner(capfd: CaptureFixture[str], mocker: MockerFixtu
     # clai shows the same banner a script gets, rather than heading it with its own name and version.
     assert f'pydantic-ai v{__version__}' in output
     assert 'clai - Pydantic AI CLI' not in output
-    assert 'model: openai:gpt-5 • tools: 0 • capabilities: 0' in output
+    assert 'model: openai:gpt-6.1-sol • tools: 0 • capabilities: 0' in output
     # The banner carries the observability pointer, so clai doesn't repeat its own header line.
     # Matched on the label, not the prose, which is the banner's to reword.
     assert 'observability:' in output
-    assert 'with openai:gpt-5' not in output
+    assert expected in output
+    assert 'with openai:gpt-6.1-sol' not in output
 
 
 def test_clai_nested_in_an_agent_still_opens_with_a_banner(
@@ -1792,7 +1836,7 @@ def test_clai_intro_falls_back_to_one_line_when_banner_is_suppressed(
     assert LOGO_MARKER not in output
     assert 'observability' not in output
     assert 'clai - Pydantic AI CLI' in output
-    assert 'openai:gpt-5' in output
+    assert 'openai:gpt-6.1-sol' in output
 
 
 def test_clai_run_does_not_print_a_second_banner(capfd: CaptureFixture[str], env: TestEnv, terminal_clai: None):

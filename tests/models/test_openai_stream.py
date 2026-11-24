@@ -1,13 +1,16 @@
 from __future__ import annotations as _annotations
 
 import os
+from decimal import Decimal
 
 import pytest
 
-from pydantic_ai import ModelAPIError, ModelMessage, ModelRequest
+from pydantic_ai import Agent, ModelAPIError, ModelMessage, ModelRequest
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import try_import
+from .._inline_snapshot import snapshot
+from ..conftest import RequestCapture, try_import
 
 with try_import() as imports_successful:
     from openai.types import chat
@@ -18,10 +21,10 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
     from .mock_openai import MockOpenAI
+    from .test_openai import chunk_with_usage
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -51,7 +54,10 @@ def evroc_api_key() -> str:
 
 @pytest.mark.vcr
 async def test_clean_eof_without_finish_reason_is_accepted_by_default(allow_model_requests: None, evroc_api_key: str):
-    """Keep missing finish reasons non-fatal unless the model profile opts into strict handling."""
+    """Keep missing finish reasons non-fatal unless the model profile opts into strict handling.
+
+    A clean end of stream counts as a `'stop'`, as a complete response without a finish reason does.
+    """
     model = _evroc_model(evroc_api_key)
     messages, settings = _evroc_request()
 
@@ -61,7 +67,9 @@ async def test_clean_eof_without_finish_reason_is_accepted_by_default(allow_mode
 
     response = stream.get()
     assert response.state == 'complete'
-    assert response.finish_reason is None
+    assert response.finish_reason == 'stop'
+    assert response.provider_details is not None
+    assert 'finish_reason' not in response.provider_details
     assert response.text is not None
     assert response.text.strip().splitlines() == [str(number) for number in range(1, 215)]
 
@@ -141,3 +149,98 @@ async def test_cancelled_stream_does_not_require_finish_reason(allow_model_reque
     assert response.state == 'interrupted'
     assert response.finish_reason is None
     assert response.text == 'partial'
+
+
+@pytest.mark.vcr
+async def test_gemini_stream_usage_replaces_running_totals(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """Gemini's OpenAI-compatible endpoint repeats the running usage on every streamed chunk, so each replaces the last.
+
+    The recording's 7 chunks each report 14 prompt tokens, with completion tokens growing from 2 to 110. Summing them
+    would report 98/455; the input tokens staying at 14 across steps shows each total replaces the last. Usage is
+    requested with `include_usage` alone: the replacement comes from the provider's profile, not
+    `continuous_usage_stats`.
+    """
+    provider = OpenAIProvider(
+        base_url='https://generativelanguage.googleapis.com/v1beta/openai/',
+        api_key=gemini_api_key,
+        http_client=request_capture.client,
+    )
+    agent = Agent(OpenAIChatModel('gemini-3.1-flash-lite', provider=provider))
+
+    async with agent.run_stream('Count from 1 to 40, separated by spaces.') as result:
+        usage_at_each_step = [response.usage async for response in result.stream_response(debounce_by=None)]
+
+    assert request_capture.body('/chat/completions')['stream_options'] == snapshot({'include_usage': True})
+    assert usage_at_each_step == snapshot(
+        [
+            RequestUsage(input_tokens=14, output_tokens=2),
+            RequestUsage(input_tokens=14, output_tokens=20),
+            RequestUsage(input_tokens=14, output_tokens=47),
+            RequestUsage(input_tokens=14, output_tokens=71),
+            RequestUsage(input_tokens=14, output_tokens=95),
+            RequestUsage(input_tokens=14, output_tokens=110),
+            RequestUsage(input_tokens=14, output_tokens=110, cost=Decimal('0.0001685')),
+            RequestUsage(input_tokens=14, output_tokens=110, cost=Decimal('0.0001685')),
+        ]
+    )
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=14, output_tokens=110, cost=Decimal('0.0001685')))
+
+
+async def test_stream_cumulative_usage_profile_opt_out_sums_chunks(allow_model_requests: None):
+    """A `gemini*` name on a server that reports per-chunk deltas keeps correct usage by opting out in its profile.
+
+    A unit test because no recorded server sends deltas. The flag-on side is pinned against a real recording by
+    `test_gemini_stream_usage_replaces_running_totals`.
+    """
+    stream: list[chat.ChatCompletionChunk] = [
+        chunk_with_usage(
+            [ChoiceDelta(content='hello ', role='assistant')], completion_tokens=5, prompt_tokens=10, total_tokens=15
+        ),
+        chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=5, prompt_tokens=0, total_tokens=5),
+        chunk_with_usage([], finish_reason='stop', completion_tokens=5, prompt_tokens=0, total_tokens=5),
+    ]
+    model = OpenAIChatModel(
+        'gemini-3.1-flash-lite',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)),
+        profile=OpenAIModelProfile(openai_chat_streaming_repeats_usage_totals=False),
+    )
+
+    async with Agent(model).run_stream('') as result:
+        await result.get_output()
+
+    assert result.usage == snapshot(RunUsage(requests=1, input_tokens=10, output_tokens=15))
+
+
+async def test_stream_cumulative_usage_profile_replaces_at_each_step(allow_model_requests: None):
+    """A `gemini*` name takes each chunk's running total as the usage so far, across a chunk that reports none.
+
+    A unit test because no recording has a usage-less chunk between two that report usage.
+    """
+    usage_less_chunk = chunk_with_usage([ChoiceDelta(content='world')])
+    usage_less_chunk.usage = None
+    stream: list[chat.ChatCompletionChunk] = [
+        chunk_with_usage(
+            [ChoiceDelta(content='hello ', role='assistant')], completion_tokens=5, prompt_tokens=10, total_tokens=15
+        ),
+        usage_less_chunk,
+        chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=15, prompt_tokens=10, total_tokens=25),
+        chunk_with_usage([], finish_reason='stop', completion_tokens=15, prompt_tokens=10, total_tokens=25),
+    ]
+    model = OpenAIChatModel(
+        'gemini-3.1-flash-lite', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream))
+    )
+
+    async with Agent(model).run_stream('') as result:
+        usage_at_each_step = [response.usage async for response in result.stream_response(debounce_by=None)]
+
+    assert usage_at_each_step == snapshot(
+        [
+            RequestUsage(input_tokens=10, output_tokens=5),
+            RequestUsage(input_tokens=10, output_tokens=5),
+            RequestUsage(input_tokens=10, output_tokens=15),
+            RequestUsage(input_tokens=10, output_tokens=15),
+            RequestUsage(input_tokens=10, output_tokens=15),
+        ]
+    )

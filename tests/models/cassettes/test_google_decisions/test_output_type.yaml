@@ -1,0 +1,93 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/decisions
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "819"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-decision-1
+        input: The blender arrived with a cracked jar. I want my money back today.
+        questions:
+          q0:
+            type: noul
+            instructions: "{\"field\": \"refund\", \"question\": \"Do they want a refund?\", \"goal\": \"Triage a support ticket.\"}"
+            criteria:
+              true_description: They ask for their money back.
+              false_description: They do not.
+          q1:
+            type: choice
+            instructions: "{\"field\": \"area\", \"question\": \"Which team owns it?\", \"goal\": \"Triage a support ticket.\"}"
+            criteria:
+              billing: null
+              product defect: null
+          q2:
+            type: score
+            instructions: "{\"field\": \"urgency\", \"question\": \"How urgent is it?\", \"goal\": \"Triage a support ticket.\"}"
+            criteria:
+            - Can wait a week
+            - Should be handled today
+            - Needs a reply within the hour
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=206
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        answers:
+          q0:
+            confidence: 0.9830831764080006
+            noul: 0.9830831764080006
+            type: noul
+          q2:
+            confidence: 0.7177949412677748
+            score: 1.1171219130010348
+            probabilities:
+              "0": 0.0825415728655953
+              "1": 0.7177949412677748
+              "2": 0.19966348586662996
+            legend:
+              "1": Should be handled today
+              "2": Needs a reply within the hour
+              "0": Can wait a week
+            type: score
+          q1:
+            confidence: 0.8778519632794022
+            choice: product defect
+            probabilities:
+              billing: 0.12214803672059774
+              product defect: 0.8778519632794022
+            type: choice
+        usage:
+          total_tokens: 303
+          total_input_tokens: 303
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 303
+          total_output_tokens: 0
+  recorded_at: 2026-11-11T16:49:10.132768+00:00

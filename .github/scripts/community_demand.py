@@ -5,10 +5,9 @@ real users asking for it or an AI-generated pile-on, and raw interaction counts
 cannot tell the two apart. `snapshot` writes a bounded candidate file carrying
 the actual comment threads for the sandboxed agent to read; `apply` revalidates
 the agent's verdicts against that snapshot and adds the `community-backed`
-label only for genuine demand judged with high confidence. The label opens the
-assignment gate in `semantic_owner_router` and the weekly reminder cadence in
-`issue_pr_attention_monitor`; this script owns every GitHub write, the agent
-only classifies.
+label only for genuine demand judged with high confidence. The label is a
+signal for human triage only: it never assigns anyone. This script owns every
+GitHub write, the agent only classifies.
 """
 
 from __future__ import annotations
@@ -188,7 +187,7 @@ def main() -> int:
     client = attention.GitHubClient(token)
     repo = os.environ.get('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
     if args.mode == 'snapshot':
-        lines = write_snapshot(client, repo, args.snapshot_path, now=dt.datetime.now(dt.timezone.utc))
+        lines = write_snapshot(client, repo, args.snapshot_path, now=dt.datetime.now(dt.UTC))
     else:
         if not args.agent_output:
             parser.error('--agent-output is required')

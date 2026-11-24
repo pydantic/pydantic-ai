@@ -1,0 +1,182 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "477"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Generate an image of an axolotl.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Generate an image from a text prompt.
+            name: generate_image
+            parameters_json_schema:
+              additionalProperties: false
+              properties:
+                prompt:
+                  type: string
+              required:
+              - prompt
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=808
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - functionCall:
+                name: generate_image
+                args:
+                  prompt: axolotl
+              thoughtSignature: >-
+                CsEBAWkUfRPIIbp7pZhPvsMmmjR+ZkLmagjba7+BJlhp/Yy/y3B209SEmTk13MBp4FSfJXduJBPXw1WEyLWT4PJKYL2tDoNqQklJPrY+9QXkKCOBFyTy+mRGP6YMlQbiuXkcwnwGQtNlDugF6ZAZT2HrSddCEQ+Mdull0L9jeqfOA+zEkm1/3BrS0G/iB3OpaOKT4C8aRzBvHlgv2F+K5PlVQjf63YbEajreJBTLticX/mZLOepLeTpNnWZ78tpWLU9yfA==
+            role: model
+          finishReason: STOP
+          index: 0
+          finishMessage: Model generated function call(s).
+        usageMetadata:
+          promptTokenCount: 50
+          candidatesTokenCount: 17
+          totalTokenCount: 109
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 50
+          thoughtsTokenCount: 42
+          serviceTier: standard
+        modelVersion: gemini-2.5-flash
+        responseId: VYS-asLSO6afqtsP7aa4yA8
+  recorded_at: 2026-10-01T16:03:34.683161+00:00
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1129"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Generate an image of an axolotl.
+          role: user
+        - parts:
+          - functionCall:
+              id: pyd_ai_6d147994d7814ce3943c1f0749db0afa
+              args:
+                prompt: axolotl
+              name: generate_image
+            thoughtSignature: >-
+              CsEBAWkUfRPIIbp7pZhPvsMmmjR-ZkLmagjba7-BJlhp_Yy_y3B209SEmTk13MBp4FSfJXduJBPXw1WEyLWT4PJKYL2tDoNqQklJPrY-9QXkKCOBFyTy-mRGP6YMlQbiuXkcwnwGQtNlDugF6ZAZT2HrSddCEQ-Mdull0L9jeqfOA-zEkm1_3BrS0G_iB3OpaOKT4C8aRzBvHlgv2F-K5PlVQjf63YbEajreJBTLticX_mZLOepLeTpNnWZ78tpWLU9yfA==
+          role: model
+        - parts:
+          - functionResponse:
+              id: pyd_ai_6d147994d7814ce3943c1f0749db0afa
+              name: generate_image
+              response:
+                return_value: The image was generated and shown to the user.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: Generate an image from a text prompt.
+            name: generate_image
+            parameters_json_schema:
+              additionalProperties: false
+              properties:
+                prompt:
+                  type: string
+              required:
+              - prompt
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=618
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: |
+                Here is an image of an axolotl.
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 93
+          candidatesTokenCount: 10
+          totalTokenCount: 103
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 93
+          serviceTier: standard
+        modelVersion: gemini-2.5-flash
+        responseId: VoS-apD2Mo2ymtkPsLbK6A8
+  recorded_at: 2026-10-01T16:03:35.393854+00:00

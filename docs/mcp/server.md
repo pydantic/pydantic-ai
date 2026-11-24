@@ -1,3 +1,7 @@
+---
+description: "Use Pydantic AI agents inside the tools of your own MCP server, and route their LLM calls back through the connected client with MCP sampling."
+---
+
 # Server
 
 Pydantic AI models can also be used within MCP Servers.
@@ -7,13 +11,13 @@ Pydantic AI models can also be used within MCP Servers.
 Here's a simple example of a [Python MCP server](https://github.com/modelcontextprotocol/python-sdk) using Pydantic AI within a tool call:
 
 ```py {title="mcp_server.py"}
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 
 from pydantic_ai import Agent
 
 server = FastMCP('Pydantic AI Server')
 server_agent = Agent(
-    'anthropic:claude-haiku-4-5', instructions='always reply in rhyme'
+    '{{ anthropic:small }}', instructions='always reply in rhyme'
 )
 
 
@@ -38,17 +42,20 @@ import os
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.types import TextContent
 
 
 async def client():
     server_params = StdioServerParameters(
-        command='python', args=['mcp_server.py'], env=os.environ
+        command='python', args=['mcp_server.py'], env=dict(os.environ)
     )
     async with stdio_client(server_params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool('poet', {'theme': 'socks'})
-            print(result.content[0].text)
+            content = result.content[0]
+            assert isinstance(content, TextContent)
+            print(content.text)
             """
             Oh, socks, those garments soft and sweet,
             That nestle softly 'round our feet,
@@ -68,6 +75,8 @@ if __name__ == '__main__':
 
 When Pydantic AI agents are used within MCP servers, they can use sampling via [`MCPSamplingModel`][pydantic_ai.models.mcp_sampling.MCPSamplingModel].
 
+`MCPSamplingModel` sends its request in the middle of the tool call, so it works when the client connects with FastMCP 3 or the MCP SDK v1, or with FastMCP 4 in legacy mode. On the 2026-07-28 MCP protocol, the FastMCP 4 default, the request fails with `NoBackChannelError`; see [how the server asks](./client.md#how-the-server-asks).
+
 You can continue a conversation from another model by passing its `message_history` to the sampling agent.
 Function tool calls, results, and retry feedback in that history are preserved using MCP's native tool content blocks,
 which require a client supporting the 2025-11-25 sampling format or later.
@@ -76,7 +85,7 @@ Multimodal tool results are not yet supported. Replaying tool history does not e
 We can extend the above example to use sampling so instead of connecting directly to the LLM, the agent calls back through the MCP client to make LLM calls.
 
 ```py {title="mcp_server_sampling.py"}
-from mcp.server.fastmcp import Context, FastMCP
+from fastmcp import Context, FastMCP
 
 from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
@@ -102,11 +111,10 @@ The simplest way to support sampling in an MCP client is to [use](./client.md#mc
 
 ```py {title="mcp_client_sampling.py" requires="mcp_server_sampling.py"}
 import asyncio
-from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.session import ClientRequestContext
 from mcp.client.stdio import stdio_client
-from mcp.shared.context import RequestContext
 from mcp.types import (
     CreateMessageRequestParams,
     CreateMessageResult,
@@ -115,10 +123,12 @@ from mcp.types import (
 )
 
 
+# On FastMCP 3 (MCP SDK v1), `context` is a `mcp.shared.context.RequestContext` and
+# the field below is `params.systemPrompt`.
 async def sampling_callback(
-    context: RequestContext[ClientSession, Any], params: CreateMessageRequestParams
+    context: ClientRequestContext, params: CreateMessageRequestParams
 ) -> CreateMessageResult | ErrorData:
-    print('sampling system prompt:', params.systemPrompt)
+    print('sampling system prompt:', params.system_prompt)
     #> sampling system prompt: always reply in rhyme
     print('sampling messages:', params.messages)
     """
@@ -153,7 +163,9 @@ async def client():
         async with ClientSession(read, write, sampling_callback=sampling_callback) as session:
             await session.initialize()
             result = await session.call_tool('poet', {'theme': 'socks'})
-            print(result.content[0].text)
+            content = result.content[0]
+            assert isinstance(content, TextContent)
+            print(content.text)
             #> Socks for a fox.
 
 

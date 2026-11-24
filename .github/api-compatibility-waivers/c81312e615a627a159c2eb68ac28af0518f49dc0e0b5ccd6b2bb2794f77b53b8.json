@@ -1,0 +1,5 @@
+{
+  "against": "v2.60.0",
+  "reason": "False positive: `LocalStack.secret_access_key` keeps its `'test'` default and type; `field(..., repr=False)` only hides the value from `repr()`.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10828"
+}

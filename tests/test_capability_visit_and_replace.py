@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
@@ -27,9 +26,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 def _visited(capability: AbstractCapability[Any]) -> list[tuple[str, str | None]]:
