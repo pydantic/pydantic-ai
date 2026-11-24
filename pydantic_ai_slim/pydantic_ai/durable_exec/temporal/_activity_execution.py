@@ -57,9 +57,8 @@ async def _await_with_single_cancel(handle: asyncio.Future[Any]) -> Any:
         # The cancellation hit this task because `asyncio.wait` kept the Temporal handle alive.
         # Delegate exactly one cancellation to Temporal, then wait for its configured
         # cancellation behavior without anyio redelivering cancellation on every loop turn.
-        # The already-done arm is a real race (cancel landing in the same tick the handle
-        # resolves) that cannot be timed deterministically through the workflow API.
-        if not handle.done():  # pragma: no branch
+        # The handle is already done when the cancel lands in the same tick it resolves.
+        if not handle.done():
             handle.cancel()
             with anyio.CancelScope(shield=True):
                 await asyncio.wait([handle])
