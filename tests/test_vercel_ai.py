@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import uuid
@@ -8711,6 +8712,102 @@ async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
             )
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(BinaryContent(data=b'abc', media_type='application/pdf', identifier='custom'), id='binary'),
+        pytest.param(BinaryContent(data=b'abc', media_type='image/png', identifier='custom'), id='binary-image-type'),
+        pytest.param(BinaryImage(data=b'abc', media_type='image/png', identifier='custom'), id='binary-image'),
+        pytest.param(
+            BinaryImage(data=b'abc', media_type='image/png', identifier='custom', vendor_metadata={'detail': 'low'}),
+            id='binary-image-vendor-metadata',
+        ),
+        pytest.param(ImageUrl(url='https://example.com/x.png', identifier='custom'), id='image-url'),
+        pytest.param(DocumentUrl(url='https://example.com/x.pdf', identifier='custom'), id='document-url'),
+    ],
+)
+def test_user_file_custom_identifier_round_trip(item: BinaryContent | ImageUrl | DocumentUrl):
+    """A custom identifier survives dump and load, and is written to the UI part's `provider_metadata`."""
+    dumped = VercelAIAdapter.dump_messages([ModelRequest(parts=[UserPromptPart(content=[item])])])
+    file_part = dumped[0].parts[0]
+    assert isinstance(file_part, FileUIPart)
+    assert file_part.provider_metadata is not None
+    assert file_part.provider_metadata['pydantic_ai']['identifier'] == 'custom'
+
+    [message] = VercelAIAdapter.load_messages(dumped)
+    assert isinstance(message, ModelRequest)
+    part = message.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert not isinstance(part.content, str)
+    loaded = part.content[0]
+    assert isinstance(loaded, BinaryContent | ImageUrl | DocumentUrl)
+    assert loaded.identifier == 'custom'
+    assert loaded.vendor_metadata == item.vendor_metadata
+    if isinstance(item, BinaryContent) and item.is_image:
+        assert isinstance(loaded, BinaryImage)
+
+    # A second round trip keeps writing the same key.
+    assert VercelAIAdapter.dump_messages([message])[0].parts == [file_part]
+
+
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(BinaryContent(data=b'abc', media_type='application/pdf'), id='binary'),
+        pytest.param(BinaryContent.from_data_uri('data:image/png;base64,YWJj'), id='narrowed-image'),
+        pytest.param(BinaryContent(data=b'abc', media_type='application/pdf', identifier=''), id='empty'),
+        pytest.param(ImageUrl(url='https://example.com/x.png'), id='image-url'),
+    ],
+)
+@pytest.mark.parametrize('reload_from_json', [False, True])
+def test_user_file_computed_identifier_is_not_dumped(
+    item: BinaryContent | ImageUrl,
+    reload_from_json: bool,
+):
+    """A computed identifier stays off the wire, even where `narrow_type` or a JSON reload stored it in `_identifier`."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item])])]
+    if reload_from_json:
+        messages = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    file_part = VercelAIAdapter.dump_messages(messages)[0].parts[0]
+    assert isinstance(file_part, FileUIPart)
+    assert file_part.provider_metadata is None
+
+
+@pytest.mark.parametrize(
+    'url',
+    [
+        pytest.param('data:application/pdf;base64,YWJj', id='binary'),
+        pytest.param('https://example.com/x.pdf', id='url'),
+    ],
+)
+@pytest.mark.parametrize(
+    'identifier',
+    [pytest.param({'not': 'a string'}, id='non-string'), pytest.param('', id='empty')],
+)
+def test_user_file_unusable_identifier_falls_back_to_computed(url: str, identifier: object):
+    """`provider_metadata` is client-supplied, so an empty or non-string identifier gives way to the computed one."""
+    ui_message = UIMessage(
+        id='msg1',
+        role='user',
+        parts=[
+            FileUIPart(
+                url=url,
+                media_type='application/pdf',
+                provider_metadata={'pydantic_ai': {'identifier': identifier}},
+            )
+        ],
+    )
+    [message] = VercelAIAdapter.load_messages([ui_message])
+    assert isinstance(message, ModelRequest)
+    part = message.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert not isinstance(part.content, str)
+    loaded = part.content[0]
+    assert isinstance(loaded, BinaryContent | DocumentUrl)
+    source = loaded.data if isinstance(loaded, BinaryContent) else loaded.url.encode()
+    assert loaded.identifier == hashlib.sha1(source, usedforsecurity=False).hexdigest()[:6]
 
 
 async def test_adapter_load_messages_file_url_without_metadata():
