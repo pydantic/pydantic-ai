@@ -2824,9 +2824,10 @@ async def test_chat_completions_function_tools_unflagged_id_unaffected(allow_mod
 async def test_chat_completions_function_tools_gpt_5_4_opt_in_reasoning(allow_model_requests: None) -> None:
     """GPT-5.4 allows function tools at default (reasoning off) and rejects them when reasoning is enabled.
 
-    A unit test of the request shape: the guard sends nothing, so there is nothing to record, and the requests it lets
-    through are pinned as sent. Live, gpt-5.4 accepts tools with omitted effort or `'none'`, and rejects them with
-    `'low'` or `'medium'`; the 400 is recorded in `test_chat_completions_function_tools_with_reasoning_provider_400_without_flag`.
+    A unit test of the request shape: it pins the request each setting sends, and that the guard sends nothing with
+    reasoning on. Probed live on https://github.com/pydantic/pydantic-ai/pull/14369: gpt-5.4 accepts tools with
+    omitted effort or `'none'`, and rejects them with `'low'` or `'medium'`. The 400 is recorded in
+    `test_chat_completions_function_tools_with_reasoning_provider_400_without_flag`.
     """
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='done', role='assistant')))
     m = OpenAIChatModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
