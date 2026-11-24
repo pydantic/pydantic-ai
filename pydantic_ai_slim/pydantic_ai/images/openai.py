@@ -282,16 +282,13 @@ class OpenAIImageGenerationModel(ImageGenerationModel):
             # A retrying transport raises this for a status it gave up on, and `openai` lets it through unwrapped.
             body, error, text = _model_errors.transport_error_body(e.response)
             code, error_type = _model_errors.openai_error_fields(error)
-            message = error.get('message')
             raise _status_error(
                 self.model_name,
                 status_code=e.response.status_code,
                 body=body,
                 code=code,
                 error_type=error_type,
-                # Like `openai` does for its own errors, classify from the error's `message` when the body has one; the
-                # whole response text is the fallback when it doesn't.
-                message=message if isinstance(message, str) else text,
+                message=_model_errors.openai_error_message(error, text),
                 headers=dict(e.response.headers),
                 error_object=error,
             ) from e

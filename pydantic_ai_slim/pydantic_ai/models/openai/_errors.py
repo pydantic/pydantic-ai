@@ -61,7 +61,6 @@ def map_transport_status_error(e: httpx2.HTTPStatusError, model_name: str, model
     """The error for a status a retrying transport gave up on, which `openai` lets through unwrapped."""
     body, error, text = _model_errors.transport_error_body(e.response)
     code, error_type = _model_errors.openai_error_fields(error)
-    message = error.get('message')
     return status_error(
         model_name,
         model_id_namespace,
@@ -69,9 +68,7 @@ def map_transport_status_error(e: httpx2.HTTPStatusError, model_name: str, model
         body=body,
         code=code,
         error_type=error_type,
-        # Like `openai` does for its own errors, classify from the error's `message` when the body has one; the whole
-        # response text is the fallback when it doesn't.
-        message=message if isinstance(message, str) else text,
+        message=_model_errors.openai_error_message(error, text),
         headers=dict(e.response.headers),
         error_object=error,
     )
