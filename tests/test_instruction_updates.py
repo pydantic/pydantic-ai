@@ -1224,6 +1224,7 @@ async def test_instruction_updates_suspended_resume_after_a_rewrite_outside_pref
     first = await agent.run('Continue.', deps=Settings('Terse.', 'A'))
     second = await agent.run('Continue.', deps=Settings('Chatty.', 'A'), message_history=first.all_messages())
     history = ModelMessagesTypeAdapter.validate_json(second.all_messages_json())
+    assert history == second.all_messages()
     history[-1] = scripted_response(
         texts=['partial'], state='suspended', provider_response_id='paused', input_tokens=1, output_tokens=1
     )

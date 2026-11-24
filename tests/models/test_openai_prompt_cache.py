@@ -1825,8 +1825,129 @@ async def test_openai_responses_rewrite_change_keeps_leading_instructions(allow_
 
     _, second, third = get_mock_responses_kwargs(mock_client)
     assert third['input'][: len(second['input'])] == second['input']
-    assert 'Queue: A.' in third['input'][1]['content']
-    assert third['instructions'] == 'Today is D2.'
+    assert _wire_shape(third) == snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': 'Today is D2.',
+            'input': [
+                ('system', 'Support policies.'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: A.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                ),
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>\
+""",
+                ),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    )
+
+
+# The third request of `_run_rewrite_change` on each model: `Queue: B.` folded into the prefix, `Queue: A.` gone.
+_OTHER_MODELS_THIRD: dict[str, Any] = {
+    'opt-out': snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': """\
+Support policies.
+
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+
+Today is D2.\
+""",
+            'input': [
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    ),
+    'gpt-6.1-sol': snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': """\
+Support policies.
+
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
+
+Today is D2.\
+""",
+            'input': [
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    ),
+    'chat': snapshot(
+        [
+            ('system', 'Support policies.'),
+            (
+                'system',
+                """\
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            ),
+            ('system', 'Today is D2.'),
+            ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+            ('assistant', 'response'),
+            ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+            ('assistant', 'response'),
+            ('user', 'Which volume is entry 0007? Reply with just the number.'),
+        ]
+    ),
+    'fallback-model': snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': 'Today is D2.',
+            'input': [
+                ('system', 'Support policies.'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                ),
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                ('assistant', [{'text': 'done', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    ),
+}
 
 
 @pytest.mark.parametrize('case', ['opt-out', 'gpt-6.1-sol', 'chat', 'fallback-model'])
@@ -1836,6 +1957,7 @@ async def test_openai_rewrite_change_opens_a_window_on_other_models(allow_model_
         chat_client = MockOpenAI.create_mock(chat_completion())
         await _run_rewrite_change(OpenAIChatModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=chat_client)))
         third = get_mock_chat_completion_kwargs(chat_client)[2]
+        assert [(message['role'], message['content']) for message in third['messages']] == _OTHER_MODELS_THIRD[case]
     else:
         mock_client = MockOpenAIResponses.create_mock(responses_completion())
         provider = OpenAIProvider(openai_client=mock_client)
@@ -1846,11 +1968,7 @@ async def test_openai_rewrite_change_opens_a_window_on_other_models(allow_model_
             'fallback-model': lambda: FallbackModel(OpenAIResponsesModel('gpt-6.2-sol', provider=provider)),
         }[case]()
         await _run_rewrite_change(model)
-        third = get_mock_responses_kwargs(mock_client)[2]
-
-    sent = json.dumps(third, default=str)
-    assert 'Queue: B.' in sent
-    assert 'Queue: A.' not in sent
+        assert _wire_shape(get_mock_responses_kwargs(mock_client)[2]) == _OTHER_MODELS_THIRD[case]
 
 
 async def test_openai_responses_stable_instructions_as_input_with_cache_instructions(allow_model_requests: None):
@@ -3012,7 +3130,37 @@ async def test_openai_responses_rewrite_change_keeps_cache_e2e(
 
     _, second_body, third_body = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
     assert third_body['input'][: len(second_body['input'])] == second_body['input']
-    assert third_body['instructions'] == 'Today is D2.'
+    assert _wire_shape(third_body) == snapshot(
+        {
+            'previous_response_id': None,
+            'instructions': 'Today is D2.',
+            'input': [
+                ('system', '<_STABLE_PREFIX>'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: A.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+                ),
+                ('user', 'Which shelf holds entry 0042? Reply with just the number.'),
+                ('assistant', [{'text': '19', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which aisle holds entry 0101? Reply with just the number.'),
+                (
+                    'system',
+                    """\
+<pyai:context id="agent:queue">
+Queue: B.
+</pyai:context>\
+""",
+                ),
+                ('assistant', [{'text': '3', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'Which volume is entry 0007? Reply with just the number.'),
+            ],
+        }
+    )
     assert second.usage.cache_read_tokens > 0
     assert third.usage.cache_read_tokens == second.usage.cache_write_tokens + second.usage.cache_read_tokens
 
