@@ -44,7 +44,6 @@ The model must accept images. Every model gets `computer` as a regular function 
 | Sandbox | Turn on its screen |
 |---|---|
 | Docker | [`DockerContainer(desktop=True)`](docker-container.md#give-the-agent-a-desktop) |
-| Fly.io Sprites | [`SpritesSandbox(desktop=True)`](sprites-sandbox.md#give-the-agent-a-desktop) |
 
 For any other workspace, see [Your own display](#your-own-display).
 
