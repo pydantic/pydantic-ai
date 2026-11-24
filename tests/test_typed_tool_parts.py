@@ -1,4 +1,8 @@
-"""Tool kinds, the typed tool parts registered for them, and how parts with undefined kinds behave."""
+"""Tool kinds, the typed tool parts registered for them, and how parts with undefined kinds behave.
+
+Kinds are registered and parts validated locally, before or after any provider request, so these are unit tests:
+no recording can reach that.
+"""
 
 from __future__ import annotations
 
