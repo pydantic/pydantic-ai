@@ -475,3 +475,27 @@ def test_a_typechange_keeps_both_halves_of_its_diff(tmp_path: Path, script: Path
 
     assert 'OL:1 -regular file' in diff
     assert 'NL:1 +target.txt' in diff
+
+
+@pytest.mark.parametrize(
+    ('changed', 'carried'),
+    [
+        ('src/pydantic_ai_harness/pydantic_ai_harness/memory/_capability.py', True),
+        ('pydantic_ai_slim/pydantic_ai/capabilities/caching.py', True),
+        ('tests/harness/capability_cases.py', True),
+        ('pydantic_ai_slim/pydantic_ai/messages.py', False),
+        ('tests/harness/capability_cases.py.orig', False),
+    ],
+)
+def test_a_capability_change_carries_the_conformance_checklist(tmp_path: Path, changed: str, carried: bool):
+    """CI Review gets `agent_docs/capability-conformance.md` with the AGENTS.md files when a PR changes a capability."""
+    checklist = '# Capability Conformance\n'
+    _, context = _gather(
+        tmp_path,
+        script=SCRIPT,
+        base={'agent_docs/capability-conformance.md': checklist},
+        pr={changed: 'changed\n'},
+        in_ci=False,
+    )
+    agents_md = (context / 'agents-md.txt').read_text(encoding='utf-8')
+    assert (f'=== agent_docs/capability-conformance.md ===\n{checklist}' in agents_md) is carried

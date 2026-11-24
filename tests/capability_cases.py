@@ -8,7 +8,9 @@ or why it can't run offline (`Unbuildable`). The suites that run over every capa
 here: `tests/test_history_append_only.py` and `tests/test_capability_combine.py`, and their Harness twins. A case
 whose `calls` run its tools is also run by the `CONTRACTS` at the end of this module, which
 `tests/harness/test_capability_contracts.py` checks, and by `tests/harness/test_durable_tool_io.py` when its
-calls name `durable_steps`.
+calls name `durable_steps`. A case whose capability contributes a toolset or a tool hook declares `calls`, or an
+exemption from `DECLARES_CALLS` with its reason. `agent_docs/capability-conformance.md` lists what each area's
+contracts require of a capability.
 
 This module imports nothing from Pydantic AI Harness: `tests/conftest.py` leaves `tests/harness` out of a
 lane that doesn't install it, and the core suites import this module on every lane.
@@ -34,6 +36,7 @@ from pydantic_ai.capabilities import (
     FileUnderstanding,
     HandleDeferredToolCalls,
     ImageGeneration,
+    IncludeToolReturnSchemas,
     Instrumentation,
     LocalWorkspace,
     ModelFallback,
@@ -47,6 +50,7 @@ from pydantic_ai.capabilities import (
     ReinjectSystemPrompt,
     ResolveModelId,
     SelectModel,
+    SetToolMetadata,
     Thinking,
     ToolSearch,
     Toolset,
@@ -284,7 +288,7 @@ def _mcp_server() -> FastMCP[None]:
 
     @server.tool()
     def extra_tool() -> str:
-        return 'extra'  # pragma: no cover
+        return 'extra'
 
     return server
 
@@ -292,6 +296,20 @@ def _mcp_server() -> FastMCP[None]:
 def _no_op_tool() -> str:
     """Do nothing."""
     return 'ok'  # pragma: no cover
+
+
+def echo(text: str) -> str:
+    """Return `text`."""
+    return text
+
+
+ECHO: tuple[ToolCall, ...] = (('echo', {'text': 'hi'}),)
+"""A call to the `echo` tool `with_echo` adds."""
+
+
+def with_echo(build: Callable[[], AbstractCapability[None]]) -> Fixture:
+    """The capability beside a toolset with one `echo` tool, for a capability whose hooks run around other tools."""
+    return lambda _: [build(), Toolset(FunctionToolset([echo]))]
 
 
 def _keep_history(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -450,7 +468,8 @@ CASES: dict[str, CapabilityCase] = {
                 Instrumentation(settings=InstrumentationSettings(include_content=False)),
             ),
             _check_instrumentation,
-        )
+        ),
+        calls=Calls(ECHO, with_echo(Instrumentation)),
     ),
     'ReinjectSystemPrompt': CapabilityCase(
         Combines(
@@ -519,6 +538,10 @@ CASES: dict[str, CapabilityCase] = {
     'PrefixTools': CapabilityCase(
         Anonymous('structural wrapper, applied once per wrapped capability'),
         build=lambda _: PrefixTools(Toolset(FunctionToolset([_no_op_tool])), prefix='extra'),
+        calls=Calls(
+            (('extra_echo', {'text': 'hi'}),),
+            lambda _: PrefixTools(Toolset(FunctionToolset([echo])), prefix='extra'),
+        ),
     ),
     'DynamicCapability': CapabilityCase(
         Anonymous('one per capability function'),
@@ -541,10 +564,12 @@ CASES: dict[str, CapabilityCase] = {
         ),
         build=lambda _: MCP(local=MCPToolset(_mcp_server())),
         requires='fastmcp',
+        calls=Calls((('extra_tool', {}),), lambda _: MCP(local=MCPToolset(_mcp_server()))),
     ),
     'Toolset': CapabilityCase(
         Anonymous('one per toolset'),
         build=lambda _: Toolset(FunctionToolset([_no_op_tool])),
+        calls=Calls(ECHO, lambda _: Toolset(FunctionToolset([echo]))),
     ),
     'Hooks': CapabilityCase(Anonymous('several hook bundles compose')),
     'HandleDeferredToolCalls': CapabilityCase(
@@ -600,8 +625,14 @@ CASES: dict[str, CapabilityCase] = {
         Anonymous('output-tool preparers stack'),
         build=lambda _: PrepareOutputTools(lambda ctx, tools: tools),
     ),
-    'SetToolMetadata': CapabilityCase(Anonymous('one per `ToolSelector`; several selectors compose')),
-    'IncludeToolReturnSchemas': CapabilityCase(Anonymous('one per `ToolSelector`; several selectors compose')),
+    'SetToolMetadata': CapabilityCase(
+        Anonymous('one per `ToolSelector`; several selectors compose'),
+        calls=Calls(ECHO, with_echo(lambda: SetToolMetadata(source='case'))),
+    ),
+    'IncludeToolReturnSchemas': CapabilityCase(
+        Anonymous('one per `ToolSelector`; several selectors compose'),
+        calls=Calls(ECHO, with_echo(IncludeToolReturnSchemas)),
+    ),
     'DeferredCapabilityLoader': CapabilityCase(Anonymous('auto-injected only when absent')),
     'PendingMessageDrainCapability': CapabilityCase(Anonymous('auto-injected only when absent')),
     '_GroupMember': CapabilityCase(Anonymous('internal: dispatches a deferred group member, never registered')),
@@ -750,5 +781,64 @@ WORKSPACE_FROM_FUNCTION = Contract(
 """A capability that uses the run's workspace works the same when a capability function supplies it, which the run
 selects only after every `for_run`."""
 
-CONTRACTS = (RENAMED, UNSET_ID, CUSTOM_ID, COMBINE_FIXED_POINT, FORWARDS_USAGE, WORKSPACE_FROM_FUNCTION)
+PENDING_CALLS = 'pending: C0 backfill'
+"""How an exemption from `declares_calls` starts when the case can have `calls`, but nobody has written them yet."""
+
+_ROUTE = f'{PENDING_CALLS}; other tools run through it, so its calls run a tool of a case beside it'
+
+DECLARES_CALLS = Contract(
+    'declares_calls',
+    applies=_buildable,
+    exempt={
+        'Capability': Exempt(
+            'a bundle of what the user passes it; each toolset and hook it holds is a case of its own'
+        ),
+        'DynamicCapability': Exempt('the capability its function returns runs the tools, and is a case of its own'),
+        'WrapperCapability': Exempt('forwards every hook to the capability it wraps, which is a case of its own'),
+        'Hooks': Exempt(
+            "runs the user's hook functions and registers none by default; `tests/test_capability_hooks.py` covers each"
+        ),
+        'AzureDurableTaskDurability': Exempt(
+            'a durable engine: its wrapper toolset runs tools only inside a Durable Task worker'
+        ),
+        'BubblewrappedWorkspace': Exempt('needs a sandbox backend: the `bwrap` binary and user namespaces'),
+        'Macroscope': Exempt('runs the `macroscope` CLI as a subprocess against a git repository'),
+        'PlaywrightBrowser': Exempt('needs a browser that Playwright launches'),
+        'PydanticAIDocs': Exempt(
+            'fetches the docs from GitHub through an HTTP client of its own, which a case cannot replace'
+        ),
+        **dict.fromkeys(('BackgroundTools', 'CodeMode', 'IPythonCodeMode', 'ToolBridge', 'ToolSearch'), Exempt(_ROUTE)),
+        **dict.fromkeys(
+            (
+                'AskUser',
+                'ComputerUse',
+                'Peers',
+                'Permissions',
+                'Pixeltable',
+                'RepoContext',
+                'RequireVerification',
+                'ToolCallJudge',
+                'ToolOutputLimits',
+                'XSearch',
+            ),
+            Exempt(PENDING_CALLS),
+        ),
+    },
+)
+"""A capability that contributes a toolset, a wrapper toolset or a tool hook declares `calls` that run its tools.
+
+Every contract that runs a capability's tools applies only to a case with `calls`, so without them it passes
+vacuously. An exemption says why the tools can't run offline; one whose reason starts with `PENDING_CALLS` is a
+case still to be backfilled, which `test_pending_calls_backfill` counts.
+"""
+
+CONTRACTS = (
+    RENAMED,
+    UNSET_ID,
+    CUSTOM_ID,
+    COMBINE_FIXED_POINT,
+    FORWARDS_USAGE,
+    WORKSPACE_FROM_FUNCTION,
+    DECLARES_CALLS,
+)
 """Every contract, so a meta-test can check each one's exemptions."""
