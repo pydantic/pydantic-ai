@@ -39,7 +39,7 @@ from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.exceptions import SkipModelRequest
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRun
 from pydantic_ai.usage import RunUsage
@@ -217,11 +217,13 @@ async def test_rejection_that_uses_up_the_retry_budget_is_reported_before_the_ru
 
 @dataclass
 class RejectionListener(AbstractCapability[Any]):
-    rejected: list[str] = field(default_factory=list[str])
+    """Records the run step of each rejected response it hears of."""
+
+    rejected: list[int] = field(default_factory=list[int])
 
     @on_event(ModelResponseRejectedEvent)
     async def record(self, ctx: RunContext[Any], event: ModelResponseRejectedEvent) -> None:
-        self.rejected.append(event.response.text or '')
+        self.rejected.append(event.run_step)
 
 
 @pytest.mark.parametrize('consumer', ['run_stream_events', 'event_stream_handler', 'on_event under iter()'])
@@ -255,9 +257,56 @@ async def test_wrapper_rejection_that_ends_the_run_reaches_every_consumer_before
                     async for _ in run:
                         pass
 
-    assert listener.rejected == [ANNOUNCEMENT]
+    assert listener.rejected == [1]
     if consumer != 'on_event under iter()':
         assert summarize(streamed) == [('text', ANNOUNCEMENT), ('rejected', ANNOUNCEMENT, 1, 1)]
+
+
+@dataclass
+class RetryEverything(AbstractCapability[Any]):
+    """Rejects every response from `wrap_model_request`, after its handler returned."""
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        await handler(request_context)
+        raise ModelRetry(FEEDBACK)
+
+
+async def call_a_tool(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+    yield {0: DeltaToolCall(name='look_up', json_args='{}', tool_call_id='call-look-up')}
+
+
+@pytest.mark.parametrize('final_output', [False, True], ids=['tool call', 'final text'])
+async def test_wrapper_rejection_that_ends_a_streamed_run_reaches_its_handler_and_listeners(final_output: bool):
+    """Under `run_stream()`, a `wrap_model_request` retry that uses up the output retry budget reaches the run's
+    `event_stream_handler` and listeners before `UnexpectedModelBehavior` propagates.
+
+    A response that isn't the final output fails the run before `run_stream()` yields a result; one that is fails it
+    when the `async with` block exits.
+    """
+    listener = RejectionListener()
+    agent = Agent(
+        FunctionModel(stream_function=always_announce if final_output else call_a_tool),
+        capabilities=[RetryEverything(), listener],
+        retries={'output': 0},
+    )
+
+    @agent.tool_plain
+    def look_up() -> str:
+        return ANSWER  # pragma: no cover
+
+    rejected: list[int] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        rejected.extend([event.run_step async for event in events if isinstance(event, ModelResponseRejectedEvent)])
+
+    with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+        async with agent.run_stream('When does the store open?', event_stream_handler=handler) as result:
+            assert await result.get_output() == ANNOUNCEMENT
+
+    assert rejected == [1]
+    assert listener.rejected == [1]
 
 
 @dataclass(kw_only=True)

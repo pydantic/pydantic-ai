@@ -1052,30 +1052,33 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         event_stream_handler = event_stream_handler or self.event_stream_handler
 
         yielded = False
-        async with self.iter(
-            user_prompt,
-            output_type=output_type,
-            conversation=conversation,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            run_id=run_id,
-            model=model,
-            deps=deps,
-            instructions=instructions,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            cancellation_token=cancellation_token,
-            timeout=timeout,
-            usage=usage,
-            metadata=metadata,
-            retries=retries,
-            infer_name=False,
-            toolsets=toolsets,
-            capabilities=capabilities,
-            workspace=workspace,
-            spec=spec,
-        ) as agent_run:
+        async with (
+            self.iter(
+                user_prompt,
+                output_type=output_type,
+                conversation=conversation,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                model=model,
+                deps=deps,
+                instructions=instructions,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
+                timeout=timeout,
+                usage=usage,
+                metadata=metadata,
+                retries=retries,
+                infer_name=False,
+                toolsets=toolsets,
+                capabilities=capabilities,
+                workspace=workspace,
+                spec=spec,
+            ) as agent_run,
+            agent_run._deliver_rejection_on_failure(event_stream_handler),  # pyright: ignore[reportPrivateUsage]
+        ):
             # Handle wrap_run short-circuit: result is already available
             if agent_run.result is not None:
                 graph_ctx = agent_run.ctx
