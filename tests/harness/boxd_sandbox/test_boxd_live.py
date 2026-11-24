@@ -226,8 +226,8 @@ async def test_a_machine_that_is_not_isolated_is_neither_used_nor_deleted(client
     )
     try:
         await client.machines.wait_until_ready(machine.id)
-        # boxd writes `boxd-env.sh` a moment after `wait_until_ready` returns (0.1 to 0.3 seconds in live runs
-        # on 2026-11-24), so the probe first waits up to 30 seconds for it.
+        # boxd writes `boxd-env.sh` a moment after `wait_until_ready` returns, so the probe first waits up to
+        # 30 seconds for it.
         wait_for_env = "timeout 30 sh -c 'until test -e /etc/profile.d/boxd-env.sh; do sleep 0.1; done'"
         probe = await client.machines.exec(machine.id, f'{wait_for_env}; {_BOXD_SERVICES}')
         assert str(probe.stdout).splitlines() == ['200', 'env-installed']
