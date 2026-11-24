@@ -50,6 +50,7 @@ from pydantic_ai_harness.playwright import (
     BrowserEvent,
     BrowserUnavailableError,
     BrowserUnavailableWarning,
+    CdpContextMode,
     EgressPolicy,
     EgressRequest,
     PlaywrightBrowser,
@@ -714,6 +715,7 @@ class _FakeChromium:
         self.connected: list[str] = []
         self.no_defaults: list[bool | None] = []
         self.launch_timeouts: list[int] = []
+        self.launch_args: list[list[str]] = []
         self.browser: _FakePlaywrightBrowser | None = None
         self.browsers: list[_FakePlaywrightBrowser] = []
 
@@ -722,11 +724,17 @@ class _FakeChromium:
         return self._executable_path
 
     async def launch(
-        self, *, headless: bool, chromium_sandbox: bool = False, timeout: int | None = None
+        self,
+        *,
+        headless: bool,
+        chromium_sandbox: bool = False,
+        timeout: int | None = None,
+        args: Sequence[str] | None = None,
     ) -> _FakePlaywrightBrowser:
         self.launched.append(headless)
         self.sandboxed.append(chromium_sandbox)
         self.launch_timeouts.append(timeout if timeout is not None else -1)
+        self.launch_args.append(list(args or ()))
         if self._launch_error is not None:
             raise self._launch_error
         self.browser = _FakePlaywrightBrowser(self._page, close_error=self._close_error)
@@ -2358,7 +2366,7 @@ class TestPlaywrightBrowserLifecycle:
         assert all(not existing.closed and not existing.handlers for existing in context.pages)
         # The check can wait on a loading frame while the inherited pages run, so the guards are already on.
         assert context.routes == ['**/*'] and context.websocket_routes == ['**/*']
-        assert len(context.init_scripts) == 1 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
+        assert len(context.init_scripts) == 2 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
 
     async def test_default_context_rechecks_inactive_tabs_and_recovers_once_fixed(self) -> None:
         page = _FakePage(url='about:blank', body='Allowed content')
@@ -2641,7 +2649,7 @@ class TestPlaywrightBrowserLifecycle:
         assert len(context.pages) == max(tabs, 1)
         assert context.routes == ['**/*']
         assert context.websocket_routes == ['**/*']
-        assert len(context.init_scripts) == 1 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
+        assert len(context.init_scripts) == 2 and 'ServiceWorkerContainer.prototype.register' in context.init_scripts[0]
         assert context.accept_downloads is None
         for existing in context.pages:
             assert existing.popup_events == ['popup']
@@ -3121,7 +3129,8 @@ class TestPlaywrightBrowserLifecycle:
         assert [c.storage_state for c in browser.contexts] == [_STORAGE_STATE]
         assert [c.service_workers for c in browser.contexts] == ['block']
         assert page.context.routes == ['**/*']
-        assert page.context.init_scripts == []  # the context's own `service_workers='block'` covers it
+        # The context's own `service_workers='block'` covers it, so the one script is the enforced-policy one.
+        assert len(page.context.init_scripts) == 1 and 'ServiceWorkerContainer' not in page.context.init_scripts[0]
 
     async def test_storage_state_defaults_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         page = _FakePage()
@@ -4223,6 +4232,76 @@ class TestWebSocketEgress:
         ]
 
 
+class TestEnforcedPolicyPageApis:
+    """An enforced policy limits the page APIs of every browser the session uses."""
+
+    @pytest.mark.parametrize(
+        ('cdp_url', 'cdp_context'),
+        [(None, 'new'), ('http://localhost:9222', 'new'), ('http://localhost:9222', 'default')],
+        ids=['launched', 'cdp-new-context', 'cdp-default-context'],
+    )
+    async def test_every_context_gets_the_script_under_an_enforced_policy(
+        self, monkeypatch: pytest.MonkeyPatch, cdp_url: str | None, cdp_context: CdpContextMode
+    ) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page)
+        if cdp_context == 'default':
+            _populate_default_context(monkeypatch, tabs=1)
+        agent = Agent(
+            TestModel(call_tools=['screenshot']),
+            capabilities=[PlaywrightBrowser(cdp_url=cdp_url, cdp_context=cdp_context)],
+        )
+        await agent.run('screenshot the page')
+        [script] = [script for script in page.context.init_scripts if 'WebTransport' in script]
+        for name in (
+            'RTCPeerConnection',
+            'webkitRTCPeerConnection',
+            'WebTransport',
+            'IdentityCredential',
+            'IdentityProvider',
+        ):
+            assert f'delete self.{name};' in script
+        assert 'container.prototype.get = function (options)' in script
+        assert 'copy.identity !== undefined' in script
+
+    async def test_no_script_when_nothing_is_enforced(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page)
+        agent = Agent(
+            TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(block_private_addresses=False)]
+        )
+        await agent.run('screenshot the page')
+        assert page.context.init_scripts == []
+
+    @pytest.mark.parametrize('block_private_addresses', [True, False], ids=['enforced', 'nothing-enforced'])
+    async def test_launch_switches_follow_the_policy(
+        self, monkeypatch: pytest.MonkeyPatch, block_private_addresses: bool
+    ) -> None:
+        cm = _install_fake_driver(monkeypatch, _FakePage())
+        agent = Agent(
+            TestModel(call_tools=['screenshot']),
+            capabilities=[PlaywrightBrowser(block_private_addresses=block_private_addresses)],
+        )
+        await agent.run('screenshot the page')
+        switches: list[str] = ['--disable-blink-features=FedCm'] if block_private_addresses else []
+        assert cm.driver.chromium.launch_args == [switches]
+
+    async def test_a_browser_installed_on_demand_gets_the_launch_switches(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cm = _install_fake_driver(monkeypatch, _FakePage(), executable_missing=True)
+
+        async def installed() -> None:
+            return None
+
+        monkeypatch.setattr(toolset_module, '_auto_install_chromium', installed)
+        agent = Agent(
+            TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(auto_install_chromium=True)]
+        )
+        await agent.run('screenshot the page')
+        assert cm.driver.chromium.launch_args == [['--disable-blink-features=FedCm']]
+
+
 class TestMessageRedaction:
     async def test_a_console_message_loses_its_credentials(self) -> None:
         page = _FakePage()
@@ -4371,7 +4450,12 @@ class _HangingContextBrowser(_FakePlaywrightBrowser):
 
 class _HangingContextChromium(_FakeChromium):
     async def launch(
-        self, *, headless: bool, chromium_sandbox: bool = False, timeout: int | None = None
+        self,
+        *,
+        headless: bool,
+        chromium_sandbox: bool = False,
+        timeout: int | None = None,
+        args: Sequence[str] | None = None,
     ) -> _FakePlaywrightBrowser:
         return _HangingContextBrowser(self._page)
 

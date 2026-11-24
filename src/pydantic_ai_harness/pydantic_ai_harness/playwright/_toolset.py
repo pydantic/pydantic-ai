@@ -243,6 +243,46 @@ Playwright implements that option as this init script. Re-check: search the bund
 driver's `coreBundle.js` for `Service Worker registration blocked by Playwright`.
 """
 
+# A parameter that keeps these APIs can be added if a user needs one.
+_ENFORCED_POLICY_PAGE_SCRIPT = """
+delete self.RTCPeerConnection;
+delete self.webkitRTCPeerConnection;
+delete self.WebTransport;
+delete self.IdentityCredential;
+delete self.IdentityProvider;
+(() => {
+  const container = self.CredentialsContainer;
+  if (!container) return;
+  const get = container.prototype.get, apply = Reflect.apply, create = Object.create, keys = Object.keys;
+  const toObject = Object;
+  container.prototype.get = function (options) {
+    try {
+      if (toObject(options) !== options) return apply(get, this, [options]);
+      const copy = create(null);
+      const names = keys(options);
+      for (let i = 0; i < names.length; i++) copy[names[i]] = options[names[i]];
+      if (copy.identity !== undefined) return Promise.reject(new DOMException('Not supported.', 'NotSupportedError'));
+      return apply(get, this, [copy]);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  };
+})();
+"""
+"""Init script every context the session uses gets under an enforced policy.
+
+The wrapper reads each of the caller's own options once, into an object with no prototype,
+and hands the original only that copy. Like the original, it reports an error as a rejected
+promise.
+"""
+
+_ENFORCED_POLICY_LAUNCH_ARGS = ('--disable-blink-features=FedCm',)
+"""Chromium switches a browser the session launches gets under an enforced policy.
+
+Not `--disable-features`: Playwright passes its own list under that switch, and Chromium
+keeps only the last one, so a second list would replace Playwright's.
+"""
+
 _MAX_TABS = 8
 """Pages one session keeps open at once.
 
@@ -1556,6 +1596,9 @@ class PlaywrightBrowserSession:
         page's unless `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set, and the refusal
         covers that case too. It reaches each document created or navigated from now on:
         documents already loaded can register a worker until they navigate.
+
+        Under an enforced policy, every context also gets `_ENFORCED_POLICY_PAGE_SCRIPT`,
+        with the same reach.
         """
         if self._cdp_context == 'default':
             await self._bounded(context.add_init_script(script=_BLOCK_SERVICE_WORKER_REGISTRATION))
@@ -1564,6 +1607,7 @@ class PlaywrightBrowserSession:
         await self._bounded(context.route('**/*', self._route_guard))
         # A network route never sees a WebSocket, so sockets get a guard of their own.
         await self._bounded(context.route_web_socket('**/*', self._websocket_guard))
+        await self._bounded(context.add_init_script(script=_ENFORCED_POLICY_PAGE_SCRIPT))
 
     async def _bounded(self, awaitable: Awaitable[_T]) -> _T:
         """Run a setup step that has no `timeout` parameter under `launch_timeout_ms`.
@@ -1592,7 +1636,8 @@ class PlaywrightBrowserSession:
         leaves off by default. This capability exists to open pages nobody vetted,
         and the sandbox is what keeps a compromised renderer inside the browser.
         A browser reached over `cdp_url` is already running, so its own
-        configuration decides this.
+        configuration decides this. Under an enforced policy, a launched browser also
+        gets `_ENFORCED_POLICY_LAUNCH_ARGS`.
         """
         if self._cdp_url is None and self._cdp_url_function is not None:
             endpoint = self._cdp_url_function()
@@ -1608,7 +1653,10 @@ class PlaywrightBrowserSession:
                 raise PlaywrightError(_without_endpoint_credentials(str(exc), self._cdp_url)) from exc
         if await anyio.Path(pw.chromium.executable_path).exists():
             return await pw.chromium.launch(
-                headless=self._headless, chromium_sandbox=self._chromium_sandbox, timeout=self._launch_timeout_ms
+                headless=self._headless,
+                chromium_sandbox=self._chromium_sandbox,
+                timeout=self._launch_timeout_ms,
+                args=_ENFORCED_POLICY_LAUNCH_ARGS if self.policy.enforced() else (),
             )
         # Binary genuinely absent: raise a clear install hint, or fetch it when
         # opted in. A launch failure with the binary present (sandbox, missing
@@ -1632,8 +1680,11 @@ class PlaywrightBrowserSession:
         """
         install_output = await _auto_install_chromium()
         if install_output is None:
-            return await pw.chromium.launch(  # pragma: no cover
-                headless=self._headless, chromium_sandbox=self._chromium_sandbox, timeout=self._launch_timeout_ms
+            return await pw.chromium.launch(
+                headless=self._headless,
+                chromium_sandbox=self._chromium_sandbox,
+                timeout=self._launch_timeout_ms,
+                args=_ENFORCED_POLICY_LAUNCH_ARGS if self.policy.enforced() else (),
             )
         self.launch_error = f'{_CHROMIUM_MISSING_MESSAGE}\nAuto-install failed:\n{install_output[-300:]}'
         return None
