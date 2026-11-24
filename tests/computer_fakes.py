@@ -38,7 +38,7 @@ _LOOKING = (Wait, Screenshot)
 
 
 class FakeComputer(AbstractCapability[Any]):
-    """A `computer` tool that records the actions it runs. It refuses to act on a read-only workspace.
+    """A `computer` tool that records the actions it runs. On a read-only workspace an acting call fails, which gives tests a failed call.
 
     With `native=True`, it also adds a `ComputerTool`, as `ComputerUse` does.
     """
