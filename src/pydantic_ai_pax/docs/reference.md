@@ -134,7 +134,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `GITHUB_COPILOT_CLIENT_ID` | Your own OAuth app for Copilot sign-in |
 | `GITHUB_COPILOT_INTEGRATION_ID` | The `Copilot-Integration-Id` Copilot requests carry, `vscode-chat` by default; see [Integration id](../../../docs/models/github-copilot.md#integration-id) |
 | `CLAUDE_CONFIG_DIR`, `CODEX_HOME` | Where Claude Code and Codex sessions are read from for `/resume` |
-| `PYTHONWARNINGS` | `default` shows library warnings, which Pax hides |
+| `PYTHONWARNINGS` | `default` shows library warnings, which Pax hides; see [Startup](#startup) for where |
 
 ### Files
 
@@ -149,7 +149,7 @@ Paths are under `$XDG_CONFIG_HOME/pydantic-clai2/`, or `~/.config/pydantic-clai2
 | `credentials-*.json` | The plaintext fallback when no OS keyring exists |
 | `plugins/` | Drop-in plugins; `plugins/_git/` holds plugins installed from Git |
 | `spinners.json` | Your own spinners and speeds |
-| `logfire/`, `telemetry.log` | Logfire credentials, and export warnings kept off the screen |
+| `logfire/`, `telemetry.log` | Logfire credentials, and the warnings and errors kept off the screen during a session |
 | `.clai/settings.json` in a repository | [Project settings](#project-settings) |
 | `.mcp.json` or `.clai/mcp_servers.json` in a repository | Project MCP servers, loaded after `/mcp trust accept` |
 
@@ -213,7 +213,12 @@ their initialization contributes to startup time.
 An enabled plugin whose module is not installed, such as a built-in saved by another
 Pax version, is skipped without a message; `/plugins list` shows why. Library
 warnings are hidden so they do not break up the display; pass `-W default` to
-Python or set `PYTHONWARNINGS=default` to see them. Log messages from Logfire and
+Python or set `PYTHONWARNINGS=default` to see them. During an interactive
+session on a macOS or Linux terminal, everything written to standard error goes to
+`telemetry.log` next to `config.db` instead of over the display: those warnings,
+library log messages, and the error output of programs Pax starts. Pax names the
+file on exit when the session wrote to it. `!` commands, `/update now`, and the
+editor `$EDITOR` opens still write to the terminal. Log messages from Logfire and
 OpenTelemetry, such as export retries and timeouts, never print to the terminal
 either; logging handlers that a plugin configures still receive them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for

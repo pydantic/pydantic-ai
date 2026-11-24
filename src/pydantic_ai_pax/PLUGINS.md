@@ -638,7 +638,9 @@ failed span exports from disk; OpenTelemetry drops a metrics batch it could not
 send. In the interactive shell these records go to `telemetry.log` next to
 `config.db` (owner-only, rotated at 1 MB, one previous file kept) instead of over the editor,
 and Pax names that file on exit when the session wrote to it. A logger your own
-application already handles, when embedding `chat()`, is left alone. Headless
+application already handles, when embedding `chat()`, is left alone, but on a macOS
+or Linux terminal what its handler writes to stderr during the session goes to
+`telemetry.log` too, as everything written to stderr then does. Headless
 `pax -p` still writes them to stderr, separate from the answer on stdout.
 
 Previously named `logfire`, this plugin keeps existing enabled/disabled choices,
@@ -4000,7 +4002,8 @@ panel shows a bar and reset time for each.
   follows core composition, including reverse order for `after_*` hooks. The first renderer that returns something wins. A
   plugin loaded later goes to the end of the line.
 - Anything you print, print through `self.host.console`, so it stays in step with
-  streaming output.
+  streaming output. Standard error is not the screen: during an interactive session
+  on a macOS or Linux terminal, Pax sends it to `telemetry.log`.
 - Follow the rules in [Several live sessions](#several-live-sessions): Pax may run
   your plugin in many sessions at once.
 
