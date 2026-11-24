@@ -46,6 +46,15 @@ def typed_parts() -> None:
     assert_type(StockReturnPart('stock', {'in_stock': True}).typed_content, StockResult | None)
     assert_type(ToolCallPart('t').typed_args, Any | None)
 
+    with_metadata = ToolKind('typed', 'with_metadata', content=StockResult, metadata=StockArgs)
+    assert_type(with_metadata, ToolKind[Any, StockResult, StockArgs])
+
+    class WithMetadataReturnPart(ToolReturnPart[StockResult, StockArgs], kind=with_metadata):
+        pass
+
+    assert_type(WithMetadataReturnPart('stock', {'in_stock': True}).typed_metadata, StockArgs | None)
+    assert_type(ToolReturnPart('t', 'plain').typed_metadata, Any | None)
+
     # A typed part is still a `ToolCallPart` wherever one is expected.
     parts: list[ToolCallPart] = [call]
     assert_type(parts, list[ToolCallPart])
