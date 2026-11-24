@@ -394,7 +394,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         if self._untrusted_toolset is None:
             # Its own id, so a durable engine names its activities apart from `read_skill_file`'s.
             self._untrusted_toolset = UntrustedSkillsToolset[AgentDepsT](
-                self._untrusted_skills, id=None if self.id is None else f'{self.id}_untrusted'
+                self._untrusted_skills, id=None if self.id is None else f'{self.id}_lowered'
             )
         if self._offers_untrusted or self._toolset is None:
             return self._untrusted_toolset
