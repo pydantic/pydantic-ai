@@ -69,7 +69,6 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._display import LazyDisplay, checked_desktop_size
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
     check_env,
@@ -82,6 +81,7 @@ from pydantic_ai_harness._workspace_provider import (
     running_on_asyncio,
 )
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay, UnsupportedActionError
+from pydantic_ai_harness.computer_use._display import LazyDisplay, checked_desktop_size
 
 if TYPE_CHECKING:
     from boxd import AsyncBoxd, FsEntry, Machine

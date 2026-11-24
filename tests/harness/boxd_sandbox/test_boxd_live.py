@@ -41,8 +41,8 @@ from pydantic_ai_harness.computer_use import DisplayAction
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
-from ..display_contract_live import check_display_contract
-from ..display_fakes import full_display
+from ..computer_use.display_contract_live import check_display_contract
+from ..computer_use.display_fakes import full_display
 from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT, delete_live_machine
 
 pytestmark = pytest.mark.boxd_live

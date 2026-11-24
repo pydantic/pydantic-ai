@@ -55,7 +55,7 @@ from boxd.resources.machines import AsyncMachines
 
 from pydantic_ai_harness.boxd_sandbox._desktop import START_PANEL
 
-from ..display_fakes import FAKE_SCREENSHOT
+from ..computer_use.display_fakes import FAKE_SCREENSHOT
 
 # Output a command writes after it exits is read for this long, then dropped.
 _DRAIN_GRACE = 0.05

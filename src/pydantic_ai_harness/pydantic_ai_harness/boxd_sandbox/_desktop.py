@@ -49,10 +49,10 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import WorkspaceError
-from pydantic_ai_harness._display import RELEASE_TIMEOUT
-from pydantic_ai_harness._png import PNG_SIGNATURE
-from pydantic_ai_harness._x11 import TINT2_BUTTON_STYLE
 from pydantic_ai_harness.computer_use import DisplayAction, UnsupportedActionError
+from pydantic_ai_harness.computer_use._display import RELEASE_TIMEOUT
+from pydantic_ai_harness.computer_use._png import PNG_SIGNATURE
+from pydantic_ai_harness.computer_use._x11 import TINT2_BUTTON_STYLE
 
 if TYPE_CHECKING:
     from boxd import ComputerActionResult

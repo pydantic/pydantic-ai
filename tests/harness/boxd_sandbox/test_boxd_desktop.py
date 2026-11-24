@@ -33,7 +33,7 @@ from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.boxd_sandbox._desktop import INSTALL_PANEL, START_PANEL, WRITE_PANEL_SETTINGS
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
 
-from ..display_fakes import full_display, look_click_then_finish
+from ..computer_use.display_fakes import full_display, look_click_then_finish
 from .fake_boxd import APIStatusError, FakeBoxd
 
 pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
