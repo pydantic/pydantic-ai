@@ -17,9 +17,10 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
 > This README covers driving the browser from the host model: typed,
 > deterministic actions, one tool call at a time. To hand an open-ended goal to
 > an autonomous agent that drives the browser for you, see
-> [`BrowserUse`](../browser_use/). Give an agent one or the other: each
-> capability runs its own browser, so a session opened by one is not visible to
-> the other.
+> [`BrowserUse`](../browser_use/). For one raw Chrome DevTools Protocol tool
+> that code calls in loops, see [`CDPBrowser`](../cdp_browser/). Give an agent
+> one of them: each capability runs its own browser, so a session opened by one
+> is not visible to the others.
 
 ```mermaid
 flowchart TB
@@ -648,8 +649,8 @@ not a guarantee.
 - [Browser automation with Pydantic-AI + Playwright](https://techcommunity.microsoft.com/blog/azuredevcommunityblog/browser-automation-with-pydantic-ai--playwright/4547971) (Microsoft) -- this
   capability driving a manual QA pass over a live site, wired to Microsoft
   Foundry models, with the run's OpenTelemetry traces.
-- [Browser Use](../browser_use/README.md) -- the other browser capability. Each
-  runs its own browser, so give an agent one or the other.
+- [Browser Use](../browser_use/README.md) and [CDP Browser](../cdp_browser/README.md) --
+  the other browser capabilities. Each runs its own browser, so give an agent one of them.
 - [Playwright for Python](https://playwright.dev/python/) -- the automation
   library underneath, and the reference for selector syntax.
 - [Pydantic AI capabilities](https://ai.pydantic.dev/capabilities/)
