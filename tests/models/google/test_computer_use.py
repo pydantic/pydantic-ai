@@ -667,7 +667,9 @@ def test_models_google_does_not_list_for_computer_use_leave_it_out(model_name: s
     assert ComputerTool not in model.profile.get('supported_native_tools', frozenset[type[AbstractNativeTool]]())
 
 
-@pytest.mark.parametrize('model_name', ['gemini-3.8-flash', 'gemini-4-hydrogen', 'gemini-3-flash-preview'])
+@pytest.mark.parametrize(
+    'model_name', ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-4-hydrogen', 'gemini-3-flash-preview']
+)
 def test_computer_use_models_support_it_on_the_gemini_api_only(model_name: str) -> None:
     gemini_api = GoogleModel(model_name, provider=GoogleProvider(api_key='test-key'))
     assert ComputerTool in gemini_api.profile.get('supported_native_tools', frozenset[type[AbstractNativeTool]]())
