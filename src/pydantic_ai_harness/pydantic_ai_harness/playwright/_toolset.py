@@ -1543,8 +1543,8 @@ class PlaywrightBrowserSession:
                 )
             )
             self._context = context
-            pages = [await self._bounded(context.new_page())]
             await self._install_guards(context)
+            pages = [await self._bounded(context.new_page())]
         for page in pages:
             self._wire_page(page)
             self.pages.append(page)

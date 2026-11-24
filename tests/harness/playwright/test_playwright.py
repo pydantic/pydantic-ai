@@ -283,6 +283,7 @@ class _FakeBrowserContext:
         self.websocket_routes: list[str] = []
         self.websocket_handler: Callable[[_FakeWebSocketRoute], Awaitable[None]] | None = None
         self.init_scripts: list[str] = []
+        self.init_scripts_at_first_page: list[str] | None = None
 
     @property
     def pages(self) -> list[_FakePage]:
@@ -294,6 +295,7 @@ class _FakeBrowserContext:
 
     async def new_page(self) -> _FakePage:
         if not self.opened:
+            self.init_scripts_at_first_page = list(self.init_scripts)
             self.opened.append(self.page)
             return self.page
         page = _FakePage(url='about:blank', title='')
@@ -4264,6 +4266,16 @@ class TestEnforcedPolicyPageApis:
             assert f'delete self.{name};' in script
         assert 'container.prototype.get = function (options)' in script
         assert 'copy.identity !== undefined' in script
+
+    @pytest.mark.parametrize('cdp_url', [None, 'http://localhost:9222'], ids=['launched', 'cdp-new-context'])
+    async def test_the_first_page_opens_with_the_script_in_place(
+        self, monkeypatch: pytest.MonkeyPatch, cdp_url: str | None
+    ) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page)
+        agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(cdp_url=cdp_url)])
+        await agent.run('screenshot the page')
+        assert page.context.init_scripts_at_first_page == page.context.init_scripts
 
     async def test_no_script_when_nothing_is_enforced(self, monkeypatch: pytest.MonkeyPatch) -> None:
         page = _FakePage()
