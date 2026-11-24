@@ -70,7 +70,7 @@ capabilities = [
 ]
 ```
 
-Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, [pax](https://pydantic.dev/docs/ai/pax/) is the harness TUI, running `Coder` by default and your own agent with `--agent`:
+Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, [Pax](https://pydantic.dev/docs/ai/pax/) is the harness TUI, running `Coder` by default and your own agent with `--agent`:
 
 ```bash
 uv tool install pydantic-ai-pax

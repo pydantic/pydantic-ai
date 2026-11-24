@@ -151,13 +151,10 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 `LocalWorkspace('.')` (cwd at import) and `Coder()`:
 
 ```bash
-uvx pydantic-ai-pax
+uvx pydantic-ai-pax --agent pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
 ```
 
-That is pax, the harness TUI: it runs `Coder` by default, and `pax --agent mymodule:agent` runs an agent of your own.
-
-```bash
-```
+That is Pax, the harness TUI, loading this exported agent: `--agent` takes an import path, loads no plugins, and needs `-m` because the agent carries no model. Plain `uvx pydantic-ai-pax` instead builds its own `Coder`-based agent with Pax's plugins, which is what someone who wants a coding agent rather than this export should run.
 
 ### BenchmarkInstructions
 

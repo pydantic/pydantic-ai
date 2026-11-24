@@ -73,9 +73,7 @@ uv tool install pydantic-ai-pax
 pax
 ```
 
-Point it at your own agent with `pax --agent mymodule:agent`.
-
-The bundled `coder_agent` is the example above without a model.
+Point it at your own agent with `pax --agent mymodule:agent`, or at the bundled export with `pax --agent pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5`, which is the example above without a model.
 
 Every model works: swap the string for [any provider's](https://ai.pydantic.dev/models/). Need more? Add capabilities to the list; here's the same coder on `gpt-6.1-sol`, with web search and cross-session memory:
 
