@@ -209,7 +209,8 @@ unless the user or `AGENTS.md` asks, the rule Codex gives its models for `spawn_
 work nobody asked for, and Claude, measured the same way, doesn't. The rule goes to models whose profile sets
 `delegates_unprompted`, and follows the model handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without it, the
-model is told the rule was withdrawn. A `FallbackModel` gets no rule, and `Coder` warns once when it runs on one. See
+model is told the rule was withdrawn. A `FallbackModel` gets no model-specific instructions, and `Coder` warns once
+when it runs on one. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 A delegate explores the project again from a fresh context, so delegation the user did not ask for multiplies tool
 calls and cost. To have the agent delegate, ask for it in the prompt, in `AGENTS.md`, or in `instructions=`.
@@ -263,6 +264,24 @@ on benchmarks is opt-in; see [Benchmarking](#benchmarking).
 | `'medium'` | Works until done, asking when a choice really matters. |
 | `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
 | `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. |
+
+At `'max'`, OpenAI's GPT models (not gpt-oss) get three sentences of their own, each sent to models whose profile sets
+a flag for the behavior it corrects:
+
+- `reinterprets_malformed_inputs`: the misread check first looks for a rule in the task that classifies inconsistent
+  inputs, for example as malformed or rejected, and applies it before assuming it misread.
+- `omits_handoff_evidence`: notes and handoffs use headed sections with each decision, the verification commands and
+  their results, the remaining risk, and what was left out.
+- `ignores_stated_runtime_constraints`: when a task constrains where or how its code will run, such as a restricted
+  interpreter or a specific Python version, the agent finds out what's allowed before writing code.
+
+The evidence for them is weak: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'`, one run each, `Coder` scored 53.2
+with the three sentences against 51.0 without them, within that benchmark's single-run noise of about 5.6 points.
+Like the rule against unrequested delegation (see [Sub-agents](#sub-agents)), each is its own instruction block that
+follows the model handling each request: after a fallback with the
+[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without the flag,
+the model is sent the default misread check and told the other sentences were withdrawn. See
+[Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
 or running commands if it ignores the sentence. To require approval before writes or commands, add

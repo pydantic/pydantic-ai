@@ -464,6 +464,51 @@ class ModelProfile(TypedDict, total=False):
     times as many tool calls at about 5.5 times the cost. Claude Sonnet 5.5 didn't delegate with or without it.
     """
 
+    reinterprets_malformed_inputs: bool
+    """Whether the model explains away inputs that look inconsistent instead of checking whether the task classifies
+    them (for example as malformed or rejected). Default: `False`.
+
+    Instructions that tell a model to look for such a rule before assuming it misread can be sent only to the models
+    with this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI
+    Harness `Coder` does, at `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss, together with `omits_handoff_evidence` and `ignores_stated_runtime_constraints`: the three
+    were measured only together. Evidence: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each
+    (November 2026), `Coder` with the three instructions scored 53.2 against 51.0 without them, within that
+    benchmark's single-run noise of about 5.6 points. So the evidence is weak, and the instructions are sent only at
+    `'max'`, where nobody reviews the result before it's used.
+    """
+
+    omits_handoff_evidence: bool
+    """Whether the model's notes or handoffs leave out the evidence a reviewer needs, such as the verification
+    commands it ran and their results. Default: `False`.
+
+    Instructions that ask a model for a structured handoff can be sent only to the models with this key: see
+    [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does, at
+    `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss, together with `reinterprets_malformed_inputs` and `ignores_stated_runtime_constraints`: the three
+    were measured only together. Evidence: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each
+    (November 2026), `Coder` with the three instructions scored 53.2 against 51.0 without them, within that
+    benchmark's single-run noise of about 5.6 points. So the evidence is weak, and the instructions are sent only at
+    `'max'`, where nobody reviews the result before it's used.
+    """
+
+    ignores_stated_runtime_constraints: bool
+    """Whether the model ignores constraints a task states on where or how its code will run, such as a restricted
+    interpreter or a specific Python version, when choosing language features. Default: `False`.
+
+    Instructions that tell a model to find out what's allowed before writing code can be sent only to the models with
+    this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness
+    `Coder` does, at `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss, together with `reinterprets_malformed_inputs` and `omits_handoff_evidence`: the three
+    were measured only together. Evidence: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each
+    (November 2026), `Coder` with the three instructions scored 53.2 against 51.0 without them, within that
+    benchmark's single-run noise of about 5.6 points. So the evidence is weak, and the instructions are sent only at
+    `'max'`, where nobody reviews the result before it's used.
+    """
+
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
 

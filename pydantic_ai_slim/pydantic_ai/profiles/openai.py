@@ -759,8 +759,11 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
         profile['default_framing_announcement'] = 'always'
     elif model_name.startswith('gpt-'):
-        # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the field's docstring).
+        # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the fields' docstrings).
         profile['delegates_unprompted'] = True
+        profile['reinterprets_malformed_inputs'] = True
+        profile['omits_handoff_evidence'] = True
+        profile['ignores_stated_runtime_constraints'] = True
     return profile
 
 
