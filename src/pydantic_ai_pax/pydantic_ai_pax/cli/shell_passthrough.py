@@ -265,10 +265,17 @@ async def _execute(command: str, *, output: _ShellOutput, cwd: Path) -> None:
             await pty.drain()
     except asyncio.CancelledError:
         process, _ = await spawn_task
-        _interrupt(process)
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(output.exited.wait(), _INTERRUPT_GRACE)
-        await kill_process_tree(process)
+        try:
+            _interrupt(process)
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(output.exited.wait(), _INTERRUPT_GRACE)
+            await kill_process_tree(process)
+        except PermissionError as denial:
+            # macOS refuses a signal to a group left with only zombies, a sandbox can refuse any, and Windows can refuse
+            # the kill. Closing the transport below still tries the direct child, but nothing shows the rest stopped.
+            raise PermissionError(
+                'Ctrl-C could not stop the command: the system refused to signal it, so it may still be running'
+            ) from denial
         await output.exited.wait()
         await output.drain()
         if pty is not None:

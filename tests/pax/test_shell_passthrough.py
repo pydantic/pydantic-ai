@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import errno
 import io
 import os
 import shlex
@@ -443,6 +444,63 @@ async def test_output_streams_before_exit_and_readers_are_drained(external_cance
                 assert interrupts.cancel()
                 context = await task
                 assert '\nInterrupted\n\nstdout:\nready\n\nstderr:\n' in context
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='signals POSIX process groups')
+@pytest.mark.parametrize('refused', ['every-signal', 'the-kill'])
+async def test_ctrl_c_whose_group_signal_is_refused_reports_the_command_may_still_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, refused: str
+) -> None:
+    """macOS refuses a signal to a group left with only zombies, and a sandbox can refuse any signal.
+
+    Then nothing shows the group stopped, so the command is not reported as interrupted. Closing the transport still
+    kills the direct child.
+    """
+    printed = asyncio.Event()
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if text == 'ready':
+                printed.set()
+            return super().write(text)
+
+    real_killpg = os.killpg
+
+    def refuse(pgid: int, signum: int) -> None:
+        if refused == 'every-signal' or signum == signal.SIGKILL:
+            raise PermissionError(errno.EPERM, 'Operation not permitted')
+        real_killpg(pgid, signum)
+
+    pid_file = tmp_path / 'pid'
+    # Ignoring SIGINT leaves the group's kill as the refused signal; `exec` keeps the disposition.
+    ignore = "trap '' INT; " if refused == 'the-kill' else ''
+    interrupts = Interrupts()
+    task = asyncio.create_task(
+        run_shell_command(
+            f'{ignore}echo $$ > {shlex.quote(str(pid_file))}; printf ready; exec sleep 3600',
+            console=Console(file=Output()),
+            interrupts=interrupts,
+            cwd=tmp_path,
+        )
+    )
+    pid: int | None = None
+    try:
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await printed.wait()
+            pid = int(pid_file.read_text())
+            monkeypatch.setattr(os, 'killpg', refuse)
+            assert interrupts.cancel()
+            context = await task
+        assert (
+            '\nShell error: Ctrl-C could not stop the command: the system refused to signal it, so it may still be '
+            'running\n'
+        ) in context
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        if pid is not None:
+            with contextlib.suppress(ProcessLookupError):
+                real_killpg(pid, signal.SIGKILL)
 
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX fork and detached sessions')
