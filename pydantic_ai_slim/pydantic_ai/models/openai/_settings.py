@@ -250,6 +250,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """The provided OpenAI built-in tools to use.
 
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
+
+    For the computer tool, use Pydantic AI Harness's `ComputerUse`, which sends it for you. Don't also pass a
+    `ComputerToolParam` here, or the request declares the tool twice.
     """
 
     openai_reasoning_mode: Literal['standard', 'pro']
