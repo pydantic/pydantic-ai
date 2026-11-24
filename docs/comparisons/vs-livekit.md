@@ -30,7 +30,7 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 | Speech-to-speech providers | Plugins for several providers | [Five](../realtime/overview.md#provider-support) behind one API: OpenAI, Azure OpenAI, Gemini Live, xAI, ElevenLabs |
 | Cascaded STT + LLM + TTS | Yes, the default; dozens of STT and TTS plugins | Hosted only, via [ElevenLabs Agents](../realtime/elevenlabs.md#elevenlabs-agents) or [Azure AI Voice Live](../realtime/azure.md#azure-ai-voice-live); otherwise [compose it yourself](../realtime/overview.md#other-ways-to-build-voice) around a text agent |
 | Audio transport | WebRTC rooms via LiveKit server or Cloud | Yours: [browser WebRTC sideband or WebSocket relay](../realtime/deployment.md) |
-| Telephony | SIP in and out, DTMF, transfers; numbers on Cloud | [Bridge a provider](../realtime/deployment.md#siptelephony-bridge) such as Twilio |
+| Telephony | SIP in and out, DTMF, transfers; numbers on Cloud | [Bridge Twilio Media Streams](../realtime/deployment.md#twilio-media-streams) to a session |
 | Turn detection | Silero VAD, own turn-detector model, adaptive interruption | [Provider turn detection, barge-in, push-to-talk](../realtime/turns.md) |
 | Noise cancellation | Krisp and ai-coustics plugins; enhanced models on Cloud | Provider-side only |
 | Hand off to another agent mid-call | Yes, context carried over | No; [delegate from a tool](../realtime/tools.md#delegating-work-during-a-call) instead |

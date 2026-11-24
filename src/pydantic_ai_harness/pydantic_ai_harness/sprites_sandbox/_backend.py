@@ -99,6 +99,9 @@ from pydantic_ai_harness._workspace_provider import (
     safe_credential_reason,
     stop_shielded,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, x11_display
 
 try:
     from sprites import AsyncCmd, AsyncSprite, AsyncSpritesClient
@@ -431,7 +434,7 @@ async def _recover_create(client: AsyncSpritesClient, name: str, error: Exceptio
         raise error from None
 
 
-class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem):
+class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, SupportsDisplay):
     """A Fly.io Sprite behind the Pydantic AI `WorkspaceBackend` protocol.
 
     Pass `sandbox=` to wrap a `sprites.AsyncSprite` you already have, or `ref=` to reattach to one.
@@ -443,6 +446,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     plus `env`. A `working_dir` is created on a Sprite the backend creates; an attached or
     caller-supplied Sprite must already have it. File writes go through the Sprite's filesystem
     API; the other file operations run as shell commands.
+
+    With `desktop`, `True` or a `(width, height)` (1280x800 by default), the Sprite gets a desktop for
+    [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse] on first use, which installs the programs it needs.
+    A cold wake closes its windows. The display restarts on the next screenshot or action, and until then a program
+    started from the shell can't open a window. A new backend starts the display on its first command.
     """
 
     def __init__(
@@ -454,6 +462,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         runtime: str | None = None,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'sprites')
@@ -470,7 +479,12 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         self._working_dir = absolute_path('working_dir', working_dir)
         # A Sprite this backend creates starts without `working_dir`; it is made on first acquisition.
         self._working_dir_pending = sandbox is None and ref is None and self._working_dir is not None
-        self._env = dict(env or {})
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'Sprite {self._ref.id if self._ref else "(not created)"}',
+        )
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
         # `working_dir` as the Sprite resolves it (`pwd -P`): the protocol reports a canonical absolute path.
         self._resolved_working_dir: str | None = None
         self._client = client
@@ -489,6 +503,11 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
     @property
     def ref(self) -> WorkspaceRef | None:
         return self._ref
+
+    @property
+    def display(self) -> Display | None:
+        """The Sprite's desktop, when created with `desktop=True`."""
+        return self._display
 
     async def get_sandbox(self) -> AsyncSprite:
         """Return the typed `sprites.AsyncSprite`, for Sprites features the workspace API does not cover.
@@ -692,8 +711,19 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
+        _check_command_timeout(timeout)
+        if self._display is not None:
+            # Checked first, so a bad command or `env` doesn't create a Sprite.
+            self._command_args(command, shell, env)
+            # Started before the command, so a program it opens shows on the screen.
+            await self._display.start()
         async with self._operation():
             return await self._run(command, shell=shell, env=env, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
+        async with self._operation():
+            return await self._run(argv, env=env, timeout=timeout)
 
     async def _run(
         self,
@@ -799,8 +829,8 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             started = exec_command.ws is not None
             await _close_command(exec_command)
             if capture_stderr and started:
-                # Removes the capture file, as far as the shielded grace allows.
-                await stop_shielded(lambda: self._read_capture(capture))
+                # Removes the capture file. The read-back is a fresh exec, so the grace matches its exec bound.
+                await stop_shielded(lambda: self._read_capture(capture), grace=_INTERNAL_EXEC_TIMEOUT)
         return _map_error(error, sprite_name) if isinstance(error, Exception) else None
 
     async def _check_working_dir(

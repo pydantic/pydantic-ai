@@ -7,7 +7,7 @@ on:
       - main
     tags:
       - "**"
-      # Moved by `clai2-bleeding.yml` for every CLAI change on `main`; not a release to build or publish.
+      # Moved by `clai2-bleeding.yml` for every Pax change on `main`; not a release to build or publish.
       - "!clai2-bleeding"
   pull_request: {}
   # The merge queue: a pull request reaches `main` only through a merge group that passed this
@@ -129,7 +129,7 @@ jobs:
           needs_docs_checks() {
             # `test_examples.py` also scans Markdown under the published package directories.
             case "$1" in
-              README.md|clai/README.md|src/pydantic_clai2/README.md|src/pydantic_ai_harness/README.md) ;;
+              README.md|clai/README.md|src/pydantic_ai_pax/README.md|src/pydantic_ai_harness/README.md) ;;
               docs/*.md|docs/*.mdc|docs/*.png|docs/*.svg|docs/*.ico|docs/*.jpg|docs/*.jpeg|docs/*.gif|docs/*.webp|docs/*.avif) ;;
               examples/*.md|pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) ;;
               *) return 1 ;;
@@ -150,22 +150,22 @@ jobs:
             esac
           }
 
-          # Nothing outside `pydantic-clai2` imports it, so a change confined to these paths cannot
-          # break another package's suite: it runs only the `pydantic-clai2` test cells, and skips
+          # Nothing outside `pydantic-ai-pax` imports it, so a change confined to these paths cannot
+          # break another package's suite: it runs only the `pydantic-ai-pax` test cells, and skips
           # the jobs that exercise the rest of the workspace. Shared inputs (`pyproject.toml`,
           # `uv.lock`, `tests/conftest.py`, ...) are outside them and still run everything.
           is_clai2() {
             case "$1" in
-              src/pydantic_clai2/*|tests/clai2/*) ;;
+              src/pydantic_ai_pax/*|src/pydantic_clai2/*|tests/pax/*) ;;
               *) return 1 ;;
             esac
           }
 
-          # Outside its own suite, only `pydantic-clai2` and the gh-aw shim (tested in `quality`, which
+          # Outside its own suite, only `pydantic-ai-pax` and the gh-aw shim (tested in `quality`, which
           # still runs) import `pydantic-ai-harness`; core and its tests merely probe whether it is
           # installed. So a change confined to the two packages and content runs the harness and
-          # CLAI 2 suites -- on every install shape, resolution, and Temporal leg -- and skips the jobs
-          # that exercise only the rest of the workspace. That includes a `pydantic-clai2` change that
+          # Pax suites -- on every install shape, resolution, and Temporal leg -- and skips the jobs
+          # that exercise only the rest of the workspace. That includes a `pydantic-ai-pax` change that
           # also touches content. The harness `pyproject.toml` stays on the full path: its dependency
           # bounds feed the environment every package is tested in.
           is_harness() {
@@ -181,7 +181,7 @@ jobs:
           }
 
           # `test-clai2-clipboard` runs on macOS and Windows runners, so only for a change that reaches
-          # `pydantic-clai2` or the job itself.
+          # `pydantic-ai-pax` or the job itself.
           is_clai2_input() {
             is_clai2 "$1" || [ "$1" = .github/workflows/ci.yml ]
           }
@@ -303,6 +303,7 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
           .github/scripts/test_pr_guard.py
+          .github/scripts/test_lint_exemptions.py
           .github/scripts/test_pr_gates.py
           .github/scripts/test_douwebot_config_approval.py
           .github/scripts/test_douwebot_usage_limit.py
@@ -332,11 +333,11 @@ jobs:
           UV_NO_SYNC: "1"
         run: uv run pytest scripts/test_typecheck_changed.py
 
-      # The `complexity` job runs this script with only the `lint` group installed, so its tests run here.
-      - name: Test the cognitive complexity check
+      # The `complexity` job runs these scripts with only the `lint` group installed, so their tests run here.
+      - name: Test the cognitive complexity and test waits checks
         env:
           UV_NO_SYNC: "1"
-        run: uv run pytest scripts/test_check_complexity.py
+        run: uv run pytest scripts/test_check_complexity.py scripts/test_check_test_waits.py
 
       # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
       # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
@@ -414,8 +415,9 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          # `complexity` checks only staged changes, and a checkout stages none; the `complexity` job runs it.
-          SKIP: no-commit-to-branch,complexity
+          # `complexity` and `test-waits` check only staged changes, and a checkout stages none; the `complexity`
+          # job runs them.
+          SKIP: no-commit-to-branch,complexity,test-waits
           # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
           # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
@@ -497,7 +499,7 @@ jobs:
           # spans about 30 s); the pyright 1.1.414 bump (#8690) and type-checking docs examples (#8646)
           # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
           # 150 leaves room for that variance while still failing a regression like #8077's 328 to
-          # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
+          # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-ai-pax` took a passing run to
           # 156 s, so 200 kept the same headroom. By 2026-10-16 the step ran 117 to 206 s over 98 `main`
           # runs (median 184 s, p90 197 s) and failed four of them; 260 is about 1.25x that maximum and
           # still fails a regression like #8077's.
@@ -603,6 +605,11 @@ jobs:
 
       - name: Check cognitive complexity against the base
         run: uv run --only-group lint scripts/check_complexity.py --base HEAD^1 --format github
+
+      # Fails when a change adds a real-clock wait, a private readiness timeout or a probed port to a test.
+      - name: Check test waits against the base
+        if: ${{ !cancelled() }}
+        run: uv run --only-group lint scripts/check_test_waits.py --base HEAD^1 --format github
 
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
@@ -735,7 +742,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity
+          SKIP: no-commit-to-branch,clai-help,format,lint,check-cassettes,complexity,test-waits
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
@@ -754,7 +761,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
         # A single-value dimension, so the `exclude` below can drop the legs a pull request skips:
         # 3.14 collects coverage and 3.13 detects blocking calls, so both run every install; 3.11 and
-        # 3.15, the oldest and newest, run only `standard`; 3.12 goes. A `pydantic-clai2`-only change
+        # 3.15, the oldest and newest, run only `standard`; 3.12 goes. A `pydantic-ai-pax`-only change
         # keeps its 3.11 leg too, which collects coverage there (see `COLLECT_COVERAGE`). The merge
         # queue and `main` run every leg (see `merge_group` in `on:`). The value is the string
         # `'true'`, not the boolean `==` yields: `exclude` doesn't match `"true"` to `true`.
@@ -764,7 +771,8 @@ jobs:
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
-          # Install CLAI 2 alongside the harness to exercise the gh-aw launcher.
+          # Install Pax alongside the harness to exercise the gh-aw launcher, which runs it by its
+          # published name, the `pydantic-clai2` shim over `pydantic-ai-pax`.
           - name: pydantic-ai-harness
             command: "--no-sync"
             sync_command: >-
@@ -772,14 +780,14 @@ jobs:
               --extra code-mode --extra coder --extra logfire --extra render
             # Its own suite: the rest of `tests/` is covered by the other cells.
             paths: tests/harness
-          - name: pydantic-clai2
-            command: "--package pydantic-clai2"
-            paths: tests/clai2
+          - name: pydantic-ai-pax
+            command: "--package pydantic-ai-pax"
+            paths: tests/pax
           - name: standard
             command: ""
-        # Single-value dimensions, so the `exclude` below can drop every cell but `pydantic-clai2`
+        # Single-value dimensions, so the `exclude` below can drop every cell but `pydantic-ai-pax`
         # when `classify` found a change confined to it, and every cell but `pydantic-ai-harness`
-        # and `pydantic-clai2` for one confined to those two.
+        # and `pydantic-ai-pax` for one confined to those two.
         clai2_only: ["${{ needs.classify.outputs.clai2_only }}"]
         harness_only: ["${{ needs.classify.outputs.harness_only }}"]
         exclude:
@@ -811,7 +819,7 @@ jobs:
           - pull_request: "true"
             python-version: "3.11"
             clai2_only: "false"
-            install: { name: pydantic-clai2 }
+            install: { name: pydantic-ai-pax }
           - pull_request: "true"
             python-version: "3.15"
             install: { name: pydantic-ai-slim }
@@ -823,17 +831,17 @@ jobs:
             install: { name: pydantic-ai-harness }
           - pull_request: "true"
             python-version: "3.15"
-            install: { name: pydantic-clai2 }
+            install: { name: pydantic-ai-pax }
     env:
       CI: true
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
       # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
-      # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
-      # collects it on 3.11: `tests/clai2` has pre-3.14 lines and branches that `all-extras` covers otherwise.
+      # every applicable test without duplicate coverage. A `pydantic-ai-pax`-only change also
+      # collects it on 3.11: `tests/pax` has pre-3.14 lines and branches that `all-extras` covers otherwise.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.11' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
-      # A `pydantic-clai2`-only change skips `all-extras`, so its cells install every `pydantic-clai2`
-      # extra themselves: `tests/clai2` gates tests on `typesafe` and on each `/sandbox` SDK, and only
+      # A `pydantic-ai-pax`-only change skips `all-extras`, so its cells install every `pydantic-ai-pax`
+      # extra themselves: `tests/pax` gates tests on `typesafe` and on each `/sandbox` SDK, and only
       # those tests run their fakes.
       CLAI2_ALL_EXTRAS: ${{ matrix.clai2_only == 'true' }}
     steps:
@@ -874,7 +882,7 @@ jobs:
       - run: uv sync --only-dev
 
       # A sync that selects two packages ignores root dependency groups, so `gh-aw-tracing` gets its own.
-      - name: install harness and CLAI 2 test dependencies
+      - name: install harness and Pax test dependencies
         if: matrix.install.name == 'pydantic-ai-harness'
         run: |
           uv sync ${{ matrix.install.sync_command }}
@@ -1027,7 +1035,7 @@ jobs:
   # `all-extras` is the slowest install shape by a wide margin -- it alone pulls in every
   # optional dependency -- so it gets its own job, split into shards, instead of sharing the
   # `test` job's timeout budget with the three much lighter install shapes.
-  # A `pydantic-ai-harness`-only change runs just `tests/harness` and `tests/clai2` here, keeping
+  # A `pydantic-ai-harness`-only change runs just `tests/harness` and `tests/pax` here, keeping
   # three shards on 3.11 for its legacy coverage tracer and one shard on every other version.
   test-all-extras:
     name: >-
@@ -1059,7 +1067,7 @@ jobs:
       # Computed from `classify`'s output, so passed to the shell through the environment.
       SHARD: ${{ matrix.shard }}
       SPLITS: ${{ matrix.python-version == '3.11' && 3 || needs.classify.outputs.harness_only == 'true' && 1 || 2 }}
-      TEST_PATHS: ${{ needs.classify.outputs.harness_only == 'true' && 'tests/harness tests/clai2' || '' }}
+      TEST_PATHS: ${{ needs.classify.outputs.harness_only == 'true' && 'tests/harness tests/pax' || '' }}
       DURATIONS_PREFIX: test-durations-${{ matrix.python-version }}-all-extras-
       DURATIONS_BASELINE: test-durations-baseline/${{ matrix.python-version }}-all-extras.json
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
@@ -1460,7 +1468,7 @@ jobs:
           include-hidden-files: true
 
   # The harness declares minimum bounds for its own dependencies, so a `pydantic-ai-harness`-only
-  # change still proves them here, running just `tests/harness` and `tests/clai2` in one shard.
+  # change still proves them here, running just `tests/harness` and `tests/pax` in one shard.
   test-lowest-versions:
     name: >-
       test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/${{
@@ -1500,7 +1508,7 @@ jobs:
       # Computed from `classify`'s output, so passed to the shell through the environment.
       SHARD: ${{ matrix.shard }}
       SPLITS: ${{ needs.classify.outputs.harness_only == 'true' && 1 || 2 }}
-      TEST_PATHS: ${{ needs.classify.outputs.harness_only == 'true' && 'tests/harness tests/clai2' || '' }}
+      TEST_PATHS: ${{ needs.classify.outputs.harness_only == 'true' && 'tests/harness tests/pax' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1708,6 +1716,8 @@ jobs:
       # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
       - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
       - run: uv run --no-sync coverage run -m pytest tests/harness/browser_use
+      # The capability contracts skip `BrowserUse` on every other job.
+      - run: uv run --no-sync coverage run -m pytest tests/harness/test_capability_contracts.py -k BrowserUse
       - run: uv run --no-sync pyright -p tests/harness/browser_use
         env:
           PYRIGHT_PYTHON_IGNORE_WARNINGS: 1
@@ -1723,7 +1733,7 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
-  # CLAI2 pastes images through Pillow's native macOS and Windows clipboard readers and through
+  # Pax pastes images through Pillow's native macOS and Windows clipboard readers and through
   # `xclip` on Linux. Every other job runs on Linux and skips the opt-in native clipboard test, which
   # replaces the system clipboard: safe here, where each runner's clipboard belongs to this job alone.
   # Skipped on tags: a clipboard regression is caught on its PR and on `main`, and must not hold a release.
@@ -1768,11 +1778,11 @@ jobs:
       - name: run tests
         shell: bash
         run: |
-          tests=(tests/clai2/test_image_input.py tests/clai2/test_image_clipboard_native.py)
+          tests=(tests/pax/test_image_input.py tests/pax/test_image_clipboard_native.py)
           if [[ "$RUNNER_OS" == Linux ]]; then
-            xvfb-run -a uv run --package pydantic-clai2 pytest "${tests[@]}"
+            xvfb-run -a uv run --package pydantic-ai-pax pytest "${tests[@]}"
           else
-            uv run --package pydantic-clai2 pytest "${tests[@]}"
+            uv run --package pydantic-ai-pax pytest "${tests[@]}"
           fi
 
   # `WindowsWorkspaceBackend` and the PowerShell side of the harness's file and shell tools run only on
@@ -1809,7 +1819,7 @@ jobs:
       - run: uv sync --only-dev
 
       - name: run tests
-        run: uv run --package pydantic-clai2 coverage run -m pytest tests/test_windows_workspace.py tests/harness/coder/test_windows.py
+        run: uv run --package pydantic-ai-pax coverage run -m pytest tests/test_windows_workspace.py tests/harness/coder/test_windows.py
 
       # The remote-sandbox fakes run commands as POSIX processes on the host, so their suites must skip here.
       - name: run sandbox backend tests
@@ -1822,7 +1832,7 @@ jobs:
 
       # See the matching step in the `test` job.
       - name: combine coverage files
-        run: uv run --package pydantic-clai2 coverage combine
+        run: uv run --package pydantic-ai-pax coverage combine
 
       - name: store coverage files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -1854,10 +1864,10 @@ jobs:
       fail-fast: false
       matrix:
         fastmcp:
-          # The `[mcp]` extra's floor. `pydantic-clai2` requires FastMCP 3.4.0 or later.
+          # The `[mcp]` extra's floor. `pydantic-ai-pax` requires FastMCP 3.4.0 or later.
           - name: "3.3.0"
             spec: "==3.3.0"
-            skip: tests/clai2/
+            skip: tests/pax/
           - name: latest
             spec: ">=3,<4"
             skip: ""
@@ -1899,7 +1909,9 @@ jobs:
       # binaries and data files; each hosted MCP capability's own module runs here. `tests/durable_exec` runs with `BLOCKBUSTER_ENABLED=false`, as in
       # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
       # `tests/test_conftest.py` tests BlockBuster itself, which skips in lanes that turn it off; this
-      # is the only BlockBuster-on lane that uploads coverage.
+      # is the only BlockBuster-on lane that uploads coverage. `tests/test_history_append_only.py`
+      # builds the core `MCP` case, whose FastMCP import lives in `tests/capability_cases.py`, where
+      # the pattern doesn't look.
       # `--no-extra sentence-transformers`: no MCP test module imports it, and its torch and CUDA
       # wheels are about 2.6 GB of the 3.2 GB this step downloads on a uv cache miss. A slow download
       # of them has run this job past `timeout-minutes` (#13931), as in `test-durable-exec`. The
@@ -1918,6 +1930,7 @@ jobs:
             git grep -lE "$pattern" -- 'tests/**/test_*.py' 'tests/test_*.py'
             git grep -lE "$pattern" -- 'tests/**/conftest.py' | sed 's|/conftest\.py$||'
             echo tests/test_conftest.py
+            echo tests/test_history_append_only.py
           } | sort -u)
           durable=() other=()
           for module in "${modules[@]}"; do
@@ -2136,7 +2149,9 @@ jobs:
     services:
       redis:
         # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
-        image: redis:8
+        # Pinned by digest here and in the cluster step below: the cluster container exits on start
+        # on 8.12.0 (#14283).
+        image: redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
         ports:
           - 6379:6379
         options: >-
@@ -2166,7 +2181,7 @@ jobs:
       - name: Start a single-node Redis Cluster
         timeout-minutes: 2
         run: |
-          docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+          docker run -d --name redis-cluster -p 6380:6380 redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53 \
             redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
           until docker exec redis-cluster redis-cli -p 6380 ping; do sleep 1; done
           docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
@@ -2302,7 +2317,7 @@ jobs:
         test-harness-browser-use,
         test-windows-workspace,
       ]
-    # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
+    # A `pydantic-ai-pax`-only change skips every test job but `test`, and a skipped need would
     # otherwise skip this job too. A test job
     # cancelled by its own `timeout-minutes` uploads no coverage, and neither `failure()` nor `cancelled()`
     # sees it, so without the `needs` check this job would report that job's lines as missing.
@@ -2330,19 +2345,19 @@ jobs:
 
       - run: uv sync --group dev --group coverage
       - run: uv run --no-sync coverage combine
-      # Only the `pydantic-clai2` cells ran for a change confined to it, so they can only vouch
-      # for its own tests; a `pydantic-ai-harness`-only change ran the harness and CLAI 2 suites,
+      # Only the `pydantic-ai-pax` cells ran for a change confined to it, so they can only vouch
+      # for its own tests; a `pydantic-ai-harness`-only change ran the harness and Pax suites,
       # which vouch for those and the harness source. The rest of the workspace is covered on the
-      # full path. (`pydantic-clai2`'s source is not measured: see `[tool.coverage.run]`.)
+      # full path. (`pydantic-ai-pax`'s source is not measured: see `[tool.coverage.run]`.)
       - name: coverage report
         env:
           CLAI2_ONLY: ${{ needs.classify.outputs.clai2_only }}
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
         run: |
           if [ "$CLAI2_ONLY" = true ]; then
-            uv run --no-sync coverage report --include='tests/clai2/*'
+            uv run --no-sync coverage report --include='tests/pax/*'
           elif [ "$HARNESS_ONLY" = true ]; then
-            uv run --no-sync coverage report --include='src/pydantic_ai_harness/*,tests/harness/*,tests/clai2/*'
+            uv run --no-sync coverage report --include='src/pydantic_ai_harness/*,tests/harness/*,tests/pax/*'
           else
             uv run --no-sync coverage report
           fi
@@ -2393,7 +2408,7 @@ jobs:
           # Each reduced path must run its selected checks.
           # The harness integration jobs run only when their paths change (always on tags), and
           # LocalStack also skips where its secret is unreadable. `test-clai2-clipboard` runs only when
-          # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags.
+          # a change reaches `pydantic-ai-pax` (always on pushes to `main`), and never on tags.
           # `test-clai2-web` also follows its workflow, `pyproject.toml`, and `uv.lock`; it runs on tags.
           # A `pydantic-ai-harness`-only change runs `docs-only` exactly when it changes documentation.
           allowed-skips: >-
@@ -2472,12 +2487,12 @@ jobs:
       # ship the bundle `test-clai2-web` built and tested from this commit. Building it here would run
       # the web UI's npm dependencies in the job that builds every wheel. Replaced rather than
       # overlaid, so a file the build no longer writes goes too.
-      - run: rm -rf src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+      - run: rm -rf src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: clai2-web-static
-          path: src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+          path: src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static
 
       - run: uv build --all-packages --no-sources
 
@@ -2486,11 +2501,12 @@ jobs:
           smoke_dir=$(mktemp -d)
           uv venv "$smoke_dir"
           uv pip install --python "$smoke_dir/bin/python" dist/*.whl
-          "$smoke_dir/bin/python" -I -c "import clai, pydantic_ai, pydantic_evals, pydantic_graph, pydantic_ai_harness, pydantic_clai2"
+          "$smoke_dir/bin/python" -I -c "import clai, pydantic_ai, pydantic_evals, pydantic_graph, pydantic_ai_harness, pydantic_ai_pax"
           "$smoke_dir/bin/pai" --help
           "$smoke_dir/bin/clai" --help
+          "$smoke_dir/bin/pax" --help
           "$smoke_dir/bin/clai2" --help
-          "$smoke_dir/bin/python" -I src/pydantic_clai2/scripts/check_web_assets.py src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static
+          "$smoke_dir/bin/python" -I src/pydantic_ai_pax/scripts/check_web_assets.py src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static
 
       - name: Inspect package version
         id: inspect_package

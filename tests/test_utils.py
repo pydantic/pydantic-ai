@@ -44,13 +44,12 @@ from pydantic_ai._utils import (
     using_thread_executor,
 )
 from pydantic_ai.models.test import TestModel
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 from .realtime.simulation._loop import SimulatedLoop
-
-READINESS_WAIT_TIMEOUT = 5
 
 
 @pytest.mark.parametrize(

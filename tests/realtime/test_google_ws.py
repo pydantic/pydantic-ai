@@ -1052,6 +1052,7 @@ def test_profile_allow_seeding() -> None:
         supports_webrtc=False,
         supports_seeding_images=True,
         supports_seeding_audio=False,
+        supports_appending_voice_instructions=False,
         supports_thinking=True,  # native-audio and 3.x Live models take a thinking config
         # The session's choice, via the `async_tool_calls` setting, which is off by default.
         async_tool_call_mode='optional',

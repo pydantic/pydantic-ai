@@ -79,7 +79,7 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
 
     def __init__(self, iterable: Sequence[_messages.AgentStreamEvent] = ()):
         super().__init__(iterable)
-        self.waiters: list[asyncio.Event] = []
+        self.waiters: list[asyncio.Event] = []  # noqa: TID251  (not converted to anyio yet)
 
     def append(self, event: _messages.AgentStreamEvent) -> None:
         super().append(event)

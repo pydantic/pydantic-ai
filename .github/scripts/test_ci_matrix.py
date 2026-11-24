@@ -37,7 +37,7 @@ LANE_VARS = (
 )
 REDUCED_JOBS = ('test', 'test-all-extras', 'test-durable-exec', 'test-lowest-versions', 'test-examples')
 # The `classify` outputs of each route a change can take through the test jobs: the full one, and the narrower
-# ones for a change confined to `pydantic-ai-harness` (and `pydantic-clai2`) or to `pydantic-clai2`.
+# ones for a change confined to `pydantic-ai-harness` (and `pydantic-ai-pax`) or to `pydantic-ai-pax`.
 ROUTES = {
     'full': {'clai2_only': 'false', 'harness_only': 'false'},
     'harness_only': {'clai2_only': 'false', 'harness_only': 'true'},
@@ -360,7 +360,7 @@ def test_all_extras_shards_match_the_partition(event_name: str, route: str):
         assert _render(env['SHARD'], context) == leg['shard']
         assert _render(job['name'], context) == f'test on {version} (all-extras, shard {leg["shard"]}/{splits})'
         assert _render(env['COLLECT_COVERAGE'], context) is (version in ('3.11', '3.14'))
-        assert _render(env['TEST_PATHS'], context) == ('tests/harness tests/clai2' if route == 'harness_only' else '')
+        assert _render(env['TEST_PATHS'], context) == ('tests/harness tests/pax' if route == 'harness_only' else '')
         step_context = {**context, 'env': {'COLLECT_COVERAGE': _text(_render(env['COLLECT_COVERAGE'], context))}}
         for step in map(_mapping, _list(job['steps'])):
             if step.get('name') in ('combine coverage files', 'store coverage files'):

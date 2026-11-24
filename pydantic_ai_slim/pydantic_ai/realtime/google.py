@@ -668,7 +668,7 @@ async def _open_live_session(
             # so the SDK's `async with ws_connect(...)` still gets to close the socket it opened,
             # where a level-triggered scope would cancel that close too and leak the socket.
             try:
-                return await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)
+                return await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)  # noqa: TID251  (not converted to anyio yet)
             except TimeoutError as e:
                 raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
 
