@@ -521,7 +521,8 @@ class ImportWatcher(importlib.abc.MetaPathFinder):
     """Calls the wrap given for a module once the module first runs.
 
     A module is found by the finders after this one on `sys.meta_path`. Its loader's `exec_module` runs the wrap
-    after the module, so the capture wraps what a module defines without importing it any earlier.
+    after the module, so the capture wraps what a module defines without importing it any earlier. A spec found but
+    never run, like one `importlib.util.find_spec` returns, leaves the wrap for the module's import.
     """
 
     def __init__(self, wraps: dict[str, Callable[[], None]]) -> None:
@@ -540,14 +541,17 @@ class ImportWatcher(importlib.abc.MetaPathFinder):
         # Only a namespace package has no loader of its own, and none of the modules wrapped is one.
         loader = spec.loader
         assert loader is not None
-        wrap = self.wraps.pop(fullname)
-        exec_module = loader.exec_module
+        exec_module = type(loader).exec_module
 
-        # Set on the loader the spec holds, and deleted again once called, which leaves the loader's own method.
+        # Set on the loader the spec holds, and deleted again once called, which leaves the loader's own method. It
+        # reaches the loader through the module's spec, so a loader whose spec never runs holds no reference cycle.
         def exec_then_wrap(module: ModuleType) -> None:
+            spec = module.__spec__
+            assert spec is not None and spec.loader is not None
+            loader = spec.loader
             delattr(loader, 'exec_module')
-            exec_module(module)
-            wrap()
+            exec_module(loader, module)
+            self.wraps.pop(fullname, lambda: None)()
 
         setattr(loader, 'exec_module', exec_then_wrap)
         return spec
@@ -926,8 +930,11 @@ class RefactorCapture:
                 - {StreamedResponse.__module__}
             ),
             'events': events,
-            'response': normalized(stream.get()),
+            'response': None,
         }
+        # As once iteration ends, an error getting the response is never raised into the code under test.
+        with suppress(Exception):
+            record['response'] = normalized(stream.get())
         self.records.append(record)
         self._streams.append((record, weakref.ref(stream)))
         return record, events
@@ -1875,13 +1882,13 @@ class RefactorCapture:
             record: dict[str, object] = {
                 'kind': 'dbos',
                 'node': self.node,
-                'target': status['name'],
-                'workflow_id': status['workflow_uuid'],
-                'class_name': status['class_name'],
-                'config_name': status['config_name'],
+                'target': status.get('name'),
+                'workflow_id': status.get('workflow_uuid'),
+                'class_name': status.get('class_name'),
+                'config_name': status.get('config_name'),
                 'parent_workflow_id': status.get('parent_workflow_id'),
             }
-            self._workflow_steps(self._dbos_workflows, str(status['workflow_uuid']), record, 'operations')
+            self._workflow_steps(self._dbos_workflows, str(status.get('workflow_uuid')), record, 'operations')
             return insert(database, *args, **kwargs)
 
         @functools.wraps(check)
@@ -1894,8 +1901,8 @@ class RefactorCapture:
             }
             unknown: dict[str, object] = {'kind': 'dbos', 'node': self.node, 'target': None, 'workflow_id': workflow_id}
             self._workflow_steps(self._dbos_workflows, workflow_id, unknown, 'operations').append(operation)
-            # A check that raises, like on a step that isn't the one recorded, records neither; the error reaches the
-            # test, as an exception record when it catches it.
+            # A check that raises, like on a step that isn't the one recorded, leaves its operation without `recorded`;
+            # the error reaches the test, as an exception record when it catches it.
             result = check(database, *args, **kwargs)
             operation['recorded'] = result is not None
             return result

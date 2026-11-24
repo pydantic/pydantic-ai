@@ -2624,7 +2624,8 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
 
 def test_capture_wraps_a_module_now_or_once_it_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A module imported already is wrapped at once, and one imported later once it has run, leaving its loader as it
-    was. Other imports pass through, and a module that can't be found isn't wrapped.
+    was; a spec found but never run leaves the wrap for the import. Other imports pass through, and a module that can't
+    be found isn't wrapped.
     """
     (tmp_path / 'watched_module.py').write_text('VALUE = 1\n')
     (tmp_path / 'unwatched_module.py').write_text('')
@@ -2641,6 +2642,8 @@ def test_capture_wraps_a_module_now_or_once_it_runs(tmp_path: Path, monkeypatch:
     try:
         assert wrapped == ['json']
         importlib.import_module('unwatched_module')
+        assert importlib.util.find_spec('watched_module') is not None
+        assert wrapped == ['json']
         module = importlib.import_module('watched_module')
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module('missing_module')
