@@ -174,6 +174,19 @@ async def test_an_attached_session_must_have_the_working_dir(fake_agentcore: Fak
     assert not (fake_agentcore.home / 'missing').exists()
 
 
+async def test_a_session_that_ended_under_a_held_backend_is_unavailable(fake_agentcore: FakeAgentCore) -> None:
+    backend = AgentCoreSandboxBackend()
+    note = str(fake_agentcore.home / 'note.txt')
+    await backend.write_bytes(note, b'kept')
+    [session] = fake_agentcore.sessions.values()
+    session.active = False
+    with pytest.raises(WorkspaceUnavailableError, match='is not active in this region'):
+        await backend.run(['true'])
+    with pytest.raises(WorkspaceUnavailableError, match='is not active in this region'):
+        await backend.read_bytes(note)
+    assert len(fake_agentcore.sessions) == 1
+
+
 async def test_a_started_session_creates_the_working_dir(fake_agentcore: FakeAgentCore) -> None:
     work = fake_agentcore.home / 'a' / 'b'
     backend = AgentCoreSandboxBackend(working_dir=str(work))

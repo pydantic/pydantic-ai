@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import importlib
 import re
+import sys
+from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai.workspaces import Workspace, WorkspaceRef, WorkspaceUnavailableError
+from pydantic_ai.workspaces import AuthorityWorkspace, Workspace, WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.agentcore_sandbox import AgentCoreSandbox, AgentCoreSandboxBackend
 from pydantic_ai_harness.coder import Coder
 
@@ -31,6 +35,14 @@ def test_root_package_exports_the_capability_and_backend() -> None:
     assert pydantic_ai_harness.AgentCoreSandbox is AgentCoreSandbox
     assert pydantic_ai_harness.AgentCoreSandboxBackend is AgentCoreSandboxBackend
     assert {'AgentCoreSandbox', 'AgentCoreSandboxBackend'} <= set(pydantic_ai_harness.__all__)
+
+
+def test_missing_agentcore_extra_has_an_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, 'boto3', None)
+    for name in [name for name in sys.modules if name.startswith('pydantic_ai_harness.agentcore_sandbox')]:
+        monkeypatch.delitem(sys.modules, name)
+    with pytest.raises(ImportError, match=r'^Install `pydantic-ai-harness\[agentcore\]` to use AgentCoreSandbox\.$'):
+        importlib.import_module('pydantic_ai_harness.agentcore_sandbox')
 
 
 def test_env_is_not_shown_in_repr() -> None:
@@ -69,6 +81,81 @@ def test_capability_attaches_to_its_own_reference() -> None:
     assert isinstance(backend, AgentCoreSandboxBackend)
     assert backend.ref == ref
     assert AgentCoreSandbox[None]().backend(ref).ref == ref
+
+
+async def test_backend_for_a_ref_attaches_with_the_capability_settings(fake_agentcore: FakeAgentCore) -> None:
+    started = AgentCoreSandboxBackend()
+    await started.working_dir()
+    assert started.ref is not None
+    work = fake_agentcore.home / 'work'
+    work.mkdir()
+    capability = AgentCoreSandbox[None](region_name='eu-central-1', working_dir=str(work), env={'GREETING': 'hello'})
+    backend = capability.backend(started.ref)
+    assert await backend.working_dir() == str(work)
+    assert (await backend.run(['sh', '-c', 'echo "$GREETING"'])).stdout == 'hello\n'
+    assert fake_agentcore.clients[-1]['region_name'] == 'eu-central-1'
+    assert len(fake_agentcore.sessions) == 1
+
+
+async def test_agent_runs_start_fresh_sessions_without_history(fake_agentcore: FakeAgentCore) -> None:
+    agent = Agent(TestModel(call_tools=['run_command']), capabilities=[AgentCoreSandbox()])
+
+    @agent.tool
+    async def run_command(ctx: RunContext[object]) -> str:
+        return (await ctx.workspace.run(['echo', 'ok'])).stdout
+
+    await agent.run('run')
+    await agent.run('run')
+    assert len(fake_agentcore.sessions) == 2
+
+
+async def test_a_session_with_lowered_authority_keeps_it_when_attached_again(fake_agentcore: FakeAgentCore) -> None:
+    capability = AgentCoreSandbox(authority='none', path_authority={'own': 'operator'})
+    agent = Agent(TestModel(call_tools=['authority_of']), capabilities=[capability])
+    seen: list[tuple[str, str]] = []
+
+    @agent.tool
+    async def authority_of(ctx: RunContext[object]) -> str:
+        await ctx.workspace.write_text('own/notes.md', 'mine')
+        seen.append((await ctx.workspace.authority_of('README.md'), await ctx.workspace.authority_of('own/notes.md')))
+        return 'ok'
+
+    first = await agent.run('go')
+    assert isinstance(first.workspace, AuthorityWorkspace)
+    await agent.run('go', workspace=first.workspace.ref)
+    assert seen == [('none', 'operator'), ('none', 'operator')]
+    assert len(fake_agentcore.sessions) == 1
+
+
+def test_agent_spec_schema_publishes_the_settings() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([AgentCoreSandbox])['$defs']
+    assert sorted(definitions['spec_params_AgentCoreSandbox']['properties']) == [
+        'authority',
+        'code_interpreter',
+        'defer_loading',
+        'description',
+        'env',
+        'id',
+        'path_authority',
+        'region_name',
+        'session_timeout',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_settings() -> None:
+    settings: dict[str, Any] = {
+        'id': 'sandbox',
+        'description': 'a sandbox',
+        'region_name': 'eu-central-1',
+        'code_interpreter': 'my-interpreter-abc',
+        'session_timeout': 3600,
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+        'authority': 'user',
+        'path_authority': {'/work/vendor': 'none'},
+    }
+    assert AgentCoreSandbox[None].from_spec(**settings) == AgentCoreSandbox[None](**settings)
 
 
 async def test_agent_without_workspace_use_starts_no_session(fake_agentcore: FakeAgentCore) -> None:
