@@ -195,6 +195,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_reasoning': False,
     'openai_supports_reasoning_effort_none': False,
     'openai_chat_function_tools_require_reasoning_off': False,
+    'openai_chat_function_tools_reject_explicit_reasoning': False,
     'openai_supports_minimal_reasoning_effort': True,
     'openai_responses_supports_reasoning_mode': False,
     'openai_responses_supports_reasoning_context': False,
@@ -484,6 +485,7 @@ def test_openai_gpt_5_4():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -561,6 +563,7 @@ def test_openai_gpt_5_6():
             'openai_chat_supports_allowed_tools': True,
             'openai_supports_batch_api': True,
             'may_tokenize_special_tokens_in_content': False,
+            'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -633,8 +636,7 @@ def test_openai_gpt_6_astra():
 def test_openai_gpt_6_sol_luna(model_name: str):
     """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots.
 
-    They match GPT-5.6 Sol, plus the GPT-6 `configuration_update` item that changes effort mid-conversation and the
-    flag for Chat Completions rejecting tools while reasoning is on.
+    They match GPT-5.6 Sol, plus the GPT-6 `configuration_update` item that changes effort mid-conversation.
     """
 
     profile = OpenAIProvider.model_profile(model_name)
@@ -643,7 +645,6 @@ def test_openai_gpt_6_sol_luna(model_name: str):
     assert _normalize(profile) == {
         **gpt_5_6,
         'supports_mid_conversation_effort': True,
-        'openai_chat_function_tools_require_reasoning_off': True,
     }
 
 
@@ -891,6 +892,7 @@ def test_openai_codex_gpt_5_6():
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
             'tool_deferral_mode': 'with_tool_search',
+            'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
     )

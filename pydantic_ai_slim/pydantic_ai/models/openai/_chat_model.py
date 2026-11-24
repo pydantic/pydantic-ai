@@ -553,11 +553,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # 400 pointing at `/v1/responses` or `reasoning_effort='none'`. `thinking=False` maps to `'none'` only where
         # the model accepts it; elsewhere it maps to the lowest effort, which the API rejects too. The error is the
         # category of that 400, so `FallbackModel` and `except ModelAPIError` handle it as they handle the 400.
-        if (
-            tools
-            and profile.get('openai_chat_function_tools_require_reasoning_off', False)
+        reject_tools_with_reasoning = (
+            profile.get('openai_chat_function_tools_require_reasoning_off', False)
             and reasoning_active(profile, model_settings, model_request_parameters)
-        ):
+        ) or (
+            profile.get('openai_chat_function_tools_reject_explicit_reasoning', False)
+            and self._translate_thinking(model_settings, model_request_parameters) not in (OMIT, 'none')
+        )
+        if tools and reject_tools_with_reasoning:
             remedy = ''
             if supports_reasoning_effort_none(profile):
                 # An explicit `openai_reasoning_effort` wins over `thinking`, so `thinking=False` alone wouldn't help.

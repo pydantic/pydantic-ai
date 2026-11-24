@@ -2815,6 +2815,107 @@ async def test_chat_completions_function_tools_unflagged_id_unaffected(allow_mod
     assert kwargs.get('reasoning_effort') == 'low'
 
 
+@pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra'])
+async def test_chat_completions_function_tools_gpt_5_6_requires_reasoning_off(
+    allow_model_requests: None, model_name: str
+) -> None:
+    """GPT-5.6 rejects function tools with default reasoning on, and allows them when disabled.
+
+    A unit test of the request shape: live, gpt-5.6-{sol,luna,terra} reject tools with default or `'low'` effort and
+    accept them with `reasoning_effort='none'`.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='done', role='assistant')))
+    m = OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    agent = Agent(m, tools=[echo])
+
+    with pytest.raises(ModelRequestRejectedError, match='thinking=False'):
+        await agent.run('echo')
+    assert get_mock_chat_completion_kwargs(mock_client) == []
+
+    result = await Agent(m, tools=[echo], capabilities=[Thinking(effort=False)]).run('echo')
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('reasoning_effort') == 'none'
+    assert kwargs.get('tools')
+
+
+async def test_chat_completions_function_tools_gpt_5_4_opt_in_reasoning(allow_model_requests: None) -> None:
+    """GPT-5.4 allows function tools at default (reasoning off) and rejects them when reasoning is enabled.
+
+    A unit test of the request shape: live, gpt-5.4 accepts tools with omitted effort or `'none'` and rejects `'low'`.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='done', role='assistant')))
+    m = OpenAIChatModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    agent = Agent(m, tools=[echo])
+
+    result = await agent.run('echo')
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('tools')
+    assert 'reasoning_effort' not in kwargs
+
+    with pytest.raises(ModelRequestRejectedError, match="openai_reasoning_effort='none'"):
+        await agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
+
+    with pytest.raises(ModelRequestRejectedError, match='thinking=False'):
+        await Agent(m, tools=[echo], capabilities=[Thinking(effort=True)]).run('echo')
+
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+
+    result_off = await Agent(m, tools=[echo], capabilities=[Thinking(effort=False)]).run('echo')
+    assert result_off.output == 'done'
+    assert get_mock_chat_completion_kwargs(mock_client)[1].get('reasoning_effort') == 'none'
+
+
+async def test_chat_completions_function_tools_gpt_5_5_explicit_effort_only(allow_model_requests: None) -> None:
+    """GPT-5.5 allows default tool requests without `reasoning_effort`, and rejects explicit non-`'none'` efforts.
+
+    A unit test of the request shape: live, gpt-5.5 accepts tools with omitted effort or `'none'` and rejects `'low'`.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='done', role='assistant')))
+    m = OpenAIChatModel('gpt-5.5', provider=OpenAIProvider(openai_client=mock_client))
+
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    agent = Agent(m, tools=[echo])
+
+    result = await agent.run('echo')
+    assert result.output == 'done'
+    assert 'reasoning_effort' not in get_mock_chat_completion_kwargs(mock_client)[0]
+
+    with pytest.raises(ModelRequestRejectedError, match="openai_reasoning_effort='none'"):
+        await agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
+
+    with pytest.raises(ModelRequestRejectedError, match='thinking=False'):
+        await Agent(m, tools=[echo], capabilities=[Thinking(effort=True)]).run('echo')
+
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+
+    result_off = await Agent(m, tools=[echo], capabilities=[Thinking(effort=False)]).run('echo')
+    assert result_off.output == 'done'
+    assert get_mock_chat_completion_kwargs(mock_client)[1].get('reasoning_effort') == 'none'
+
+    opt_out = OpenAIChatModel(
+        'gpt-5.5',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(openai_chat_function_tools_reject_explicit_reasoning=False),
+    )
+    opt_out_agent = Agent(opt_out, tools=[echo])
+
+    result_opt_out = await opt_out_agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
+    assert result_opt_out.output == 'done'
+    assert get_mock_chat_completion_kwargs(mock_client)[2].get('reasoning_effort') == 'low'
+
+
 async def test_chat_completions_function_tools_with_reasoning_provider_400_without_flag(
     allow_model_requests: None, openai_api_key: str
 ) -> None:
