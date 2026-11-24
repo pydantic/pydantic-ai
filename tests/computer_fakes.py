@@ -1,4 +1,4 @@
-"""A fake `computer` tool for testing model adapters without a screen. It behaves like Pydantic AI Harness's tool."""
+"""A fake `computer` tool for testing model adapters without a screen. It returns results in the shape Pydantic AI Harness's tool does."""
 
 from __future__ import annotations as _annotations
 
@@ -6,7 +6,7 @@ import struct
 import zlib
 from typing import Any
 
-from pydantic_ai import RunContext, Tool
+from pydantic_ai import Tool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.computer_use import COMPUTER_KIND, ComputerResult, ComputerToolAction, Screenshot, Wait
 from pydantic_ai.messages import BinaryImage, ToolReturn
@@ -38,23 +38,25 @@ _LOOKING = (Wait, Screenshot)
 
 
 class FakeComputer(AbstractCapability[Any]):
-    """A `computer` tool that records the actions it runs. On a read-only workspace an acting call fails, which gives tests a failed call.
+    """A `computer` tool that records the actions it runs.
 
+    With `fail_acting=True`, the first action that isn't a screenshot or a wait fails, which gives tests a failed call.
     With `native=True`, it also adds a `ComputerTool`, as `ComputerUse` does.
     """
 
-    def __init__(self, *, requires_approval: bool = False, native: bool = True) -> None:
+    def __init__(self, *, requires_approval: bool = False, native: bool = True, fail_acting: bool = False) -> None:
         self.native = native
+        self.fail_acting = fail_acting
         self.actions: list[ComputerToolAction] = []
         tool = Tool(self._computer, name='computer', tool_kind=COMPUTER_KIND, requires_approval=requires_approval)
         self._toolset = FunctionToolset[Any]([tool])
 
-    async def _computer(self, ctx: RunContext[Any], actions: list[ComputerToolAction]) -> ToolReturn:
+    async def _computer(self, actions: list[ComputerToolAction]) -> ToolReturn:
         result = ComputerResult(performed=0)
         for action in actions:
             if not isinstance(action, _LOOKING):
-                if ctx.workspace.read_only:
-                    result['error'] = 'This workspace is read-only.'
+                if self.fail_acting:
+                    result['error'] = 'The action failed.'
                     break
                 self.actions.append(action)
             result['performed'] += 1
