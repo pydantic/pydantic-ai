@@ -866,7 +866,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             placement: Where the content lands when it's delivered into a model request, as in
                 [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]: `'append'` (default) after what
                 the history already holds, or `'before_prompt'` right before the user prompt in the request
-                being sent, when it holds one, for data capability parts and user content.
+                being sent, when it holds one, for data capability parts only.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
@@ -875,7 +875,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
         Raises:
             UserError: If the run has ended, since there'd be nowhere to deliver the message, or if content
-                placed `'before_prompt'` is anything but data capability parts and user content.
+                placed `'before_prompt'` is anything but data capability parts.
         """
         pending = PendingMessage.from_content(*content, priority=priority, placement=placement)
         if pending is None:

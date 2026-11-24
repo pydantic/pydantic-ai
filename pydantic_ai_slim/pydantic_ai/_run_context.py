@@ -1077,9 +1077,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
                     being sent holds no user prompt, such as one carrying tool results, or the content
                     is delivered some other way (at the end of a run, when it pauses, or in a realtime
                     session), it lands as `'append'` would put it. Takes only
-                    [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] kinds and user content:
-                    instructions and system prompts keep `'append'`, since a model with sealed system
-                    blocks reads a request's own system prompts after the user's words.
+                    [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] kinds: instructions and
+                    system prompts keep `'append'`, since a model with sealed system blocks reads a
+                    request's own system prompts after the user's words, and so does plain user content,
+                    which ahead of the user's prompt would read as the user speaking.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
@@ -1090,7 +1091,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             UserError: If the run or realtime session has ended, or this `RunContext` isn't backed
                 by a running agent's queue (e.g. the synthetic context from
                 `Agent.system_prompt_parts`), since there'd be nowhere to deliver the message; or if
-                content placed `'before_prompt'` is anything but data capability parts and user content.
+                content placed `'before_prompt'` is anything but data capability parts.
         """
         if self.pending_messages is None:
             raise UserError(

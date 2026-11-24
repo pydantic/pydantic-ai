@@ -3388,7 +3388,7 @@ async def test_before_prompt_content_goes_into_the_prompt_request_in_enqueue_ord
     )
     nodes: list[_agent_graph.ModelRequestNode[Any, Any]] = []
     async with agent.iter('What now?') as run:
-        app_id = run.enqueue('The account is on the Team plan.', placement='before_prompt')
+        app_id = run.enqueue(_context('The account is on the Team plan.'), placement='before_prompt')
         async for node in run:
             if isinstance(node, _agent_graph.ModelRequestNode):
                 nodes.append(node)
@@ -3399,7 +3399,7 @@ async def test_before_prompt_content_goes_into_the_prompt_request_in_enqueue_ord
         [
             [
                 'SystemPromptPart:Be brief.',
-                'UserPromptPart:The account is on the Team plan.',
+                '_ContextPart:The account is on the Team plan.',
                 '_ContextPart:memory 1',
                 '_ContextPart:plan 1',
                 'UserPromptPart:What now?',
@@ -3454,13 +3454,20 @@ async def test_without_a_prompt_before_prompt_content_lands_as_append_would_put_
 @pytest.mark.parametrize(
     'content',
     [
+        pytest.param('Some text.', id='user-content'),
         pytest.param(SystemPromptPart('Be brief.'), id='system-prompt'),
         pytest.param(_NotePart(content='Be brief.', source=OperatorSource()), id='instruction-part'),
         pytest.param(ModelRequest(parts=[_context('context')]), id='complete-request'),
     ],
 )
-async def test_before_prompt_takes_only_data_and_user_content(content: SystemPromptPart | _NotePart | ModelRequest):
-    """Instructions and system prompts stay after the user's words, and a complete message can't go into a request."""
+async def test_before_prompt_takes_only_data_capability_parts(
+    content: str | SystemPromptPart | _NotePart | ModelRequest,
+):
+    """Only data capability parts go before the prompt.
+
+    Instructions and system prompts stay after the user's words, plain user text there would read as the user
+    speaking, and a complete message can't go into a request.
+    """
 
     agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])))
     async with agent.iter('What now?') as run:

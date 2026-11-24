@@ -73,7 +73,7 @@ PendingMessagePlacement: TypeAlias = Literal['append', 'before_prompt']
 - `'before_prompt'`: inside the request being sent, right before its
     [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], so context the model should read first comes before the
     user's question. When that request holds no user prompt, it lands as `'append'` would put it. Only for
-    [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] kinds and user content.
+    [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart] kinds.
 """
 
 QueueChangeMethod: TypeAlias = Literal['dequeue', 'set_enqueue_priority']
@@ -370,7 +370,7 @@ class PendingMessage:
             UserError: If the assembled messages don't end in a
                 [`ModelRequest`][pydantic_ai.messages.ModelRequest] — e.g. a lone `ModelResponse` —
                 since the agent needs a request to respond to, or if content placed `'before_prompt'`
-                is anything but data capability parts and user content.
+                is anything but data capability parts.
         """
         messages = _build_enqueue_messages(content)
         if not messages:
@@ -389,25 +389,25 @@ class PendingMessage:
 
 
 def _check_before_prompt(messages: Sequence[ModelMessage], *, complete_messages: bool) -> None:
-    """Raise unless `messages` is content that can go before the user's prompt: data and user content, as parts.
+    """Raise unless `messages` is content that can go before the user's prompt: data capability parts.
 
     Instructions and system prompts are left out: on a model with sealed system blocks, a request's own system
     prompts are sent after the user's words on purpose (`_system_prompts_after_user_words`), so they stay with
-    `'append'`.
+    `'append'`. So is plain user content, which ahead of the user's own prompt would read as the user speaking.
     """
     if complete_messages:
         raise UserError(
-            "`placement='before_prompt'` puts the content inside the request being sent, so enqueue parts or "
-            'user content, not a complete `ModelRequest` or `ModelResponse`.'
+            "`placement='before_prompt'` puts the content inside the request being sent, so enqueue "
+            '`DataCapabilityPart`s, not a complete `ModelRequest` or `ModelResponse`.'
         )
     for message in messages:
         assert isinstance(message, ModelRequest)  # Parts and user content always build one request.
         for part in message.parts:
-            if not isinstance(part, DataCapabilityPart | UserPromptPart):
+            if not isinstance(part, DataCapabilityPart):
                 raise UserError(
-                    "`placement='before_prompt'` is for context the model reads before the user's question: a "
-                    f'`DataCapabilityPart` or user content, not `{type(part).__name__}`. Instructions and system '
-                    "prompts keep the default `placement='append'`."
+                    "`placement='before_prompt'` is for data the model reads before the user's question: a "
+                    f'`DataCapabilityPart` kind, not `{type(part).__name__}`. Instructions, system prompts and '
+                    "user content keep the default `placement='append'`."
                 )
 
 
