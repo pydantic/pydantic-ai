@@ -1,5 +1,5 @@
 ---
-# Shared public CLAI 2 engine with repository workflow policy and Z.ai routing.
+# Shared public Pax engine with repository workflow policy and Z.ai routing.
 # Each workflow declares only engine.model. Keep identity and credentials here:
 # gh-aw validates root engine.env before registering imported engines.
 #
@@ -17,7 +17,8 @@
 # staged outside the checkout and selected through the public PAI_AGENT seam.
 #
 # Required repo variable:
-#   GH_AW_MODEL — unchanged model ID, prefixed with anthropic/ by each workflow.
+#   GH_AW_ZAI_MODEL — unchanged model ID, prefixed with anthropic/ by each workflow.
+# `.github/workflows/AGENTS.md` says why GH_AW_MODEL stays set.
 # Required secret:
 #   ZAI_API_KEY — primary Coding Plan API key injected by the AWF api-proxy.
 # Optional secret:
@@ -34,20 +35,22 @@ runtimes:
 # Pricing here measures API-equivalent usage, not Coding Plan quota or charges.
 max-ai-credits: -1
 models:
-  # USD per million tokens: https://docs.z.ai/guides/overview/pricing (2026-10-15).
+  # USD per million tokens. Z.ai published no GLM-5.4 API price as of 2026-11-23 (https://docs.z.ai/guides/llm/glm-5.4),
+  # so these are GLM-5.3's: https://docs.z.ai/guides/overview/pricing (2026-11-23). GLM-5.4 succeeds GLM-5.3,
+  # and the Coding Plan's credit multipliers rate it below GLM-5.3: https://docs.z.ai/devpack/overview.
   default-ai-credits-pricing:
-    input: 0.15
-    cache_read: 0.03
-    output: 0.50
+    input: 1.4
+    cache_read: 0.26
+    output: 4.4
   providers:
     anthropic:
       models:
-        glm-5.3-flash:
+        glm-5.4:
           # Provider overlays use USD per token for actual AWF credit accounting.
           cost:
-            input: 0.00000015
-            cache_read: 0.00000003
-            output: 0.00000050
+            input: 0.0000014
+            cache_read: 0.00000026
+            output: 0.0000044
 engine:
   id: pydantic-ai
   version: '0.70.0'

@@ -33,7 +33,9 @@ WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'protect-github-dir.yml'
 # pipes the canned payload through the real `jq` so the guard's own `--jq` expressions are
 # under test, not just the shell around them. It ignores `--paginate` and serves every
 # payload as one page: the guard's page-boundary behaviour is GitHub's to get right, while
-# the truncation case that IS the guard's problem is driven through FAKE_TOTAL_FILES.
+# the truncation case that IS the guard's problem is driven through FAKE_TOTAL_FILES. Real
+# `gh` filters with its built-in jq, so the stub calls jq by absolute path, REAL_JQ: a
+# stand-in `jq` on PATH then breaks only the guard's own pipeline.
 FAKE_GH = """#!/usr/bin/env python3
 import os
 import subprocess
@@ -44,7 +46,7 @@ args = sys.argv[1:]
 
 def jq(payload):
     expr = args[args.index('--jq') + 1]
-    result = subprocess.run(['jq', '-r', expr], input=payload, capture_output=True, text=True)
+    result = subprocess.run([os.environ['REAL_JQ'], '-r', expr], input=payload, capture_output=True, text=True)
     sys.stdout.write(result.stdout)
     sys.stderr.write(result.stderr)
     sys.exit(result.returncode)
@@ -170,8 +172,11 @@ CASES: list[Case] = [
 ]
 
 
-def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], Path]:
-    """Execute the guard's `run:` block for one case; return the result and the comment path."""
+def _run_guard(case: Case, tmp_path: Path, jq: str | None = None) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Execute the guard's `run:` block for one case; return the result and the comment path.
+
+    `jq`, when given, is the shell body of a stand-in for the `jq` the guard's own pipeline runs.
+    """
     script = tmp_path / 'guard.sh'
     script.write_text(_workflow()['jobs']['guard']['steps'][0]['run'], encoding='utf-8')
 
@@ -180,7 +185,13 @@ def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[
     gh = bin_dir / 'gh'
     gh.write_text(FAKE_GH, encoding='utf-8')
     gh.chmod(0o755)
+    if jq is not None:
+        stand_in = bin_dir / 'jq'
+        stand_in.write_text(f'#!/bin/sh\n{jq}\n', encoding='utf-8')
+        stand_in.chmod(0o755)
 
+    real_jq = shutil.which('jq')
+    assert real_jq is not None
     comment = tmp_path / 'comment.md'
     total_files = len(case.files) if case.total_files is None else case.total_files
     result = subprocess.run(
@@ -201,6 +212,7 @@ def _run_guard(case: Case, tmp_path: Path) -> tuple[subprocess.CompletedProcess[
             'FAKE_PERMISSION': case.permission,
             'FAKE_TOTAL_FILES': str(total_files),
             'FAKE_COMMENT_OUT': str(comment),
+            'REAL_JQ': real_jq,
         },
     )
     return result, comment
@@ -242,6 +254,25 @@ def test_a_hostile_filename_cannot_reach_the_shell(tmp_path: Path):
     assert not (tmp_path / 'pwned-sub').exists()
     assert not (tmp_path / 'pwned-tick').exists()
     assert hostile in comment.read_text(encoding='utf-8')
+
+
+@pytest.mark.skipif(shutil.which('jq') is None, reason='the gh stub filters payloads with jq')
+@pytest.mark.parametrize(
+    'jq',
+    [
+        pytest.param('exit 127', id='jq-missing'),
+        # Stops after the unrelated file, before the `.github/` one.
+        pytest.param("echo docs/agents.md; echo 'jq: error' >&2; exit 5", id='jq-failing-part-way'),
+    ],
+)
+def test_a_jq_failure_fails_the_guard(jq: str, tmp_path: Path):
+    """An empty or partial path list must never read as "nothing under `.github/` changed"."""
+    case = Case(id='jq-failure', files=PROTECTED, blocked=True, comments=False)
+    result, comment = _run_guard(case, tmp_path, jq=jq)
+
+    assert result.returncode != 0, f'stdout:\n{result.stdout}\nstderr:\n{result.stderr}'
+    assert 'No files under .github/ changed.' not in result.stdout
+    assert not comment.exists()
 
 
 def test_the_guard_never_checks_out_pull_request_code():

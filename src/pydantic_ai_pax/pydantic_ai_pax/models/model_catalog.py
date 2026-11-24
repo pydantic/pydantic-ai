@@ -61,9 +61,9 @@ def check_installed(name: str) -> None:
     try:
         infer_provider_class(provider)
     except ValueError:
-        return  # Not a core provider, like CLAI's own `vllm:`; the turn resolves or reports it.
+        return  # Not a core provider, like Pax's own `vllm:`; the turn resolves or reports it.
     except ImportError as exc:
-        where = f'the Python CLAI2 runs on ({sys.executable})'
+        where = f'the Python Pax runs on ({sys.executable})'
         if provider not in (metadata('pydantic-ai-pax').get_all('Provides-Extra') or ()):
             raise ValueError(f'Cannot use {name} with {where}: {exc}') from exc
         raise ValueError(

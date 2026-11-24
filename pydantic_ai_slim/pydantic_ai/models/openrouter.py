@@ -775,7 +775,8 @@ def _openrouter_settings_to_openai_settings(
     # `merge_model_settings` can return the model's own `settings` by identity, so popping in place
     # would drop the keys on the next request.
     model_settings = model_settings.copy()
-    extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
+    configured = model_settings.get('extra_body')
+    extra_body: dict[str, object] = {} if configured is None else dict(cast(dict[str, object], configured))
 
     if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models

@@ -170,6 +170,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     Gemini API rejects it for that model ("Budget 0 is invalid. This model only works in thinking mode.").
     """
 
+    google_minimal_thinking_budget: int
+    """The `thinking_budget` that unified `thinking='minimal'` sends on a model that takes `thinking_budget`.
+    Default: `128`, the smallest budget Gemini 2.5 Pro accepts.
+
+    `GoogleModel` sets 512 for `gemini-2.5-flash-lite` on the Gemini API, which rejects budgets below 512 there.
+    See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
+    """
+
     google_thinking_levels: frozenset[GoogleThinkingLevel]
     """Thinking levels the model supports, from Google's per-model thinking table. Default: unset.
 
@@ -199,6 +207,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     Gemini 3+ bills each unique search query. This decides the `web_searches` count on
     [`RequestUsage`][pydantic_ai.usage.RequestUsage].
     See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
+    """
+
+    google_supports_penalties: bool
+    """Whether the model accepts `presence_penalty` and `frequency_penalty`. Default: `True`.
+
+    The Gemini API rejects them for every model, so `GoogleModel` turns this off when its client talks to the Gemini
+    API. On Google Cloud (Vertex AI), Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models
+    reject them with a 400.
     """
 
     google_supports_batch_api: bool
@@ -253,6 +269,21 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
     ('gemini-3.8-live-extended-thinking', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
 )
 """Live model name prefixes mapped to the thinking levels they accept."""
+
+
+_GOOGLE_CLOUD_PENALTY_REJECTING_MODELS = ('gemini-3.5-flash-lite', 'gemini-3.6', 'gemini-3.7', 'gemini-3.8', 'gemini-4')
+"""The models Google Cloud rejects `presence_penalty` and `frequency_penalty` for (verified live 2026-11-04).
+
+They answer `Penalty is not enabled for this model`, as do the Gemini 3 image models. The Gemini API answers that for
+every model. Other models, including ones this doesn't recognize, like a tuned model's endpoint, keep sending them.
+"""
+
+
+def _google_cloud_supports_penalties(model_name: str) -> bool:
+    """Whether Google Cloud accepts penalties for the model; apart from `google_model_profile` to keep it simple enough."""
+    if model_name.startswith(_GOOGLE_CLOUD_PENALTY_REJECTING_MODELS):
+        return False
+    return not ('image' in model_name and model_name.startswith('gemini-3'))
 
 
 _GEMINI_IMAGE_MEDIA_TYPES = KNOWN_IMAGE_MEDIA_TYPES | {'image/heic', 'image/heif', 'image/avif', 'image/bmp'}
@@ -337,6 +368,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
         google_web_search_billed_per_prompt=is_older_gemini,
+        google_supports_penalties=_google_cloud_supports_penalties(model_name),
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels

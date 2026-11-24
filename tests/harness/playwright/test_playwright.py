@@ -3493,6 +3493,71 @@ class TestPlaywrightBrowserLifecycle:
         for text in kept:
             assert text in rendered
 
+    # Messages as Playwright 1.65 words a rejected WebSocket handshake: the URL without
+    # its query, the status, then the response body, once in the message and again in
+    # the call log. A server that repeats the credential it rejected puts it in the body.
+    @pytest.mark.parametrize(
+        ('endpoint', 'message', 'kept'),
+        [
+            pytest.param(
+                'ws://127.0.0.1:9222/devtools/browser?token=SUPERSECRET',
+                'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token SUPERSECRET"}\n'
+                'Call log:\n'
+                '  - <ws connecting> ws://127.0.0.1:9222/devtools/browser\n'
+                '  - <ws unexpected response> ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token SUPERSECRET"}\n',
+                ('401 Unauthorized', '"error": "invalid token REDACTED"', 'ws://127.0.0.1:9222'),
+                id='query-value',
+            ),
+            pytest.param(
+                'ws://127.0.0.1:9222/devtools/browser?token=SUPER%20SECRET%2F1',
+                'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token SUPER+SECRET%2F1"}\n'
+                'Call log:\n'
+                '  - <ws unexpected response> ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token SUPER SECRET/1"}\n',
+                ('"error": "invalid token REDACTED"',),
+                id='percent-encoded-query-value',
+            ),
+            pytest.param(
+                'ws://user:SUPERSECRET@127.0.0.1:9222/devtools/browser',
+                'BrowserType.connect_over_cdp: WebSocket error: '
+                'ws://user:SUPERSECRET@127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid password SUPERSECRET"}\n'
+                'Call log:\n'
+                '  - <ws connecting> ws://user:SUPERSECRET@127.0.0.1:9222/devtools/browser\n',
+                ('"error": "invalid password REDACTED"', 'ws://127.0.0.1:9222'),
+                id='userinfo-password',
+            ),
+            pytest.param(
+                'ws://127.0.0.1:9222/devtools/browser?browser=chromium&x-api-key=SUPERSECRET',
+                'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid x-api-key SUPERSECRET for chromium"}\n',
+                ('"error": "invalid x-api-key REDACTED for REDACTED"',),
+                id='any-parameter-name',
+            ),
+            pytest.param(
+                'ws://127.0.0.1:9222/devtools/browser?headless=true&profile=default&token=MYSECRET',
+                'BrowserType.connect_over_cdp: WebSocket error: ws://127.0.0.1:9222/devtools/browser 401 Unauthorized\n'
+                '{"error": "invalid token MYSECRET", "headless": true, "profile": "default"}\n',
+                ('"headless": true', '"profile": "default"', '"error": "invalid token REDACTED"'),
+                id='values-under-eight-characters-kept',
+            ),
+        ],
+    )
+    async def test_attach_failure_redacts_endpoint_credentials_the_server_repeats(
+        self, monkeypatch: pytest.MonkeyPatch, endpoint: str, message: str, kept: tuple[str, ...]
+    ) -> None:
+        page = _FakePage()
+        _install_fake_driver(monkeypatch, page, launch_error=PlaywrightError(message))
+        agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[PlaywrightBrowser(cdp_url=endpoint)])
+        result = await agent.run('screenshot the page')
+        rendered = str(result.all_messages())
+        assert 'SECRET' not in rendered
+        for text in kept:
+            assert text in rendered
+
     async def test_attach_failure_redacts_an_endpoint_without_a_scheme_or_port(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

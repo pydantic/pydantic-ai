@@ -397,7 +397,7 @@ async def test_entering_a_key_asks_before_replacing_it(
 
 async def test_key_deleted_while_choosing(tmp_path: Path, vault: Vault) -> None:
     class Deleting(ScriptedDialogs):
-        """Another CLAI deletes the key just as it is picked."""
+        """Another Pax deletes the key just as it is picked."""
 
         async def choose(
             self, *, title: str, options: Sequence[Option], current: str | None = None, description: str = ''

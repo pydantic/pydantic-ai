@@ -51,6 +51,10 @@ agent = Agent(model)
 
     The same guide also recommends re-evaluating `max_tokens` and any token-count assumptions when migrating from Opus 4.6, since Opus 4.7 introduced updated tokenization (carried into 4.8). If you rely on `count_tokens()` or `count_tokens_before_request`, verify your thresholds against the new model.
 
+## Sampling settings
+
+The Claude models that aren't covered by the migration note above take `temperature`, `top_p` and `top_k`, with two limits Pydantic AI applies silently instead of sending a request Anthropic rejects: while the model thinks, `temperature` other than `1`, `top_p` below `0.95` and `top_k` are dropped, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`.
+
 ## `provider` argument
 
 You can provide a custom `Provider` via the `provider` argument:

@@ -46,6 +46,12 @@ _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
 _CANCELLED = 'sign-in cancelled.'
 """How a cancelled Codex sign-in's message ends; `login_command` adds no models after one."""
+_NOT_CONNECTED = (
+    f'Codex is not connected. Run /login {CODEX} to sign in with ChatGPT, /login to see every other sign-in '
+    f'(such as {github_copilot.ACCOUNT}), or /model add to use another provider with an API key '
+    '(saved with /keys or set in its environment variable).'
+)
+"""Where a first run lands on the default Codex model: every way in, so none is forced."""
 
 ReadLine = Callable[[str], Awaitable[str | None]]
 """Read one line after showing a prompt; `None` when the user cancels."""
@@ -61,7 +67,7 @@ async def login_command(
     dialogs: Dialogs | None = None,
     select_default: Callable[[str], bool] = lambda model: False,
 ) -> str:
-    """`/login NAME[@PROFILE]` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` asks which.
+    """`/login NAME[@PROFILE]` signs in to Pax's subscriptions or one a plugin adds; bare `/login` asks which.
 
     `@PROFILE` signs in another account, used by models named `PROVIDER@PROFILE:MODEL`. Providers that
     take an API key or a connection (`openrouter`, `vllm`, `openai`, ...) sign in to a profile too.
@@ -71,7 +77,7 @@ async def login_command(
     `dialogs` asks wherever a menu was opened, such as the web UI: subscriptions wait on their waiting
     screen and API keys come from `/keys`;
     connections and plugin sign-ins, which ask in the terminal, raise `ValueError` saying so.
-    Without them, where CLAI has no terminal, Codex waits on `remote_dialogs`' screen and a plugin's
+    Without them, where Pax has no terminal, Codex waits on `remote_dialogs`' screen and a plugin's
     handler asks there through `line_input.read_line`.
     """
     plugins = plugins or {}
@@ -236,7 +242,9 @@ class CodexCredentials(OpenAICodexCredentialSource):
             partial(load_codex_credentials, account=self.account), abandon_on_cancel=True
         )
         if value is None:
-            raise UserError(f'Codex is not connected. Run /login {self.account}.')
+            if self.account != CODEX:
+                raise UserError(f'Codex is not connected. Run /login {self.account}.')
+            raise UserError(_NOT_CONNECTED)
         try:
             return _CREDENTIALS.validate_json(value)
         except ValidationError:
@@ -378,7 +386,7 @@ class CodexAuth:
     async def _receive(self, flow: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
         """Race the localhost callback against a pasted redirect; the first to succeed wins.
 
-        A listener that cannot bind its port (another login, or a second CLAI) loses the race
+        A listener that cannot bind its port (another login, or a second Pax) loses the race
         instead of ending it: the paste path exists for exactly that case. Anything else the
         callback reports, such as a denial in the browser, is a real outcome and ends the login.
         """

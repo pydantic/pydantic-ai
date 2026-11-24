@@ -27,6 +27,7 @@ from pydantic_ai import (
     ModelServerError,
     ModelSettingsDeltaPart,
     ModelTimeoutError,
+    NativeOutput,
     PartEndEvent,
     PartStartEvent,
     RunContext,
@@ -2579,6 +2580,28 @@ async def test_openrouter_structured_output_mode_follows_whether_forcing_stops_t
         assert 'tools' not in kwargs
     else:
         assert kwargs['tool_choice'] == 'required'
+
+
+@pytest.mark.parametrize('model_name', ['moonshotai/kimi-k3', 'moonshotai/kimi-k3.1-pro'])
+async def test_openrouter_kimi_native_output(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture, model_name: str
+) -> None:
+    """Kimi K3 and K3.1 Pro take `NativeOutput` through OpenRouter: the request carries a `json_schema` response
+    format, and the reply validates against it."""
+
+    class Person(BaseModel):
+        name: str
+        role: Literal['architect', 'engineer', 'planner']
+
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    agent = Agent(OpenRouterModel(model_name, provider=provider), output_type=NativeOutput(Person, strict=True))
+
+    result = await agent.run('Dana Reyes is a structural engineer.')
+
+    assert result.output == snapshot(Person(name='Dana Reyes', role='engineer'))
+    response_format = request_capture.body()['response_format']
+    assert isinstance(response_format, dict)
+    assert response_format['type'] == 'json_schema'
 
 
 async def test_openrouter_advisor_tool(allow_model_requests: None, openrouter_api_key: str) -> None:

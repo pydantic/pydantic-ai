@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -47,6 +46,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._smolvm_cli import NAME as _NAME, NAME_PREFIX as _NAME_PREFIX
 from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
     absolute_path,
@@ -73,16 +73,6 @@ except ImportError as _import_error:
 logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
-
-_NAME_PREFIX = 'pydantic-ai-'
-_NAME = re.compile(rf'{_NAME_PREFIX}[0-9a-f]{{32}}')
-"""The names the backend gives its VMs, and so the only refs it attaches to or deletes.
-
-A local VM's id is its name and `connect` opens any VM of this OS user, so without this check a ref
-from message history could reach a VM made by another tool, with host mounts or network. The name is
-a namespace, not proof of origin: any process of this OS user could use it, and smolmachines can't report
-an existing VM's mounts or network, so a ref is still trusted input.
-"""
 
 _SETUP_TIMEOUT = 60.0
 """Seconds the backend's own commands in the VM (`mkdir -p` and `pwd -P`) get."""
@@ -228,7 +218,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
     touch the host's files or processes. File operations run as shell commands in the VM (see
-    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
+    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)),
     so a custom image needs `/bin/sh` and the usual file utilities.
 
     Building one does no I/O. The first operation boots a new persistent VM, or attaches to the one

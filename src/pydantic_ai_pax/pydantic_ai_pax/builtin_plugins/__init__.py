@@ -1,1 +1,1 @@
-"""Built-in CLAI plugin implementations. Plugin IDs remain unchanged."""
+"""Built-in Pax plugin implementations. Plugin IDs remain unchanged."""

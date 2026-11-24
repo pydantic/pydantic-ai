@@ -108,6 +108,7 @@ from .. import (
     download_item,
 )
 from .._anthropic_max_tokens import cap_max_tokens
+from .._anthropic_sampling import drop_conflicting_sampling_settings
 from .._anthropic_schema_limits import default_output_mode_within_limits, limit_exceeded_error, model_exceeded_limit
 from .._decode_errors import check_json_response, map_decode_errors
 from .._history_digest import history_hasher
@@ -384,6 +385,11 @@ _BATCH_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# Anthropic's deprecation dates apply to the platforms it operates, including Microsoft Foundry, Claude Platform on AWS
+# and Claude Models on Google Cloud (Anthropic managed, `AsyncAnthropicGoogleCloud`). Amazon Bedrock and Claude Models
+# on Google Cloud (Google managed, Vertex AI's `AsyncAnthropicVertex`) set their own:
+# https://platform.claude.com/docs/en/about-claude/model-deprecations#overview
+_OWN_DEPRECATION_SCHEDULE_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle, AsyncAnthropicVertex)
 # `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
 # `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
 # the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
@@ -1093,8 +1099,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         `rejects_unpaired_tool_calls` is on for `AsyncAnthropic` clients and off for the Bedrock, Bedrock Mantle,
         Vertex AI and Foundry clients, which aren't verified to reject an unpaired tool call, unless the provider's
         profile already sets it.
+
+        `deprecation` is dropped for the Bedrock, Bedrock Mantle and Vertex AI clients, whose platforms retire Claude
+        models on their own schedules.
         """
         client = self._provider.client
+        if 'deprecation' in profile and isinstance(client, _OWN_DEPRECATION_SCHEDULE_CLIENTS):
+            profile = merge_profile(profile, AnthropicModelProfile(deprecation=None))
         profile = merge_profile(
             profile,
             AnthropicModelProfile(
@@ -1448,16 +1459,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             raise limit_exceeded_error(exceeded, self.model_name)
         if not extends_max_output(self._request_betas(cast(AnthropicModelSettings, prepared_settings or {}))):
             prepared_settings = cap_max_tokens(prepared_settings, profile.get('anthropic_max_output_tokens'))
-        if profile.get('anthropic_disallows_sampling_settings', False) and prepared_settings:
-            filtered: ModelSettings = {**prepared_settings}
-            self._drop_unsupported_sampling_settings(filtered)
-            prepared_settings = filtered or None
+        if prepared_settings:
+            prepared_settings = self._drop_rejected_sampling_settings(prepared_settings, model_request_parameters)
         # Explicit `anthropic_cache*` settings take precedence over the unified `cache` setting.
         if (cache := model_request_parameters.cache) and not any(
             key in (prepared_settings or {}) for key in _CACHE_SETTINGS_KEYS
         ):
             prepared_settings = self._translate_cache(cast(AnthropicModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
+
+    def _drop_rejected_sampling_settings(
+        self, model_settings: ModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelSettings | None:
+        """Drop the sampling settings the model rejects alone or with the rest of the request."""
+        profile = self.profile
+        if profile.get('anthropic_disallows_sampling_settings', False):
+            filtered: ModelSettings = {**model_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            return filtered or None
+        thinking = request_thinking_type(profile, model_settings, model_request_parameters) is not None
+        return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}

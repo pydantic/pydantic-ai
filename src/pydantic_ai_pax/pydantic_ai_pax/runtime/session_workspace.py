@@ -3,7 +3,7 @@
 The terminal shell stays in the directory it started in. Under `pax --web`, a session that moves
 records its new directory as its workspace, then loads its plugins again there: the coding tools,
 `repo_context`, skills, and MCP project files read it through `PluginHost.workspace`. The process's
-working directory stays where CLAI started, as other live sessions work in other directories.
+working directory stays where Pax started, as other live sessions work in other directories.
 """
 
 from collections.abc import Callable
@@ -35,7 +35,7 @@ def workspace_directory(path: str) -> Path:
 
 @dataclass(kw_only=True)
 class SessionWorkspace:
-    """Moves `pax --web`'s live session into another directory, as if CLAI had started there.
+    """Moves `pax --web`'s live session into another directory, as if Pax had started there.
 
     Never while a turn, a background fork, or a delegated task runs: their tools still use the plugins loaded now.
     """
@@ -45,7 +45,7 @@ class SessionWorkspace:
     loader: SessionPlugins[None]
     status: Status
     settings: Callable[[ProjectSettings], Settings]
-    """The settings CLAI starts with beside a project file: saved ones, then the project's, then launch flags."""
+    """The settings Pax starts with beside a project file: saved ones, then the project's, then launch flags."""
     busy: Callable[[], bool] = lambda: False
     """Whether a background fork or a delegated task runs."""
 

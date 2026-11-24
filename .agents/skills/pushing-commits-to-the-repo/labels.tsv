@@ -1,4 +1,5 @@
 Stale
+agentic-workflows
 approved:ci-config	Maintainer approval for changes to CI config (workflows, actions, scripts, pre-commit, Makefile)
 approved:dependencies	Maintainer approval for changes to pyproject.toml or uv.lock
 area:absurd	Absurd durable execution integration (`AbsurdDurability`).
@@ -60,6 +61,7 @@ cluster:concise-docs	Trim harness docs pages and Ruff-format their code and diag
 cluster:extra-headers	Header-name handling in extra_headers (user-agent, anthropic-beta)
 cluster:gh-aw	Work stream: gh-aw agentic workflows on the public pydantic-ai engine
 cluster:thinking-profiles	Work stream: model profiles that turn thinking on for model families and gateway routes
+cluster:tool-search	Replaying tool-search calls and results in message history
 cluster:voice-authority	Work stream: voice and authority of model-visible text across frames and untrusted channels
 community contribution
 community snippets

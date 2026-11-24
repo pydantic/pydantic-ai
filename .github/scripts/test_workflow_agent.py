@@ -1,4 +1,4 @@
-"""Exercise repository policy through the agent and CLAI's headless entry point."""
+"""Exercise repository policy through the agent and Pax's headless entry point."""
 
 import asyncio
 import json
@@ -757,7 +757,7 @@ async def test_cancelled_delegate_preserves_usage(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.parametrize('summary_fails', [False, True])
 async def test_compaction_retains_the_exact_workflow_task(monkeypatch: pytest.MonkeyPatch, summary_fails: bool) -> None:
-    """Neither a summary nor its failure can erase CLAI's original task."""
+    """Neither a summary nor its failure can erase Pax's original task."""
     monkeypatch.setattr(cli, 'COMPACTION_TRIGGER_CHARS', 1)
     task = ModelRequest(parts=[UserPromptPart('Required verdict, target and safe-output constraints')])
     messages: list[ModelMessage] = [task, *[ModelResponse(parts=[TextPart('Evidence ' * 100)]) for _ in range(20)]]

@@ -18,7 +18,7 @@ from pydantic_ai_pax.ui.stderr_relay import terminal_stderr
 
 @dataclass(frozen=True, kw_only=True)
 class Worktree:
-    """The linked checkout CLAI starts in, as it was at launch."""
+    """The linked checkout Pax starts in, as it was at launch."""
 
     path: Path
     branch: str

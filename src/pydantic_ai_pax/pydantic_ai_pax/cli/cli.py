@@ -66,7 +66,7 @@ def _unique_prefixes(identifiers: set[str]) -> dict[str, str]:
 
 def run(*, splash: Splash | None = None) -> None:
     """Parse explicit overrides without replacing persisted preferences."""
-    parser = argparse.ArgumentParser(description='CLAI 2.0: streaming Pydantic AI terminal')
+    parser = argparse.ArgumentParser(description='Pax: streaming Pydantic AI terminal')
     _add_resume_flags(parser)
     parser.add_argument(
         '--session-id',
@@ -104,7 +104,7 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '--web',
         action='store_true',
-        help='Drive CLAI from a local web UI instead of the terminal prompt; prints the address and opens it',
+        help='Drive Pax from a local web UI instead of the terminal prompt; prints the address and opens it',
     )
     parser.add_argument(
         '--port',
@@ -124,7 +124,7 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument(
         '--update',
         action='store_true',
-        help='Install the newest CLAI from the updates.channel setting with uv, then exit',
+        help='Install the newest Pax from the updates.channel setting with uv, then exit',
     )
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
@@ -257,7 +257,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
 
 
 def _resolve_paths(args: argparse.Namespace) -> None:
-    """Resolve `--database` and `--token-file` against the directory CLAI was launched in."""
+    """Resolve `--database` and `--token-file` against the directory Pax was launched in."""
     if args.database is not None:
         # Before `--worktree` changes directory, so a restart after `/update` reopens the same database.
         args.database = args.database.resolve()
@@ -312,7 +312,7 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
 
 
 async def _update(channel: 'UpdateChannel') -> int:
-    """`pax --update`: install the newest CLAI on `channel` as `/update now` does, print how it went, and exit.
+    """`pax --update`: install the newest Pax on `channel` as `/update now` does, print how it went, and exit.
 
     No shell runs, so nothing restarts: the next `pax` is the new build. Exits 1 when uv failed or is missing,
     or other `pax` processes run from the install.
@@ -335,7 +335,7 @@ async def _update(channel: 'UpdateChannel') -> int:
     try:
         print(await updates.command([]))
     except (httpx.HTTPError, ValueError) as exc:  # Offline, rate-limited, or an unexpected release listing.
-        print(f'Could not check for a newer CLAI: {exc}', file=sys.stderr)
+        print(f'Could not check for a newer Pax: {exc}', file=sys.stderr)
         return 1
     return 1 if updates.failed else 0
 
@@ -348,7 +348,7 @@ def _settings_for(
     agent: bool = False,
     agent_model: bool = False,
 ) -> 'Callable[[ProjectSettings], Settings]':
-    """The settings CLAI starts with beside a project file: saved ones, then the project's, then the launch flags.
+    """The settings Pax starts with beside a project file: saved ones, then the project's, then the launch flags.
 
     With `agent`, launched with `--agent`: code mode off. With `agent_model`, no model: the agent's own one is used.
     """
@@ -392,7 +392,7 @@ def _enter_worktree(*, name: str, headless: bool, store: 'SettingsStore') -> 'Wo
 
 
 def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
-    """The linked checkout CLAI starts inside, restoring the first launch's snapshot after `/update`."""
+    """The linked checkout Pax starts inside, restoring the first launch's snapshot after `/update`."""
     from pydantic_ai_pax.runtime.worktrees import current_worktree
 
     worktree = current_worktree()

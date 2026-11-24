@@ -94,9 +94,12 @@ jobs:
           fi
 
           # `previous_filename` catches a rename *out of* `.github/`, which changes the
-          # directory just as much as an edit in place.
-          PROTECTED_FILES=$(printf '%s\n' "$PR_FILES" \
-            | jq -r '.filename, (.previous_filename // empty)' | grep '^\.github/' | sort -u) || true
+          # directory just as much as an edit in place. `jq` gets its own assignment so that
+          # `set -e` fails the guard when it errors or is missing: behind the `|| true`, an empty
+          # or partial list would read as "No files under .github/ changed." The `|| true` stays
+          # on the grep pipeline, where grep exits 1 when nothing matches.
+          CHANGED_PATHS=$(printf '%s\n' "$PR_FILES" | jq -r '.filename, (.previous_filename // empty)')
+          PROTECTED_FILES=$(printf '%s\n' "$CHANGED_PATHS" | grep '^\.github/' | sort -u) || true
 
           if [ -z "$PROTECTED_FILES" ]; then
             echo "No files under .github/ changed."

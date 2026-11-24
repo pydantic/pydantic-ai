@@ -622,7 +622,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_supports_input_token_counting: bool
     """Whether the provider exposes server-side input-token counting (`responses/input_tokens`). Default: `True`.
 
-    When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
+    When `False`, `count_tokens()` raises a `UserError` that is also a `NotImplementedError` instead of calling a
+    missing endpoint.
     """
 
     openai_supports_batch_api: bool
@@ -766,6 +767,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_system_messages': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
+        # The agent's instructions are the backend's; the voice model's own prompt can be added to mid-session.
+        'supports_appending_voice_instructions': True,
         # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
         'supports_webrtc': True,
         # Speech and delegated work run independently: the Live model can keep the conversation going

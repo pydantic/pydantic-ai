@@ -972,6 +972,21 @@ def test_publisher_engine_attribution_preserves_the_gate(engine: publish_douwebo
     assert verdicts(ReviewGitHub(current_reviews=[review(body=json.loads(legacy)['body'])]))['douwebot'].failures
 
 
+@pytest.mark.parametrize(
+    ('engine', 'attribution'),
+    [(engine, text) for engine, texts in publish_douwebot_review.EARLIER_REVIEW_ATTRIBUTIONS.items() for text in texts],
+)
+def test_gate_reads_the_attribution_of_an_engine_earlier_model(
+    engine: publish_douwebot_review.ReviewEngine, attribution: str
+):
+    """A clean approval an engine published on its earlier model stays clean on its head."""
+    result = ReviewResult(verdict='APPROVE', comments=[], discussion='')
+    current = json.loads(publication(result, HEAD, 20, engine=engine))['body']
+    earlier = current.replace(publish_douwebot_review.REVIEW_ENGINES[engine], attribution)
+    assert earlier != current
+    assert not verdicts(ReviewGitHub(current_reviews=[review(body=earlier)]))['douwebot'].failures
+
+
 @pytest.mark.parametrize('state', ['open', 'moved', 'closed'])
 def test_publisher_checks_live_head_before_publication(monkeypatch: pytest.MonkeyPatch, state: str):
     for key, value in {

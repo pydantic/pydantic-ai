@@ -18,6 +18,7 @@ from pydantic_ai.profiles.openai import (
     openai_realtime_model_profile,
 )
 from pydantic_ai.providers import missing_api_key_error
+from pydantic_ai.providers._model_deprecations import OPENAI_MODEL_DEPRECATIONS
 
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
@@ -182,6 +183,10 @@ class OpenAIProvider(_OpenAISDKProvider):
                 rejects_unpaired_tool_calls=True,
             ),
             special_token_route_profile('openai', model_name),
+            # The OpenAI models drop it for an Azure OpenAI client, as Azure retires models on its own schedule.
+            OpenAIModelProfile()
+            if (deprecation := OPENAI_MODEL_DEPRECATIONS.get(model_name)) is None
+            else OpenAIModelProfile(deprecation=deprecation),
         )
 
     @staticmethod

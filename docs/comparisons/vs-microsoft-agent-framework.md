@@ -14,7 +14,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Extensibility | Tools, middleware, context providers | [Capabilities and toolsets](../extensibility.md); [100+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | `create_harness_agent`, or build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
-| Enterprise support | With a [Microsoft Unified support agreement](https://github.com/microsoft/agent-framework/blob/main/SUPPORT.md), when used with Azure AI services | [For the framework itself](../enterprise-support.md), no platform required |
+| Enterprise support | With a Microsoft Unified support agreement, when used with Azure AI services | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | Yes | [Nine integrations](../durable_execution/overview.md) |
 | Interfaces | DevUI (sample app), AG-UI, A2A | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
@@ -31,7 +31,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes (beta) | [Execution environments](https://pydantic.dev/docs/ai/harness/#execution-environments) |
+| Code sandboxes | Yes (beta) | [Workspaces](../workspace.md#supported-workspaces) |
 | Browser use | Computer-use tools; you run the browser | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
 
 ## FAQ
@@ -53,4 +53,3 @@ nothing requires an Action.
 ## Sources
 
 - [Microsoft Agent Framework documentation](https://learn.microsoft.com/en-us/agent-framework/overview/)
-- [Microsoft Agent Framework repository](https://github.com/microsoft/agent-framework)

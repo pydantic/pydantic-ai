@@ -78,6 +78,8 @@ async def read(self, *args, **kwargs):
     assert 'pydantic_ai_pax.mcp' in sys.modules and 'pydantic_ai_pax.builtin_plugins.logfire' in sys.modules
     for name in ('fastmcp', 'mcp', 'pydantic_ai.mcp'):
         assert name not in sys.modules, name
+    # The HTTPX instrumentors serve an opt-in setting.
+    assert 'opentelemetry.instrumentation.httpx' not in sys.modules
     assert requested == [warm_imports.FIRST_USE_MODULES]
     print('PROMPT_READY')
     # Modules that only name provider settings types must not load the SDKs: test modules import them,

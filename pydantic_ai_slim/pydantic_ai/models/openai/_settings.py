@@ -308,6 +308,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     so disabling this also stops them from being sent back entirely. Hosted tool-search items are the exception:
     they carry their state (the query and discovered tools) inline, so they are still replayed with the IDs
     omitted, and previously discovered tools stay callable.
+
+    A local `search_tools` call replayed as a `tool_search_call` item never carries a function call (`fc_*`) ID,
+    even with this enabled: the API rejects that ID on a tool-search item.
     """
 
     openai_truncation: Literal['disabled', 'auto']
@@ -376,6 +379,12 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     are omitted from the input, since OpenAI reconstructs them from the server-side conversation. So
     changes to those messages, by a history processor or compaction for instance, don't reach the
     model: it continues from the conversation as OpenAI stored it.
+
+    OpenAI adds a response to its conversation only once the response completes. When the response found was
+    streamed and its stream dropped or was cancelled before it finished, Pydantic AI first lists the conversation's
+    items to check whether OpenAI completed it anyway, if the response has output items to look for. If it didn't,
+    or the response has none, that response is sent again, with the messages since the last response the
+    conversation holds. Counting tokens for such a request makes the same check, so it counts the same input.
 
     `'auto'` trusts the message history for this ID, which
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass a

@@ -1,4 +1,4 @@
-"""The live sessions of one CLAI process: which session holds which conversation, opening, closing, idle closing.
+"""The live sessions of one Pax process: which session holds which conversation, opening, closing, idle closing.
 
 Every `SessionRuntime` joins its process's `LiveRuntimes` when it is built and leaves it when it closes.
 The terminal's session and the session `pax --web` starts with run under their own driver. Sessions
@@ -59,16 +59,16 @@ class Served(Protocol):
         ...
 
     def restarts_clai(self) -> bool:
-        """Whether `/reload` and `/update` restart CLAI from it."""
+        """Whether `/reload` and `/update` restart Pax from it."""
         ...
 
     def restart_refusal(self) -> str | None:
-        """Why `/reload` and `/update` cannot restart CLAI from it now; `None` when they can."""
+        """Why `/reload` and `/update` cannot restart Pax from it now; `None` when they can."""
         ...
 
 
 Builder = Callable[[Path | None], Served]
-"""Builds a session in a directory, by default the one CLAI started in, ready to `serve`."""
+"""Builds a session in a directory, by default the one Pax started in, ready to `serve`."""
 
 
 @dataclass(kw_only=True)
@@ -105,11 +105,11 @@ class LiveRuntimes(JoinedSessions):
         self.idle_after = idle_after
         self.check_every = check_every
         self.build: Builder | None = None
-        """Builds the sessions `open` and `new` start; `None` where CLAI opens no others, as with `-p`."""
+        """Builds the sessions `open` and `new` start; `None` where Pax opens no others, as with `-p`."""
         self.focused: str | None = None
         """The session the terminal shows, never closed for being idle; `None` while no terminal shows one."""
         self.dialogs: Dialogs | None = None
-        """A remote UI's dialogs, where a command asks while CLAI has no terminal; the web UI sets its own."""
+        """A remote UI's dialogs, where a command asks while Pax has no terminal; the web UI sets its own."""
         self._group: TaskGroup | None = None
         self._opening: dict[str, Event] = {}
         """Conversations being opened or resumed, set once that is done."""
@@ -123,7 +123,7 @@ class LiveRuntimes(JoinedSessions):
         return [live.runtime.live_session for live in self._live.values() if live.ready]
 
     def restarter(self) -> Served | None:
-        """The live session CLAI restarts from; `None` while none does, as while the terminal shows one not listed."""
+        """The live session Pax restarts from; `None` while none does, as while the terminal shows one not listed."""
         return next((live.runtime for live in self._live.values() if live.ready and live.runtime.restarts_clai()), None)
 
     def add(self, runtime: Served) -> None:
@@ -165,7 +165,7 @@ class LiveRuntimes(JoinedSessions):
     def driving(self, runtime: Served) -> Generator[None]:
         """Let `close`, idle closing included, end the loop its own driver runs for `runtime` in the block.
 
-        The terminal runs the session CLAI started with so; it is closed only while the terminal shows another.
+        The terminal runs the session Pax started with so; it is closed only while the terminal shows another.
         """
         live = self._live[runtime.live_session.id]
         try:
@@ -216,7 +216,7 @@ class LiveRuntimes(JoinedSessions):
     async def open(self, conversation_id: str, /) -> LiveSession:
         """The live session holding `conversation_id`, else a new one resuming it.
 
-        One another process runs continues in the fork of it an earlier open saved, in any CLAI, if there is one.
+        One another process runs continues in the fork of it an earlier open saved, in any Pax, if there is one.
         """
         while True:
             live = self._holder(conversation_id)
@@ -262,7 +262,7 @@ class LiveRuntimes(JoinedSessions):
             raise ValueError('This session is already switching to another conversation.')
         held = self.holding(conversation_id)
         if (held is not None and held is not holder) or conversation_id in self._opening:
-            raise ValueError(f'Session {conversation_id} is open in another live session of this CLAI.')
+            raise ValueError(f'Session {conversation_id} is open in another live session of this Pax.')
         claimed = self._opening[conversation_id] = self._switching[holder.id] = Event()
         try:
             yield

@@ -31,6 +31,7 @@ from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart
 from pydantic_ai._enqueue import PendingMessage, stamp_capability_parts
 from pydantic_ai._event_registry import set_replay_isolation_guard
 from pydantic_ai._tool_search import ToolSearchReturnPart
+from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, DynamicCapability, Hooks, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -2130,6 +2131,24 @@ class _FreshPerRunReporter(Reporter):
 def test_with_authority_survives_a_fresh_instance_from_for_run() -> None:
     reporter = _FreshPerRunReporter([nudge()], id='fresh').with_authority('user')
     assert _sources_by_capability([reporter]) == {'fresh': CapabilitySource('fresh', authority='user')}
+
+
+@dataclass
+class _FreshPerAgentReporter(Reporter):
+    def for_agent(self, agent: AbstractAgent[Any, Any]) -> AbstractCapability[Any]:
+        # A fresh instance through the constructor, which knows nothing of `with_authority`.
+        return replace(self)
+
+
+def test_with_authority_survives_a_fresh_instance_from_for_agent_in_an_override() -> None:
+    """`override(capabilities=...)` binds what it adds with `for_agent`, and keeps its ceiling as `run` does."""
+    agent = Agent(FunctionModel(lambda m, i: ModelResponse(parts=[TextPart('Done.')]), profile=INLINE))
+    reporter = _FreshPerAgentReporter([nudge()], id='fresh').with_authority('none')
+    with agent.override(capabilities=[reporter]):
+        messages = agent.run_sync('Run the tests.').all_messages()
+    assert [
+        part.source for message in messages for part in getattr(message, 'parts', []) if isinstance(part, NudgePart)
+    ] == [CapabilitySource('fresh', authority='none')]
 
 
 def test_a_wrapper_keeps_the_authority_of_what_it_wraps() -> None:

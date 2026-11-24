@@ -14,7 +14,14 @@ import pytest
 import yaml
 from category_classify_opencode import TOOL_GUIDANCE, Classification
 from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP
-from publish_douwebot_review import REVIEW_ENGINES, Finding, ReviewEngine, ReviewResult, publication
+from publish_douwebot_review import (
+    EARLIER_REVIEW_ATTRIBUTIONS,
+    REVIEW_ENGINES,
+    Finding,
+    ReviewEngine,
+    ReviewResult,
+    publication,
+)
 
 WORKFLOW = Path(__file__).parent.parent / 'workflows' / 'bots.yml'
 APPROVAL_LABEL = 'douwebot:review-agent-config'
@@ -523,6 +530,21 @@ def _douwebot_review(
             False,
             '',
             id='clean-opencode-zai',
+        ),
+        pytest.param(
+            (
+                zai := _douwebot_review(
+                    16, 'APPROVED', ReviewResult(verdict='APPROVE', comments=[], discussion=''), engine='opencode-zai'
+                )
+            )
+            | {
+                'body': zai['body'].replace(
+                    REVIEW_ENGINES['opencode-zai'], EARLIER_REVIEW_ATTRIBUTIONS['opencode-zai'][0]
+                )
+            },
+            False,
+            '',
+            id='clean-opencode-zai-on-an-earlier-model',
         ),
         pytest.param(
             _douwebot_review(

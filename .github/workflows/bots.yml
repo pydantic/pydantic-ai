@@ -390,13 +390,15 @@ jobs:
                 | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"))
                 | (($body | capture(" engine=(?<engine>claude|opencode|opencode-zai|opencode-deepinfra) -->\\z") | .engine) // "") as $engine
                 | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"; "")) as $marked
-                | (if $engine == "claude" then "\n\nReviewer: Claude Code (claude-opus-5-5)"
-                   elif $engine == "opencode" then "\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"
-                   elif $engine == "opencode-zai" then "\n\nReviewer: OpenCode (zai-coding-plan/glm-5.3-flash)"
-                   elif $engine == "opencode-deepinfra" then "\n\nReviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)"
-                   else "" end) as $attribution
-                | (if $attribution == "" then $marked
-                   elif $marked | endswith($attribution) then $marked | rtrimstr($attribution)
+                # Each engine attribution, then those of its earlier models (`EARLIER_REVIEW_ATTRIBUTIONS`).
+                | (if $engine == "claude" then ["\n\nReviewer: Claude Code (claude-opus-5-5)"]
+                   elif $engine == "opencode" then ["\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"]
+                   elif $engine == "opencode-zai" then ["\n\nReviewer: OpenCode (zai-coding-plan/glm-5.4)", "\n\nReviewer: OpenCode (zai-coding-plan/glm-5.3-flash)"]
+                   elif $engine == "opencode-deepinfra" then ["\n\nReviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)"]
+                   else [] end) as $attributions
+                | (first($attributions[] | select(. as $text | $marked | endswith($text))) // "") as $attribution
+                | (if $attributions == [] then $marked
+                   elif $attribution != "" then $marked | rtrimstr($attribution)
                    else $marked + "\nMissing engine attribution" end) as $verdict
                 | select($verdict | startswith("Review incomplete.") | not)
                 | select(.id as $id | any($commented[]; . == $id) or ($verdict != "No blocking findings." and $verdict != "Blocking findings are recorded inline."))

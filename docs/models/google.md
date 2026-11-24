@@ -350,6 +350,8 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+`presence_penalty` and `frequency_penalty` aren't sent through the Gemini API, which rejects them for every model, or on Google Cloud for Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models, which reject them too.
+
 ### Configure thinking
 
 Use the provider-agnostic [`Thinking`][pydantic_ai.capabilities.Thinking] capability to enable thinking:
@@ -399,6 +401,12 @@ On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinkin
 Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) supports only the `minimal` and `high` levels on the Gemini API and
 rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minimal`, and `'medium'` and above to
 `high`. Without a `thinking` setting it thinks by default there.
+
+On Gemini 2.5, `thinking='minimal'` sends a `thinking_budget` of 128 tokens. The exception is `gemini-2.5-flash-lite`
+on the Gemini API, which rejects budgets below 512, so it gets 512.
+To send another budget for `minimal`, set
+[`GoogleModelProfile.google_minimal_thinking_budget`][pydantic_ai.profiles.google.GoogleModelProfile.google_minimal_thinking_budget]
+in the model's `profile`.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),

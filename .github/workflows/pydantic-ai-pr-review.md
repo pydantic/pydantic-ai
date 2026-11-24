@@ -146,7 +146,7 @@ env:
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
 engine:
-  model: anthropic/${{ vars.GH_AW_MODEL }}
+  model: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:

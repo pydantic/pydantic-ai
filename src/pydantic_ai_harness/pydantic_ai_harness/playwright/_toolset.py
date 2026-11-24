@@ -135,7 +135,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from time import monotonic
 from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar, get_args
-from urllib.parse import urlparse
+from urllib.parse import quote, quote_plus, unquote, unquote_plus, urlparse
 
 import anyio
 import idna
@@ -898,9 +898,25 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     percent-encoded). Every URL left after the exact replacement is cut to its
     origin too, so a credential there does not depend on `_without_credentials`
     knowing its parameter name.
+
+    A credential can also appear outside any URL. When the endpoint answers the
+    WebSocket handshake with an error status, Playwright quotes the response body,
+    in the message and again in the call log, and a server may repeat the token it
+    rejected there. So the endpoint's userinfo password and every query value are
+    replaced wherever they still appear: as written, decoded, and percent-encoded
+    by `quote` and `quote_plus`. Every value counts, whatever its parameter is
+    called. A value shorter than eight characters, such as `headless=true` or
+    `timeout=60000`, is left alone, since the message can contain that text for
+    other reasons. A longer value is replaced whatever it holds, so a setting such
+    as `browser=chromium` is replaced like a credential. Eight is the shortest
+    password NIST SP 800-63B allows, for one used alongside a second factor.
     """
+    values: list[str] = []
     try:
         parsed = urlparse(cdp_url)
+        values = [parameter.partition('=')[2] for parameter in parsed.query.split('&')]
+        if parsed.password is not None:
+            values.append(parsed.password)
         host = parsed.hostname or ''
         # `.port` parses lazily and raises on a non-numeric port, so it has to be
         # read inside the guard: this runs while an error is already being built.
@@ -909,7 +925,18 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
         safe = f'{parsed.scheme}://{host}' if parsed.scheme else host
     except ValueError:
         safe = '<cdp_url>'
-    return _URL_IN_TEXT.sub(lambda url: _url_origin(url.group()), message.replace(cdp_url, safe))
+    cut = _URL_IN_TEXT.sub(lambda url: _url_origin(url.group()), message.replace(cdp_url, safe))
+    forms = {
+        form
+        for value in values
+        if len(unquote(value)) >= 8
+        for variant in (value, unquote(value), unquote_plus(value))
+        for form in (variant, quote(variant), quote_plus(variant))
+    }
+    if not forms:
+        return cut
+    # Longest first, so a form that contains another is replaced whole.
+    return re.sub('|'.join(re.escape(form) for form in sorted(forms, key=len, reverse=True)), 'REDACTED', cut)
 
 
 def _truncate(text: str, max_chars: int) -> str:

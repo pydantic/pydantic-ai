@@ -67,7 +67,13 @@ from ..._utils import (
     number_to_datetime,
 )
 from ...durable_exec._operation_backend import in_durable_unit
-from ...exceptions import ModelConnectionError, SuspendedResponseExpired, UnsupportedSettingWarning, UserError
+from ...exceptions import (
+    ModelConnectionError,
+    SuspendedResponseExpired,
+    UnsupportedSettingWarning,
+    UserError,
+    _TokenCountingUnavailableError,  # pyright: ignore[reportPrivateUsage]
+)
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -204,6 +210,7 @@ from ._response_fields import (
     map_compaction_item,
     map_logprobs,
     map_usage,
+    report_input_transformations,
     response_refusal,
     response_status_to_state,
 )
@@ -260,6 +267,9 @@ _WEBSOCKET_RETRY_AFTER_LIMIT = 60.0
 
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
+
+
+_TOOL_SEARCH_CALL_ITEM_ID_PREFIX = 'tsc_'
 
 
 class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
@@ -720,9 +730,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Turn off Batch API and Responses WebSocket defaults for Azure clients and the gateway.
 
+        `deprecation` is dropped for an Azure OpenAI client, as Azure retires models on its own schedule.
+
         Every model resolves this, so it reads only the client's type and the provider's identity, never client state
         such as URLs, which a mocked or partly built client may not have yet.
         """
+        if 'deprecation' in profile and is_azure(self._provider.client, self._provider.name):
+            profile = merge_profile(profile, ModelProfile(deprecation=None))
         if is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
@@ -995,7 +1009,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> usage.RequestUsage:
         check_allow_model_requests()
         if not self.profile.get('openai_supports_input_token_counting', True):
-            raise UserError(
+            raise _TokenCountingUnavailableError(
                 f'Server-side token counting is not available for {self.system} models '
                 f'({self.model_name!r}); the provider does not expose the input-tokens endpoint.'
             )
@@ -1161,6 +1175,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['service_tier'] = response.service_tier
         if response.prompt_cache_diagnostics is not None:
             provider_details['prompt_cache_diagnostics'] = response.prompt_cache_diagnostics.model_dump(mode='json')
+        if response.input_transformations:
+            provider_details['input_transformations'] = report_input_transformations(response.input_transformations)
 
         state = response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
@@ -1492,7 +1508,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if not tools and not history_declared_tool_names:
             tool_choice = None
 
-        previous_response_id, conversation_id, messages = self._resolve_server_side_state(model_settings, messages)
+        previous_response_id, conversation_id, messages = await self._resolve_server_side_state(
+            model_settings, messages
+        )
         if not sends_effort_changes:
             messages = _without_model_settings_deltas(messages)
 
@@ -2472,7 +2490,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return False
         return None
 
-    def _resolve_server_side_state(
+    async def _resolve_server_side_state(
         self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]
     ) -> tuple[str | None, str | None, list[ModelMessage]]:
         previous_response_id_setting = model_settings.get('openai_previous_response_id')
@@ -2484,7 +2502,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             )
 
         if conversation_id_setting is not None:
-            conversation_id, messages = self._resolve_conversation_id(conversation_id_setting, messages)
+            conversation_id, messages = await self._resolve_conversation_id(
+                conversation_id_setting, messages, model_settings
+            )
             return None, conversation_id, messages
 
         previous_response_id, messages = self._resolve_previous_response_id(
@@ -2495,47 +2515,84 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
         return previous_response_id, None, messages
 
-    def _resolve_conversation_id(
-        self, setting: Literal['auto'] | str, messages: list[ModelMessage]
+    async def _resolve_conversation_id(
+        self,
+        setting: Literal['auto'] | str,
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
     ) -> tuple[str | None, list[ModelMessage]]:
         if setting == 'auto':
             # Agent runs stamp the active Pydantic AI conversation ID on the final request.
             # Direct model calls may still pass an empty message list.
             pydantic_ai_conversation_id = next((m.conversation_id for m in messages[-1:]), None)
-            return self._get_conversation_id_and_new_messages(
-                messages, pydantic_ai_conversation_id=pydantic_ai_conversation_id
+            return await self._get_conversation_id_and_new_messages(
+                messages, model_settings, pydantic_ai_conversation_id=pydantic_ai_conversation_id
             )
+        return await self._get_conversation_id_and_new_messages(
+            messages, model_settings, openai_conversation_id=setting
+        )
 
-        conversation_id, trimmed = self._get_conversation_id_and_new_messages(messages, openai_conversation_id=setting)
-        if conversation_id is not None:
-            return conversation_id, trimmed
-        return setting, messages
-
-    def _get_conversation_id_and_new_messages(
+    async def _get_conversation_id_and_new_messages(
         self,
         messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
         *,
         openai_conversation_id: str | None = None,
         pydantic_ai_conversation_id: str | None = None,
     ) -> tuple[str | None, list[ModelMessage]]:
+        """The OpenAI conversation to send to, and the messages after the last response it holds.
+
+        Without such a response, every message is sent, to `openai_conversation_id` if one is given, or else to
+        the conversation of a response it doesn't hold.
+        """
+        conversation_id = openai_conversation_id
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
-            if isinstance(m, ModelResponse) and self.accepts_server_state(m):
+            # A response from another Pydantic AI conversation doesn't continue this one.
+            if (
+                isinstance(m, ModelResponse)
+                and self.accepts_server_state(m)
+                and (pydantic_ai_conversation_id is None or m.conversation_id in (None, pydantic_ai_conversation_id))
+            ):
                 candidate = m.provider_details and m.provider_details.get('conversation_id')
-                if (
-                    pydantic_ai_conversation_id is not None
-                    and m.conversation_id is not None
-                    and m.conversation_id != pydantic_ai_conversation_id
-                ):
-                    trimmed_messages.append(m)
-                    continue
-                if isinstance(candidate, str) and (
-                    openai_conversation_id is None or candidate == openai_conversation_id
-                ):
-                    return candidate, list(reversed(trimmed_messages))
+                if isinstance(candidate, str) and conversation_id in (None, candidate):
+                    if await self._conversation_holds(candidate, m, model_settings):
+                        return candidate, list(reversed(trimmed_messages))
+                    # Send this response again, with what came before it, to the same conversation.
+                    conversation_id = candidate
             trimmed_messages.append(m)
 
-        return None, messages
+        return conversation_id, messages
+
+    async def _conversation_holds(
+        self, conversation_id: str, response: ModelResponse, model_settings: OpenAIResponsesModelSettings
+    ) -> bool:
+        """Whether the OpenAI conversation holds `response`.
+
+        OpenAI adds a response's input and output items to its conversation only once the response completes.
+        A response whose stream dropped or was cancelled before it finished may have completed anyway, or not,
+        so its output items are looked up among the conversation's newest items. One with no item IDs to look
+        up is taken as missing.
+
+        Only the newest page, of up to 100 items, is read. The caller stops at the first response the
+        conversation holds, so a held response is on that page unless something else added 100 or more items to
+        the conversation since.
+        """
+        if response.state != 'interrupted' or response.finish_reason is not None:
+            return True
+        item_ids = {
+            part.id
+            for part in response.parts
+            if not isinstance(part, NativeToolReturnPart | NativeToolSearchReturnPart) and part.id
+        }
+        if not item_ids:
+            return False
+        extra_headers, timeout = self._build_request_options(model_settings)
+        with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
+            items = await with_max_retries(self.client, model_settings).conversations.items.list(
+                conversation_id, order='desc', limit=100, extra_headers=extra_headers, timeout=timeout
+            )
+        return not item_ids.isdisjoint(item.id for item in items.data)
 
     async def _map_messages(
         self,
@@ -2860,10 +2917,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 'call_id': call_id,
                 'status': 'completed',
             }
-            if id and should_send_item_id:  # pragma: no branch
+            # A local `search_tools` call made on a model without native tool search carries a
+            # function-call (`fc_*`) item ID, which the Responses API rejects on a `tool_search_call`
+            # item. The item ID is optional here, so only that prefix is dropped: compatible APIs
+            # can issue opaque IDs of their own.
+            if id and should_send_item_id and not id.startswith('fc_'):
                 tool_search_call['id'] = id
             context.openai_messages.append(tool_search_call)
         else:
+            # A client-executed search made on a model with native tool search carries a
+            # `tool_search_call` (`tsc_*`) item ID, which the Responses API rejects on a
+            # `function_call` item. The item ID is optional here, so only that prefix is dropped:
+            # compatible APIs can issue opaque IDs of their own.
+            if isinstance(item, ToolSearchCallPart) and id and id.startswith(_TOOL_SEARCH_CALL_ITEM_ID_PREFIX):
+                id = None
             context.openai_messages.append(
                 self._map_function_call(item, call_id, id, context, should_send_item_id=should_send_item_id)
             )
