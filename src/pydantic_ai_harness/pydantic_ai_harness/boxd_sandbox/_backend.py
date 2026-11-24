@@ -1,7 +1,8 @@
 """A [boxd](https://boxd.sh) machine behind Pydantic AI's `WorkspaceBackend` protocol.
 
-SDK behavior verified 2026-10-28 against boxd 0.2.20 on boxd's production cluster. Re-check these before
-changing acquisition, command, file, or error handling:
+SDK behavior verified 2026-10-28 against boxd 0.2.20 on boxd's production cluster; the credential and error
+notes below were re-checked 2026-11-24 against boxd 0.3.4's source, not against a live cluster. Re-check
+these before changing acquisition, command, file, or error handling:
 
 - `machines.create` returns once the machine is scheduled. A name is unique in its org: creating a second
   machine under it raises `ConflictError`, and `machines.get` finds a machine by id or name.
@@ -24,9 +25,13 @@ changing acquisition, command, file, or error handling:
   snapshot was saved from, even with `isolated=True`, and peers with every machine on them.
 - A command that prints nothing for 30 minutes is ended, its process killed, with `APIStatusError` code
   `deadline_exceeded` ("no output from the command for 30m").
-- Each client exchanges `BOXD_API_KEY` for a session token on its first call, and boxd allows 30 exchanges per
-  60 seconds from one source IP (`RateLimitError` past that). Missing and rejected credentials raise
-  `AuthenticationError`; an exchange that could not reach boxd raises `APIConnectionError`, and one that got
+- With `BOXD_API_KEY`, each call carries the key itself as the bearer over TLS or to a loopback address, which
+  covers the default `https://boxd.sh:9443`; that path never exchanges it, so the exchange rate limit does not
+  apply. A server that refuses the key itself (a server from before raw keys, or a call sent as plaintext from
+  a non-loopback host) switches that client to exchanging it for a token, for the rest of its life. The
+  exchange is limited per source IP and waits out one `Retry-After` before retrying a 429; its token lasts an
+  hour. Missing and rejected credentials raise `AuthenticationError`; a 403 on the exchange is
+  `PermissionDeniedError`; an exchange that could not reach boxd raises `APIConnectionError`, and one that got
   a 5xx answer `APIStatusError`.
 - `machines.fs` runs as the `boxd` user and sees the files commands see. A write creates missing parents,
   writes through a symlink, and keeps an existing file's mode; a read or write of a FIFO is refused at once.
