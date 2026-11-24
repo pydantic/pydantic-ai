@@ -72,6 +72,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
     _max_tokens_getter: Callable[[], int | None] = field(default=lambda: None, repr=False)
     """The `max_tokens` the request was made with, for the error raised when the token limit cut off the output."""
+    _attempt: int = field(default=1, repr=False)
+    """The attempt at the request step that the stream came from, which its events' `origin` records."""
 
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -545,8 +547,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 pass
         return True
 
+    def _with_origin(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
+        """The event, stamped with the origin of the response it came from unless it already has one."""
+        if event.origin is not None or (run_id := self._run_ctx.run_id) is None:
+            return event
+        return replace(
+            event,
+            origin=_messages.ModelResponseOrigin(run_id=run_id, run_step=self._run_ctx.run_step, attempt=self._attempt),
+        )
+
     async def _model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """The model stream's events, followed by its replacement's if the stream was abandoned."""
+        """The model stream's events, followed by its replacement's if the stream was abandoned, stamped with their origin."""
         events = aiter(self._raw_stream_response)
         while self._replacement_response is None:
             event: ModelResponseStreamEvent | None = None
@@ -561,15 +572,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             if event is None:
                 self._model_stream_finished = True
                 return
-            yield event
+            yield self._with_origin(event)
 
         response = await self._replacement_response()
         if response is not None:
+            # The replacement is another response at the request step, streamed as its next attempt.
+            self._attempt += 1
             self._raw_stream_response = models.CompletedStreamedResponse(
                 response, model_request_parameters=self._model_request_parameters, replay_events=True
             )
             async for event in self._raw_stream_response:
-                yield event
+                yield self._with_origin(event)
 
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a

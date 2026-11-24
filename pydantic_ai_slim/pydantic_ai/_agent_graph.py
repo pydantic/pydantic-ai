@@ -117,6 +117,7 @@ from ._run_context import (
     EventStreamBuffer,
     dispatch_event_stream,
     recorded_workspace_ref,
+    set_current_request_attempt,
     set_current_run_context,
 )
 from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
@@ -2198,7 +2199,11 @@ async def model_request(  # noqa: C901
     # One `request_timeout` deadline covers the whole continuation chain, including the waits between segments. A
     # `FallbackModel` starts one per model it tries instead, and carries the picked model's on its suspended responses.
     deadline = start_request_deadline(model, request_context.model_settings, stream=False)
-    with set_current_run_context(run_context), enforce_request_deadline(deadline):
+    with (
+        set_current_run_context(run_context),
+        set_current_request_attempt(request_context.attempt),
+        enforce_request_deadline(deadline),
+    ):
         while True:
             if response is None:
                 messages = base_messages
@@ -2731,7 +2736,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                     self._did_stream = True
                     agent_stream = self._build_agent_stream(
-                        ctx, sr, req_ctx.model_request_parameters, model_id=self._serving_model_id
+                        ctx,
+                        sr,
+                        req_ctx.model_request_parameters,
+                        model_id=self._serving_model_id,
+                        attempt=req_ctx.attempt,
                     )
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
@@ -3013,8 +3022,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters: models.ModelRequestParameters,
         *,
         model_id: str | None = None,
+        attempt: int = 1,
     ) -> result.AgentStream[DepsT, T]:
-        """Build an AgentStream from the given stream response and context, which came from the model `model_id` identifies."""
+        """Build an AgentStream from the given stream response and context.
+
+        The response came from the model `model_id` identifies, at the request step's attempt `attempt`.
+        """
         return result.AgentStream[DepsT, T](
             _raw_stream_response=stream_response,
             _output_schema=ctx.deps.output_schema,
@@ -3029,6 +3042,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _metadata_getter=lambda: ctx.state.metadata,
             _event_stream_buffer_getter=lambda: ctx.state.event_stream_buffer,
             _max_tokens_getter=lambda: ctx.state.last_max_tokens,
+            _attempt=attempt,
         )
 
     async def _make_request(

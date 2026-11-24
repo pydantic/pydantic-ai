@@ -42,6 +42,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
@@ -2982,6 +2983,61 @@ async def test_dbos_durability_model_error_retry_after_continues_the_backoff(
     # The backoff is 40 seconds, then 80: the first wait gets the one-minute floor.
     assert waits == [60.0, 80.0]
     assert intervals == [80.0, 160.0]
+
+
+@pytest.mark.parametrize(
+    'error',
+    [
+        pytest.param(RuntimeError('connection lost'), id='step-retry'),
+        pytest.param(_rate_limited(0.01), id='retry-after-wait'),
+    ],
+)
+async def test_dbos_durability_retried_model_step_streams_a_later_execution(dbos: DBOS, error: Exception) -> None:
+    """A model step that fails after it streamed runs again as a later execution of the same response.
+
+    DBOS retries a failure in the step itself, while a model error's `retry_after` makes workflow code run the step
+    again after a durable wait; the execution attempt goes on counting either way.
+    """
+    executions = 0
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal executions
+        executions += 1
+        if executions == 1:
+            yield 'Hel'
+            raise error
+        yield 'Hello'
+
+    origins: list[ModelResponseOrigin | None] = []
+
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, PartStartEvent):
+                origins.append(event.origin)
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        name=f'durability_retried_stream_{uuid.uuid4().hex[:8]}',
+        capabilities=[
+            DBOSDurability(
+                event_stream_handler=handler,
+                model_step_config=StepConfig(retries_allowed=True, max_attempts=2, interval_seconds=0.01),
+            )
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello DBOS')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_durable_agent() == 'Hello'
+
+    first, second = origins
+    assert first is not None and second is not None
+    assert (first.execution_attempt, second.execution_attempt) == (1, 2)
+    assert first.response_id == second.response_id
+    assert second.supersedes(first)
 
 
 async def test_dbos_durability_model_error_retry_after_caps_at_dbos_maximum_backoff(

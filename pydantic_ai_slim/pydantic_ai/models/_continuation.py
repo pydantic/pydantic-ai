@@ -47,7 +47,7 @@ import anyio
 
 from .. import _utils
 from .._fallback import request_stream_until_first_event
-from .._run_context import RunContext
+from .._run_context import RunContext, set_current_request_attempt
 from ..exceptions import ModelAPIError, UnexpectedModelBehavior
 from ..messages import (
     FinalResultEvent,
@@ -531,7 +531,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
             messages = [*self.base_messages, seed]
         stack = AsyncExitStack()
         try:
-            with self.segment_context():
+            with self.segment_context(), self._opening_segment():
                 sub = await stack.enter_async_context(
                     request_stream_until_first_event(
                         # The deadlines cover opening the segment and waiting for its first event.
@@ -602,10 +602,21 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     yield sub
             return
         with self.segment_context():
-            async with self.model.request_stream(
-                messages, self.model_settings, self.model_request_parameters, self.run_context
-            ) as sub:
+            async with AsyncExitStack() as stack:
+                with self._opening_segment():
+                    sub = await stack.enter_async_context(
+                        self.model.request_stream(
+                            messages, self.model_settings, self.model_request_parameters, self.run_context
+                        )
+                    )
                 yield sub
+
+    def _opening_segment(self) -> AbstractContextManager[None]:
+        """Entered while a segment's `request_stream(...)` is opened, for a model that reads the attempt it's for.
+
+        Only while it's opened: a segment can be closed from another task, which can't reset a context variable.
+        """
+        return set_current_request_attempt(1 if self.request_context is None else self.request_context.attempt)
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         """Cancel-teardown errors to suppress, extended with the in-flight sub-stream's own.

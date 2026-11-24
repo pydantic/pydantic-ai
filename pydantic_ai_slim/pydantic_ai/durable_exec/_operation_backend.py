@@ -101,6 +101,16 @@ class DurableOperationBackend(ABC, Generic[ConfigT]):
     @abstractmethod
     def registrations(self) -> Sequence[Callable[..., object]]: ...
 
+    def execution_attempt(self) -> int:
+        """Which execution of the durable unit running now this is, starting at `1`, called from inside the unit.
+
+        It goes up when the engine runs the unit again after a failure. A model unit's stream events record it
+        as their origin's [`execution_attempt`][pydantic_ai.messages.ModelResponseOrigin.execution_attempt], so a
+        consumer can drop the events of an earlier execution. Override it when the engine reports it; the default
+        is `1`.
+        """
+        return 1
+
 
 class _CallableBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Generic[ParamsT, WireT, ResultT]):
     def __init__(
