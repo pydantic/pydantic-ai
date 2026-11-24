@@ -30,7 +30,7 @@ from tests.temporal_utils import temporal_dev_server_cache_dir
 
 from ..append_only import skip_unless_installed
 from ..capability_cases import DURABLE_TEMPORAL
-from ._contracts import CASES, assert_holds, contract_cases
+from ._contracts import CASES, assert_cell_holds, contract_cases
 from ._durable_cases import PROMPT, build_case, counting_requests, installed, journal_breaks, one_call_per_response
 
 pytest.importorskip('temporalio')
@@ -166,4 +166,4 @@ async def test_a_case_replays_equal_under_temporal(
 ) -> None:
     skip_unless_installed(name, CASES[name].requires)
     count_requests = counting_requests(monkeypatch, tmp_path)
-    assert_holds(DURABLE_TEMPORAL, name, await _breaks(name, temporal, count_requests))
+    assert_cell_holds('temporal', DURABLE_TEMPORAL, name, await _breaks(name, temporal, count_requests))
