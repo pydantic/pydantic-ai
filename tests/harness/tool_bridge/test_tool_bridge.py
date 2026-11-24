@@ -653,6 +653,60 @@ class TestToolBridge:
         assert seen == [[['edited']]]
 
     @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
+    async def test_content_is_held_to_each_lowered_capability_in_a_chain(self):
+        """Nested content is held to each capability it passed through, innermost first.
+
+        With `CodeMode` at `'none'` too, the note on `fetch`'s content names `plugin`, its innermost capability, and
+        the note on `note`'s content, which no capability contributes, names `code_mode`.
+        """
+
+        def fetch() -> ToolReturn:
+            """Fetch a page."""
+            return ToolReturn(return_value='ok', content='page text')
+
+        def note(text: str) -> ToolReturn:
+            """Take a note."""
+            return ToolReturn(return_value='ok', content=text)
+
+        seen: list[list[object]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            code = (
+                'await tool_call(name=\'note\', args_json=\'{"text": "first"}\')\n'
+                "await tool_call(name='fetch', args_json='{}')"
+            )
+            return ModelResponse(parts=[_call('run_code', code=code)])
+
+        capabilities: list[AbstractCapability[object]] = [
+            Capability[object](id='plugin', tools=[fetch]).with_authority('none'),
+            ToolBridge(),
+            CodeMode().with_authority('none'),
+        ]
+        await Agent(FunctionModel(respond), tools=[note], capabilities=capabilities).run('Fetch the page')
+
+        assert seen == snapshot(
+            [
+                [
+                    '<system>The accompanying <capability_content> was written by the `code_mode` capability, not by the user or the application.</system>',
+                    [
+                        TextContent(content='<capability_content>'),
+                        TextContent(content='first'),
+                        TextContent(content='</capability_content>'),
+                    ],
+                    '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                    [
+                        TextContent(content='<capability_content>'),
+                        TextContent(content='page text'),
+                        TextContent(content='</capability_content>'),
+                    ],
+                ]
+            ]
+        )
+
+    @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
     async def test_code_mode_keeps_a_bridged_tools_capability(self):
         """Content from a bridged tool that `run_code` calls reaches the model framed as it would be on a direct call.
 
