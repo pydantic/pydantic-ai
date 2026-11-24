@@ -127,6 +127,7 @@ Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
 Daytona's default snapshot has a desktop with a terminal and Chromium. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/).
 
 - A public sandbox gets no desktop, since its preview link needs no token and anyone with it can control the desktop: the run fails with `UserError`.
+- Where the snapshot's Chromium can't run its own sandbox, as in Daytona's default snapshot, `desktop=True` adds `--no-sandbox` to its flags through a file in `/etc/chromium.d/`, written as root or with passwordless `sudo`. The file stays after the run, also on a sandbox you attached with `ref=` or `sandbox=`, so a page that breaks out of Chromium's renderer reaches the rest of the sandbox. A custom snapshot whose Chromium sandbox works is left alone.
 - On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
 - The desktop can't press print screen, pause, scroll lock or the menu key, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one.
 

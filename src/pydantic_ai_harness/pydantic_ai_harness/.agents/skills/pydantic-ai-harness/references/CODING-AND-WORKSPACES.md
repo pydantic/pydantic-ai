@@ -428,6 +428,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   sets another size, fixed at creation. It can't press print screen, pause, scroll lock or the menu key, use side mouse
   buttons, or type characters beyond U+FFFF (most emoji). Anyone with the preview link can control the desktop, so a public sandbox gets none: its first
   desktop use or shell command raises `UserError`.
+  Where Chromium can't run its own sandbox, as in the default snapshot, it adds `--no-sandbox` through a file in
+  `/etc/chromium.d/` (as root or passwordless `sudo`) that stays after the run, also on an attached sandbox.
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
 
