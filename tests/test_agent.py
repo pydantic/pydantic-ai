@@ -4414,6 +4414,23 @@ async def test_agent_run_result_run_id_property() -> None:
     assert result.run_id == 'run-result'
 
 
+async def test_agent_run_result_pickle_drops_tool_defs() -> None:
+    """Pickling a completed AgentRunResult must not fail on unpicklable tool metadata (#13530)."""
+    import pickle
+
+    agent = Agent(TestModel(custom_output_text='done', call_tools=[]))
+
+    @agent.tool_plain(metadata={'filter': lambda: True})
+    def tool() -> str:
+        return 'unused'
+
+    result = await agent.run('go')
+    unpickled = pickle.loads(pickle.dumps(result))
+    assert unpickled.output == 'done'
+    assert unpickled.all_messages() == result.all_messages()
+    assert result._state.last_model_request_parameters is not None
+
+
 async def test_agent_run_id_fresh_on_deferred_resume() -> None:
     """Deferred-tool resume is a new agent run — it gets a fresh `run_id`, not the paused run's."""
 

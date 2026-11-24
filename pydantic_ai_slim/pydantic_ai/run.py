@@ -985,8 +985,13 @@ class AgentRunResult(Generic[OutputDataT]):
     def __getstate__(self) -> dict[str, Any]:
         # DBOS pickles workflow results. The live workspace can hold secrets (`LocalWorkspace(env=)`) and
         # means nothing in another process; its ref stays in the messages' `workspace_ref`.
+        # Request parameters and cached MCP tool definitions can hold non-picklable metadata (e.g. lambdas)
+        # and are unused on a finished result.
         state = self.__dict__.copy()
         state.pop('_workspace', None)
+        state['_state'] = dataclasses.replace(
+            self._state, last_model_request_parameters=None, mcp_tool_defs_cache={}
+        )
         return state
 
     @classmethod
