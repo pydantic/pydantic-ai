@@ -43,7 +43,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -61,11 +61,12 @@ from .mock_openai import (
 )
 
 with try_import() as imports_successful:
-    from openai import AsyncAzureOpenAI, AsyncOpenAI
+    from openai import AsyncAzureOpenAI, AsyncOpenAI, omit
     from openai.types import chat, responses as resp
     from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
+    from openai.types.responses.response_compaction_item import ResponseCompactionItem
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_text import ResponseOutputText
     from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails, ResponseUsage
@@ -1876,15 +1877,15 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
 @pytest.mark.parametrize(
     'settings',
     [
-        pytest.param(OpenAIResponsesModelSettings(openai_previous_response_id='auto'), id='previous_response_id'),
+        pytest.param(OpenAIResponsesModelSettings(openai_previous_response_id='resp_seed'), id='previous_response_id'),
         pytest.param(OpenAIResponsesModelSettings(openai_conversation_id='conv_123'), id='conversation_id'),
     ],
 )
 async def test_openai_responses_stable_instructions_stay_top_level_with_server_side_state(
     allow_model_requests: None, settings: OpenAIResponsesModelSettings
 ):
-    """A stored response keeps its input and a continuing request inherits it, so with server-side state the
-    instructions stay in the top-level field, which isn't carried over."""
+    """A stored response keeps its input and a continuing request inherits it, so with an explicit response id or a
+    conversation the instructions stay in the top-level field, which isn't carried over."""
     mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
     model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model, instructions='Support policies.', model_settings=settings)
@@ -1898,12 +1899,157 @@ async def test_openai_responses_stable_instructions_stay_top_level_with_server_s
 
 
 @pytest.mark.parametrize('instructions', ['Support policies.', 'Billing policies.'], ids=['same-agent', 'handoff'])
-async def test_openai_responses_explicit_id_with_history_resends_it(allow_model_requests: None, instructions: str):
-    """A response from a full-history request stores its instructions in its input but has no history digest, so an
-    explicit id passed with that history resends the history, and the model sees only the current instructions."""
+async def test_openai_responses_auto_chain_sends_stable_instructions_once(
+    allow_model_requests: None, instructions: str
+):
+    """An `'auto'` chain sends the static instructions as leading input when it starts, and leaves them out while it
+    continues, since the stored response holds them. Different ones fail the history digest, so a handoff resends the
+    history, and the model sees only the current instructions."""
     mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
     model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
-    first = await Agent(model, instructions='Support policies.').run('Where is order 1234?')
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+
+    await Agent(model, instructions=instructions, model_settings=settings).run(
+        'And order 5678?', message_history=first.all_messages()
+    )
+
+    first_request, second_request = get_mock_responses_kwargs(mock_client)
+    assert 'instructions' not in first_request
+    assert first_request['input'] == [
+        {'role': 'system', 'content': 'Support policies.'},
+        {'role': 'user', 'content': 'Where is order 1234?'},
+    ]
+    assert 'instructions' not in second_request
+    if instructions == 'Support policies.':
+        assert second_request['previous_response_id'] == first.response.provider_response_id
+        assert second_request['input'] == [{'role': 'user', 'content': 'And order 5678?'}]
+    else:
+        assert 'previous_response_id' not in second_request
+        assert [(item.get('role'), item.get('content')) for item in second_request['input']] == snapshot(
+            [
+                ('system', 'Billing policies.'),
+                ('user', 'Where is order 1234?'),
+                ('assistant', [{'text': 'first', 'type': 'output_text', 'annotations': []}]),
+                ('user', 'And order 5678?'),
+            ]
+        )
+
+
+async def test_openai_responses_auto_chain_continues_across_appended_change(allow_model_requests: None):
+    """An appended change and a dynamic instruction leave the chain's leading instructions as they were, so the
+    request continues: the change goes out after the stored conversation, and the dynamic instruction in the field."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    agent = _support_agent(model, OpenAIResponsesModelSettings(openai_previous_response_id='auto'))
+
+    first = await agent.run('Where is order 1234?', deps='open')
+    await agent.run('And order 5678?', deps='closed', message_history=first.all_messages())
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert second_request['previous_response_id'] == first.response.provider_response_id
+    assert {'instructions': second_request['instructions'], 'input': second_request['input']} == snapshot(
+        {
+            'instructions': 'Today is 2026-08-18.',
+            'input': [
+                {'role': 'user', 'content': 'And order 5678?'},
+                {
+                    'role': 'system',
+                    'content': """\
+<pyai:context id="agent:queue">
+Queue: closed.
+</pyai:context>\
+""",
+                },
+            ],
+        }
+    )
+
+
+@pytest.mark.parametrize('as_input', [(False, True), (True, False)], ids=['turned-on', 'turned-off'])
+async def test_openai_responses_auto_chain_resends_history_when_instruction_placement_changes(
+    allow_model_requests: None, as_input: tuple[bool, bool]
+):
+    """A response stored with its instructions in the top-level field doesn't hold them in its input, and one stored
+    with them as leading input does, so a request that would send them the other way resends the history."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    first_model, second_model = (
+        OpenAIResponsesModel(
+            'gpt-6.2-sol',
+            provider=OpenAIProvider(openai_client=mock_client),
+            profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=flag),
+        )
+        for flag in as_input
+    )
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(first_model, instructions='Support policies.', model_settings=settings).run(
+        'Where is order 1234?'
+    )
+
+    await Agent(second_model, instructions='Support policies.', model_settings=settings).run(
+        'And order 5678?', message_history=first.all_messages()
+    )
+
+    second_request = get_mock_responses_kwargs(mock_client)[1]
+    assert 'previous_response_id' not in second_request
+    assert [item.get('role') for item in second_request['input']] == (
+        ['system', 'user', 'assistant', 'user'] if as_input[1] else ['user', 'assistant', 'user']
+    )
+
+
+async def test_openai_responses_auto_chain_compaction_resends_the_window(allow_model_requests: None):
+    """A compaction item keeps the window's leading system items, so compacting an `'auto'` chain whose stored input
+    starts with its instructions resends the window, with them in the top-level field, instead of continuing it."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion('first'))
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    first = await Agent(model, instructions='Support policies.', model_settings=settings).run('Where is order 1234?')
+    compact_kwargs: dict[str, Any] = {}
+
+    async def fake_compact(**kwargs: Any) -> resp.CompactedResponse:
+        compact_kwargs.update(kwargs)
+        return resp.CompactedResponse(
+            id='resp-compact',
+            created_at=0,
+            object='response.compaction',
+            output=[ResponseCompactionItem(id='comp-1', encrypted_content='encrypted', type='compaction')],
+            usage=ResponseUsage.model_construct(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    model.client.responses.compact = fake_compact
+    messages = [
+        *first.all_messages(),
+        ModelRequest(parts=[UserPromptPart('And order 5678?')], instructions='Support policies.'),
+    ]
+    await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=messages,
+            model_settings=settings,
+            model_request_parameters=ModelRequestParameters(),
+        )
+    )
+
+    assert compact_kwargs['previous_response_id'] is omit
+    assert compact_kwargs['instructions'] == 'Support policies.'
+    assert [item.get('role') for item in compact_kwargs['input']] == ['user', 'assistant', 'user']
+
+
+@pytest.mark.parametrize(
+    'seed_settings', [None, OpenAIResponsesModelSettings(openai_previous_response_id='auto')], ids=['default', 'auto']
+)
+@pytest.mark.parametrize('instructions', ['Support policies.', 'Billing policies.'], ids=['same-agent', 'handoff'])
+async def test_openai_responses_explicit_id_with_history_resends_it(
+    allow_model_requests: None, instructions: str, seed_settings: OpenAIResponsesModelSettings | None
+):
+    """A response from a full-history request stores its instructions in its input but has no history digest, and an
+    `'auto'` chain's records them as leading input, which an explicit id doesn't send. Either way, an explicit id
+    passed with that history resends the history, and the model sees only the current instructions."""
+    mock_client = MockOpenAIResponses.create_mock([responses_completion('first'), responses_completion('second')])
+    model = OpenAIResponsesModel('gpt-6.2-sol', provider=OpenAIProvider(openai_client=mock_client))
+    first = await Agent(model, instructions='Support policies.', model_settings=seed_settings).run(
+        'Where is order 1234?'
+    )
     response_id = first.response.provider_response_id
     assert response_id is not None
 
@@ -2606,6 +2752,46 @@ async def test_openai_responses_explicit_id_with_history_e2e(
     assert [item.get('role') for item in bodies[2]['input']] == ['user']
     assert first.usage.cache_write_tokens > 0
     assert (second.usage.cache_read_tokens, third.usage.cache_read_tokens) == (0, 0)
+
+
+@pytest.mark.vcr
+async def test_openai_responses_auto_chain_e2e(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """An `'auto'` chain on GPT-6.2 sends its instructions as leading input when it starts and leaves them out while it
+    continues, so the continuation reads them from the cache. A change resends the history, which the next request
+    continues from in turn."""
+    model = OpenAIResponsesModel(
+        'gpt-6.2-sol', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    )
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    changed = _STABLE_PREFIX + '\nAnswer with just the number.'
+
+    first = await Agent(model, instructions=_STABLE_PREFIX, model_settings=settings).run(
+        'Which shelf holds entry 0042? Reply with just the number.'
+    )
+    second = await Agent(model, instructions=_STABLE_PREFIX, model_settings=settings).run(
+        'Which aisle holds entry 0101? Reply with just the number.', message_history=first.all_messages()
+    )
+    third = await Agent(model, instructions=changed, model_settings=settings).run(
+        'Which volume is entry 0077?', message_history=second.all_messages()
+    )
+    fourth = await Agent(model, instructions=changed, model_settings=settings).run(
+        'Which shelf holds entry 0101?', message_history=third.all_messages()
+    )
+
+    bodies = cast('list[dict[str, Any]]', request_capture.bodies('/responses'))
+    assert 'instructions' not in bodies[0]
+    assert bodies[0]['input'][0] == {'role': 'system', 'content': _STABLE_PREFIX}
+    assert bodies[1]['previous_response_id'] == first.response.provider_response_id
+    assert [item.get('role') for item in bodies[1]['input']] == ['user']
+    assert 'previous_response_id' not in bodies[2]
+    assert bodies[2]['input'][0] == {'role': 'system', 'content': changed}
+    assert bodies[3]['previous_response_id'] == third.response.provider_response_id
+    assert [item.get('role') for item in bodies[3]['input']] == ['user']
+    assert first.usage.cache_write_tokens > 0
+    assert second.usage.cache_read_tokens > 0
+    assert fourth.usage.cache_read_tokens > 0
 
 
 # ===== Prompt cache diagnostics =====
