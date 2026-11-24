@@ -2742,15 +2742,8 @@ def test_cache_policy_excludes_non_serializable_deps():
     )
 
 
-@pytest.mark.parametrize(
-    'nest',
-    [
-        pytest.param(tuple, id='tuple'),
-        pytest.param(list, id='list'),
-        pytest.param(lambda items: dict(zip(('tool_name', 'args', 'ctx', 'tool'), items)), id='dict'),
-    ],
-)
-def test_cache_policy_projects_nested_run_context_and_tool(nest: Callable[[tuple[object, ...]], object]):
+@pytest.mark.parametrize('container', ['tuple', 'list', 'dict'])
+def test_cache_policy_projects_nested_run_context_and_tool(container: Literal['tuple', 'list', 'dict']):
     """The projection reaches a `RunContext`/`ToolsetTool` nested in a container, not just a top-level one.
 
     `PrefectOperationBackend` passes an operation's logical inputs as a single `*args` tuple
@@ -2759,6 +2752,13 @@ def test_cache_policy_projects_nested_run_context_and_tool(nest: Callable[[tuple
     `compute_key` raises `Unable to create hash` for any agent whose `deps` hold a live resource.
     A list or dict nests them the same way, and a nested `RunContext` is projected as a top-level one is.
     """
+
+    def nest(items: tuple[object, ...]) -> object:
+        if container == 'tuple':
+            return items
+        if container == 'list':
+            return list(items)
+        return dict(zip(('tool_name', 'args', 'ctx', 'tool'), items))
 
     @dataclass
     class CacheDeps:
