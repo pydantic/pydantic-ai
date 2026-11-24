@@ -1265,10 +1265,9 @@ class OpenRouterModel(OpenAIChatModel):
         try:
             return await super()._completions_create(messages, stream, model_settings, model_request_parameters)
         except ModelHTTPError as error:
-            body = error.body
-            # The error object, or the whole response body for a status a retrying transport gave up on.
-            error_object = body.get('error', body) if is_str_dict(body) else None
-            metadata = error_object.get('metadata') if is_str_dict(error_object) else None
+            # `body` is the error object `openai` unwraps. A status a retrying transport gave up on carries the whole
+            # response body instead, and `status_error` already classifies that from the body's full text.
+            metadata = error.body.get('metadata') if is_str_dict(error.body) else None
             if (
                 # Only a generic rejection narrows: a more specific category, or flagged input, keeps its own.
                 not isinstance(error, ModelRequestRejectedError)

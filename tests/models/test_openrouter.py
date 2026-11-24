@@ -574,8 +574,8 @@ async def _openrouter_status_error(status_code: int, error_body: dict[str, objec
         agent = Agent(OpenRouterModel('openai/gpt-oss-120b', provider=provider))
         with pytest.raises(ModelAPIError) as exc_info:
             if stream:
-                async with agent.run_stream('test'):
-                    pass  # pragma: no cover
+                # The error arrives while the stream is being opened.
+                await agent.run_stream('test').__aenter__()
             else:
                 await agent.run('test')
     return exc_info.value
@@ -653,33 +653,6 @@ async def test_openrouter_metadata_raw_keeps_outer_error_category(
 
     assert isinstance(error, expected_error)
     assert not isinstance(error, ModelContextWindowExceededError)
-
-
-@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
-@pytest.mark.parametrize(
-    'message, expected_error',
-    [
-        ("Input length (100000) exceeds the model's maximum context length (8192).", ModelContextWindowExceededError),
-        ('Provider returned error', ModelRequestRejectedError),
-    ],
-)
-async def test_openrouter_request_preserves_error_categories(
-    allow_model_requests: None, message: str, expected_error: type[ModelAPIError]
-) -> None:
-    response_body = {'error': {'code': 400, 'message': message}}
-
-    def handler(_: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(400, json=response_body)
-
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
-        provider = OpenRouterProvider(
-            api_key='test', base_url='https://openrouter.example/api/v1', http_client=http_client
-        )
-        model = OpenRouterModel('openai/gpt-oss-120b', provider=provider)
-        with pytest.raises(expected_error) as exc_info:
-            await Agent(model).run('test')
-
-    assert isinstance(exc_info.value, expected_error)
 
 
 async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -3409,19 +3382,6 @@ async def test_openrouter_stream_context_window_exceeded_via_metadata_raw(allow_
     assert isinstance(cause, APIError)
     assert cause.body == outer_error
 
-    nested_raw_without_message = json.dumps({'error': {'type': 'BadRequestError', 'code': 400}})
-    error_without_message = {
-        'code': 400,
-        'message': 'Provider returned error',
-        'metadata': {'raw': nested_raw_without_message},
-    }
-    error_chunk_without_message = f'data: {json.dumps({"error": error_without_message})}\n\n'.encode()
-    rejected_error = await _run_openrouter_stream(
-        httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk_without_message)
-    )
-    assert isinstance(rejected_error, ModelRequestRejectedError)
-    assert not isinstance(rejected_error, ModelContextWindowExceededError)
-
 
 @pytest.mark.vcr(ignore_hosts=['openrouter.example'])
 @pytest.mark.parametrize(
@@ -3430,6 +3390,7 @@ async def test_openrouter_stream_context_window_exceeded_via_metadata_raw(allow_
         '[]',
         '{"error": null}',
         '{"error": {"message": "ordinary provider error"}}',
+        '{"error": {"type": "BadRequestError", "code": 400}}',
         None,
         pytest.param(_DEEPLY_NESTED_RAW, id='deeply-nested'),
     ],
