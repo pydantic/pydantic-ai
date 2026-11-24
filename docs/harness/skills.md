@@ -161,7 +161,7 @@ reads the instructions at run time.
 
 ## Skills from files you didn't write
 
-The model reads the catalog as your instructions, so a skill whose `SKILL.md` is below `'operator'` [authority](../workspace.md#workspace-authority), such as one in a repository the operator doesn't control, stays out of it. The instructions point the model at two tools instead: it calls `list_skills` for their names and descriptions and `load_skill` for one's instructions. Both reach it as tool output rather than as your instructions. This costs a tool call when a task may need a skill. The tools offer the skills the run started with, read again on each call, and a skill skipped on that read, such as one an artifact scan now flags, is reported to the model in the tool's result rather than as a warning: the run warns about skips once, at its start.
+The model reads the catalog as your instructions, so a skill whose `SKILL.md` is below `'operator'` [authority](../workspace.md#workspace-authority), such as one in a repository the operator doesn't control, stays out of it. The instructions point the model at two tools instead: it calls `list_skills` for their names and descriptions, with any `when_to_use` as the catalog shows it, and `load_skill` for one's instructions. Both reach it as tool output rather than as your instructions. With `read_files=True`, `read_skill_file` also reads the files of a skill `list_skills` lists, without loading it first, and they reach the model as tool output too. This costs a tool call when a task may need a skill. The tools offer the skills the run started with, read again on each call, and a skill skipped on that read, such as one an artifact scan now flags, is reported to the model in the tool's result rather than as a warning: the run warns about skips once, at its start.
 
 Each skill takes the level of its own file, [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of], in the workspace its library is read from. So with a run workspace at `authority='none'`, `Skills('skills', workspace=LocalWorkspaceBackend('/app'))` keeps its skills in the catalog, while `Skills('skills')`, read from the run's workspace, offers its skills through `list_skills`; and a `path_authority` entry such as `{'skills/vendored': 'none'}` moves just those skills.
 
@@ -328,7 +328,8 @@ works for [skills shipped with your application](#ship-skills-with-your-applicat
 A read returns at most 50,000 characters, and says which `offset` to pass to
 read on. A file over 10 MiB is refused.
 
-The tool refuses a skill the model has not loaded with `load_capability`, an
+The tool refuses a skill the model has neither loaded with `load_capability`
+nor seen in [`list_skills`](#skills-from-files-you-didnt-write), an
 absolute path, a path that leads outside the skill's directory through `..` or
 a symlink, and a file that is not UTF-8 text. It does not read a skill with
 `disable-model-invocation: true`, even after a host sends its `render()` as a

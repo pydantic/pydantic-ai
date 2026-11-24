@@ -35,6 +35,7 @@ from pydantic_ai_harness.skills._loader import (
     SkillDefinition,
     SkippedSkill,
     UnknownNames,
+    catalog_description,
     load_skill_libraries,
     same_skill,
     skip_duplicate_name,
@@ -88,7 +89,7 @@ class _Skill(AbstractCapability[AgentDepsT]):
     def __init__(self, skill: SkillDefinition) -> None:
         self.id = skill.name
         # Continuation lines are indented so a multiline description doesn't read as separate catalog entries.
-        self.description = _catalog_description(skill).replace('\n', '\n  ')
+        self.description = catalog_description(skill).replace('\n', '\n  ')
         self.defer_loading = True
         self.instructions = skill.render()
 
@@ -122,7 +123,9 @@ class Skills(AbstractCapability[AgentDepsT]):
     itself; render one with `SkillDefinition.render`.
 
     With `read_files=True`, the model also gets a `read_skill_file` tool that reads the text files in
-    a loaded skill's directory, such as `references/guide.md`, and nothing outside it.
+    a loaded skill's directory, such as `references/guide.md`, and nothing outside it. A skill below `'operator'`
+    can be read as soon as `list_skills` lists it, and its files reach the model as tool output, as its instructions
+    from `load_skill` do.
 
     Two `Skills` on one agent combine, so every library either names stays reachable.
     """
@@ -401,11 +404,11 @@ class Skills(AbstractCapability[AgentDepsT]):
     async def _read_skill_file(
         self, ctx: RunContext[AgentDepsT], skill: str, path: str, offset: Annotated[int, Field(ge=0)] = 0
     ) -> str:
-        """Read a text file bundled with a skill you have loaded, such as `references/guide.md`.
+        """Read a text file bundled with a skill you loaded or `list_skills` lists, such as `references/guide.md`.
 
         Args:
             ctx: The run context.
-            skill: The name of the loaded skill.
+            skill: The skill's name.
             path: The file's path relative to the skill's directory, such as `references/guide.md`, without
                 the directory itself in front.
             offset: The character to start at, to continue a file longer than one read returns.
@@ -418,7 +421,11 @@ class Skills(AbstractCapability[AgentDepsT]):
         if entry is None or not entry.source.read_files or not entry.skill.model_invocable:
             raise ModelRetry(f'The files of skill {skill!r} cannot be read with this tool.')
         if skill not in ctx.loaded_capability_ids:
-            raise ModelRetry(f'Load the skill {skill!r} with `load_capability` before reading its files.')
+            # A skill `list_skills` lists is never loaded with `load_capability`: its files are tool output, like its
+            # instructions from `load_skill`.
+            listed = self._run_lowered_names(ctx)
+            if (listed is not None and skill not in listed) or skill not in await _lowered({skill: entry}):
+                raise ModelRetry(f'Load the skill {skill!r} with `load_capability` before reading its files.')
         text = await _read_text(entry, path)
         if offset and offset >= len(text):
             raise ModelRetry(f'offset={offset} is past the end of {path!r}, which has {len(text):,} characters.')
@@ -439,7 +446,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         """Read the selected skills, from each configuration's `workspace=` or else the run's workspace.
 
         Returns one deferred capability per `'operator'` skill the model may load, with the `read_skill_file` tool
-        when one of them has `read_files` set, plus, when skills below `'operator'` authority are among them, a copy
+        when one of the skills the model may load has `read_files` set, plus, when skills below `'operator'` authority are among them, a copy
         of this capability that offers those through `list_skills` and `load_skill`. Without any skills, it adds no
         instructions or tools. Emits a `UserWarning` for each skipped `SKILL.md` or library path, an overlong
         description, or unsupported frontmatter. Raises `UserError` when a configuration without `workspace=` meets
@@ -458,7 +465,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         invocable = [entry for entry in entries.values() if entry.skill.model_invocable]
         trusted = [entry for entry in invocable if entry.skill.name not in lowered]
         offered: list[AbstractCapability[AgentDepsT]] = [_Skill[AgentDepsT](entry.skill) for entry in trusted]
-        if self._toolset is not None and any(entry.source.read_files for entry in trusted):
+        if self._toolset is not None and any(entry.source.read_files for entry in invocable):
             # The toolset built at construction, so a durable engine finds the one it registered.
             offered.append(Toolset(self._toolset))
         if len(trusted) == len(invocable):
@@ -560,7 +567,7 @@ class Skills(AbstractCapability[AgentDepsT]):
             skills, skipped = await load_skill_libraries(
                 workspace,
                 source.directories,
-                include=_selection(source.include, only),
+                include=_selection(source.include, source.exclude, only),
                 exclude=source.exclude,
                 missing_directories=source.missing_directories,
                 duplicate_names=source.duplicate_names,
@@ -610,14 +617,6 @@ class Skills(AbstractCapability[AgentDepsT]):
         return advice
 
 
-def _catalog_description(skill: SkillDefinition) -> str:
-    """The text the model's catalog lists for `skill`: its description, then its `when_to_use`."""
-    if skill.when_to_use is None:
-        return skill.description
-    # Appended verbatim, Claude Code style: the author writes the trigger clause, e.g. 'Use when ...'.
-    return f'{skill.description} {skill.when_to_use}'
-
-
 async def _read_text(entry: _Entry, path: str) -> str:
     """The text of `path` in `entry`'s skill directory, refusing a path that leads outside it."""
     skill, workspace, directory = entry.skill.name, entry.workspace, entry.skill.directory
@@ -660,7 +659,7 @@ def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> Skipped
     if scanner is None:
         return None
     # Scan exactly what reaches the model: the catalog entry, including `when_to_use`, and the body.
-    scan = scanner.scan(f'{_catalog_description(skill)}\n\n{skill.body}', source=f'skill:{skill.name}')
+    scan = scanner.scan(f'{catalog_description(skill)}\n\n{skill.body}', source=f'skill:{skill.name}')
     if not scan.flagged:
         return None
     return SkippedSkill(
@@ -671,11 +670,17 @@ def _flagged(scanner: ArtifactScanner | None, skill: SkillDefinition) -> Skipped
     )
 
 
-def _selection(include: frozenset[str] | None, only: frozenset[str] | None) -> frozenset[str] | None:
-    """The names a configuration selects, narrowed to `only` when that's given."""
+def _selection(
+    include: frozenset[str] | None, exclude: frozenset[str], only: frozenset[str] | None
+) -> frozenset[str] | None:
+    """The names a configuration includes, narrowed to `only` when that's given.
+
+    The loader ignores `exclude` once there's an `include` set, so narrowing to `only` takes the exclusions out here:
+    a name read again in one library mustn't bring back a skill that library excluded.
+    """
     if only is None:
         return include
-    return only if include is None else include & only
+    return only - exclude if include is None else include & only
 
 
 async def _lowered(entries: dict[str, _Entry]) -> frozenset[str]:
