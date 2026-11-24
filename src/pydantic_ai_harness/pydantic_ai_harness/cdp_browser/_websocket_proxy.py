@@ -48,7 +48,7 @@ async def websocket_proxy(policy: EgressPolicy) -> AsyncGenerator[int]:
         task = asyncio.create_task(relay(policy, reader, writer), name='cdp-websocket-relay')
         connections.add(task)
         task.add_done_callback(connections.discard)
-        task.add_done_callback(lambda _: writer.transport.abort())
+        task.add_done_callback(lambda _: writer.is_closing() or writer.transport.abort())
 
     server = await asyncio.start_server(accepted, '127.0.0.1', 0)
     try:
@@ -93,13 +93,16 @@ async def relay(policy: EgressPolicy, reader: asyncio.StreamReader, writer: asyn
         # A transport with unsent data stays open until its peer reads it, which a stalled peer never does.
         for open_writer in writers:
             open_writer.close()
+        unclosed = list(writers)
         try:
             with anyio.move_on_after(CLOSE_GRACE_SECONDS, shield=True):
                 for open_writer in writers:
                     with suppress(OSError):
                         await open_writer.wait_closed()
+                    unclosed.remove(open_writer)
         finally:
-            for open_writer in writers:
+            # On Python 3.13 and older, aborting a transport whose close has finished raises `AttributeError`.
+            for open_writer in unclosed:
                 open_writer.transport.abort()
 
 
