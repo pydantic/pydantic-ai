@@ -1012,7 +1012,7 @@ class GraphAgentState:
             and model_response.parts
             and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
             and (call is None or call.tool_call_id == tool_call.tool_call_id)
-            and _output.are_cut_off_tool_args(tool_call.args)
+            and _output.are_tool_call_args_cut_off(tool_call)
         ):
             raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
 

@@ -5192,6 +5192,30 @@ def test_tool_exceeds_token_limit_error():
         agent.run_sync('Hello')
 
 
+def test_tool_exceeds_token_limit_with_empty_args():
+    """A function tool call with no arguments at the token limit was cut off: Anthropic sends `{}` for one."""
+    requests = 0
+
+    def return_empty_args(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(parts=[ToolCallPart('dummy_tool', args={})], finish_reason='length')
+
+    agent = Agent(FunctionModel(return_empty_args), output_type=str)
+
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'  # pragma: no cover
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+    ):
+        agent.run_sync('Hello')
+    # A function tool call keeps its retry, as for arguments that don't parse.
+    assert requests == 2
+
+
 def test_tool_exceeds_token_limit_but_complete_args():
     def return_complete_tool_but_hit_limit(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -5368,7 +5392,7 @@ def test_text_output_function_validation_error_with_finish_reason_length_is_retr
     # Anthropic sends `{}` for a tool call it cut off, and no input when streamed.
     ids=['partial_json', 'empty_dict', 'empty_str'],
 )
-async def test_truncated_output_tool_call_raises_without_retry(mode: str, args: str | dict[str, Any]):
+async def test_truncated_output_tool_call_raises_without_retry(mode: str, args: str | dict[str, str]):
     """Output tool arguments the token limit cut off would be cut off again on a retry with the same limit."""
     calls = 0
 
@@ -5399,7 +5423,7 @@ async def test_truncated_output_tool_call_raises_without_retry(mode: str, args: 
     ids=['schema', 'schema_dict', 'non_object', 'output_validator'],
 )
 def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(
-    first: str | dict[str, Any],
+    first: str | dict[str, str],
 ):
     """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried."""
 
