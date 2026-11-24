@@ -472,11 +472,11 @@ class ModelProfile(TypedDict, total=False):
     with this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI
     Harness `Coder` does, at `'max'` autonomy.
 
-    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss, together with `omits_handoff_evidence` and `ignores_stated_runtime_constraints`: the three
-    were measured only together. Evidence: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each
-    (November 2026), `Coder` with the three instructions scored 53.2 against 51.0 without them, within that
-    benchmark's single-run noise of about 5.6 points. So the evidence is weak, and the instructions are sent only at
-    `'max'`, where nobody reviews the result before it's used.
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss, together with `omits_handoff_evidence` and
+    `ignores_stated_runtime_constraints`: the three were measured only together. Evidence: on Harness-Bench SWE81
+    with GPT-6.2 Sol at `'max'` autonomy, one run each (November 2026), `Coder` with the three instructions scored
+    53.2 against 51.0 without them, within that benchmark's single-run noise of about 5.6 points. So the evidence is
+    weak, and the instructions are sent only at `'max'`, where nobody reviews the result before it's used.
     """
 
     omits_handoff_evidence: bool
@@ -487,11 +487,8 @@ class ModelProfile(TypedDict, total=False):
     [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does, at
     `'max'` autonomy.
 
-    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss, together with `reinterprets_malformed_inputs` and `ignores_stated_runtime_constraints`: the three
-    were measured only together. Evidence: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each
-    (November 2026), `Coder` with the three instructions scored 53.2 against 51.0 without them, within that
-    benchmark's single-run noise of about 5.6 points. So the evidence is weak, and the instructions are sent only at
-    `'max'`, where nobody reviews the result before it's used.
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss, together with
+    `reinterprets_malformed_inputs`: see its docstring for the evidence.
     """
 
     ignores_stated_runtime_constraints: bool
@@ -502,11 +499,8 @@ class ModelProfile(TypedDict, total=False):
     this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness
     `Coder` does, at `'max'` autonomy.
 
-    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss, together with `reinterprets_malformed_inputs` and `omits_handoff_evidence`: the three
-    were measured only together. Evidence: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each
-    (November 2026), `Coder` with the three instructions scored 53.2 against 51.0 without them, within that
-    benchmark's single-run noise of about 5.6 points. So the evidence is weak, and the instructions are sent only at
-    `'max'`, where nobody reviews the result before it's used.
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss, together with
+    `reinterprets_malformed_inputs`: see its docstring for the evidence.
     """
 
     ignore_streamed_leading_whitespace: bool

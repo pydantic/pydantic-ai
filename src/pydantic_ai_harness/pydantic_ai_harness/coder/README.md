@@ -277,7 +277,7 @@ with the three sentences against 51.0 without them, within that benchmark's sing
 Like the rule against unrequested delegation (see [Sub-agents](#sub-agents)), each is its own instruction block that
 follows the model handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without the flag,
-the model is told the sentences were withdrawn. Models without the flags get the same prompt as before. See
+the model is told the sentences were withdrawn. Models without the flags get only the shared `'max'` guidance. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing

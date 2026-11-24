@@ -161,34 +161,31 @@ def model_specific_instructions(
       check the shared text carries for every model.
     - `handoff`: at `'max'`, `_STRUCTURED_HANDOFF`, for `omits_handoff_evidence`.
     - `runtime_constraints`: at `'max'`, `_RUNTIME_CONSTRAINTS`, for `ignores_stated_runtime_constraints`.
+
+    Below `'max'`, the last three are left out rather than sent empty, so they don't add dynamic parts to an otherwise
+    static instruction list; a block that first appears later in a conversation is still appended.
     """
-    is_max = autonomy == 'max'
+    delegation = (
+        [
+            _model_specific(
+                'delegation',
+                lambda p: p.get('delegates_unprompted', False),
+                flagged=_DELEGATION.format(tool_name=delegate_tool),
+            )
+        ]
+        if delegate_tool is not None
+        else []
+    )
+    if autonomy != 'max':
+        return delegation
     return [
-        *(
-            [
-                _model_specific(
-                    'delegation',
-                    lambda p: p.get('delegates_unprompted', False),
-                    flagged=_DELEGATION.format(tool_name=delegate_tool),
-                )
-            ]
-            if delegate_tool is not None
-            else []
-        ),
-        _model_specific(
-            'misread',
-            lambda p: p.get('reinterprets_malformed_inputs', False),
-            flagged=_MISREAD_CLASSIFY if is_max else '',
-        ),
-        _model_specific(
-            'handoff',
-            lambda p: p.get('omits_handoff_evidence', False),
-            flagged=_STRUCTURED_HANDOFF if is_max else '',
-        ),
+        *delegation,
+        _model_specific('misread', lambda p: p.get('reinterprets_malformed_inputs', False), flagged=_MISREAD_CLASSIFY),
+        _model_specific('handoff', lambda p: p.get('omits_handoff_evidence', False), flagged=_STRUCTURED_HANDOFF),
         _model_specific(
             'runtime_constraints',
             lambda p: p.get('ignores_stated_runtime_constraints', False),
-            flagged=_RUNTIME_CONSTRAINTS if is_max else '',
+            flagged=_RUNTIME_CONSTRAINTS,
         ),
     ]
 

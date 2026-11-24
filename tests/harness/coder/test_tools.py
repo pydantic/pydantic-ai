@@ -579,6 +579,9 @@ class TestCoder:
         for name, text in expected.items():
             if text is not None:
                 assert f'id="capability:coder_instructions:{name}">\n{text}\n</pyai:context>' in blocks[name]
+        if not is_max:
+            # Below `'max'` the blocks aren't registered, so the instructions stay all static.
+            assert not any(part.dynamic for part in parts)
         guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
         assert (_MISREAD_MAX_TEXT in guidance) is is_max
         assert (_MISREAD_TEXT in guidance) is not is_max
