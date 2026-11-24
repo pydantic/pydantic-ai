@@ -87,12 +87,13 @@ async def test_a_desktop_box_reattaches_with_its_display(
     assert owner.ref is not None
 
     # Attaching installs nothing it can't, so the network setting for new boxes doesn't stop it.
-    sandbox = BoxLiteSandbox(working_dir=str(tmp_path.resolve()), desktop=(1440, 900))
-    attached = sandbox.backend(owner.ref)
+    attached = BoxLiteSandboxBackend(working_dir=str(tmp_path.resolve()), ref=owner.ref, desktop=(1440, 900))
     await full_display(attached).display_size()
+    # The capability hands its desktop size to the backend it attaches. Defining it checks the options for a new box.
+    sandbox = BoxLiteSandbox(working_dir=str(tmp_path.resolve()), image='my-desktop', desktop=(1440, 900))
+    await full_display(sandbox.backend(owner.ref)).display_size()
 
-    (start,) = display.starts
-    assert start.endswith(' sh 1440x900')
+    assert [start.endswith(' sh 1440x900') for start in display.starts] == [True, True]
     assert BoxLiteSandbox().backend(owner.ref).display is None
 
 
