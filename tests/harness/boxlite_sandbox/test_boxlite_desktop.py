@@ -76,7 +76,8 @@ async def test_a_shell_command_finds_the_desktop_running(
     result = await backend.run('printf %s "$DISPLAY $FOO"', shell=True)
 
     assert result.stdout == ':1 bar'
-    assert len(display.starts) == 1
+    (start,) = display.starts
+    assert start.endswith(' sh 1280x800')
 
 
 async def test_a_desktop_box_reattaches_with_its_display(
