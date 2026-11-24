@@ -54,6 +54,9 @@ into an id against whatever source contributes it), its
 `InstructionPart` to declare the same from inside it."""
 
 AgentInstructions = AgentInstruction[AgentDepsT] | Sequence[AgentInstruction[AgentDepsT]] | None
+"""Instructions as `Agent(instructions=...)` and `Agent.override(instructions=...)` take them and
+[`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] returns them: one
+instruction, a sequence of them, or `None`."""
 
 
 def validate_instruction_id_segment(id: str, *, kind: str) -> None:
@@ -78,7 +81,12 @@ def validate_instruction_name(name: str) -> None:
 
 @dataclass(frozen=True, repr=False)
 class SourcedInstruction(Generic[AgentDepsT]):
-    """A lazy instruction recipe with the name and key its content should be addressed by."""
+    """An instruction as the agent collects it: a lazy recipe with the name and key its content is addressed by.
+
+    Capabilities don't build these to contribute instructions. They return instructions from
+    [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], and the agent
+    wraps each one with where it came from; `instruction` holds what the capability returned.
+    """
 
     instruction: AgentInstruction[AgentDepsT]
 

@@ -65,6 +65,7 @@ def test_env_is_not_shown_in_repr() -> None:
         ({'sandbox_timeout': 1.5}, 'sandbox_timeout must be an integer of at least 1, got 1.5'),
         ({'sandbox_timeout': True}, 'sandbox_timeout must be an integer of at least 1, got True'),
         ({'sandbox_timeout': 86_401}, 'sandbox_timeout must be at most 86400 seconds, got 86401'),
+        ({'desktop': (0, 0)}, '`desktop` must be a `(width, height)` of at least 1 pixel each, got (0, 0)'),
         (
             {'defer_loading': True, 'id': 'render'},
             (
@@ -235,6 +236,7 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
         'authority',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
         'path_authority',
@@ -251,5 +253,6 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'env': {'FOO': 'bar'},
         'allow_internet_access': False,
         'sandbox_timeout': 120,
+        'desktop': (1440, 900),
     }
     assert RenderSandbox[None].from_spec(**spec_fields) == RenderSandbox[None](**spec_fields)

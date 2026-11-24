@@ -408,7 +408,7 @@ async def test_discovery_http_failure(monkeypatch: pytest.MonkeyPatch, status: i
 
 
 async def test_integration_id_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CLAI 2 builds its own provider, so the environment is how a launcher picks the integration id."""
+    """Pax builds its own provider, so the environment is how a launcher picks the integration id."""
     monkeypatch.setenv('GITHUB_COPILOT_API_KEY', 'test-token')
     monkeypatch.setenv('GITHUB_COPILOT_INTEGRATION_ID', 'agentic-workflows')
     model = github_copilot.model('github-copilot:gpt-5.4')

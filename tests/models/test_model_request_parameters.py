@@ -1,9 +1,12 @@
+"""`ModelRequestParameters` is built locally before any provider request, so these are unit tests: no recording can reach it."""
+
 from dataclasses import replace
 from typing import Literal
 
 import pytest
 from pydantic import TypeAdapter
 
+from pydantic_ai.messages import ToolKind
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.native_tools import (
     AbstractNativeTool,
@@ -288,6 +291,22 @@ def test_visibility_of_unresolved_parameters_uses_authored_deferral() -> None:
     assert params.visibility_of('hidden') == 'withheld'
     assert params.visibility_of('visible') == 'visible'
     assert params.visibility_of('unknown') == 'visible'
+
+
+def test_available_tool_names_for_kind_skips_deferred_tools_until_history_reveals_them() -> None:
+    lookup = ToolKind('request_parameters', 'lookup')
+    params = ModelRequestParameters(
+        function_tools=[
+            ToolDefinition(name='search', tool_kind='request_parameters.search'),
+            ToolDefinition(name='hidden_lookup', tool_kind=lookup, defer_loading=True),
+            ToolDefinition(name='revealed_lookup', tool_kind=lookup, defer_loading=True),
+            ToolDefinition(name='lookup', tool_kind=lookup),
+        ],
+        revealed_tool_names={'revealed_lookup'},
+    )
+    assert params.available_tool_names_for_kind(lookup) == ['revealed_lookup', 'lookup']
+    assert params.available_tool_names_for_kind(lookup.id) == ['revealed_lookup', 'lookup']
+    assert params.available_tool_names_for_kind('request_parameters.missing') == []
 
 
 @pytest.mark.parametrize(

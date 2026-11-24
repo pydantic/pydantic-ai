@@ -41,6 +41,8 @@ To keep two rather than resolving them, pass a distinct `id` to each, or `id=Non
 
 One limit: for a capability that contributes a [native tool](../native-tools.md), these escapes do not dissolve the native tool's own `id`. Two differently-configured duplicates of a `WebSearch` still raise the native-tool-id conflict whether you give the capabilities distinct `id`s or `id=None` — only identical configurations avoid it.
 
+[`Agent.override`][pydantic_ai.agent.Agent.override] replaces differently from a run: `agent.override(capabilities=[Thinking(effort='low')])` replaces the agent's configured capabilities as a whole for every run inside the block, not only its `Thinking`, and a run's own capabilities then resolve against that set. To add a capability for one run, pass it to the run method's `capabilities=`; to add one for every run inside the block, list the agent's own beside it: `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`. [`root_capability`][pydantic_ai.agent.Agent.root_capability] is always the set the agent was constructed with, so inside another override this list drops what the outer override added. On an agent with a [durability capability](../durable_execution/overview.md), build the list this way: a list without the agent's bound durability capability raises a [`UserError`][pydantic_ai.exceptions.UserError], and inside a durable workflow or flow, the capabilities the list adds follow the rules for capabilities passed to a run there ([Temporal](../durable_execution/temporal.md#capabilities-at-runtime), [DBOS](../durable_execution/dbos.md#capabilities-at-runtime), [Prefect](../durable_execution/prefect.md#capabilities-at-runtime)).
+
 ```python {title="custom_capability_plain.py"}
 from typing import Any
 
@@ -325,6 +327,8 @@ print(
 _(This example is complete, it can be run "as is")_
 
 For text that changes during a run, such as state a tool updates, return a callable from `get_instructions()` that returns `InstructionPart(..., name=..., on_change='append')`, as in the [current page example](../agent.md#appending-instruction-changes), or build the capability on [`Capability`][pydantic_ai.capabilities.Capability] and register the function with [`@capability.instructions(name=..., on_change='append')`][pydantic_ai.capabilities.Capability.instructions].
+
+Annotate `get_instructions()` with [`AgentInstructions`][pydantic_ai.capabilities.AgentInstructions]. The agent collects each instruction a capability returns as a [`SourcedInstruction`][pydantic_ai.capabilities.SourcedInstruction], which keeps the instruction as returned along with the name and id it's addressed by.
 
 ## Telling the model things mid-conversation {#capability-parts}
 
@@ -737,7 +741,7 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_native_tools()`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] | `Sequence[`[`AgentNativeTool`][pydantic_ai.tools.AgentNativeTool]`]` | [Native tools](../native-tools.md) to register (including callables) |
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] `| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_wrapper_model()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_model] | [`Model`][pydantic_ai.models.Model] `| None` | [Wrap the model serving each request](#wrapping-the-model) |
-| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.agent.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [`InstructionPart`][pydantic_ai.messages.InstructionPart]s, [template strings](../agent-spec.md#template-strings), or callables) |
+| [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.capabilities.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [`InstructionPart`][pydantic_ai.messages.InstructionPart]s, [template strings](../agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.AgentModelSettings] `| None` | [Model settings](../agent.md#model-run-settings) dict, or a callable for per-step settings |
 | [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] | [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] `| None` | The run's [workspace](../workspace-custom.md#supplying-a-workspace-from-a-capability): a backend for `ref` (fresh when `ref` is `None`), or `None` for a `ref` you don't recognize. Synchronous, no I/O. With several workspace capabilities, the first that returns one wins |
 | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `| None` | Static or per-step [model selection](#selecting-the-model) |

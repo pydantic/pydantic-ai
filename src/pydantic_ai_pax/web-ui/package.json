@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "The browser UI of the CLAI 2 `web` plugin. `npm run build` writes ../pydantic_ai_pax/builtin_plugins/web/static.",
+  "description": "The browser UI of the Pax `web` plugin. `npm run build` writes ../pydantic_ai_pax/builtin_plugins/web/static.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

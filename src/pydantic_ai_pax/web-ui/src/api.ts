@@ -34,7 +34,7 @@ const token =
 const RELOADED = 'clai-reloaded-for'
 const RELOADED_FROM = 'clai-reloaded-from'
 
-/** The version of the CLAI whose bundle this page loaded again for, after `/update` restarted it; `null` otherwise. */
+/** The version of Pax whose bundle this page loaded again for, after `/update` restarted it; `null` otherwise. */
 export const reloadedFor = sessionStorage.getItem(RELOADED)
 /** The version the page ran before that reload, which an older bundle reloading leaves unset. */
 export const reloadedFrom = sessionStorage.getItem(RELOADED_FROM)
@@ -172,7 +172,7 @@ export type SessionApi = ReturnType<typeof sessionApi>
 export const SessionContext = createContext<SessionApi>(sessionApi(null))
 
 export const api = {
-  /** Install the newest CLAI as `/update` does; the `update` messages and the next snapshot's version report it. */
+  /** Install the newest Pax as `/update` does; the `update` messages and the next snapshot's version report it. */
   update: () => call<void>('POST', '/api/input', { text: '/update' }),
   models: () => call<string[]>('GET', '/api/models'),
   /** The default session's snapshot: the terminal's, else the one opened last. */
@@ -187,7 +187,7 @@ export const api = {
   /** Start a live session, in `workspace` when given; it answers the new session's conversation ID. */
   newSession: (workspace?: string) =>
     call<Opened>('POST', '/api/sessions/new', workspace === undefined ? undefined : { workspace }),
-  /** Check out a new `branch` (empty: generated) from `base` (empty: `HEAD`) in `repo`'s repository, as `clai2 --worktree` does. */
+  /** Check out a new `branch` (empty: generated) from `base` (empty: `HEAD`) in `repo`'s repository, as `pax --worktree` does. */
   addWorktree: (repo: string, branch: string, base: string) =>
     call<AddedWorktree>('POST', '/api/worktrees', { repo, branch, base }),
   /** Make a saved session live, or find the live one; it answers its conversation ID. */
@@ -279,7 +279,7 @@ export function preconnect(): void {
 
 Each new connection watches `watching()`'s sessions again, after calling `onWatch` with the shown one, before any of
 its messages arrive.
-A CLAI restarted since this page loaded has a new token: after a few failed attempts this checks, and
+Restarting Pax gives it a new token: after a few failed attempts this checks, and
 reports `expired` instead of retrying forever. One that `/update` restarted as another version serves its own bundle,
 which the page loads instead of talking to it with this one.
  */
@@ -313,7 +313,7 @@ export function connect(
     }
     if (!stopped) {
       timer = window.setTimeout(open, delay)
-      // At most 2 seconds apart, so a page waiting on `/update`'s restart is back soon after CLAI is.
+      // At most 2 seconds apart, so a page waiting on `/update`'s restart is back soon after Pax is.
       delay = Math.min(delay * 2, 2000)
     }
   }
@@ -326,7 +326,7 @@ export function connect(
     send(sessions)
     onState('open')
   }
-  // The version of the CLAI this bundle came from, as its first snapshot says.
+  // The version of Pax this bundle came from, as its first snapshot says.
   let version: string | null = null
   const received = (event: MessageEvent<string>) => {
     const message = JSON.parse(event.data) as ServerMessage

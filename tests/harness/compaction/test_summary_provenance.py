@@ -1,4 +1,4 @@
-"""Pin the summary provenance used by CLAI2's conservative rewind boundary check."""
+"""Pin the summary provenance used by Pax's conservative rewind boundary check."""
 
 from datetime import UTC, datetime
 
