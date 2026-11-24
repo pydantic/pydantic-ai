@@ -863,14 +863,21 @@ def zai_workflow_model(
 
 
 @pytest.mark.parametrize(
-    ('status', 'body'),
+    ('status', 'body', 'reason'),
     [
-        pytest.param(529, _ZAI_OVERLOADED, id='anthropic-endpoint'),
+        pytest.param(529, _ZAI_OVERLOADED, 'HTTP 529, Z.ai code 1305', id='anthropic-endpoint'),
         # Z.ai's code table lists `1305` under HTTP 429.
         pytest.param(
             429,
             {'type': 'error', 'error': {'type': 'rate_limit_error', 'code': '1305', 'message': 'overloaded'}},
+            'HTTP 429, Z.ai code 1305',
             id='code-table',
+        ),
+        pytest.param(
+            529,
+            {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'overloaded'}},
+            'HTTP 529',
+            id='no-code',
         ),
     ],
 )
@@ -880,8 +887,9 @@ async def test_overloaded_model_falls_back_for_that_request(
     agent_spans: InMemorySpanExporter,
     status: int,
     body: dict[str, object],
+    reason: str,
 ) -> None:
-    """A `1305` refusal sends that request to GLM-5.3-Flash at low effort; the next request tries GLM-5.4 again."""
+    """An overload refusal sends that request to GLM-5.3-Flash at low effort; the next request tries GLM-5.4 again."""
     refusals = [httpx2.Response(status, json=body)]
     model, bodies = zai_workflow_model(monkeypatch, lambda name: refusals.pop() if refusals else zai_message(name))
 
@@ -896,7 +904,7 @@ async def test_overloaded_model_falls_back_for_that_request(
     [served_first] = [m for m in first.new_messages() if isinstance(m, ModelResponse)]
     [served_second] = [m for m in second.new_messages() if isinstance(m, ModelResponse)]
     assert (served_first.model_name, served_second.model_name) == ('glm-5.3-flash', 'glm-5.4')
-    assert 'glm-5.4 is overloaded (Z.ai code 1305); this request falls back to glm-5.3-flash' in capsys.readouterr().err
+    assert f'glm-5.4 is overloaded ({reason}); this request falls back to glm-5.3-flash' in capsys.readouterr().err
     spans = agent_spans.get_finished_spans()
     chat_models = [
         (span.attributes or {}).get('gen_ai.request.model') for span in spans if span.name.startswith('chat ')

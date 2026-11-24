@@ -579,7 +579,8 @@ unless `ANTHROPIC_BASE_URL` is unset or names `api.anthropic.com`.
 Z.AI's Anthropic-compatible endpoint maps any enabled `thinking`, a token budget included, to its default `max` effort
 ([Z.AI](https://docs.z.ai/devpack/latest-model)).
 `shared/engine-zai.md` sets the overload fallback, `PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL`, to `glm-5.3-flash`.
-When Z.AI refuses a request to the configured model with code `1305`, `workflow_model` in `pydantic_ai_gh_aw_shim/agent.py`
+When Z.AI refuses a request to the configured model as overloaded, with HTTP 529 `overloaded_error` or code `1305`,
+`workflow_model` in `pydantic_ai_gh_aw_shim/agent.py`
 sends that request to the fallback, on the same client and at the same low effort.
 Z.AI's Anthropic endpoint sends `1305` as HTTP 529 `overloaded_error`, which the SDK retries before the fallback.
 A `1305` sent as HTTP 429, as Z.AI's code table lists it, falls back only after the shim's 429 retries:

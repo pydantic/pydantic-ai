@@ -144,8 +144,11 @@ def _configured_model_overloaded(error: Exception) -> bool:
     code = cli.zai_error_code(error.body) if isinstance(error, ModelHTTPError) else None
     if not isinstance(error, ModelOverloadedError) and code != '1305':
         return False
+    reason = f'HTTP {error.status_code}' if isinstance(error, ModelHTTPError) else 'stream error event'
+    if code:
+        reason += f', Z.ai code {code}'
     print(
-        f'[pydantic-ai] {error.model_name} is overloaded (Z.ai code {code}); '
+        f'[pydantic-ai] {error.model_name} is overloaded ({reason}); '
         f'this request falls back to {os.environ[OVERLOAD_FALLBACK_MODEL_ENV]}',
         file=sys.stderr,
         flush=True,
