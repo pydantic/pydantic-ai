@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, TypeGuard
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
@@ -21,13 +21,12 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
     UserError,
 )
-from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
+from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturn, ToolReturnPart
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai_harness._code_tools import is_code_execution_tool, reserve_nested_call
-from pydantic_ai_harness._typeguards import is_tool_return
 
 SEARCH_TOOL_NAME = 'tool_search'
 DESCRIBE_TOOL_NAME = 'tool_describe'
@@ -88,6 +87,10 @@ _DISPATCHERS = {
         ToolCallArgs,
     ),
 }
+
+
+def _is_tool_return(value: object) -> TypeGuard[ToolReturn[object]]:
+    return isinstance(value, ToolReturn)
 
 
 @dataclass(kw_only=True)
@@ -263,7 +266,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
-        if not is_tool_return(result) or not result.content:
+        if not _is_tool_return(result) or not result.content:
             return result
         # Held to the bridged tool's capability's authority, as if the model had called the tool itself.
         return replace(result, content=NestedCallContent([(target.tool_def.capability_id, result.content)]))

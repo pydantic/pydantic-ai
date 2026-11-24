@@ -17,6 +17,7 @@ from collections.abc import (
 )
 from contextlib import aclosing
 from copy import deepcopy
+from itertools import chain
 from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
 from typing_extensions import TypeVar
@@ -1143,7 +1144,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             _prune_duplicate_tool_reveals(tool_parts_by_index, self.ctx.deps.discovered_tool_names)
             for index in sorted(tool_parts_by_index):
                 self.output_parts.extend(tool_parts_by_index[index])
-            self.output_parts.extend([part for k in sorted(user_parts_by_index) for part in user_parts_by_index[k]])
+            self.output_parts.extend(chain.from_iterable(user_parts_by_index[k] for k in sorted(user_parts_by_index)))
 
         for index in sorted(tool_parts_by_index):
             for part in tool_parts_by_index[index]:
