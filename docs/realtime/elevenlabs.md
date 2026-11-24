@@ -177,6 +177,8 @@ model = ElevenLabsAgentsRealtimeModel('agent_0101k2example', settings=settings)
 | `elevenlabs_agents_tool_sync` | How the session's tools are reconciled with the agent's client tools; see [Tool synchronization](#tool-synchronization) |
 | `elevenlabs_agents_config_override` | Raw override keys merged last as a forward-compatibility escape hatch |
 
+Instrumentation leaves `elevenlabs_agents_custom_llm_extra_body`, and the `elevenlabs_agents_dynamic_variables` entries whose names start with `secret__`, out of the `model_settings` it records.
+
 Each `elevenlabs_agents_*` override setting requires its toggle on the agent, as described above;
 `elevenlabs_agents_dynamic_variables`, `elevenlabs_agents_user_id`, `elevenlabs_agents_strip_audio_tags`, and
 `elevenlabs_agents_tool_sync` need none.
