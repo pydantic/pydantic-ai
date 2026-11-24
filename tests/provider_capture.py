@@ -111,16 +111,16 @@ class CapturedRequest:
             elif voice != 'user':
                 voices.append((voice, text))
             elif open_frame is not None:
-                voices.append(('data', text))
-                if text.strip() == f'</{open_frame}>':
+                # Text after the closing tag in the same piece isn't framed, so the whole piece counts as unframed.
+                closing = f'</{open_frame}>'
+                voices.append(('data' if closing not in text or text.strip().endswith(closing) else voice, text))
+                if closing in text:
                     open_frame = None
             elif (opened := _FRAME_OPEN.fullmatch(text.strip())) is not None:
                 open_frame = opened.group(1)
                 voices.append(('data', text))
-            elif _FRAMED.fullmatch(text.strip()) is not None:
-                voices.append(('data', text))
             else:
-                voices.append((voice, text))
+                voices.append(('data' if _is_framed(text.strip()) else voice, text))
         return voices
 
     def voices_of(self, marker: str) -> list[Voice]:
@@ -162,6 +162,12 @@ def _texts(content: Any) -> Iterator[str]:
 
 _FRAME_OPEN = re.compile(r'<([a-z][a-z0-9_]*)(?: [^<>]*)?>')
 _FRAMED = re.compile(r'<([a-z][a-z0-9_]*)(?: [^<>]*)?>.*</\1>', re.DOTALL)
+
+
+def _is_framed(text: str) -> bool:
+    """Whether all of `text` is one frame: an opening tag at the start, and its only closing tag at the end."""
+    framed = _FRAMED.fullmatch(text)
+    return framed is not None and text.count(f'</{framed.group(1)}>') == 1
 
 
 def _is_inline_system(text: str) -> bool:

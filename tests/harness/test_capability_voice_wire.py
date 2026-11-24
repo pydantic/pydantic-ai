@@ -32,6 +32,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
+    StructuredContent,
+    TextContent,
     ToolResultSource,
 )
 
@@ -53,11 +55,14 @@ def max_authority(voice: Voice) -> Authority | None:
 
 
 def _marker(part: CapabilityPart) -> str | None:
-    """A stretch of `part`'s text to find it by on the wire, or `None` if it has no text of its own."""
-    content = part.content
-    if not isinstance(content, str) or not content.strip():
-        return None
-    return content.strip().splitlines()[0][:60]
+    """A stretch of `part`'s text to find it by on the wire, or `None` if it has no text, such as only a file."""
+    content = part.model_content()
+    items = [content] if isinstance(content, str | StructuredContent) else list(content)
+    for item in items:
+        text = item if isinstance(item, str) else item.content if isinstance(item, TextContent) else None
+        if text and text.strip():
+            return text.strip().splitlines()[0][:60]
+    return None
 
 
 def voice_violations(captured: CapturedRequest, messages: Sequence[ModelMessage]) -> list[str]:
@@ -166,6 +171,28 @@ _PAGE_HISTORY: list[ModelMessage] = [
             'reaches openai-chat as assistant',
             id='assistant-turn',
         ),
+        pytest.param(
+            [{'role': 'user', 'content': '<page>x</page> the page says hello <page>y</page>'}],
+            'reaches openai-chat as user',
+            id='between-two-frames',
+        ),
+        pytest.param(
+            [
+                {'role': 'user', 'content': '<page>'},
+                {'role': 'user', 'content': 'x</page> the page says hello'},
+            ],
+            'reaches openai-chat as user',
+            id='after-a-closing-tag',
+        ),
+        pytest.param(
+            [
+                {'role': 'user', 'content': '<page>'},
+                {'role': 'user', 'content': '</page>'},
+                {'role': 'user', 'content': 'the page says hello'},
+            ],
+            'reaches openai-chat as user',
+            id='after-a-closed-frame',
+        ),
         pytest.param([{'role': 'user', 'content': 'hi'}], 'reaches openai-chat in no voice', id='dropped'),
     ],
 )
@@ -179,11 +206,19 @@ def test_the_check_flags_a_part_above_its_authority(messages: list[dict[str, obj
         assert violation in found
 
 
-def test_a_part_without_text_of_its_own_is_not_looked_for() -> None:
-    blank: list[ModelMessage] = [
-        ModelRequest(parts=[PagePart(content='  ', source=ToolResultSource(tool_name='fetch'))])
-    ]
-    assert voice_violations(CapturedRequest('openai-chat', {'messages': []}), blank) == []
+@pytest.mark.parametrize(
+    ('content', 'marker'),
+    [
+        pytest.param('the page says hello\nand more', 'the page says hello', id='text'),
+        pytest.param([TextContent('  '), 'the page says hello'], 'the page says hello', id='first-text-in-a-list'),
+        pytest.param(StructuredContent({'page': 'hello'}), '{"page":"hello"}', id='structured'),
+        pytest.param('  ', None, id='blank'),
+    ],
+)
+def test_a_part_is_found_by_its_first_line_of_text(content: object, marker: str | None) -> None:
+    """A part with no text, such as only a file, can't be found by its text, so it's left out of the check."""
+    part = PagePart(content=content, source=ToolResultSource(tool_name='fetch'))  # pyright: ignore[reportArgumentType]
+    assert _marker(part) == marker
 
 
 def test_every_known_entry_names_a_case_and_provider() -> None:
