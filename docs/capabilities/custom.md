@@ -466,7 +466,7 @@ Below `'operator'`, `ctx.enqueue` treats what the capability sends by kind, so n
 - A `SystemPromptPart` goes out as an instruction part lowered to the ceiling.
 - User content or a `UserPromptPart` from a capability at `'none'` goes out as data in a `<capability_content>` frame whose note names the capability.
 - Retry feedback, which would otherwise say the application's validation failed, goes out as the capability's own text: plain user text at `'user'`, and data at `'none'`.
-- The [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content] of a tool the capability contributes goes out as `<capability_content>` data at `'none'`, rather than as user text.
+- The [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content] of a tool the capability contributes goes out as `<capability_content>` data at `'none'`, rather than as user text, also when the tool is called through [Code Mode](../harness/code-mode.md) or [`ToolBridge`](../harness/tool-bridge.md). A hook that replaces the calling tool's `ToolReturn.content` holds the new content to the calling tool's capability only; one that edits it in place keeps each contributing capability's framing.
 - A plain `ToolReturnPart` is tool output whoever sends it, so it's kept as it is.
 
 Anything else raises `UserError` in `ctx.enqueue`:
