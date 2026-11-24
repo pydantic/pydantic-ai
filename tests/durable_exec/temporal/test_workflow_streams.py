@@ -38,7 +38,13 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 
 try:
     from temporalio import workflow
-    from temporalio.client import Client, WorkflowFailureError, WorkflowHandle, WorkflowHistory
+    from temporalio.client import (
+        Client,
+        WorkflowContinuedAsNewError,
+        WorkflowFailureError,
+        WorkflowHandle,
+        WorkflowHistory,
+    )
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.contrib.workflow_streams import WorkflowStreamItem, WorkflowStreamState
     from temporalio.exceptions import ApplicationError
@@ -885,8 +891,15 @@ async def _run_continue_as_new_enqueue_workflow(
             id=f'{ContinueAsNewEnqueueWorkflow.__name__}-{uuid.uuid4()}',
             task_queue=TASK_QUEUE,
         )
+        if continues_as_new:
+            # Subscribe once the first run is over: a poll that reaches it while it's closing for the continuation
+            # fails the subscription. The successor carries the whole log, and waits for the subscriber to drain it.
+            with pytest.raises(WorkflowContinuedAsNewError):
+                await handle.result(follow_runs=False)
         received = await _collect(
-            _continue_as_new_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+            _continue_as_new_durability.stream_agent_events(
+                client, client.get_workflow_handle(handle.id), poll_cooldown=timedelta(milliseconds=50)
+            )
         )
         messages = await handle.result()
     history = await client.get_workflow_handle(handle.id, run_id=handle.first_execution_run_id).fetch_history()
