@@ -100,6 +100,13 @@ from .test_session import FakeRealtimeModel, make_tool_manager
 with try_import() as openai_live_installed:
     from pydantic_ai.realtime.openai_live import OpenAILiveModelSettings
 
+with try_import() as elevenlabs_agents_installed:
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+    from pydantic_ai.realtime.elevenlabs_agents import (
+        ElevenLabsAgentsRealtimeModel,
+        ElevenLabsAgentsRealtimeModelSettings,
+    )
+
 with try_import() as mcp_installed:
     from fastmcp import FastMCP
 
@@ -871,6 +878,89 @@ async def test_request_config_omits_model_settings_without_content() -> None:
         assert 'secret persona' not in json.dumps(dict(attributes))
         assert 'model_request_parameters' in attributes
         assert attributes['gen_ai.request.max_tokens'] == 4096
+
+
+@pytest.mark.skipif(not elevenlabs_agents_installed(), reason='websockets not installed')
+async def test_request_config_filters_elevenlabs_agents_settings() -> None:
+    # Like the embedding and image spans' recorded settings, which leave out `extra_body`, the realtime
+    # `model_settings` blob leaves out the custom-LLM request body and the `secret__` dynamic variables.
+    settings, exporter = _settings()
+    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), ResponseDone()])
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model=ElevenLabsAgentsRealtimeModel('agent_x', provider=ElevenLabsProvider(api_key='k')),
+        model_settings=ElevenLabsAgentsRealtimeModelSettings(
+            max_tokens=4096,
+            elevenlabs_agents_custom_llm_extra_body={'value': 'sentinel'},
+            elevenlabs_agents_dynamic_variables={'secret__x': 'sentinel', 'name': 'Ana'},
+        ),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = exporter.get_finished_spans()
+    for span in spans:
+        assert 'sentinel' not in json.dumps(dict(span.attributes or {}))
+        for event in span.events:
+            assert 'sentinel' not in json.dumps(dict(event.attributes or {}))
+    session_attributes = {s.name: s for s in spans}['invoke_agent agent'].attributes
+    assert session_attributes is not None
+    assert json.loads(str(session_attributes['model_settings'])) == snapshot(
+        {'max_tokens': 4096, 'elevenlabs_agents_dynamic_variables': {'name': 'Ana'}}
+    )
+
+
+@pytest.mark.skipif(not elevenlabs_agents_installed(), reason='websockets not installed')
+async def test_request_config_omits_filtered_out_elevenlabs_agents_settings() -> None:
+    # Settings holding only the custom-LLM request body and `secret__` dynamic variables record no
+    # `model_settings` at all.
+    settings, exporter = _settings()
+    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), ResponseDone()])
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model=ElevenLabsAgentsRealtimeModel('agent_x', provider=ElevenLabsProvider(api_key='k')),
+        model_settings=ElevenLabsAgentsRealtimeModelSettings(
+            elevenlabs_agents_custom_llm_extra_body={'value': 'sentinel'},
+            elevenlabs_agents_dynamic_variables={'secret__x': 'sentinel'},
+        ),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = exporter.get_finished_spans()
+    assert spans
+    for span in spans:
+        attributes = dict(span.attributes or {})
+        assert 'model_settings' not in attributes
+        assert 'sentinel' not in json.dumps(attributes)
+    session_attributes = {s.name: s for s in spans}['invoke_agent agent'].attributes
+    assert session_attributes is not None
+    assert 'model_settings' not in json.loads(str(session_attributes['logfire.json_schema']))['properties']
+
+
+@pytest.mark.skipif(not elevenlabs_agents_installed(), reason='websockets not installed')
+async def test_request_config_keeps_empty_elevenlabs_agents_dynamic_variables() -> None:
+    # An empty `elevenlabs_agents_dynamic_variables` is recorded as given.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([ResponseDone()]),
+        _ok_runner,
+        instrumentation=settings,
+        model=ElevenLabsAgentsRealtimeModel('agent_x', provider=ElevenLabsProvider(api_key='k')),
+        model_settings=ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_dynamic_variables={}),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    session_attributes = {s.name: s for s in exporter.get_finished_spans()}['invoke_agent agent'].attributes
+    assert session_attributes is not None
+    assert json.loads(str(session_attributes['model_settings'])) == snapshot(
+        {'elevenlabs_agents_dynamic_variables': {}}
+    )
 
 
 async def test_session_span_records_lifecycle_spans() -> None:

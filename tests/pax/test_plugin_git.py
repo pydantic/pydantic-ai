@@ -332,7 +332,7 @@ async def test_module_without_id_does_not_start_a_git_install(tmp_path: Path, so
 
 def test_shell_git_install_directs_user_to_a_clai_session(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
-    with pytest.raises(ValueError, match=r'Run `/plugins add https://example.com/plugin.git` in a CLAI session'):
+    with pytest.raises(ValueError, match=r'Run `/plugins add https://example.com/plugin.git` in a Pax session'):
         plugins_command(harness.store, ['add', 'https://example.com/plugin.git'])
     assert harness.store.plugins() == []
     assert not (harness.store.plugins_dir / '_git').exists()

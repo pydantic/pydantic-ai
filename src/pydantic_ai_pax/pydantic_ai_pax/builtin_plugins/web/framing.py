@@ -101,7 +101,7 @@ def _frame_ancestors(policy: str) -> list[str] | None:
 
 
 def _matches(source: str, *, target: SplitResult, framer: SplitResult) -> bool:
-    """CSP's source matching for an ancestor, ignoring paths, which no `frame-ancestors` CLAI meets uses."""
+    """CSP's source matching for an ancestor, ignoring paths, which no `frame-ancestors` Pax meets uses."""
     if source == '*':
         return framer.scheme in _DEFAULT_PORTS
     if source == "'self'":

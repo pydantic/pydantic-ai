@@ -90,7 +90,7 @@ class Guard:
             await send({'type': 'websocket.close', 'code': 1008})
         else:
             refused = Response(
-                "Open the address CLAI printed: it carries this launch's access token.",
+                "Open the address Pax printed: it carries this launch's access token.",
                 status_code=403,
                 media_type='text/plain',
             )
@@ -437,7 +437,7 @@ def _prompt(app: FastAPI, service: WebService) -> None:
     """What the composer does: enter input, interrupt, complete, find `@` files, pick a model, answer questions.
 
     Each route is there twice: under `/api/sessions/ID/` for the live session holding conversation ID,
-    and unprefixed for the default session, as before CLAI ran several.
+    and unprefixed for the default session, as before Pax ran several.
     """
 
     def session(conversation_id: str | None) -> SessionChannel:
@@ -823,7 +823,7 @@ def _events(app: FastAPI, service: WebService) -> None:
                 try:
                     snapshot = dump(service.default().snapshot())
                 except LookupError:
-                    snapshot = None  # No session is live, as while CLAI exits; `live` says so.
+                    snapshot = None  # No session is live, as while Pax exits; `live` says so.
                 # Before the first `await`, so the default it follows is the one in the snapshot, and every
                 # `live` already queued, or queued from here on, is no older than this one.
                 service.follow(client, snapshots=False)

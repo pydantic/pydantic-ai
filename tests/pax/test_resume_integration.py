@@ -143,7 +143,7 @@ async def test_opening_resume_names_only_sessions_the_naming_model_already_saw(t
     await chosen.listing()
     assert not chosen.namer.submit(local.id, client=chosen.naming)
 
-    # On CLAI's default model neither side records a model, but sessions from another agent still wait.
+    # On Pax's default model neither side records a model, but sessions from another agent still wait.
     context.set_setting(['sessions.naming_model', 'null'])
     session.model = None
     native = ConversationSummary(workspace='/a')
@@ -407,7 +407,7 @@ async def test_archived_sessions_are_hidden_and_resuming_one_lists_it_again(
     assert (await store.get(conversation_id=old)).summary.archived_at is not None
     assert session.conversation_id != old
     await service.resume(old)
-    # Archived meanwhile by another CLAI, as it was open here between turns: the next turn lists it again.
+    # Archived meanwhile by another Pax, as it was open here between turns: the next turn lists it again.
     await store.set_archived(conversation_id=old, archived=True)
     await session.prompt('continued')
     assert old in [entry.id for entry in await service.listing()]

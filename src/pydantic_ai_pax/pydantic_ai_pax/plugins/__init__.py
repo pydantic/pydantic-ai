@@ -75,9 +75,9 @@ class Conversation(Protocol):
         ...
 
     async def resolved_model(self) -> Model | str | None:
-        """The model CLAI or the user selected for the next run; `None` when neither has chosen one.
+        """The model Pax or the user selected for the next run; `None` when neither has chosen one.
 
-        A capability that selects a model can replace CLAI's default per request, so a run may use another.
+        A capability that selects a model can replace Pax's default per request, so a run may use another.
         """
         ...
 
@@ -87,7 +87,7 @@ class Conversation(Protocol):
         Only restores the saved history: nothing runs and no tool is replayed. Call it between
         turns, such as from `on_session_start` or a command. It raises `RuntimeError` during a run,
         `LookupError` for an unknown ID, and `ValueError` for a conversation saved in another
-        directory, when persistence is not configured, or when another live session of this CLAI holds
+        directory, when persistence is not configured, or when another live session of this Pax holds
         it. `allow_other_workspace=True` continues a conversation saved in another directory in this one
         instead, as confirming it in the `/resume` browser does. A conversation still running in another
         process is not taken over: a fork of it is resumed, and the notice says so.
@@ -106,7 +106,7 @@ class SessionCatalog(Protocol):
     def follows_workspace(self) -> bool:
         """Whether `/resume ID` moves the session into the directory it was saved in, as under `pax --web`.
 
-        Otherwise it refuses a session saved in another directory than the one CLAI runs in.
+        Otherwise it refuses a session saved in another directory than the one Pax runs in.
         """
         ...
 
@@ -229,7 +229,7 @@ class PluginCatalog(Protocol):
     """The plugins `/plugins` lists, for a plugin that shows or manages them; the shell's `SessionPlugins` is one.
 
     Each action applies at once and is saved, as the same `/plugins` action is, in every live session
-    of this CLAI; a running turn keeps the plugins it started with. Adding and removing declarations
+    of this Pax; a running turn keeps the plugins it started with. Adding and removing declarations
     goes through the prompt, with `PluginHost.send_input`, as does a settings menu that is not declared
     (`/plugins configure NAME`).
     Changes run one at a time, each waiting for one in progress, so never await one from a plugin's
@@ -294,11 +294,11 @@ SendInput = Callable[[str, Sequence[BinaryContent]], None]
 
 
 PluginScope = Literal['session', 'process']
-"""How many instances of a plugin CLAI builds: one per live session, or one for the whole process."""
+"""How many instances of a plugin Pax builds: one per live session, or one for the whole process."""
 
 
 class LiveSession(Protocol):
-    """One live session of this CLAI process, as a process-scoped plugin reaches it through `PluginHost.live`."""
+    """One live session of this Pax process, as a process-scoped plugin reaches it through `PluginHost.live`."""
 
     @property
     def id(self) -> str:
@@ -363,7 +363,7 @@ class LiveSession(Protocol):
         ...
 
     def setting(self, key: str, /) -> JsonValue:
-        """The effective value of a CLAI setting in the session, as `PluginHost.setting` reads it."""
+        """The effective value of a Pax setting in the session, as `PluginHost.setting` reads it."""
         ...
 
     def command_menu(self, name: str, /) -> SettingsMenu | None:
@@ -424,7 +424,7 @@ class LiveSession(Protocol):
 
 
 class LiveSessions(Protocol):
-    """The live sessions of this CLAI process, for a process-scoped plugin; see `PluginHost.live`."""
+    """The live sessions of this Pax process, for a process-scoped plugin; see `PluginHost.live`."""
 
     def listing(self) -> list[LiveSession]:
         """Every live session, oldest first."""
@@ -447,20 +447,20 @@ class LiveSessions(Protocol):
         Concurrent calls for one conversation return the same session. A conversation another process runs
         continues in a fork of it, reusing one saved before, so the session's conversation ID differs.
         Raises `LookupError` for an unknown conversation, `ValueError` when its directory is gone, and
-        `RuntimeError` where CLAI opens no sessions.
+        `RuntimeError` where Pax opens no sessions.
         Do not await it from `on_session_start`: the new session waits for the plugins still loading.
         """
         ...
 
     async def new(self, *, workspace: Path | None = None) -> LiveSession:
-        """A new live session with a new conversation, in `workspace`, by default the directory CLAI started in.
+        """A new live session with a new conversation, in `workspace`, by default the directory Pax started in.
 
         Do not await it from `on_session_start`: the new session waits for the plugins still loading.
         """
         ...
 
     async def close(self, live_id: str, /) -> None:
-        """Close a session CLAI opened with `open` or `new`, cancelling its turn; its plugins end with `'exit'`.
+        """Close a session Pax opened with `open` or `new`, cancelling its turn; its plugins end with `'exit'`.
 
         Raises `LookupError` when none is live and `ValueError` for one its own driver runs, such as the terminal's.
         """
@@ -535,7 +535,7 @@ class TaskCatalog(Protocol):
     async def resume(self, task_id: str) -> None:
         """Ask the agent to resume a finished task, as `/tasks resume ID` does, entering the request as a prompt.
 
-        Raises `ValueError` for a task that is running or cannot resume, and `RuntimeError` on a CLAI with
+        Raises `ValueError` for a task that is running or cannot resume, and `RuntimeError` on a Pax with
         no prompt to enter it at; the task stays as it was then.
         """
         ...
@@ -549,7 +549,7 @@ class TaskCatalog(Protocol):
         as `on_task_progress`, as for any task. Prompting a task the user stopped lets it resume. Raises
         `ValueError` for blank text, a task that is running, starting from a prompt, or cannot resume, or one
         the agent can no longer delegate to or whose delegate call fails or is denied, and `RuntimeError` on a
-        CLAI that cannot run it; the task stays as it was then.
+        Pax that cannot run it; the task stays as it was then.
         """
         ...
 
@@ -607,7 +607,7 @@ class Transcript:
 
 @dataclass(kw_only=True)
 class SessionStart:
-    """CLAI is ready for prompts. Each plugin receives this once, when it loads."""
+    """Pax is ready for prompts. Each plugin receives this once, when it loads."""
 
     agent: AbstractAgent[Never, object]
     settings: Settings
@@ -697,10 +697,10 @@ UpdateStage = Literal['installing', 'output', 'failed', 'installed', 'restarting
 
 @dataclass(frozen=True, kw_only=True)
 class InstallProgress:
-    """`/update` is installing a newer CLAI with uv.
+    """`/update` is installing a newer Pax with uv.
 
     `installing` comes first, then `output` for each line uv prints, then one of `failed` when uv fails,
-    `installed` when CLAI must be started again by hand, or `restarting` when CLAI is about to exit and
+    `installed` when Pax must be started again by hand, or `restarting` when Pax is about to exit and
     start the new build in its place.
     """
 
@@ -721,7 +721,7 @@ class PluginLoadFailed:
 
 @dataclass(kw_only=True)
 class SessionEnd:
-    """CLAI is quitting, or this plugin is being unloaded."""
+    """Pax is quitting, or this plugin is being unloaded."""
 
     reason: SessionEndReason
 
@@ -758,9 +758,9 @@ SettingsProvider = Literal['anthropic', 'google', 'openai', 'openai-chat']
 class ModelProvider:
     """Models a plugin runs under its own `PREFIX:`; return it from `Plugin.get_model_providers`.
 
-    `resolve` gets NAME without the prefix. CLAI calls it in a worker thread before every run with
+    `resolve` gets NAME without the prefix. Pax calls it in a worker thread before every run with
     one of these models, so it may read the keyring; raise `UserError` saying how to set up when it
-    cannot build the model. A prefix Pydantic AI or CLAI already runs is rejected; when two plugins
+    cannot build the model. A prefix Pydantic AI or Pax already runs is rejected; when two plugins
     offer one prefix, the later one wins. Unloading the plugin removes the prefix, and a run with
     a model under it then fails as an unknown provider until the plugin is enabled again.
 
@@ -783,10 +783,10 @@ class ModelProvider:
     """
 
     def __post_init__(self) -> None:
-        """Reject a malformed prefix, one CLAI already runs, or an unknown `settings_from`."""
+        """Reject a malformed prefix, one Pax already runs, or an unknown `settings_from`."""
         _require_name('Model prefix', self.prefix)
         if _runs_already(self.prefix):
-            raise ValueError(f'Model prefix {self.prefix!r} is a provider CLAI already runs; choose your own.')
+            raise ValueError(f'Model prefix {self.prefix!r} is a provider Pax already runs; choose your own.')
         if self.settings_from is not None and self.settings_from not in get_args(SettingsProvider):
             raise ValueError(
                 f'settings_from must be one of {", ".join(get_args(SettingsProvider))}; got {self.settings_from!r}.'
@@ -794,7 +794,7 @@ class ModelProvider:
 
     @property
     def names(self) -> tuple[str, ...]:
-        """`models` as CLAI shows and saves them, with the prefix."""
+        """`models` as Pax shows and saves them, with the prefix."""
         return tuple(f'{self.prefix}:{name}' for name in self.models)
 
 
@@ -824,8 +824,8 @@ class PluginLogin:
 
     For sign-ins that store credentials, such as the subscription behind a `ModelProvider`. Keep
     secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
-    Name it after the model prefix it unlocks, as CLAI's own `openai-codex` and `github-copilot` are.
-    NAME cannot be a sign-in CLAI ships (including the earlier `codex` and `copilot`); when two
+    Name it after the model prefix it unlocks, as Pax's own `openai-codex` and `github-copilot` are.
+    NAME cannot be a sign-in Pax ships (including the earlier `codex` and `copilot`); when two
     plugins add one name, the later one wins. Unloading the plugin removes it. Once the sign-in
     succeeds, `models` (as `PREFIX:NAME`, such as a `ModelProvider`'s `names`) are added to the saved
     model list, so `/model` and `/model settings` offer them without `/model add`.
@@ -850,10 +850,10 @@ class PluginLogin:
     """
 
     def __post_init__(self) -> None:
-        """Reject a malformed name, or one CLAI already signs in to, before any plugin can offer it."""
+        """Reject a malformed name, or one Pax already signs in to, before any plugin can offer it."""
         _require_name('Login name', self.name)
         if self.name in LOGINS or self.name in LOGIN_ALIASES:
-            raise ValueError(f'Login name {self.name!r} is a sign-in CLAI already has; choose your own.')
+            raise ValueError(f'Login name {self.name!r} is a sign-in Pax already has; choose your own.')
 
 
 _PROVIDER_PREFIX = re.compile(r'[a-z][a-z0-9-]*')
@@ -868,7 +868,7 @@ def _require_name(kind: str, name: str) -> None:
 
 
 def _runs_already(prefix: str) -> bool:
-    """Whether CLAI or Pydantic AI already runs `prefix:` models, aliases such as `openai-chat` included.
+    """Whether Pax or Pydantic AI already runs `prefix:` models, aliases such as `openai-chat` included.
 
     `infer_model` accepts exactly the prefixes `infer_provider_class` knows, so that is the source of truth.
     An unknown prefix raises `ValueError` without importing anything; a known one whose SDK is missing
@@ -913,7 +913,7 @@ async def bare_screen() -> AsyncGenerator[None]:
 
 
 class PluginHost(Generic[DepsT]):
-    """What CLAI gives a plugin to talk to: the terminal, the conversation, and its saved settings.
+    """What Pax gives a plugin to talk to: the terminal, the conversation, and its saved settings.
 
     A plugin declares what it contributes on its `Plugin` subclass; the host only carries context.
     """
@@ -995,7 +995,7 @@ class PluginHost(Generic[DepsT]):
         self._resolve_model = resolve_model
         self._model_settings = model_settings
         self.live = live
-        """Every live session of this CLAI, for a plugin with `scope = 'process'`; `None` for any other.
+        """Every live session of this Pax, for a plugin with `scope = 'process'`; `None` for any other.
 
         Such a plugin is built once for the whole process. Its host's `session_id`, `workspace`, `tasks`,
         `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` follow `live.current()`, the
@@ -1007,7 +1007,7 @@ class PluginHost(Generic[DepsT]):
     async def resolve_model(self, name: str) -> Model | str:
         """Resolve a model ID, saved chain, or account through the session's providers.
 
-        A host outside CLAI without a resolver returns the ID unchanged for core to resolve.
+        A host outside Pax without a resolver returns the ID unchanged for core to resolve.
         """
         return await self._resolve_model(name) if self._resolve_model is not None else name
 
@@ -1019,7 +1019,7 @@ class PluginHost(Generic[DepsT]):
     def workspace(self) -> Path:
         """The directory this session works in: where its runs' tools work and its project files are read.
 
-        Use it instead of the process's working directory, which CLAI does not change after startup,
+        Use it instead of the process's working directory, which Pax does not change after startup,
         and pass it as `cwd=` to a subprocess. Under `pax --web` each session has its own. A host
         built outside the shell, such as in a test, has the current directory.
         """
@@ -1059,7 +1059,7 @@ class PluginHost(Generic[DepsT]):
         entered before the prompt opens, such as from `on_session_start`, waits for it. Unlike
         `submit_prompt`, it is not tied to a command handler. A headless `-p` run reads no prompts, so
         what it is sent is never run. Raises `RuntimeError` on a host whose shell reads no such input:
-        one built without `send_input=`, or a CLAI whose output is not a terminal, which reads its
+        one built without `send_input=`, or a Pax whose output is not a terminal, which reads its
         prompts line by line. A bare command that opens a menu, such as `/model`, opens it in the
         terminal, where only the keyboard or `interrupt` closes it.
 
@@ -1076,7 +1076,7 @@ class PluginHost(Generic[DepsT]):
 
         Without a saved one, the agent's own model, or `None` when it has none. For a plugin whose
         own agent works for the whole process rather than one session, such as the web UI's
-        orchestrator. A host without CLAI's settings, such as in a test, returns `None` unless built
+        orchestrator. A host without Pax's settings, such as in a test, returns `None` unless built
         with `default_model=`.
         """
         return None if self._default_model is None else await self._default_model()
@@ -1090,10 +1090,10 @@ class PluginHost(Generic[DepsT]):
         return None if self._default_model_name is None else await self._default_model_name()
 
     def setting(self, key: str, /) -> JsonValue:
-        """The effective value of a CLAI setting, such as `run.code_mode`, read now, as `/set KEY` shows it.
+        """The effective value of a Pax setting, such as `run.code_mode`, read now, as `/set KEY` shows it.
 
         Read-only: change one as the user would, with `send_input('/set KEY VALUE')`. Raises `KeyError`
-        for an unknown key, and on a host without CLAI's settings, such as in a test, unless the host
+        for an unknown key, and on a host without Pax's settings, such as in a test, unless the host
         was built with `setting=`.
         """
         if self._setting is None:
@@ -1131,7 +1131,7 @@ class PluginHost(Generic[DepsT]):
     def command_menu(self, name: str, /) -> SettingsMenu | None:
         """The settings menu bare `/NAME` opens, as the command declares it with `Command.menu`, built now.
 
-        For a plugin that is another way to use CLAI, such as a remote UI, to show that menu itself
+        For a plugin that is another way to use Pax, such as a remote UI, to show that menu itself
         instead of opening it in the terminal. `None` for a command that declares none, an unknown or
         unavailable one, and on a host without a shell.
         """
@@ -1152,7 +1152,7 @@ class PluginHost(Generic[DepsT]):
         """Validate the JSON given to `plugins add` against the plugin's own model.
 
         `requires` names the features a setting's saved value depends on, such as
-        `{'sub_agents': ['stock-bound-delegation']}`. CLAI stores the tags beside the declaration
+        `{'sub_agents': ['stock-bound-delegation']}`. Pax stores the tags beside the declaration
         whenever the settings are saved, and a build missing a feature ignores that setting and uses
         its default. Keys are the saved names (aliases included); see `PLUGINS.md`.
         """
@@ -1229,11 +1229,11 @@ _RENAMED_HANDLERS = {'on_task_event': 'on_task_progress', 'on_update_progress': 
 
 
 class Plugin(Generic[SettingsT, DepsT]):
-    """A CLAI plugin, declared by overriding what it contributes, as an `AbstractCapability` is.
+    """A Pax plugin, declared by overriding what it contributes, as an `AbstractCapability` is.
 
     Parametrize with the settings model, `class Linear(Plugin[LinearSettings])`: the loader validates
     the declaration's JSON against it and passes the result as `settings`. When the plugin loads,
-    CLAI calls every `get_*` method once and keeps what they return until it unloads, so build
+    Pax calls every `get_*` method once and keeps what they return until it unloads, so build
     tools, commands, and other contributions there or in `__init__`, not per call. Every method has
     a default that contributes nothing, so a plugin overrides only what it needs.
 
@@ -1244,7 +1244,7 @@ class Plugin(Generic[SettingsT, DepsT]):
     settings_type: ClassVar[type[BaseModel]] = NoSettings
     """The settings model, read from the class's `Plugin[...]` parameter; there is no need to set it."""
     scope: ClassVar[PluginScope] = 'session'
-    """`'session'` builds the plugin once per live session; `'process'` once for the whole CLAI.
+    """`'session'` builds the plugin once per live session; `'process'` once for the whole Pax.
 
     A process-scoped plugin gets `on_session_start` and `on_session_end` once, when it loads and unloads.
     Its capabilities and commands join every live session, and each other moment reaches it once per
@@ -1288,7 +1288,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         return self._settings
 
     async def prepare(self) -> None:
-        """Read what the `get_*` methods need, such as files on disk, before CLAI calls them.
+        """Read what the `get_*` methods need, such as files on disk, before Pax calls them.
 
         Called once per load, after `__init__` and before the `get_*` methods, so commands and
         capabilities can depend on what it finds. A failure fails the load. `load_plugin` raises
@@ -1308,8 +1308,8 @@ class Plugin(Generic[SettingsT, DepsT]):
 
         The shell repaints the row about ten times a second while it works and once a second while
         the editor sits idle, so keep each fragment cheap and synchronous: it is called for every
-        frame, not once per turn. Fragments are appended in load order, painted `MUTED`, and
-        truncated from the right on a narrow terminal.
+        frame, not once per turn. Fragments are appended in load order and painted `MUTED`; a row too
+        narrow for them hides the whole group; see the status-line section of `docs/reference.md`.
         """
         return ()
 
@@ -1364,10 +1364,10 @@ class Plugin(Generic[SettingsT, DepsT]):
         return '\n'.join(messages) or f'{menu.source.title}: nothing changed.'
 
     async def on_session_start(self, event: SessionStart) -> None:
-        """CLAI is ready for prompts; called once, when the plugin loads."""
+        """Pax is ready for prompts; called once, when the plugin loads."""
 
     async def on_session_end(self, event: SessionEnd) -> None:
-        """CLAI is quitting, the plugin is unloading, or it failed to load after it was built."""
+        """Pax is quitting, the plugin is unloading, or it failed to load after it was built."""
 
     async def on_plugin_load_failed(self, event: PluginLoadFailed) -> None:
         """A startup plugin failed to load; called after all enabled plugins have been tried."""
@@ -1395,7 +1395,7 @@ class Plugin(Generic[SettingsT, DepsT]):
         """A background `/fork` finished, failed, or was cancelled."""
 
     async def on_install_progress(self, event: InstallProgress) -> None:
-        """`/update` started installing a newer CLAI, uv printed a line, or the install ended."""
+        """`/update` started installing a newer Pax, uv printed a line, or the install ended."""
 
     @deprecated('`on_task_event` has been renamed to `on_task_progress`.', category=PydanticAIDeprecationWarning)
     async def on_task_event(self, event: TaskProgress) -> None:

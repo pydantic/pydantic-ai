@@ -12,6 +12,7 @@ from pathlib import Path
 import anyio
 import pytest
 from pydantic import ValidationError
+from rich.cells import cell_len
 from rich.console import Console
 from rich.text import Text
 
@@ -102,6 +103,61 @@ async def test_conditional_fields_empty_layout_and_narrow_terminal() -> None:
     assert 'agent default' not in Text.from_ansi(stream.getvalue()).plain
 
 
+DEEP = '/home/dev/work/clients/acme/services/billing/jsonrc'
+WIDE = '/srv/プロジェクト/日本語のリポジトリ'
+REST = ' | running: shell | docker sandbox'
+
+
+@pytest.mark.parametrize(
+    ('workspace', 'width', 'expected'),
+    [
+        (
+            DEEP,
+            260,
+            'opus | …rk/clients/acme/services/billing/jsonrc | context: 61k/1m tokens | 1,804 output tokens'
+            f' | $0.0123{REST} | update ready | live: 2 | queued: 1',
+        ),
+        (
+            DEEP,
+            174,
+            f'opus | …/jsonrc | context: 61k/1m tokens | 1,804 output tokens | $0.0123{REST} | update ready | live: 2'
+            ' | queued: 1',
+        ),
+        (DEEP, 142, f'opus | …/jsonrc | context: 61k/1m tokens | $0.0123{REST} | update ready | live: 2 | queued: 1'),
+        (DEEP, 120, f'opus | …/jsonrc | context: 61k/1m tokens{REST} | update ready | live: 2 | queued: 1'),
+        (DEEP, 110, f'opus | …/jsonrc | context: 61k/1m tokens{REST} | update ready | live: 2'),
+        (DEEP, 98, f'opus | …/jsonrc | context: 61k/1m tokens{REST} | live: 2'),
+        (DEEP, 83, f'opus | …/jsonrc | context: 61k/1m tokens{REST}'),
+        (DEEP, 73, f'opus | context: 61k/1m tokens{REST}'),
+        (DEEP, 62, 'opus | context: 61k/1m tokens | running: shell'),
+        (DEEP, 45, 'opus | 61k/1m | running: shell'),
+        (DEEP, 29, '61k/1m | running: shell'),
+        (WIDE, 120, f'opus | …/日本語のリポジトリ | context: 61k/1m tokens{REST} | update ready | live: 2'),
+    ],
+)
+def test_a_narrow_footer_gives_way_by_priority_in_the_configured_order(
+    workspace: str, width: int, expected: str
+) -> None:
+    status = Status(
+        model='opus',
+        workspace=workspace,
+        context_tokens=61_000,
+        context_window=1_000_000,
+        output_tokens=1804,
+        cost=Decimal('0.0123'),
+        activity='running: shell',
+        status_segments=(lambda: 'docker sandbox',),
+        updates=lambda: 'update ready',
+        live=lambda: 'live: 2',
+        queued=lambda: 1,
+    )
+    assert ''.join(text for _, text in status.toolbar(width=width)) == expected
+    assert cell_len(expected) <= width
+    # The figure keeps its warning colour once its labels are gone.
+    status.context_alert = True
+    assert (theme.WARNING, '61k/1m') in status.toolbar(width=24)
+
+
 @pytest.mark.parametrize('fields', [['bogus'], ['model', 'model'], 'model', [1]])
 def test_invalid_layout_is_rejected(fields: object) -> None:
     with pytest.raises(ValidationError):
@@ -157,9 +213,11 @@ async def test_editor_queue_respects_layout_without_duplicate_counts(visible: bo
         live.submit('queued user input')
         footer = Text.from_ansi(live.frame()[-1]).plain
         assert footer.count('queued: 1') == int(visible)
-        live.notice = 'A notice replaces the toolbar'
+        live.notice = 'A notice replaces the toolbar ' * 10
         footer = Text.from_ansi(live.frame()[-1]).plain
-        assert 'A notice replaces the toolbar' in footer
+        assert footer.startswith('A notice replaces the toolbar')
+        # A notice wider than the row is cut before the queue count, not the count itself.
+        assert footer.endswith(' | queued: 1') is visible
         assert footer.count('queued: 1') == int(visible)
         assert status.last_text_at is None
 

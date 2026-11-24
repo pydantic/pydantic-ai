@@ -67,7 +67,13 @@ from ..._utils import (
     number_to_datetime,
 )
 from ...durable_exec._operation_backend import in_durable_unit
-from ...exceptions import ModelConnectionError, SuspendedResponseExpired, UnsupportedSettingWarning, UserError
+from ...exceptions import (
+    ModelConnectionError,
+    SuspendedResponseExpired,
+    UnsupportedSettingWarning,
+    UserError,
+    _TokenCountingUnavailableError,  # pyright: ignore[reportPrivateUsage]
+)
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -204,6 +210,7 @@ from ._response_fields import (
     map_compaction_item,
     map_logprobs,
     map_usage,
+    report_input_transformations,
     response_refusal,
     response_status_to_state,
 )
@@ -260,6 +267,9 @@ _WEBSOCKET_RETRY_AFTER_LIMIT = 60.0
 
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
+
+
+_TOOL_SEARCH_CALL_ITEM_ID_PREFIX = 'tsc_'
 
 
 class _OpenAIResponsesContinuationDetails(TypedDict, total=False):
@@ -999,7 +1009,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> usage.RequestUsage:
         check_allow_model_requests()
         if not self.profile.get('openai_supports_input_token_counting', True):
-            raise UserError(
+            raise _TokenCountingUnavailableError(
                 f'Server-side token counting is not available for {self.system} models '
                 f'({self.model_name!r}); the provider does not expose the input-tokens endpoint.'
             )
@@ -1165,6 +1175,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details['service_tier'] = response.service_tier
         if response.prompt_cache_diagnostics is not None:
             provider_details['prompt_cache_diagnostics'] = response.prompt_cache_diagnostics.model_dump(mode='json')
+        if response.input_transformations:
+            provider_details['input_transformations'] = report_input_transformations(response.input_transformations)
 
         state = response_status_to_state(response.status, background=bool(response.background))
         if refusal_text is not None:
@@ -2913,6 +2925,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 tool_search_call['id'] = id
             context.openai_messages.append(tool_search_call)
         else:
+            # A client-executed search made on a model with native tool search carries a
+            # `tool_search_call` (`tsc_*`) item ID, which the Responses API rejects on a
+            # `function_call` item. The item ID is optional here, so only that prefix is dropped:
+            # compatible APIs can issue opaque IDs of their own.
+            if isinstance(item, ToolSearchCallPart) and id and id.startswith(_TOOL_SEARCH_CALL_ITEM_ID_PREFIX):
+                id = None
             context.openai_messages.append(
                 self._map_function_call(item, call_id, id, context, should_send_item_id=should_send_item_id)
             )
