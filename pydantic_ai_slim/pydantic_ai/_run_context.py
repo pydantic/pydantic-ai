@@ -125,6 +125,11 @@ async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentS
     """Dispatch an immediately dispatched capability event and mark it for stream deduplication."""
     if not isinstance(event, _messages.CapabilityEvent) or event.event_dispatch != 'immediate':
         return
+    await dispatch_event_ahead(ctx, event)
+
+
+async def dispatch_event_ahead(ctx: RunContext[Any], event: _messages.AgentStreamEvent) -> None:
+    """Dispatch a buffered event to its listeners before the stream reaches it, and mark it for stream deduplication."""
     # Mark before awaiting listeners: awaiting yields the event loop, and a concurrent stream
     # consumer (e.g. the `run_stream_events` reader task) could drain the buffered event in that
     # window and dispatch it a second time if it weren't already marked. Each marker carries a

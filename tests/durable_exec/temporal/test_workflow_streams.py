@@ -4,9 +4,10 @@ import json
 import sys
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
-from dataclasses import replace
+from contextlib import nullcontext
+from dataclasses import dataclass, replace
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import anyio
 import pytest
@@ -14,6 +15,7 @@ import pytest
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    CapabilityEvent,
     EnqueuedMessagesEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -26,8 +28,10 @@ from pydantic_ai import (
     RunUsage,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import Hooks, ProcessEventStream
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ProcessEventStream, on_event
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
@@ -769,8 +773,51 @@ _declined_continuations: list[int] = []
 async def _continue_as_new_with_stream(ctx: RunContext[object]) -> None:
     instance = cast(ContinueAsNewEnqueueWorkflow, workflow.instance())
     if instance.continues_as_new:
-        await instance.events.stream.continue_as_new(lambda state: [True, ctx.messages, state])
+        await instance.events.stream.continue_as_new(lambda state: [True, instance.listener, ctx.messages, state])
     _declined_continuations.append(ctx.run_step)
+
+
+def _listener() -> Literal['mutate', 'replace'] | None:
+    return cast(ContinueAsNewEnqueueWorkflow, workflow.instance()).listener
+
+
+@dataclass(kw_only=True)
+class _RequestCheckEvent(CapabilityEvent, namespace='continue_as_new_stream_test', dispatch='immediate'):
+    """Emitted before each model request, so its listeners have already run when the run may continue as new."""
+
+
+_request_checks: list[int] = []
+_listened: list[list[Any]] = []
+
+
+@dataclass
+class _RequestChecks(AbstractCapability[object]):
+    async def before_model_request(
+        self, ctx: RunContext[object], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if _listener() is not None:
+            await ctx.emit(_RequestCheckEvent())
+        return request_context
+
+    @on_event(_RequestCheckEvent)
+    async def count(self, ctx: RunContext[object], event: _RequestCheckEvent) -> None:
+        _request_checks.append(ctx.run_step)
+
+
+_redacting_hooks = Hooks[object]()
+
+
+@_redacting_hooks.on.event(EnqueuedMessagesEvent)
+async def _redact(ctx: RunContext[object], event: EnqueuedMessagesEvent) -> EnqueuedMessagesEvent | None:
+    """Redact delivered content from the event, in place or with a replacement; the history keeps the original."""
+    if (listener := _listener()) is None:
+        return None
+    _listened.append(_user_prompts(event.messages))
+    redacted = (ModelRequest(parts=[UserPromptPart('[redacted]')]),)
+    if listener == 'replace':
+        return replace(event, messages=redacted)
+    event.messages = redacted
+    return None
 
 
 _continue_as_new_durability = TemporalDurability(
@@ -779,7 +826,10 @@ _continue_as_new_durability = TemporalDurability(
     continue_as_new=_continue_as_new_with_stream,
 )
 _continue_as_new_agent = Agent(
-    _model, name='continue_as_new_stream_agent', tools=[get_answer], capabilities=[_continue_as_new_durability]
+    _model,
+    name='continue_as_new_stream_agent',
+    tools=[get_answer],
+    capabilities=[_RequestChecks(), _redacting_hooks, _continue_as_new_durability],
 )
 
 
@@ -791,16 +841,19 @@ class ContinueAsNewEnqueueWorkflow:
     def __init__(
         self,
         continues_as_new: bool,
+        listener: Literal['mutate', 'replace'] | None,
         history: list[ModelMessage] | None = None,
         state: WorkflowStreamState | None = None,
     ) -> None:
         self.continues_as_new = continues_as_new
+        self.listener = listener
         self.events = AgentEventStream(prior_state=state)
 
     @workflow.run
     async def run(
         self,
         continues_as_new: bool,
+        listener: Literal['mutate', 'replace'] | None,
         history: list[ModelMessage] | None = None,
         state: WorkflowStreamState | None = None,
     ) -> list[ModelMessage]:
@@ -815,7 +868,7 @@ class ContinueAsNewEnqueueWorkflow:
 
 
 async def _run_continue_as_new_enqueue_workflow(
-    client: Client, *, continues_as_new: bool
+    client: Client, *, continues_as_new: bool, listener: Literal['mutate', 'replace'] | None = None
 ) -> tuple[list[Any], list[ModelMessage], WorkflowHistory]:
     """Run the workflow to the end: the topic's events, the final messages, and the first run's history."""
     async with Worker(
@@ -827,7 +880,7 @@ async def _run_continue_as_new_enqueue_workflow(
     ):
         handle = await client.start_workflow(
             ContinueAsNewEnqueueWorkflow.run,
-            args=[continues_as_new, None, None],
+            args=[continues_as_new, listener, None, None],
             id=f'{ContinueAsNewEnqueueWorkflow.__name__}-{uuid.uuid4()}',
             task_queue=TASK_QUEUE,
         )
@@ -847,6 +900,10 @@ def _user_prompts(messages: Sequence[ModelMessage]) -> list[Any]:
         for part in message.parts
         if isinstance(part, UserPromptPart)
     ]
+
+
+def _enqueued_prompts(received: list[Any]) -> list[list[Any]]:
+    return [_user_prompts(event.messages) for event in received if isinstance(event, EnqueuedMessagesEvent)]
 
 
 _CONTINUE_AS_NEW_ENQUEUE_KINDS = [
@@ -883,8 +940,7 @@ async def test_continue_as_new_publishes_the_enqueued_messages_event(client: Cli
 
     assert _user_prompts(messages) == ['Hello', 'Follow-up']
     assert _kinds(received) == _CONTINUE_AS_NEW_ENQUEUE_KINDS
-    enqueued = [event for event in received if isinstance(event, EnqueuedMessagesEvent)]
-    assert [_user_prompts(event.messages) for event in enqueued] == [['Follow-up']]
+    assert _enqueued_prompts(received) == [['Follow-up']]
     await _replay_continue_as_new_enqueue_workflow(history)
 
 
@@ -896,6 +952,51 @@ async def test_declined_continue_as_new_publishes_the_enqueued_messages_event_on
     assert _declined_continuations
     assert _user_prompts(messages) == ['Hello', 'Follow-up']
     assert _kinds(received) == _CONTINUE_AS_NEW_ENQUEUE_KINDS
+
+
+@pytest.mark.parametrize('listener', ['mutate', 'replace'])
+@pytest.mark.parametrize('continues_as_new', [True, False])
+async def test_continue_as_new_publishes_events_as_their_listeners_left_them(
+    client: Client, continues_as_new: bool, listener: Literal['mutate', 'replace']
+) -> None:
+    """Buffered events reach their listeners before they're published ahead of `continue_as_new`, each exactly once.
+
+    So the topic carries what a listener that redacts the event left, whether or not the run then continues, and
+    an immediately dispatched event, whose listeners already ran when it was emitted, isn't dispatched again.
+    """
+    _request_checks.clear()
+    _listened.clear()
+    warns = (
+        pytest.warns(PydanticAIDeprecationWarning, match='returning a replacement event')
+        if listener == 'replace'
+        else nullcontext()
+    )
+    with warns:
+        received, messages, _ = await _run_continue_as_new_enqueue_workflow(
+            client, continues_as_new=continues_as_new, listener=listener
+        )
+
+    assert _user_prompts(messages) == ['Hello', 'Follow-up']
+    assert _listened == [['Follow-up']]
+    assert _enqueued_prompts(received) == [['[redacted]']]
+    # One check per model request: the successor makes the third.
+    assert len(_request_checks) == (3 if continues_as_new else 2)
+    assert _kinds(received) == [
+        '_RequestCheckEvent',
+        'PartStartEvent',
+        'PartEndEvent',
+        'FunctionToolCallEvent',
+        'FunctionToolResultEvent',
+        'EnqueuedMessagesEvent',
+        '_RequestCheckEvent',
+        *(['_RequestCheckEvent'] if continues_as_new else []),
+        'PartStartEvent',
+        'FinalResultEvent',
+        'PartDeltaEvent',
+        'PartDeltaEvent',
+        'PartEndEvent',
+        'AgentRunResultEvent',
+    ]
 
 
 async def test_continue_as_new_replays_a_history_recorded_without_publishing_buffered_events(

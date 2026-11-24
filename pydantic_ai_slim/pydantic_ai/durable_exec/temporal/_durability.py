@@ -15,6 +15,7 @@ from temporalio.workflow import ActivityConfig
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._durable_replay import replay_scope
+from pydantic_ai._run_context import dispatch_event_ahead
 from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -758,23 +759,30 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             and self.continue_as_new is not None
             and workflow.info().is_continue_as_new_suggested()
         ):
-            self._publish_buffered_events(ctx)
+            await self._publish_buffered_events(ctx)
             await await_maybe(self.continue_as_new(ctx))
         return await super().before_model_request(ctx, request_context)
 
-    def _publish_buffered_events(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Publish the events buffered for the run's stream, before `continue_as_new` can end this execution.
+    async def _publish_buffered_events(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Dispatch and publish the events buffered for the run's stream, before `continue_as_new` can end this execution.
 
         Hooks that ran before this one, like the delivery of enqueued messages, buffer events that only reach the
-        stream once the model request starts, so continuing as new here would lose them. If the run doesn't
-        continue as new after all, the stream skips them when it gets there.
+        stream once the model request starts, so continuing as new here would lose them. Their listeners run first,
+        so the topic gets each event as they left it, as it would from the stream. If the run doesn't continue as
+        new after all, the stream neither dispatches nor publishes them again when it gets there.
         """
         if (topic := self._event_stream_topic) is None:
             return
-        buffered = [event for event in ctx._event_stream_buffer or () if _publishes_from_workflow(topic, event)]  # pyright: ignore[reportPrivateUsage]
-        if buffered and workflow.patched(_PUBLISH_BEFORE_CONTINUE_AS_NEW_PATCH):
-            for event in buffered:
-                publish_agent_event_ahead(topic.name, event)
+        buffered = list(ctx._event_stream_buffer or ())  # pyright: ignore[reportPrivateUsage]
+        if not buffered or not workflow.patched(_PUBLISH_BEFORE_CONTINUE_AS_NEW_PATCH):
+            return
+        for event in buffered:
+            # An immediately dispatched event's listeners already ran when it was emitted.
+            if id(event) not in ctx._pending_immediate_dispatches:  # pyright: ignore[reportPrivateUsage]
+                await dispatch_event_ahead(ctx, event)
+            dispatched = ctx._event_stream_replacements.get(id(event), event)  # pyright: ignore[reportPrivateUsage]
+            if _publishes_from_workflow(topic, dispatched):
+                publish_agent_event_ahead(topic.name, dispatched)
 
     async def _cancel_suspended_response_without_run_context(
         self, model_id: str | None, response: ModelResponse
