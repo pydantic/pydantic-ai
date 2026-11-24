@@ -8,7 +8,7 @@ A capability is conformant when its entry in `CASES` (`tests/capability_cases.py
 
 Each area says what it requires and how the suite checks it. Contracts are `Contract(applies, exempt)` entries in `CONTRACTS`, run by `tests/harness/test_capability_contracts.py`; an exempt case must still break its contract, so fixing the capability fails the suite until the exemption is removed. Link an exemption that records a bug to the issue that tracks it.
 
-The contracts are numbered C0, C1, … in the order they land. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
+The contracts are numbered C0, C1, … in the order they land, and an area with contracts of its own numbers them under its letter, as Durable execution's D1. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
 
 ## Coverage
 
@@ -57,7 +57,23 @@ The rules behind these are in [Message History & Prompt Caching](message-history
 
 ## Durable execution
 
-To be written. Planned scope: DBOS first, each case's `calls` re-executed from the last recorded step; then Temporal (the toolset id present, a `Replayer` run equal), then Prefect; the journaled steps recorded next to each case (`Calls.durable_steps` per engine).
+**Requirements**
+
+- Every request a tool makes goes through a `@durable_operation` or a workspace call (`ctx.workspace`). DBOS runs a function tool in workflow code, so a request made any other way is made again on every recovery.
+- Every toolset a capability builds has an `id`. Temporal and Prefect run each function tool in a unit named after it, and refuse an agent with an id-less toolset.
+- Code that runs in the workflow is deterministic: hooks, instructions, `prepare_tools`, a toolset factory, and a tool marked `ToolDefinition.durable=False`, which runs outside its unit. It reads clocks, randomness and I/O only through a `@durable_operation`, and a workflow-side tool must not block.
+- A capability added per run only adds hooks, instructions or settings: one that contributes an executing toolset, declares a `@durable_operation`, or chooses or wraps the model must be on the agent when it's built ([#13124](https://github.com/pydantic/pydantic-ai/pull/13124)).
+- The names of the units a capability's calls record (its id, its operation names, its toolset ids) don't change between releases, as an in-flight workflow replays by them. A change that renames one says how in-flight runs recover.
+
+The engine-side rules (what crosses a durable boundary, workspace routing, workflow-side determinism) are in `pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md`, and the core definitions the engines depend on are listed in `scripts/durable_exec_contract.json`. This section covers what a capability must do; those cover what the engines and core must keep.
+
+**How it's tested**
+
+- D1, durable per case: every case with `calls` runs them, one per response, under each engine, and the units the run records must be the ones its `Calls.durable_steps` lists (`DurableSteps(dbos=..., temporal=...)`, names without the agent prefix, the run's own model requests left out). A case whose tools do no I/O lists nothing for DBOS, which is checked too. When a name changes, the failure prints the new list: update the case, with a compatibility note if a recorded name changed.
+  - `DURABLE_DBOS`: `tests/harness/test_durable_tool_io.py` runs the calls in a DBOS workflow, forks it from after its last step, as recovery does, and checks that no request the stand-ins count is made again.
+  - `DURABLE_TEMPORAL`: `tests/harness/test_durable_temporal_replay.py` runs them in a Temporal workflow, on one dev server per module, and replays the recorded history with a `Replayer`, which must succeed without a request. An agent Temporal refuses breaks it, so an id-less toolset is exempt with its issue.
+- A case that can't run under an engine is exempt from that engine's contract, with the reason: an exemption, never a skip.
+- Prefect and the Harness engines are next; until then, `test_prefect_wraps_every_toolset_temporal_does` checks Prefect accepts every case Temporal runs.
 
 ## Workspaces and sandboxes
 
