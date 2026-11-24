@@ -1,7 +1,7 @@
 """Each panel that shows a session's work catches up with it without a manual refresh.
 
 A panel asks the server again on triggers the page guesses, such as a turn ending. Three moments have each left one
-showing stale data: a turn the session keeps after the page hears it end (#11874), a panel opened during a turn
+showing stale data: a turn the session keeps only after the page hears it end and asks again (#11874), a panel opened during a turn
 (#11983), and a running turn that writes while the panel is open (#12223). Each built-in panel below is checked at each
 one, and a plugin's panel at the two its view can catch.
 """
@@ -10,6 +10,7 @@ import json
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 import anyio
@@ -23,6 +24,8 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.messages import ModelMessage, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.file_system import WRITE_FILE_KIND
+from pydantic_ai_pax.builtin_plugins.web import app as web_app
+from pydantic_ai_pax.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_ai_pax.builtin_plugins.web.protocol import PanelInfo
 from pydantic_ai_pax.config import PluginSettings
 from pydantic_ai_pax.plugins import PanelView, Plugin, SidePanel, TurnStart
@@ -38,8 +41,6 @@ WRITE = 'write notes.py'
 HOLD = 'hold'
 """A prompt whose turn runs until the test releases it, writing nothing."""
 WRITTEN = ['notes.py']
-KEEP_DELAY = 1.0
-"""How long after the page hears a turn end the session keeps it, as a slow disk can make it."""
 
 
 @dataclass(frozen=True)
@@ -105,16 +106,22 @@ class Script:
 
     hold_after_write: bool
     released: anyio.Event
-    """Made on the fleet's event loop, which runs the turns; the test sets it through the portal."""
+    """Made on the fleet's event loop, which runs the turns and serves the page; the test sets it through the portal."""
+    answered: anyio.Event
+    """Set when the server answers a Changes request for this session; made anew as a turn gives its answer."""
 
 
 @dataclass
 class KeepLate(AbstractCapability[None]):
-    """Return each run `KEEP_DELAY` after it ends, so the session keeps the turn that long after the page hears it."""
+    """Return each run once the server has answered the page's Changes request at its end, so the session keeps the
+    turn only after the page has asked, as a slow disk can make it.
+    """
+
+    script: Script
 
     async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         result = await handler()
-        await anyio.sleep(KEEP_DELAY)  # real-wait: the delay is the slow persistence this mode stands for
+        await self.script.answered.wait()
         return result
 
 
@@ -129,9 +136,10 @@ def writer(workspace: anyio.Path, script: Script, *, keep_late: bool) -> Agent[N
             isinstance(last, UserPromptPart) and last.content == HOLD
         ):
             await script.released.wait()
+        script.answered = anyio.Event()
         yield 'Done'
 
-    capabilities: list[AbstractCapability[None]] = [KeepLate()] if keep_late else []
+    capabilities: list[AbstractCapability[None]] = [KeepLate(script)] if keep_late else []
     agent = Agent(FunctionModel(stream_function=turns), deps_type=type(None), capabilities=capabilities)
 
     @agent.tool_plain(tool_kind=WRITE_FILE_KIND)
@@ -168,7 +176,18 @@ def panels_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
     root = tmp_path_factory.mktemp('browser-panels').resolve()
     turns = PluginSettings(id='turns', factory=f'{__name__}:Turns')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
-        scripts = {folder(*case): Script(case[1] != 'opened mid-turn', portal.call(anyio.Event)) for case in CASES}
+        scripts = {
+            folder(*case): Script(case[1] != 'opened mid-turn', portal.call(anyio.Event), portal.call(anyio.Event))
+            for case in CASES
+        }
+
+        async def answer(
+            messages: Sequence[ModelMessage], workspace: Path, *, scope: ChangeScope, diffs: bool = True
+        ) -> Changes:
+            changes = await session_changes(messages, workspace, scope=scope, diffs=diffs)
+            scripts[workspace.name].answered.set()
+            return changes
+
         agents = {
             name: writer(anyio.Path(root / name), script, keep_late=name.endswith('kept-late'))
             for name, script in scripts.items()
@@ -177,6 +196,7 @@ def panels_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
         patch.setenv('XDG_CONFIG_HOME', str(root / 'config'))
         patch.setenv('XDG_STATE_HOME', str(root / 'state'))
         patch.setattr(models, 'ALLOW_MODEL_REQUESTS', False)
+        patch.setattr(web_app, 'session_changes', answer)
         fleet = Fleet(root=root, portal=portal, agents=agents, builtin=(turns,))
         try:
             with serve(fleet) as url:
@@ -184,6 +204,7 @@ def panels_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
         finally:
             for script in scripts.values():
                 portal.call(script.released.set)
+                portal.call(script.answered.set)
             fleet.exit()
 
 
