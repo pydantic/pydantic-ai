@@ -10,6 +10,8 @@ from typing import Any, cast
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
+from pydantic import ValidationError
 
 from pydantic_ai import (
     Agent,
@@ -22,6 +24,7 @@ from pydantic_ai import (
     PartStartEvent,
     RunContext,
     RunUsage,
+    TextPart,
 )
 from pydantic_ai.capabilities import Hooks, ProcessEventStream
 from pydantic_ai.exceptions import UserError
@@ -680,6 +683,118 @@ async def test_a_consumer_can_resume_at_the_next_offset(client: Client) -> None:
     assert rest.offset > first.offset
     assert isinstance(received[-1], AgentRunResultEvent)
     assert 'PartStartEvent' not in _kinds(received[:1])  # the first event was consumed above
+
+
+# --- Event kinds from a newer worker --------------------------------------------------------------
+
+
+@workflow.defn
+class NewerWorkerWorkflow:
+    """Publishes event kinds this version doesn't know between known events, as a newer worker would."""
+
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+        topic = self.events.stream.topic(TOPIC)
+        topic.publish(PartStartEvent(index=0, part=TextPart('before')))
+        topic.publish({'event_kind': 'future_event', 'payload': 1})
+        topic.publish({'event_kind': 'future_event', 'payload': 2})
+        topic.publish({'event_kind': 'other_future_event'})
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _topic_only_agent.run(prompt)
+        return result.output
+
+
+async def test_unknown_event_kinds_are_skipped(client: Client) -> None:
+    """A consumer on an older version skips event kinds it can't decode, warning once per kind."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NewerWorkerWorkflow],
+        plugins=[AgentPlugin(_topic_only_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            NewerWorkerWorkflow.run,
+            args=['Hello'],
+            id=f'{NewerWorkerWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        with pytest.warns(UserWarning, match='unknown kind') as warned:
+            received = await _collect(
+                _topic_only_durability.stream_agent_events(
+                    client, handle, output_type=str, poll_cooldown=timedelta(milliseconds=50)
+                )
+            )
+        await handle.result()
+
+    assert [str(warning.message) for warning in warned] == snapshot(
+        [
+            "Skipping agent events of unknown kind 'future_event' on Workflow Stream topic 'agent_events': they were likely published by a worker running a newer version of Pydantic AI. Upgrade `pydantic-ai` in this consumer to receive them.",
+            "Skipping agent events of unknown kind 'other_future_event' on Workflow Stream topic 'agent_events': they were likely published by a worker running a newer version of Pydantic AI. Upgrade `pydantic-ai` in this consumer to receive them.",
+        ]
+    )
+    assert received[0] == PartStartEvent(index=0, part=TextPart('before'))
+    assert _kinds(received) == snapshot(
+        [
+            'PartStartEvent',
+            'PartStartEvent',
+            'PartEndEvent',
+            'FunctionToolCallEvent',
+            'FunctionToolResultEvent',
+            'PartStartEvent',
+            'FinalResultEvent',
+            'PartDeltaEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'AgentRunResultEvent',
+        ]
+    )
+    terminal = received[-1]
+    assert isinstance(terminal, AgentRunResultEvent)
+    assert terminal.result.output == 'Streamed response'
+
+
+@workflow.defn
+class MalformedEventWorkflow:
+    """Publishes a known event kind with a payload that doesn't validate, then waits to be terminated."""
+
+    @workflow.init
+    def __init__(self) -> None:
+        self.events = AgentEventStream()
+        self.events.stream.topic(TOPIC).publish({'event_kind': 'part_start', 'index': 'not-an-index'})
+
+    @workflow.run
+    async def run(self) -> None:
+        await workflow.wait_condition(lambda: False)
+
+
+async def test_a_malformed_known_event_kind_still_raises(client: Client) -> None:
+    """Only unknown kinds are skipped: a known kind that fails to validate is a real error."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MalformedEventWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            MalformedEventWorkflow.run,
+            id=f'{MalformedEventWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        try:
+            async with stream_agent_events(client, handle, TOPIC, poll_cooldown=timedelta(milliseconds=50)) as events:
+                with pytest.raises(ValidationError) as exc_info:
+                    await anext(events)
+        finally:
+            await handle.terminate()
+
+    assert [(error['type'], error['loc']) for error in exc_info.value.errors()] == snapshot(
+        [('int_parsing', ('part_start', 'index')), ('missing', ('part_start', 'part'))]
+    )
 
 
 # --- Replay safety --------------------------------------------------------------------------------
