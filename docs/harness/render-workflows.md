@@ -473,8 +473,9 @@ schedule, use a Render cron job.
 The capability emits no additional OpenTelemetry spans. Pydantic AI traces model and tool operations, while
 Render records task runs, retries, logs, and metrics. Configure Pydantic AI instrumentation when each worker
 loads the app to use `ctx.tracer` inside chained task runs. It is a no-op when tracing is disabled. The caller's
-`trace_include_content` setting is preserved, but parent span context is not propagated across Render task
-calls, so spans from chained task runs can appear in separate traces.
+`trace_include_content` setting crosses into the task, and spans there record content only if the worker's
+instrumentation allows it too. Parent span context is not propagated across Render task calls, so spans from
+chained task runs can appear in separate traces.
 
 ## API reference
 
