@@ -12,6 +12,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai._tool_execution import NestedCallContent
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _to_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
@@ -240,6 +241,13 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
     return NestedCallOutcome(content=result, tool_kind=tool_kind)
 
 
+def content_list(content: str | Sequence[UserContent]) -> list[UserContent]:
+    """`ToolReturn.content` as a list, keeping the capability each tool behind a `ToolBridge` call came from."""
+    if isinstance(content, NestedCallContent):
+        return NestedCallContent([(capability_id, content_list(each)) for capability_id, each in content.segments])
+    return [content] if isinstance(content, str) else list(content)
+
+
 def record_nested_call(
     call_part: ToolCallPart,
     outcome: NestedCallOutcome,
@@ -278,8 +286,7 @@ def record_nested_call(
     )
     # Like core, empty content sends the model nothing.
     if outcome.user_content:
-        content = outcome.user_content
-        user_content[tool_call_id] = (outcome.capability_id, [content] if isinstance(content, str) else list(content))
+        user_content[tool_call_id] = (outcome.capability_id, content_list(outcome.user_content))
 
 
 def schema_arg_names(tool_def: ToolDefinition, kwargs: dict[str, Any]) -> dict[str, Any]:

@@ -148,13 +148,25 @@ class NestedCallContent(list[_messages.UserContent]):
     """
 
     segments: tuple[tuple[str | None, str | Sequence[_messages.UserContent]], ...]
-    """Each called tool's `ToolReturn.content`, after the run id of the capability that contributed the tool, if any."""
+    """Each called tool's `ToolReturn.content`, after the run id of the capability that contributed the tool, if any.
+
+    A called tool that runs other tools in turn returns its own `NestedCallContent` here.
+    """
 
     def __init__(self, segments: Sequence[tuple[str | None, str | Sequence[_messages.UserContent]]]) -> None:
         self.segments = tuple(segments)
         super().__init__(
             item for _, content in self.segments for item in ([content] if isinstance(content, str) else content)
         )
+
+    def owned_segments(self) -> Iterator[tuple[tuple[str | None, ...], str | Sequence[_messages.UserContent]]]:
+        """Each called tool's content, after the run ids of the capabilities it passed through, innermost first."""
+        for capability_id, content in self.segments:
+            if isinstance(content, NestedCallContent):
+                for capability_ids, nested_content in content.owned_segments():
+                    yield (*capability_ids, capability_id), nested_content
+            else:
+                yield (capability_id,), content
 
 
 def build_tool_return_part(
@@ -953,11 +965,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         capability_id = None if tool_def is None else tool_def.capability_id
         if not isinstance(content, NestedCallContent):
             return [self._within_capability_ceiling(_messages.UserPromptPart(content=content), capability_id)]
-        # Neighbouring content that stays user text stays one part, as it was before it kept its capabilities.
+        # Neighbouring content that stays user text shares one part.
         runs: list[_messages.ModelRequestPart | list[str | Sequence[_messages.UserContent]]] = []
-        for nested_capability_id, nested_content in content.segments:
+        for capability_ids, nested_content in content.owned_segments():
             part = _messages.UserPromptPart(content=nested_content)
-            lowered = self._within_capability_ceiling(part, nested_capability_id)
+            lowered: _messages.ModelRequestPart = part
+            for nested_capability_id in capability_ids:
+                lowered = self._within_capability_ceiling(lowered, nested_capability_id)
             if lowered is not part:
                 runs.append(lowered)
             elif runs and isinstance(unchanged := runs[-1], list):

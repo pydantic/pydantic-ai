@@ -604,6 +604,57 @@ class TestToolBridge:
 
         assert seen == [['run_code']]
 
+    @pytest.mark.filterwarnings('ignore::pydantic_ai_harness.code_mode.CodeModeReturnSchemaWarning')
+    async def test_code_mode_keeps_a_bridged_tools_capability(self):
+        """Content from a bridged tool that `run_code` calls reaches the model framed as it would be on a direct call.
+
+        Content from a bridged tool no capability contributes stays user text before it.
+        """
+
+        def fetch() -> ToolReturn:
+            """Fetch a page."""
+            return ToolReturn(return_value='ok', content='page text')
+
+        def note(text: str) -> ToolReturn:
+            """Take a note."""
+            return ToolReturn(return_value='ok', content=text)
+
+        seen: list[list[object]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                seen.append([part.content for part in messages[-1].parts if isinstance(part, UserPromptPart)])
+                return ModelResponse(parts=[TextPart('done')])
+            if any(tool.name == 'run_code' for tool in info.function_tools):
+                code = (
+                    'await tool_call(name=\'note\', args_json=\'{"text": "first"}\')\n'
+                    "await tool_call(name='fetch', args_json='{}')"
+                )
+                return ModelResponse(parts=[_call('run_code', code=code)])
+            return ModelResponse(parts=[_call('fetch')])
+
+        def plugin() -> Capability[object]:
+            return Capability[object](id='plugin', tools=[fetch]).with_authority('none')
+
+        await Agent(FunctionModel(respond), capabilities=[plugin()]).run('Fetch the page')
+        await Agent(FunctionModel(respond), tools=[note], capabilities=[plugin(), ToolBridge(), CodeMode()]).run(
+            'Fetch the page'
+        )
+
+        direct, nested = seen
+        assert nested[1:] == direct
+        assert nested == snapshot(
+            [
+                ['first'],
+                '<system>The accompanying <capability_content> was written by the `plugin` capability, not by the user or the application.</system>',
+                [
+                    TextContent(content='<capability_content>'),
+                    TextContent(content='page text'),
+                    TextContent(content='</capability_content>'),
+                ],
+            ]
+        )
+
     async def test_bridged_retries_spend_tool_call_retries(self):
         def flaky() -> str:
             """Always fail."""
