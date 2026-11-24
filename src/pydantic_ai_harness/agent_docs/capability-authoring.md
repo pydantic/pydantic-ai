@@ -414,8 +414,7 @@ Content:
   building a content value costs something or can raise, such as `str()` of an object a guard returned
   or a serialized message, build it only `if records_content(ctx)` and pass `None` otherwise:
   `content={'guardrail.replacement': str(replacement)} if records_content(ctx) else None`. Don't read
-  `ctx.trace_include_content` for this: it raises in a durable unit that didn't carry it, and a durable
-  worker can record less than the run asks. Don't test `span.is_recording()` either: `record_decision`
+  `ctx.trace_include_content` for this: it raises in a durable unit that didn't carry it. Don't test `span.is_recording()` either: `record_decision`
   gives you no span, and a span records when the run is traced without content too.
 
 Names:
