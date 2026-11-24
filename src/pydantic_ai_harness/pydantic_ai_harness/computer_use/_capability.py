@@ -375,7 +375,7 @@ def _find_computer_call(ctx: RunContext[Any]) -> tuple[int, ModelResponse, ToolC
     for index in range(len(ctx.messages) - 1, -1, -1):
         message = ctx.messages[index]
         # A realtime session can place other calls' returns and new input after the response that made this call.
-        if not isinstance(message, ModelResponse):  # pragma: no cover
+        if not isinstance(message, ModelResponse):
             continue
         for part in message.parts:  # pragma: no branch
             if isinstance(part, ToolCallPart) and part.tool_call_id == ctx.tool_call_id:
