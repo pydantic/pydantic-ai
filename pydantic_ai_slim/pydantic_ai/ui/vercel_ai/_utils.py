@@ -45,6 +45,7 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     UIMessage,
 )
 from pydantic_ai.ui.vercel_ai.response_types import (
+    BaseChunk,
     DataChunk,
     FileChunk,
     ProviderMetadata,
@@ -336,7 +337,7 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 # the corresponding chunk type should be added here.
 DataCarryingChunk: TypeAlias = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
 # The same types as a tuple, for `isinstance` callers outside this package such as Pydantic AI Harness.
-DATA_CHUNK_TYPES = get_args(DataCarryingChunk)
+DATA_CHUNK_TYPES: tuple[type[BaseChunk], ...] = get_args(DataCarryingChunk)
 _data_carrying_chunk_ta: TypeAdapter[DataCarryingChunk] = TypeAdapter(DataCarryingChunk)
 
 
