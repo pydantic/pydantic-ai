@@ -21,7 +21,7 @@ from typing_extensions import TypeIs
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -575,18 +575,27 @@ class TestUntrustedWorkspaces:
         assert _tool_results(requests) == [{'skills': {'review': 'Review code. Use when asked to review.'}}]
 
     async def test_a_tool_call_without_the_runs_copy_reads_every_library(self, tmp_path: Path) -> None:
-        # As in a durable engine's activity in another process, which doesn't hold the run's copy.
-        _write_skill(tmp_path / 'skills', 'alpha', description='Alpha help.')
-        toolset = Skills[None]('skills').get_toolset()
-        assert _is_toolset(toolset)
-        ctx = RunContext[None](
-            deps=None, model=TestModel(), usage=RunUsage(), workspace=_untrusted(tmp_path), run_id='elsewhere'
+        # As in a durable engine's activity in another process, which doesn't hold the run's copy: every library is
+        # read, only the lowered skills are listed, and a listed skill's files can be read without loading it.
+        _write_skill(tmp_path / 'own', 'mine', description='Mine help.', files={'notes.md': 'Own notes.'})
+        _write_skill(tmp_path / 'vendor', 'alpha', description='Alpha help.', files={'notes.md': 'Vendor notes.'})
+        workspace = AuthorityWorkspace(
+            Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority={'vendor': 'none'}
         )
+        toolset = Skills[None](['own', 'vendor'], read_files=True).get_toolset()
+        assert _is_toolset(toolset)
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), workspace=workspace, run_id='elsewhere')
         tools = await toolset.get_tools(ctx)
 
         assert await toolset.call_tool('list_skills', {}, ctx, tools['list_skills']) == {
             'skills': {'alpha': 'Alpha help.'}
         }
+        read = tools['read_skill_file']
+        assert await toolset.call_tool('read_skill_file', {'skill': 'alpha', 'path': 'notes.md'}, ctx, read) == (
+            'Vendor notes.'
+        )
+        with pytest.raises(ModelRetry, match="Load the skill 'mine'"):
+            await toolset.call_tool('read_skill_file', {'skill': 'mine', 'path': 'notes.md'}, ctx, read)
 
     async def test_a_run_without_an_id_still_offers_its_lowered_skills(self, tmp_path: Path) -> None:
         # A `for_run` called outside an agent run has no run ID to remember the run's skills by.
@@ -1583,6 +1592,19 @@ class TestSkillFiles:
             *[IsStr(regex=r".*is outside the directory of skill 'guide'.*")] * 2,
             IsStr(regex=r".*Give a path relative to the directory of skill 'guide'.*"),
         ]
+
+    async def test_a_windows_library_outside_the_working_directory_stays_in_the_catalog(self, tmp_path: Path) -> None:
+        # The operator configured the library, so its skills keep the workspace's level, as on POSIX.
+        _write_skill(tmp_path / 'shared' / 'skills', 'guide', description='Guide help.')
+        run = _Run()
+        agent: Agent[None, str] = Agent(
+            _model(run, None), capabilities=[Skills('C:\\shared\\skills', workspace=DriveBackend(tmp_path))]
+        )
+
+        await agent.run('go')
+
+        assert run.tools == ['load_capability']
+        assert '- guide: Guide help.' in (run.instructions or '')
 
     async def test_a_drive_path_is_refused_on_windows(self, tmp_path: Path) -> None:
         _write_guide(tmp_path / 'project' / 'skills')
