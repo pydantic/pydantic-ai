@@ -830,6 +830,33 @@ def zai_message(model: str) -> httpx2.Response:
     )
 
 
+def zai_stream(model: str) -> httpx2.Response:
+    """The answer of `zai_message`, streamed as Z.ai's Anthropic endpoint streams it."""
+    message: dict[str, object] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'model': model,
+        'content': [],
+        'stop_reason': None,
+        'stop_sequence': None,
+        'usage': {'input_tokens': 1, 'output_tokens': 1},
+    }
+    events: list[tuple[str, dict[str, object]]] = [
+        ('message_start', {'message': message}),
+        ('content_block_start', {'index': 0, 'content_block': {'type': 'text', 'text': ''}}),
+        ('content_block_delta', {'index': 0, 'delta': {'type': 'text_delta', 'text': 'ok'}}),
+        ('content_block_stop', {'index': 0}),
+        ('message_delta', {'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': 1}}),
+        ('message_stop', {}),
+    ]
+    return httpx2.Response(
+        200,
+        headers={'content-type': 'text/event-stream'},
+        content=''.join(f'event: {kind}\ndata: {json.dumps(dict(data, type=kind))}\n\n' for kind, data in events),
+    )
+
+
 def zai_workflow_model(
     monkeypatch: pytest.MonkeyPatch, respond: Callable[[str], httpx2.Response], *, fallback: str = 'glm-5.3-flash'
 ) -> tuple[Model, list[dict[str, object]]]:
@@ -881,6 +908,8 @@ def zai_workflow_model(
         ),
     ],
 )
+# gh-aw runs stream: Pax passes an `event_stream_handler`, so `FallbackModel.request_stream` serves them.
+@pytest.mark.parametrize('streamed', [False, True], ids=['request', 'stream'])
 async def test_overloaded_model_falls_back_for_that_request(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -888,18 +917,25 @@ async def test_overloaded_model_falls_back_for_that_request(
     status: int,
     body: dict[str, object],
     reason: str,
+    streamed: bool,
 ) -> None:
     """An overload refusal sends that request to GLM-5.3-Flash at low effort; the next request tries GLM-5.4 again."""
     refusals = [httpx2.Response(status, json=body)]
-    model, bodies = zai_workflow_model(monkeypatch, lambda name: refusals.pop() if refusals else zai_message(name))
+    answer = zai_stream if streamed else zai_message
+    model, bodies = zai_workflow_model(monkeypatch, lambda name: refusals.pop() if refusals else answer(name))
 
-    first = await Agent(model).run('hi')
-    second = await Agent(model).run('hi')
+    async def drain(ctx: RunContext[object], events: AsyncIterable[object]) -> None:
+        async for _ in events:
+            pass
 
-    assert [(body['model'], body['output_config']) for body in bodies] == [
-        ('glm-5.4', {'effort': 'low'}),
-        ('glm-5.3-flash', {'effort': 'low'}),
-        ('glm-5.4', {'effort': 'low'}),
+    handler = drain if streamed else None
+    first = await Agent(model).run('hi', event_stream_handler=handler)
+    second = await Agent(model).run('hi', event_stream_handler=handler)
+
+    assert [(body['model'], body['output_config'], body.get('stream', False)) for body in bodies] == [
+        ('glm-5.4', {'effort': 'low'}, streamed),
+        ('glm-5.3-flash', {'effort': 'low'}, streamed),
+        ('glm-5.4', {'effort': 'low'}, streamed),
     ]
     [served_first] = [m for m in first.new_messages() if isinstance(m, ModelResponse)]
     [served_second] = [m for m in second.new_messages() if isinstance(m, ModelResponse)]
