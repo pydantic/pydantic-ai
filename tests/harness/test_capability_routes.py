@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -45,7 +44,7 @@ from pydantic_ai_harness import BackgroundTools, CodeMode, SubAgent, SubAgents, 
 from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 
 from .. import capability_cases as core
-from ..append_only import ToolCall, discover_capabilities, drain_events, run_through_ui
+from ..append_only import ToolCall, discover_capabilities, drain_events, run_through_ui, ui_imports_successful
 from ..capability_cases import CORE_CAPABILITY_PACKAGES, Calls, CapabilityCase
 from ..conftest import try_import
 from .capability_cases import CASES as HARNESS_CASES, HARNESS_CAPABILITY_PACKAGES
@@ -188,7 +187,7 @@ def _seen(part: object) -> Seen:
     )
 
 
-_CARRIERS = (ToolReturnPart, RetryPromptPart, BackgroundToolResultPart)
+_CARRIERS = (ToolReturnPart, BackgroundToolResultPart)
 """Parts that carry what a call returned, which each route wraps its own way."""
 
 
@@ -291,7 +290,7 @@ def _ran(calls: Calls, observer: _Observer) -> list[str]:
 
 async def _native(calls: Calls, directory: Path) -> RouteRun:
     capabilities, observer = await _built(calls, directory)
-    agent = Agent(_Script(calls.made).model, capabilities=[*capabilities, observer])
+    agent = Agent(_Script(calls.made).model, deps_type=type(None), capabilities=[*capabilities, observer])
     result = await agent.run('go', event_stream_handler=drain_events)
     return RouteRun(result.all_messages(), _ran(calls, observer))
 
@@ -305,16 +304,17 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
     capabilities, observer = await _built(calls, directory)
     script = _Script(calls.made, _WRAPS.get(route))
     if route in ('vercel_ai', 'ag_ui'):
-        agent = Agent(script.model, capabilities=[*capabilities, observer])
+        agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, observer])
         protocol: Literal['vercel', 'agui'] = 'vercel' if route == 'vercel_ai' else 'agui'
         first = (await run_through_ui(protocol, agent, 'go')).all_messages()
         # The client sends the whole conversation back, and the server keeps the history it stored.
         second = await run_through_ui(protocol, agent, 'next', message_history=first)
         return RouteRun(second.all_messages()[: len(first)], _ran(calls, observer))
     if route == 'sub_agent':
-        child = Agent(script.model, name='child', capabilities=[observer])
+        child = Agent(script.model, deps_type=type(None), name='child', capabilities=[observer])
         parent = Agent(
             _Script([('delegate_task', {'agent_name': 'child', 'task': 'go'})]).model,
+            deps_type=type(None),
             capabilities=[SubAgents(agents=[SubAgent(child)], shared_capabilities=capabilities)],
         )
         await parent.run('go', event_stream_handler=drain_events)
@@ -327,7 +327,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
         'background_tools': lambda: BackgroundTools(tools='all'),
         'prepare_hook': lambda: PrepareTools(_rebuild_definitions),
     }
-    agent = Agent(script.model, capabilities=[*capabilities, around[route](), observer])
+    agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, around[route](), observer])
     result = await agent.run('go', event_stream_handler=drain_events)
     if route in _WRAPS and not script.wrapped:
         pytest.skip(f'{route} keeps every tool the calls make native')
@@ -345,6 +345,11 @@ def _matrix(routes: Sequence[Route]) -> Iterator[ParameterSet]:
             if (known := KNOWN.get((name, route))) is not None:
                 reason, raises = known
                 marks.append(pytest.mark.xfail(strict=True, raises=raises, reason=reason))
+            if route in ('vercel_ai', 'ag_ui') and not ui_imports_successful():
+                marks.append(pytest.mark.skip(reason='the UI adapters are not installed'))
+            if route == 'ag_ui':
+                # It loses only what the client sends back; the server-held history this route compares keeps it.
+                marks.append(pytest.mark.filterwarnings('ignore:ag-ui-protocol .* predates the `encrypted_value`'))
             if calls.moves_cache_prefix is not None:
                 marks.append(pytest.mark.moves_cache_prefix(reason=calls.moves_cache_prefix))
             yield pytest.param(name, route, marks=marks, id=f'{name}-{route}')
