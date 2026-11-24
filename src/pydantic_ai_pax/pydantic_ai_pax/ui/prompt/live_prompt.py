@@ -220,15 +220,17 @@ class LivePrompt:
     def _keep_edit_as_draft(self) -> None:
         """Leave the prompt being edited in the draft only, followed by the draft Up set aside.
 
-        While the recall walk lasts, Down still restores that draft, so it is not added twice. After an edit
-        into a `/command` or `!` line the set-aside draft would become part of the command, so it goes to
-        history instead, where Up finds it.
+        While the recall walk lasts, Down still restores that draft, so it is not added twice. Joined, a
+        `/command` or `!` line on either side would turn the other into part of the command, or itself into
+        prompt text, so the set-aside draft goes to history instead, where Up finds it.
         """
         if self._editing is None:
             return
         if self.buffer.history_index is None and (shelved := self._shelved_draft):
             joined = '\n'.join(filter(None, [self.buffer.text.strip(), shelved]))
-            if joined == shelved or input_kind(expand_bare_command(joined)) == 'prompt':
+            if joined == shelved or all(
+                input_kind(expand_bare_command(text)) == 'prompt' for text in (joined, shelved)
+            ):
                 self.buffer.replace(joined)
                 self.refresh_completions()
             else:
@@ -456,8 +458,7 @@ class LivePrompt:
     def interrupt(self) -> None:
         """Cancel running work, or else drop the draft and signal the reader.
 
-        Cancelling while a queued prompt is edited ends the edit as Esc does, but keeps an edit into another
-        prompt, which runs with the rest of the queue.
+        Cancelling while a queued prompt is edited ends the edit as Esc does, before the queue runs on.
         """
         cancelled = self.interrupts.cancel()
         telemetry.record('prompt interrupt', key='ctrl-c', cancelled_turn=cancelled)
@@ -467,16 +468,10 @@ class LivePrompt:
             self._edit(None)
             self.submit(KeyboardInterrupt())
         elif (editing := self._editing) is not None:
-            if edit := self.buffer.text.strip():
-                command = expand_bare_command(edit)
-                if input_kind(command) == 'prompt' and not command.startswith('!'):
-                    editing.text, editing.recorded = command, edit
-                    self.queue_changed()
-                else:
-                    # Only Enter makes a command or shell line runnable: the prompt returns unchanged, as Esc
-                    # returns it, and Up finds the edit in history.
-                    self.history.append_string(edit)
-                    self.buffer.history.append(edit)
+            # Only Enter saves an edit: the prompt runs unchanged, as Esc returns it, and Up finds the edit in history.
+            if (edit := self.buffer.text.strip()) and expand_bare_command(edit) != editing.text:
+                self.history.append_string(edit)
+                self.buffer.history.append(edit)
             self.stop_editing()
 
     def _chord(self, key: str) -> bool:

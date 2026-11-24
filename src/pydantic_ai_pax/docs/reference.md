@@ -1423,10 +1423,9 @@ example with `export WT_SESSION=1` in the shell you start Pax from.
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
 Queued messages, slash commands, and `!` shell commands stay queued and run next, in
 the order you queued them. While you edit a queued message, the first Esc stops
-editing instead of interrupting. Ctrl-C interrupts: the message goes back to its
-place with your edit, and the draft you had before pressing Up comes back. An edit
-into a slash command or `!` shell command only runs once you press Enter, so Ctrl-C
-puts the queued message back unchanged; Up finds the edit in history.
+editing instead of interrupting. Ctrl-C interrupts and puts the message back in its
+place unchanged, since only Enter saves an edit; Up finds your edit in history, and
+the draft you had before pressing Up comes back.
 Tool cleanup finishes before the next queued message starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather

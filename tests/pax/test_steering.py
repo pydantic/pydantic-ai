@@ -643,12 +643,9 @@ async def test_interrupt_leaves_the_queue_to_run_in_order(key: str) -> None:
             await live.read()
 
 
-@pytest.mark.parametrize(
-    ('queued', 'ups', 'expected'),
-    [(('b',), 1, ('b2',)), (('a', 'b'), 1, ('a', 'b2')), (('a', 'b', 'c'), 2, ('a', 'b2', 'c'))],
-)
-async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_in_order_and_the_draft(
-    queued: tuple[str, ...], ups: int, expected: tuple[str, ...]
+@pytest.mark.parametrize(('queued', 'ups'), [(('b',), 1), (('a', 'b'), 1), (('a', 'b', 'c'), 2)])
+async def test_ctrl_c_while_editing_a_queued_prompt_runs_it_unchanged_and_keeps_the_draft(
+    queued: tuple[str, ...], ups: int
 ) -> None:
     async with editor() as (live, _, _):
         async with running(live):
@@ -658,9 +655,19 @@ async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_in_order_and_
                 live.feed('up')
             live.buffer.insert('2')
             live.feed('ctrl-c')
-        # The edit keeps the prompt's place in the queue, and the draft from before Up comes back.
-        assert (live.buffer.text, live.queued_messages) == ('draft', expected)
-        assert [await live.read() for _ in expected] == list(expected)
+        # Only Enter saves the edit: the queue runs as it was, the draft from before Up comes back, and Up finds the edit.
+        assert (live.buffer.text, live.queued_messages, live.buffer.history[-1]) == ('draft', queued, 'b2')
+        assert [await live.read() for _ in queued] == list(queued)
+
+
+async def test_ctrl_c_on_an_unchanged_edit_adds_nothing_to_history() -> None:
+    async with editor() as (live, _, _):
+        async with running(live):
+            queue(live, '/help')
+            live.feed('up')
+            history = list(live.buffer.history)
+            live.feed('ctrl-c')
+        assert (live.buffer.history, live.queued_messages) == (history, ('/help',))
 
 
 async def test_recalled_queued_prompt_edited_into_immediate_command_leaves_queue() -> None:
@@ -962,9 +969,17 @@ async def test_a_draft_a_search_hides_keeps_its_images() -> None:
 
 
 @pytest.mark.parametrize(
-    ('draft', 'edit'), [('printf injected', '!'), ('please explain', '!git status'), ('more', '/help')]
+    ('draft', 'edit'),
+    [
+        ('printf injected', '!'),
+        ('please explain', '!git status'),
+        ('more', '/help'),
+        ('!git status', 'only2'),
+        ('/help', 'only2'),
+        ('clear', 'only2'),
+    ],
 )
-async def test_an_edit_into_a_command_never_takes_the_draft_up_set_aside_with_it(draft: str, edit: str) -> None:
+async def test_a_command_never_joins_the_edit_and_the_draft_up_set_aside(draft: str, edit: str) -> None:
     async with editor() as (live, _, _):
         queue(live, 'only')
         live.buffer.replace(draft)
@@ -974,7 +989,8 @@ async def test_an_edit_into_a_command_never_takes_the_draft_up_set_aside_with_it
         live.wake()
         with pytest.raises(PromptWakeup):
             await live.read()
-        # Joined, the draft would run as part of the command: the edit stays alone and Up finds the draft.
+        # Joined, one would turn the other into part of a command, or a command into prompt text: the edit stays
+        # alone and Up finds the draft.
         assert (live.buffer.text, live.buffer.history[-1]) == (edit, draft)
 
 
