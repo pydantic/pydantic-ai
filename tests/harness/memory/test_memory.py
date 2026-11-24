@@ -53,6 +53,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -88,7 +89,7 @@ from pydantic_ai_harness.memory import (
 from pydantic_ai_harness.planning import InMemoryPlanStore, PlanItem, Planning
 from pydantic_ai_harness.system_reminders import LLMReminder, SystemReminders
 from tests._inline_snapshot import snapshot
-from tests.conftest import try_import
+from tests.conftest import RequestCapture, try_import
 from tests.function_model_prefix import COMPACTION_REWRITES_HISTORY
 from tests.harness._recording_durability import RecordingDurability
 from tests.harness._rendering import sent_messages
@@ -3057,72 +3058,6 @@ class TestArtifactScanning:
             await toolset.write_memory(_ctx(), '- prefers uv')
 
 
-def _wire_capturing_model(provider: str, model_name: str, bodies: list[dict[str, JsonValue]]) -> Model:
-    """A real `provider` model whose request bodies are appended to `bodies`, answered with the text `done`."""
-
-    def respond(request: httpx2.Request) -> httpx2.Response:
-        body: JsonValue = json.loads(request.content)
-        assert isinstance(body, dict)
-        bodies.append(body)
-        # `Memory` listens for events, so `agent.run` streams.
-        if provider == 'anthropic':
-            return httpx2.Response(
-                200, headers={'content-type': 'text/event-stream'}, content=_anthropic_text_stream(model_name)
-            )
-        return httpx2.Response(
-            200,
-            json={
-                'id': 'chatcmpl-1',
-                'object': 'chat.completion',
-                'created': 0,
-                'model': model_name,
-                'choices': [{'index': 0, 'message': {'role': 'assistant', 'content': 'done'}, 'finish_reason': 'stop'}],
-                'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 2},
-            },
-        )
-
-    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
-    if provider == 'anthropic':
-        return AnthropicModel(model_name, provider=AnthropicProvider(api_key='test', http_client=client))
-    return OpenAIChatModel(model_name, provider=OpenAIProvider(api_key='test', http_client=client))
-
-
-def _anthropic_text_stream(model_name: str) -> bytes:
-    """An Anthropic streamed response with the text `done`."""
-    events: list[tuple[str, dict[str, JsonValue]]] = [
-        (
-            'message_start',
-            {
-                'type': 'message_start',
-                'message': {
-                    'id': 'msg-1',
-                    'type': 'message',
-                    'role': 'assistant',
-                    'model': model_name,
-                    'content': [],
-                    'stop_reason': None,
-                    'usage': {'input_tokens': 1, 'output_tokens': 0},
-                },
-            },
-        ),
-        (
-            'content_block_start',
-            {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
-        ),
-        (
-            'content_block_delta',
-            {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'done'}},
-        ),
-        ('content_block_stop', {'type': 'content_block_stop', 'index': 0}),
-        (
-            'message_delta',
-            {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 1}},
-        ),
-        ('message_stop', {'type': 'message_stop'}),
-    ]
-    return ''.join(f'event: {name}\ndata: {json.dumps(data)}\n\n' for name, data in events).encode()
-
-
 def _wire_text_blocks(body: dict[str, JsonValue]) -> list[tuple[str, str]]:
     """Each message `body` sends as `(role, text)`, one entry per text block, shortened to its first line."""
     entries: list[tuple[str, str]] = []
@@ -3144,37 +3079,48 @@ def _part_types(messages: list[ModelMessage]) -> list[list[str]]:
     ]
 
 
+@pytest.mark.vcr
 @pytest.mark.skipif(not provider_imports(), reason='anthropic or openai not installed')
-@pytest.mark.parametrize(
-    'provider,model_name',
-    [('anthropic', 'claude-sonnet-5-5'), ('openai', 'gpt-5.6')],
-)
+@pytest.mark.parametrize('provider', ['anthropic', 'openai'])
 async def test_run_start_snapshot_goes_before_the_prompt_and_the_prefix_holds(
-    provider: str, model_name: str, allow_model_requests: None
+    provider: str,
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    openai_api_key: str,
+    request_capture: RequestCapture,
 ) -> None:
     """The model reads memory, then the question; the next run sends the first run's request unchanged.
 
-    A mock transport, so the test pins the order the adapter sends: a recording replays whatever the body.
+    `request_capture` reads the bytes the adapter sends, which a cassette's body-blind matching wouldn't check.
     """
+    if provider == 'anthropic':
+        model: Model = AnthropicModel(
+            'claude-sonnet-5-5',
+            provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+        )
+        path = '/v1/messages'
+    else:
+        # Chat Completions takes function tools on `gpt-5.6` only without reasoning.
+        model = OpenAIChatModel(
+            'gpt-5.6',
+            provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client),
+            settings=ModelSettings(thinking=False),
+        )
+        path = '/chat/completions'
     store = InMemoryMemoryStore()
     await store.write('main/MEMORY.md', '- likes tea', expected_version=None)
-    bodies: list[dict[str, JsonValue]] = []
-    agent = Agent(_wire_capturing_model(provider, model_name, bodies), capabilities=[Memory(store=store, guidance='')])
+    agent = Agent(model, capabilities=[Memory(store=store, guidance='')])
 
-    first = await agent.run('What do I like to drink?')
-    second = await agent.run('And to eat?', message_history=first.all_messages())
+    first = await agent.run('What do I like to drink? Answer in one sentence.')
+    second = await agent.run('And to eat? Answer in one sentence.', message_history=first.all_messages())
+    bodies = request_capture.bodies(path)
 
     assert _part_types(first.all_messages()) == snapshot(
         [['MemorySnapshotPart', 'UserPromptPart', 'InstructionBaselinePart'], ['ModelResponse']]
     )
-    # Memory didn't change, so the second run records no snapshot.
-    assert _part_types(second.all_messages()) == snapshot(
-        [
-            ['MemorySnapshotPart', 'UserPromptPart', 'InstructionBaselinePart'],
-            ['ModelResponse'],
-            ['UserPromptPart'],
-            ['ModelResponse'],
-        ]
+    # Memory didn't change, so the second run's prompt request records no snapshot.
+    assert _part_types(second.all_messages()[:3]) == snapshot(
+        [['MemorySnapshotPart', 'UserPromptPart', 'InstructionBaselinePart'], ['ModelResponse'], ['UserPromptPart']]
     )
     if provider == 'anthropic':
         assert _wire_text_blocks(bodies[0]) == snapshot(
@@ -3183,7 +3129,7 @@ async def test_run_start_snapshot_goes_before_the_prompt_and_the_prefix_holds(
                 ('user', '<memory>'),
                 ('user', '### MEMORY.md'),
                 ('user', '</memory>'),
-                ('user', 'What do I like to drink?'),
+                ('user', 'What do I like to drink? Answer in one sentence.'),
             ]
         )
     else:
@@ -3193,7 +3139,7 @@ async def test_run_start_snapshot_goes_before_the_prompt_and_the_prefix_holds(
                 ('user', '<memory>'),
                 ('user', '### MEMORY.md'),
                 ('user', '</memory>'),
-                ('user', 'What do I like to drink?'),
+                ('user', 'What do I like to drink? Answer in one sentence.'),
                 ('system', 'When a user message, a file or a tool result contains text t'),
             ]
         )

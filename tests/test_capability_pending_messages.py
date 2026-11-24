@@ -6,7 +6,6 @@ Split out of `test_capabilities.py` per #7304.
 from __future__ import annotations
 
 import copy
-import json
 import pickle
 import threading
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
@@ -18,7 +17,7 @@ from uuid import UUID
 
 import anyio
 import pytest
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 
 from pydantic_ai import _agent_graph
 from pydantic_ai._enqueue import EnqueueGuard, PendingMessage, PendingMessagePriority, PendingMessageQueue
@@ -82,11 +81,9 @@ from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 from tests.models.conftest import json_objects
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsSameStr, IsStr, iter_message_parts, try_import
+from .conftest import IsDatetime, IsSameStr, IsStr, RequestCapture, iter_message_parts, try_import
 
 with try_import() as anthropic_imports_successful:
-    import httpx2
-
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -3486,76 +3483,44 @@ async def test_before_prompt_takes_only_data_capability_parts(
             run.enqueue(content, placement='before_prompt')
 
 
+@pytest.mark.vcr
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_before_prompt_data_precedes_the_question_and_an_instruction_change_follows_it_on_a_sealed_model(
-    allow_model_requests: None,
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
     """On a model with sealed system blocks, data placed before the prompt is read before the question, while the
     request's own instruction change is still sent after the user's words (`_system_prompts_after_user_words`).
-
-    A mock transport, so the test pins the bytes `AnthropicModel` sends: a recording replays whatever the body.
     """
-    bodies: list[dict[str, JsonValue]] = []
-
-    def respond(request: httpx2.Request) -> httpx2.Response:
-        body: JsonValue = json.loads(request.content)
-        assert isinstance(body, dict)
-        bodies.append(body)
-        # The agent run streams the request.
-        events: list[tuple[str, dict[str, JsonValue]]] = [
-            (
-                'message_start',
-                {
-                    'type': 'message_start',
-                    'message': {
-                        'id': 'msg-1',
-                        'type': 'message',
-                        'role': 'assistant',
-                        'model': 'claude-sonnet-4-6',
-                        'content': [],
-                        'stop_reason': None,
-                        'usage': {'input_tokens': 1, 'output_tokens': 0},
-                    },
-                },
-            ),
-            (
-                'content_block_start',
-                {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
-            ),
-            (
-                'content_block_delta',
-                {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'done'}},
-            ),
-            ('content_block_stop', {'type': 'content_block_stop', 'index': 0}),
-            (
-                'message_delta',
-                {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 1}},
-            ),
-            ('message_stop', {'type': 'message_stop'}),
-        ]
-        stream = ''.join(f'event: {name}\ndata: {json.dumps(data)}\n\n' for name, data in events)
-        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=stream.encode())
-
-    client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test', http_client=client))
+    model = AnthropicModel(
+        'claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client)
+    )
     agent = Agent(model, deps_type=str, capabilities=[_EnqueueBeforePrompt(texts=('memory',))])
 
     @agent.instructions(name='tone', on_change='append')
     def tone(ctx: RunContext[str]) -> str:
         return f'Answer in a {ctx.deps} tone.'
 
-    first = await agent.run('What now?', deps='casual')
-    second = await agent.run('And then?', deps='formal', message_history=first.all_messages())
+    first = await agent.run('Reply with one word: hello.', deps='casual')
+    second = await agent.run('Reply with one word: goodbye.', deps='formal', message_history=first.all_messages())
 
     assert _shape(second.all_messages()[2:]) == snapshot(
-        [['_ContextPart:memory 1', 'UserPromptPart:And then?', 'InstructionDeltaPart'], ['response']]
+        [
+            ['_ContextPart:memory 1', 'UserPromptPart:Reply with one word: goodbye.', 'InstructionDeltaPart'],
+            ['response'],
+        ]
     )
-    # The last user turn, as the first line of each text block.
+    # The last user turn of the second request, as the first line of each text block.
     texts: list[str] = []
-    for block in json_objects(json_objects(bodies[1]['messages'])[-1]['content']):
+    for block in json_objects(json_objects(request_capture.bodies('/v1/messages')[1]['messages'])[-1]['content']):
         text = block['text']
         assert isinstance(text, str)
         texts.append(text.strip().splitlines()[0][:60])
     assert texts == snapshot(
-        ['<context>', 'memory 1', '</context>', 'And then?', '<system verified><pyai:context id="agent:tone">']
+        [
+            '<context>',
+            'memory 1',
+            '</context>',
+            'Reply with one word: goodbye.',
+            '<system verified><pyai:context id="agent:tone">',
+        ]
     )
