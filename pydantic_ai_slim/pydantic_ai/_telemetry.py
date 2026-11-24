@@ -49,8 +49,8 @@ __all__ = (
 class RunTelemetry:
     """The tracer a run's spans go to, and whether they may record content.
 
-    Not `InstrumentationSettings`: a durable worker combines its own settings with the run's
-    serialized content flag. A published value is compared by identity, so each publish is a distinct
+    Not `InstrumentationSettings`: in a durable unit both come from the rebuilt `ctx`, whose content flag
+    the engine narrowed to the worker's setting. A published value is compared by identity, so each publish is a distinct
     run's telemetry; one built from a `ctx` is used for a single call and never published.
     """
 
@@ -188,15 +188,8 @@ def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> RunTelemetry | 
     # other raises. Work in a unit that didn't carry the tracer goes untraced rather than failing.
     if not _TRACE_FIELDS <= ctx.__dataclass_fields__.keys():
         return None
-    # Telemetry published for the same tracer can only narrow content: a durable worker that doesn't record
-    # content publishes that, while `ctx` still carries the run's own flag. Agents sharing a tracer provider
-    # share tracers too, so a sub-agent's `for_run`, which still sees its parent's published value, records
-    # content only when both runs do. That fails closed: a parent's setting never turns a child's content on.
-    published = _current.get()
-    include_content = ctx.trace_include_content
-    if published is not None and published.tracer is ctx.tracer:
-        include_content = include_content and published.include_content
-    return _run_telemetry(ctx.tracer, include_content)
+    # `ctx` is the only source: in a durable unit the engine already narrowed its flag to the worker's setting.
+    return _run_telemetry(ctx.tracer, ctx.trace_include_content)
 
 
 def _with_content(
