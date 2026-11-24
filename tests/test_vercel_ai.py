@@ -8749,7 +8749,7 @@ def test_user_file_custom_identifier_round_trip(item: BinaryContent | ImageUrl |
         assert isinstance(loaded, BinaryImage)
 
     # A second round trip keeps writing the same key.
-    assert VercelAIAdapter.dump_messages([message])[0].parts[0].provider_metadata == file_part.provider_metadata
+    assert VercelAIAdapter.dump_messages([message])[0].parts == [file_part]
 
 
 @pytest.mark.parametrize(
