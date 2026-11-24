@@ -593,6 +593,23 @@ async def test_a_refused_key_down_holds_nothing(allow_model_requests: None) -> N
     assert provider.actions == [Click(x=640, y=400)]
 
 
+async def test_a_key_down_a_hook_refuses_holds_nothing(allow_model_requests: None) -> None:
+    hooks = Hooks[object]()
+
+    @hooks.on.after_tool_validate
+    async def refuse_key_down(
+        ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        if call.tool_call_id == 'call_1':
+            raise ToolFailed('Holding keys is not allowed.')
+        return args
+
+    provider, _ = await _display_actions(
+        [_call('key_down', key='shift')], [_call('click', 'call_2', x=500, y=500)], capabilities=(hooks,)
+    )
+    assert provider.actions == [Click(x=640, y=400)]
+
+
 async def test_mouse_up_while_a_key_is_held_still_lets_go(allow_model_requests: None) -> None:
     """A button pressed before the key was held is released, so it never stays down."""
     provider, _ = await _display_actions(

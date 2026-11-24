@@ -264,10 +264,26 @@ class NativeComputer:
     """The modifiers Gemini holds for its next call: each `key_down` that no `key_up` let go of."""
 
     def restore_held_keys(self, messages: Sequence[ModelMessage]) -> None:
-        """Hold the modifiers Gemini held after its last computer use call in `messages`, which stored them."""
+        """Hold the modifiers held after Gemini's last computer use call in `messages`, which stored them.
+
+        A call that didn't run, such as a denied `key_down`, leaves the modifiers held before it.
+        """
         parts = (part for m in reversed(messages) if isinstance(m, ModelResponse) for part in reversed(m.parts))
-        last = next((r for part in parts if isinstance(part, ToolCallPart) and (r := self._stored_call(part))), None)
-        self.held_modifiers = last[2] if last else ()
+        last = next(
+            ((part, r) for part in parts if isinstance(part, ToolCallPart) and (r := self._stored_call(part))), None
+        )
+        if last is None:
+            self.held_modifiers = ()
+            return
+        part, (_, _, held_after, held_before) = last
+        ran = any(
+            isinstance(result, ToolReturnPart)
+            and result.tool_call_id == part.tool_call_id
+            and result.outcome == 'success'
+            for m in messages
+            for result in m.parts
+        )
+        self.held_modifiers = held_after if ran else held_before
 
     @staticmethod
     def tool_dict() -> ToolDict:
@@ -306,8 +322,10 @@ class NativeComputer:
         replayed = self._stored_call(part)
         return replayed[0] if replayed and part.args_as_dict() == {'actions': replayed[1]} else None
 
-    def _stored_call(self, part: ToolCallPart) -> tuple[GeminiFunctionCall, list[_ActionJson], tuple[str, ...]] | None:
-        """Gemini's call stored on a `computer` call, its actions, and the modifiers held after it, if one is stored."""
+    def _stored_call(
+        self, part: ToolCallPart
+    ) -> tuple[GeminiFunctionCall, list[_ActionJson], tuple[str, ...], tuple[str, ...]] | None:
+        """Gemini's call stored on a `computer` call, its actions, and the modifiers held after and before it."""
         if part.tool_name != self.name:
             return None
         try:
@@ -318,7 +336,7 @@ class NativeComputer:
         actions, _, held = map_computer_call(
             call['name'], call['args'], replay['display_size'], replay['held_modifiers']
         )
-        return call, actions, held
+        return call, actions, held, replay['held_modifiers']
 
 
 def map_computer_result(
