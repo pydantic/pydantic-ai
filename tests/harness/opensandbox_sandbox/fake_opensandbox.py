@@ -39,7 +39,7 @@ import httpx
 from opensandbox.config import ConnectionConfig
 from pydantic import TypeAdapter
 
-from .._fake_x_display import FakeDisplay
+from ..computer_use._fake_x_display import FakeDisplay
 
 API_KEY = 'fake-key'
 DOMAIN = 'opensandbox.invalid'
