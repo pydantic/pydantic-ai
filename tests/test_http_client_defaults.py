@@ -7,8 +7,16 @@ transport without a public accessor, so the tests record what the client hands i
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Generator
+from contextlib import contextmanager
+
+import anyio
 import httpx
 import httpx2
+import pytest
+from anyio.abc import SocketAttribute, SocketStream
+from truststore import _api as truststore_api  # pyright: ignore[reportPrivateUsage]
 
 from pydantic_ai.models import create_async_http_client, create_async_httpx2_client, get_user_agent
 
@@ -62,6 +70,59 @@ async def test_httpx2_client_custom_transport(transport_limits: list[httpx.Limit
     assert requests[0].extensions['timeout'] == {'connect': 5, 'read': 30, 'write': 30, 'pool': 30}
     # The given transport owns the connection pool: the client builds no transport of its own.
     assert transport_limits == []
+
+
+async def test_httpx2_client_concurrent_first_requests_configure_tls_one_at_a_time(monkeypatch: pytest.MonkeyPatch):
+    """Concurrent TLS handshakes on a cold pool don't configure the client's shared SSL context at the same time.
+
+    The default client verifies with a `truststore.SSLContext`, whose `wrap_bio` anyio runs in a worker
+    thread. Before truststore 0.10.5 it reloaded the CA certificates into the shared context without a
+    lock, so concurrent handshakes could corrupt the heap and abort the process (#12530). This can't be
+    a VCR test: the race is in the TLS setup below HTTPX. The first configuration waits briefly for
+    another to start alongside it, so an unlocked context reliably shows an overlap.
+    """
+    for var in ('SSL_CERT_FILE', 'SSL_CERT_DIR', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy'):
+        monkeypatch.delenv(var, raising=False)
+
+    configure_context = truststore_api._configure_context  # pyright: ignore[reportPrivateUsage]
+    changed = threading.Condition()
+    entered = active = most_active = 0
+
+    @contextmanager
+    def tracking_configure_context(ctx: object) -> Generator[None]:
+        nonlocal entered, active, most_active
+        with changed:
+            entered += 1
+            active += 1
+            most_active = max(most_active, active)
+            changed.notify_all()
+            changed.wait_for(lambda: entered > 1, timeout=0.2)
+        with configure_context(ctx):  # pyright: ignore[reportArgumentType]
+            yield
+        with changed:
+            active -= 1
+
+    monkeypatch.setattr(truststore_api, '_configure_context', tracking_configure_context)
+
+    async def close_connection(stream: SocketStream) -> None:
+        await stream.aclose()
+
+    async with await anyio.create_tcp_listener(local_host='127.0.0.1') as listener:
+        port = listener.extra(SocketAttribute.local_port)
+        async with anyio.create_task_group() as server, create_async_httpx2_client(timeout=5) as client:
+            server.start_soon(listener.serve, close_connection)
+
+            async def first_request() -> None:
+                with pytest.raises(httpx2.TransportError):
+                    await client.get(f'https://127.0.0.1:{port}/')
+
+            async with anyio.create_task_group() as requests:
+                for _ in range(4):
+                    requests.start_soon(first_request)
+            server.cancel_scope.cancel()
+
+    assert entered == 4
+    assert most_active == 1
 
 
 async def test_legacy_httpx_client_defaults(transport_limits: list[httpx.Limits | httpx2.Limits]):
