@@ -606,6 +606,11 @@ class TestCDPBrowserLaunch:
         monkeypatch.setattr(shutil, 'which', which)
         agent = Agent(calls_then_reply(), capabilities=[CDPBrowser()])
         if expected is None:
+            # the macOS candidate is an absolute path, so a Chrome installed on the host would be found
+            def not_a_file(self: Path) -> bool:
+                return False
+
+            monkeypatch.setattr(Path, 'is_file', not_a_file)
             with pytest.raises(FileNotFoundError, match='Chrome not found, set `CHROME_PATH`'):
                 await agent.run('hi')
             return
