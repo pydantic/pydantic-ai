@@ -143,8 +143,12 @@ class _RunPressedButtons:
     """The buttons that the last successful call said are still pressed. The next call starts with these."""
     maybe_pressed: list[MouseButton] = field(default_factory=list[MouseButton])
     """Buttons that may be pressed without the model knowing, because a call was interrupted or a release failed."""
-    failed_response_index: int | None = None
-    """The index in the messages of the response whose last `computer` call failed, so its later calls don't run."""
+    halted_call_ids: set[str] = field(default_factory=set[str])
+    """The other calls of the response whose last `computer` call failed, so they don't run.
+
+    They are kept by ID, not by the response's place in the messages, because compaction can rewrite the messages and
+    put a later response in the same place.
+    """
 
 
 _RUN_PRESSED_BUTTONS: ContextVar[_RunPressedButtons | None] = ContextVar('_RUN_PRESSED_BUTTONS', default=None)
@@ -388,8 +392,8 @@ async def _release_buttons_after_failure(runner: _ActionRunner) -> tuple[str, li
     return ' '.join(sentences), stuck
 
 
-def _find_computer_call(ctx: RunContext[Any]) -> tuple[int, ToolCallPart] | None:
-    """The index of the response that made this call, and the call as the model made it."""
+def _find_computer_call(ctx: RunContext[Any]) -> tuple[int, ModelResponse, ToolCallPart] | None:
+    """The index of the response that made this call, the response, and the call as the model made it."""
     for index in range(len(ctx.messages) - 1, -1, -1):
         message = ctx.messages[index]
         # A realtime session can place other calls' returns and new input after the response that made this call.
@@ -397,7 +401,7 @@ def _find_computer_call(ctx: RunContext[Any]) -> tuple[int, ToolCallPart] | None
             continue
         for part in message.parts:  # pragma: no branch
             if isinstance(part, ToolCallPart) and part.tool_call_id == ctx.tool_call_id:
-                return index, part
+                return index, message, part
     # A tool runs only for a call in the run's messages, unless a custom runner calls the toolset directly.
     return None  # pragma: no cover
 
@@ -541,15 +545,25 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         response_index = found_call[0] if found_call else None
         # The model chose a response's calls together, so once one fails the rest would act on a screen it didn't
         # expect.
-        if response_index is not None and run_buttons.failed_response_index == response_index:
+        if ctx.tool_call_id in run_buttons.halted_call_ids:
+            run_buttons.halted_call_ids.discard(ctx.tool_call_id)
             raise ToolFailed(_EARLIER_CALL_FAILED)
-        part = found_call[1] if found_call else None
+        part = found_call[2] if found_call else None
         confirmation = part.confirmation if isinstance(part, ComputerCallPart) else None
         if confirmation is not None and not ctx.tool_call_approved:
             # The provider asked for a person to approve this action before it runs. This is checked here, in the
             # tool, so no hook can skip it.
             raise ApprovalRequired(metadata={'reason': confirmation})
-        run_buttons.failed_response_index = response_index  # cleared below if the call succeeds
+        # Cleared below if the call succeeds.
+        run_buttons.halted_call_ids = (
+            {
+                call.tool_call_id
+                for call in found_call[1].parts
+                if isinstance(call, ToolCallPart) and call.tool_call_id != ctx.tool_call_id
+            }
+            if found_call
+            else set()
+        )
         call_inputs = _CallInputs(
             # The model gave its positions on the latest screenshot before its call.
             screenshot_size=latest_screenshot_size(ctx.messages[:response_index]) if found_call else None,
@@ -573,7 +587,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         result: ComputerResult = tool_return.metadata
         run_buttons.pressed, run_buttons.maybe_pressed = pressed, maybe_pressed_before
         if 'error' not in result:
-            run_buttons.failed_response_index = None
+            run_buttons.halted_call_ids = set()
         # Sent here, not inside the durable step, which can't send events. So a retried step doesn't send it twice.
         await ctx.emit(ActionsPerformedEvent(result=result))
         return tool_return
