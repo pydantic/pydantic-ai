@@ -204,7 +204,9 @@ def _print_intro(
         pass
 
 
-def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-5') -> int:
+def cli(
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'clai', default_model: str = 'openai:gpt-6.1-sol'
+) -> int:
     """Run the CLI and return the exit code for the process."""
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-5.2` but not `gpt-5.2`

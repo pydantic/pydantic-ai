@@ -30,6 +30,7 @@ from pydantic_ai_pax.ui.prompt.prompt_resize import resize_notifications
 from pydantic_ai_pax.ui.prompt.prompt_surface import TRANSCRIPT_KEYS, PromptSurface
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
@@ -75,6 +76,7 @@ class LivePrompt:
         panel: Callable[[str], Sequence[str]] = lambda _: (),
         queue_changed: Callable[[], None] = lambda: None,
         queue_in_toolbar: Callable[[], bool] | None = None,
+        full_screen: bool = False,
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
@@ -87,6 +89,7 @@ class LivePrompt:
         `queue_changed` is told whenever a prompt joins, leaves, or is rewritten in the queue.
         `queue_in_toolbar=None` appends the queue count here; a callback leaves it to the toolbar,
         except over a notice when the callback returns `True`.
+        `full_screen` takes the whole terminal from the start; otherwise the panel starts compact and grows.
         """
         self.console = console
         self.commands = commands
@@ -97,7 +100,7 @@ class LivePrompt:
         self.steer = steer
         self.run_now = run_now
         self.clock = clock
-        self.chords = dict(chords or {})
+        self.chords = {'ctrl-o': self.toggle_details, **(chords or {})}
         self.pinned = pinned
         self.spinner = spinner
         self.panel = panel
@@ -113,6 +116,7 @@ class LivePrompt:
         self._last_escape: float | None = None
         self.buffer = PromptBuffer(history=list(reversed(list(history.load_history_strings()))))
         self.output = PromptSurface(output=console.file, size=lambda: console.size, transcript=transcript)
+        self.output.full_screen = full_screen
         self.keys = PromptKeys(
             source=get_app_session().input,
             feed=self.feed,
@@ -282,6 +286,10 @@ class LivePrompt:
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
 
+    def toggle_details(self) -> str:
+        """Expand or collapse the output of every finished command in the transcript, for Ctrl+O."""
+        return 'Showing command output.' if self.output.toggle_details() else 'Hiding command output.'
+
     def escape(self) -> None:
         """Cancel or dismiss first; only consecutive idle presses request a rewind."""
         previous, self._last_escape = self._last_escape, None
@@ -313,7 +321,8 @@ class LivePrompt:
 
         A history walk owns the arrows, so recalling a `/command` shows its suggestions
         without trapping the walk on them. Tab picks a suggestion and hands the arrows to
-        the popup; editing the recalled text ends the walk, as does typing a fresh draft.
+        the popup. Editing recalled text keeps the walk only when it protects a nonempty
+        original draft; editing the restored draft ends the walk.
         """
         return bool(self._completions) and (self.buffer.history_index is None or self._selection >= 0)
 
@@ -579,26 +588,20 @@ class LivePrompt:
             for entry in self.queued_prompts()
         ]
         rows += _capped(queued, limit=limit, room=room - len(rows), more=muted + '+{} more queued' + reset)
-        title = ''
-        if self.interrupts.active:
-            head, glyph = '─ Working ', self.spinner().frame(self.clock())
-            # Queue and steer hints only matter once there is something to send, matching pi and Claude Code.
-            chord = 'Ctrl+Enter' if self.ctrl_enter_steers else 'Alt+Enter'
-            hints = f'| Enter: queue | {chord}: steer ' if self.queued_messages or self.buffer.text.strip() else ''
-            title = truncate(f'{head}{glyph} {hints}', width)
-            if title.startswith(head + glyph):
-                title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
+        title = self._working_title(width, muted=muted) if self.interrupts.active else ''
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
-        # The box has no side borders and no prompt marker: the draft and the
-        # suggestions are plain rows between the top and bottom rules, so no
-        # row can drift out of alignment with the corners.
+        # The box has no side borders: the draft and the suggestions are rows between the top and
+        # bottom rules, so no row can drift out of alignment with the corners. The draft wraps two
+        # cells narrower, after a `❯ ` marker on its first row shown (a tall draft scrolls to the
+        # cursor, and the marker stays visible) and an indent on the rest.
         # The pinned row only takes a spare row: `paint` keeps `height - 2` rows, and the title,
         # one draft row, the rule, and the footer come first.
         pinned = self.pinned() if height - len(rows) - 5 >= 1 else ''
         inner = max(1, height - len(rows) - 4 - bool(pinned))
         popup_want = min(6, len(self._completions))
-        draft = self.buffer.rows(width=width, limit=max(1, min(height // 3, inner - popup_want)))
-        rows.extend(draft)
+        draft = self.buffer.rows(width=width - 2, limit=max(1, min(height // 3, inner - popup_want)))
+        rows.append(f'{theme.sgr(theme.ACCENT)}❯{reset} {draft[0]}')
+        rows.extend(map('  {}'.format, draft[1:]))
         popup_limit = max(0, min(6, len(self._completions), inner - len(draft)))
         start = max(0, self._selection - popup_limit + 1)
         for index, item in enumerate(self._completions[start : start + popup_limit], start=start):
@@ -609,14 +612,40 @@ class LivePrompt:
         rows.append(muted + '─' * width + reset)
         if pinned:
             rows.append(truncate(pinned, width) + reset)
-        rows.append(muted + truncate(self._footer(muted=muted), width) + reset)
+        rows.append(muted + truncate(self._footer(width, muted=muted), width) + reset)
         return tuple(rows)
 
-    def _footer(self, *, muted: str) -> str:
+    def _working_title(self, width: int, *, muted: str) -> str:
+        """The rule above the draft while work runs: the animation, its time, and the keys that act on it.
+
+        The first of the candidate rows that fits wins; a draft's own keys outrank the Esc hint and the time.
+        """
+        head, glyph, reset = '─ Working ', self.spinner().frame(self.clock()), '\x1b[0m'
+        # Esc, unlike Ctrl-C, never counts toward the double press that quits.
+        candidates = [[format_duration(self.interrupts.elapsed), 'Esc to interrupt']]
+        # Queue and steer hints only matter once there is something to send.
+        if self.queued_messages or self.buffer.text.strip():
+            keys = ['Enter to queue', f'{"Ctrl+Enter" if self.ctrl_enter_steers else "Alt+Enter"} to steer']
+            candidates = [[*candidates[0], *keys], [candidates[0][0], *keys], keys]
+        candidates.append(['Esc to interrupt'])
+        title = ''
+        for parts in candidates:
+            title = f'{head}{glyph} {" · ".join(parts)} '
+            if visible_length(title) <= width:
+                break
+        title = truncate(title, width)
+        if title.startswith(head + glyph):
+            title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
+        return title
+
+    def _footer(self, width: int, *, muted: str) -> str:
         """The bottom row: the history search, or else a notice or the toolbar, with the queue's length."""
         if self.buffer.search is not None:
             return f'reverse-i-search: {self.buffer.search}'
         notice = self.notice or self.images.notice or self._completion_error
+        queued = ''
+        if self.queued_messages and (self.queue_in_toolbar is None or (notice and self.queue_in_toolbar())):
+            queued = f'{muted} | queued: {len(self.queued_messages)}'
         footer = (
             ' '.join(terminal_text(notice).split())
             if notice
@@ -625,9 +654,8 @@ class LivePrompt:
                 for style, text in self.toolbar()
             )
         )
-        if self.queued_messages and (self.queue_in_toolbar is None or (notice and self.queue_in_toolbar())):
-            footer += f' | queued: {len(self.queued_messages)}'
-        return footer
+        # Cut the notice or toolbar, not the queue count after it.
+        return truncate(footer, max(0, width - visible_length(queued))) + queued
 
     def paint(self) -> None:
         """Draw only when the editor owns the terminal."""
@@ -684,7 +712,7 @@ class LivePrompt:
         try:
             async with self._completion_owner:
                 await self.output.drain()
-                self.output.release()
+                self.output.release(turn_running=self.interrupts.active)
                 yield
         finally:
             self._suspended = False
@@ -747,7 +775,7 @@ def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]
     Only a prompt's text is recorded, as `prompt`, since agent spans already carry it. A `!` line never reaches
     the agent and can hold a secret such as `!export KEY=...`, so it records only its kind and length. A command
     records only its registered name, never its arguments: any plugin can add a command, and arguments such as
-    `/plugins add` settings JSON or an MCP server's headers can hold a secret CLAI cannot recognize.
+    `/plugins add` settings JSON or an MCP server's headers can hold a secret Pax cannot recognize.
     """
     kind = input_kind(text)
     if kind == 'command':

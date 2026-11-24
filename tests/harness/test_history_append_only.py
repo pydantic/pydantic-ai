@@ -2,9 +2,10 @@
 
 See `tests/append_only.py` for the scenario and the three invariants it checks, and
 `tests/test_history_append_only.py` for the core capabilities. Every public capability class in
-`pydantic_ai_harness` runs, constructed with its defaults or with a fixture from `FIXTURES`, unless
-`EXEMPT` says why it can't run offline. Capabilities that keep state change it mid-conversation through
-`SCENARIOS`, and the clock moves an hour between requests.
+`pydantic_ai_harness` runs, constructed with its defaults or with the `build` of its case in
+`tests/harness/capability_cases.py`, unless that `build` is `Unbuildable`, saying why it can't run offline.
+Capabilities that keep state change it mid-conversation through `SCENARIOS`, and the clock moves an hour
+between requests.
 """
 
 from __future__ import annotations
@@ -13,82 +14,36 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import anyio
 import pytest
 
-import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
     LocalWorkspace,
-    RawToolArgs,
     ToolSearch,
     Toolset,
 )
 from pydantic_ai.capabilities.abstract import leaf_capabilities
-from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
-    Advisor,
-    ApprovalReviewer,
-    AskUser,
-    BubblewrappedWorkspace,
-    CapabilityCreation,
-    ClampOversizedMessages,
-    ClearToolResults,
     CodeMode,
-    Coder,
-    CompactOnRequest,
-    DayAI,
-    DeduplicateFileReads,
     FallbackCompaction,
     FileSystem,
-    Goal,
-    Grain,
-    InputGuardrail,
-    Macroscope,
-    ManagedPrompt,
-    Ordinal,
-    OutputGuardrail,
     Peers,
-    PostHog,
-    PruneToolResults,
-    Pylon,
-    RelevanceCompaction,
-    RepoContext,
     ReportStaleFiles,
-    RequireVerification,
-    Researcher,
-    Shell,
-    Skills,
-    SlidingWindowCompaction,
-    SmartSearch,
-    StackOne,
-    StreamGuardrail,
     SummarizingCompaction,
     SystemReminders,
-    TieredCompaction,
-    ToolCallJudge,
-    ToolOutputLimits,
-    TrajectoryJudge,
-    WarnNearLimits,
 )
-from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
-from pydantic_ai_harness.github import GitHub
-from pydantic_ai_harness.linear import Linear
-from pydantic_ai_harness.logfire_mcp import LogfireMCP
-from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.report_stale_files import StaleFilesPart
-from pydantic_ai_harness.slack import Slack
-from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.sub_agents import (
     DelegationReports,
     DelegationTaskEvent,
@@ -100,11 +55,9 @@ from pydantic_ai_harness.sub_agents import (
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
 
 from ..append_only import (
-    CLOCK,
     PROVIDERS,
     Allowed,
     ConversationResult,
-    Exempt,
     Fixture,
     Known,
     Provider,
@@ -117,62 +70,8 @@ from ..append_only import (
     run_conversation,
     skip_unless_installed,
 )
-from ._mcp_server import MCPServer
-
-if TYPE_CHECKING:
-    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
-
-
-def _hosted_server() -> MCPServer:
-    """An in-process stand-in for a hosted MCP service, with server instructions and one tool."""
-    server = MCPServer('hosted', instructions='Hosted service instructions.')
-
-    @server.tool()
-    def search() -> str:
-        return 'found'  # pragma: no cover
-
-    return server
-
-
-_HOSTED_MCP: tuple[type[AbstractCapability[Any]], ...] = (
-    DayAI,
-    GitHub,
-    Grain,
-    Linear,
-    LogfireMCP,
-    Notion,
-    Ordinal,
-    PostHog,
-    Pylon,
-    Slack,
-)
-"""Hosted MCP integrations, run against an in-process server through their `client` field."""
-
-
-def _hosted(cls: Callable[..., AbstractCapability[Any]]) -> Fixture:
-    return lambda _: cls(client=_hosted_server())
-
-
-def _workspace(build: Callable[[], AbstractCapability[Any]]) -> Fixture:
-    """The capability plus a local workspace in the test's directory, for capabilities that need one."""
-    return lambda tmp_path: [build(), LocalWorkspace(tmp_path)]
-
-
-def _repo_context(tmp_path: Path) -> list[AbstractCapability[Any]]:
-    (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
-    return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
-
-
-def _skills(tmp_path: Path) -> list[AbstractCapability[Any]]:
-    skill = tmp_path / 'skills' / 'weather'
-    skill.mkdir(parents=True)
-    (skill / 'SKILL.md').write_text('---\ndescription: Report the weather.\n---\n\nSay sunny.\n')
-    return [Skills(tmp_path / 'skills'), LocalWorkspace(tmp_path)]
-
-
-def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[Any]]:
-    (tmp_path / 'notes.md').write_text('Sunny.\n')
-    return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
+from ..capability_cases import Unbuildable
+from .capability_cases import CASES, HARNESS_CAPABILITY_PACKAGES
 
 
 def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
@@ -181,18 +80,6 @@ def _run_look_up(topic: str) -> tuple[str, dict[str, Any]]:
 
 def _bridge_look_up(topic: str) -> tuple[str, dict[str, str]]:
     return 'tool_call', {'name': 'look_up', 'args_json': f'{{"topic": "{topic}"}}'}
-
-
-class _PruneLatestReturn(AbstractCapability[None]):
-    """Points a scripted `prune_tool_result` call at the previous step's result, whose ID differs by provider."""
-
-    async def before_tool_validate(
-        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
-    ) -> RawToolArgs:
-        if call.tool_name != 'prune_tool_result':
-            return args
-        [latest] = [part.tool_call_id for part in ctx.messages[-2].parts if isinstance(part, ToolReturnPart)]
-        return {**call.args_as_dict(), 'tool_call_id': latest}
 
 
 def _forecast(city: str) -> str:
@@ -300,101 +187,6 @@ _TIDES_FROM_CODE = _run_code("await tides(port='Brest')")
 _CODE_MODE_SEARCHES = _code_mode_discoveries(_SEARCH_TIDES, _TIDES_FROM_CODE)
 _CODE_MODE_LOADS = _code_mode_discoveries(_LOAD_TIDAL, _TIDES_FROM_CODE, ('load_capability', {'id': 'forecasting'}))
 
-
-def _modal_sandbox() -> AbstractCapability[Any]:
-    # Imported here, not at module level, so collecting this file never imports the Modal SDK. The test has
-    # already skipped when `modal` isn't installed (`OPTIONAL_DEPENDENCIES`).
-    from pydantic_ai_harness.modal_sandbox import ModalSandbox
-
-    return ModalSandbox(warn_if_no_tools=False)
-
-
-def _kubernetes_sandbox() -> KubernetesSandbox:
-    # Imported here, so collecting this file never imports the agent-sandbox SDK. The test has already
-    # skipped when it isn't installed (`OPTIONAL_DEPENDENCIES`).
-    from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
-
-    return KubernetesSandbox(warm_pool='python-pool')
-
-
-def _ipython_code_mode() -> AbstractCapability[Any]:
-    # Imported here, so collecting this file never imports `jupyter_client`. The test has already skipped
-    # when it isn't installed (`OPTIONAL_DEPENDENCIES`).
-    from pydantic_ai_harness.ipython_code_mode import IPythonCodeMode
-
-    return IPythonCodeMode(tools=[])
-
-
-def _read_file_key(call: ToolCallPart) -> str | None:
-    args = call.args_as_dict()
-    return str(args['path']) if call.tool_name == 'read_file' else None
-
-
-def _time_reminder(ctx: RunContext[Any]) -> str:
-    return f'It is now {CLOCK.now:%H:%M} UTC.'
-
-
-async def _goal_met(ctx: RunContext[None], output: object) -> None:
-    return None
-
-
-FIXTURES: dict[str, Fixture] = {
-    **{cls.__name__: _hosted(cls) for cls in _HOSTED_MCP},
-    'Advisor': lambda _: Advisor(TestModel()),
-    'ApprovalReviewer': lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
-    'AskUser': lambda _: AskUser(answerer=None),
-    'BubblewrappedWorkspace': lambda tmp_path: BubblewrappedWorkspace(LocalWorkspace(tmp_path)),
-    'CapabilityCreation': lambda tmp_path: [CapabilityCreation(tmp_path / 'capabilities'), LocalWorkspace(tmp_path)],
-    'ClampOversizedMessages': lambda _: ClampOversizedMessages(max_part_chars=100_000),
-    'ClearToolResults': lambda _: ClearToolResults(max_messages=6, keep_pairs=1),
-    'Coder': _workspace(Coder),
-    'CompactOnRequest': lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
-    'ConversationSearch': lambda _: ConversationSearch(
-        SnapshotHistorySource(InMemoryStepStore()), scope='conversation'
-    ),
-    'DeduplicateFileReads': _deduplicate_file_reads,
-    'FallbackCompaction': lambda _: FallbackCompaction(
-        fallback_chain=[SlidingWindowCompaction(max_messages=6, keep_messages=2)]
-    ),
-    'FileSystem': _workspace(FileSystem),
-    'Goal': lambda _: Goal(goal='Report the weather.', verify=_goal_met),
-    'InputGuardrail': lambda _: InputGuardrail(guard=lambda text: True),
-    # Keeps the scenario's tools native, so the conversation checks the `run_code` declaration without
-    # launching a kernel process for every provider.
-    'IPythonCodeMode': lambda _: _ipython_code_mode(),
-    'KubernetesSandbox': lambda _: _kubernetes_sandbox(),
-    'Macroscope': _workspace(Macroscope),
-    'ManagedPrompt': lambda _: ManagedPrompt('assistant', default='You answer questions about the news.'),
-    'ModalSandbox': lambda _: _modal_sandbox(),
-    'OutputGuardrail': lambda _: OutputGuardrail(guard=lambda output: True),
-    'Pixeltable': lambda _: pydantic_ai_harness.Pixeltable(tables=['*']),
-    'PruneToolResults': lambda _: [PruneToolResults(), _PruneLatestReturn()],
-    'RepoContext': _repo_context,
-    'RequireVerification': lambda tmp_path: [
-        RequireVerification(verification_commands=[r'true\b']),
-        FileSystem(),
-        Shell(denied_commands=[]),
-        LocalWorkspace(tmp_path),
-    ],
-    'RelevanceCompaction': lambda _: RelevanceCompaction(TestModel(), max_tokens=20, keep_tokens=1),
-    'Researcher': _workspace(Researcher),
-    'Shell': _workspace(Shell),
-    'Skills': _skills,
-    'SlidingWindowCompaction': lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
-    'SmartSearch': _workspace(lambda: SmartSearch(model=TestModel())),
-    'StackOne': lambda _: StackOne('account', client=_hosted_server()),
-    'StreamGuardrail': lambda _: StreamGuardrail(guard=lambda part: True),
-    'SummarizingCompaction': lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
-    'SystemReminders': lambda _: SystemReminders(dynamic_reminders=[_time_reminder]),
-    'TieredCompaction': lambda _: TieredCompaction(
-        tiers=[ClearToolResults(max_messages=6, keep_pairs=1)], target_tokens=10
-    ),
-    'ToolCallJudge': lambda _: ToolCallJudge(TestModel(), question='Is this call safe?'),
-    'ToolOutputLimits': _workspace(ToolOutputLimits),
-    'TrajectoryJudge': lambda _: TrajectoryJudge(model=TestModel()),
-    'WarnNearLimits': lambda _: WarnNearLimits(max_iterations=2),
-}
-"""Capabilities that need configuration, keyed by class name, built for each test in its `tmp_path`."""
 
 VARIANTS: dict[str, tuple[Fixture, Scenario]] = {
     # A lasting reminder is recorded on each firing and sent again on every later request, so it only ever appends.
@@ -518,6 +310,16 @@ SCENARIOS: dict[str, Scenario] = {
     'CodeMode': Scenario(look_up=_run_look_up),
     'ToolBridge': Scenario(look_up=_bridge_look_up),
     'CompactOnRequest': Scenario(state_calls=(('compact_context', {'focus': 'the forecast'}),)),
+    # A button pressed in one step stays held into the run's next step, which releases it.
+    'ComputerUse': Scenario(
+        turns=(
+            Turn(calls=(('computer', {'actions': [{'type': 'mouse_down'}]}),)),
+            Turn(calls=(('computer', {'actions': [{'type': 'mouse_up'}, {'type': 'screenshot'}]}),)),
+            Turn(text='Clicked.'),
+            Turn(calls=(('look_up', {'topic': 'sports'}),)),
+            Turn(text='Here is more.'),
+        )
+    ),
     'DeduplicateFileReads': Scenario(
         state_calls=(('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'}))
     ),
@@ -569,19 +371,6 @@ SCENARIOS: dict[str, Scenario] = {
     ),
 }
 """Conversations that change a capability's state, or call tools the way the capability exposes them."""
-
-EXEMPT: dict[str, Exempt] = {
-    'AbsurdDurability': Exempt('Durable engine: needs a Postgres-backed Absurd queue.'),
-    'AWSLambdaDurability': Exempt('Durable engine: needs the AWS Lambda durable functions runtime.'),
-    'DynamicWorkflow': Exempt('Runs sub-agents a caller supplies, whose requests are their own conversations.'),
-    'GoogleWorkspace': Exempt('Needs Google OAuth credentials to list its tools.'),
-    'ModelRouter': Exempt(
-        "Replaces the run's model with one from its menu, so the scenario's provider model is never requested."
-    ),
-    'PGTaskDurability': Exempt('Durable engine: needs Postgres.'),
-    'RenderWorkflows': Exempt('Durable engine: needs a Render Workflows app.'),
-    'SSHWorkspace': Exempt('Needs an SSH host to attach a workspace to.'),
-}
 
 _ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PULLS = 'https://github.com/pydantic/pydantic-ai/pull/'
@@ -718,38 +507,7 @@ ALLOWED: dict[str, Allowed] = {
 }
 """Documented prefix movers, checked exactly."""
 
-OPTIONAL_DEPENDENCIES: dict[str, str] = {
-    'BoxdSandbox': 'boxd',
-    'BoxLiteSandbox': 'boxlite',
-    'BrowserUse': 'browser_use',
-    'DaytonaSandbox': 'daytona',
-    'AzureDurableTaskDurability': 'durabletask',
-    'E2BSandbox': 'e2b',
-    'ExaAgent': 'exa_py',
-    'ExaSearch': 'exa_py',
-    'IPythonCodeMode': 'jupyter_client',
-    'KubernetesSandbox': 'k8s_agent_sandbox',
-    'ModalSandbox': 'modal',
-    'OpenSandbox': 'opensandbox',
-    'Pixeltable': 'pixeltable',
-    'PlaywrightBrowser': 'playwright',
-    'PromptInjectionDefender': 'stackone_defender',
-    'SmolSandbox': 'smol',
-    'SpritesSandbox': 'sprites',
-    'YouResearch': 'youdotcom',
-    'YouSearch': 'youdotcom',
-}
-"""Capabilities whose module needs an optional dependency group, by the module that group provides."""
-
-ENV: dict[str, dict[str, str]] = {
-    'ExaAgent': {'EXA_API_KEY': 'test-key'},
-    'ExaSearch': {'EXA_API_KEY': 'test-key'},
-    'YouResearch': {'YDC_API_KEY': 'test-key'},
-    'YouSearch': {'YDC_API_KEY': 'test-key'},
-}
-"""Credentials a capability checks when it's built; nothing is sent, as the scripted model never calls its tools."""
-
-CAPABILITIES = discover_capabilities(('pydantic_ai_harness',))
+CAPABILITIES = discover_capabilities(HARNESS_CAPABILITY_PACKAGES)
 
 
 _REPORT = 'The logs show one error.'
@@ -883,25 +641,27 @@ CONVERSATIONS = {
 """Capabilities whose behavior needs a conversation of its own, with the check it must also pass."""
 
 
-def test_every_capability_has_a_case():
+UNBUILDABLE = {name for name, case in CASES.items() if isinstance(case.build, Unbuildable)}
+
+
+def test_every_table_entry_names_a_capability():
     """Every table entry names a capability that still exists, so renames and removals don't leave dead rows."""
-    tables = (
-        FIXTURES.keys() | EXEMPT.keys() | SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys() | ENV.keys()
-    ) | OPTIONAL_DEPENDENCIES.keys()
+    tables = SCENARIOS.keys() | KNOWN.keys() | ALLOWED.keys()
     stale = tables - CAPABILITIES.keys() - VARIANTS.keys() - CONVERSATIONS.keys()
     assert not stale, f'entries for capabilities that no longer exist: {sorted(stale)}'
 
 
-@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - EXEMPT.keys()))
+@pytest.mark.parametrize('name', sorted(CAPABILITIES.keys() - UNBUILDABLE))
 def test_only_coder_repairs_tool_arguments_by_default(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """`Coder` is the one capability that turns `RepairToolArguments` on; every other one leaves arguments as sent."""
-    skip_unless_installed(name, OPTIONAL_DEPENDENCIES)
-    for key, value in ENV.get(name, {}).items():
+    case = CASES[name]
+    skip_unless_installed(name, case.requires)
+    for key, value in case.env.items():
         monkeypatch.setenv(key, value)
     if name in CONVERSATIONS:
         capabilities = CONVERSATIONS[name](tmp_path)[0]
     else:
-        capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
+        capabilities = build_capabilities(name, CAPABILITIES[name].load, CASES[name].fixture, tmp_path)
     leaves = [leaf for capability in capabilities for leaf in leaf_capabilities(capability)]
     repairs = any(isinstance(leaf, RepairToolArguments) for leaf in leaves)
     assert repairs == (name in {'Coder', 'RepairToolArguments'})
@@ -910,14 +670,15 @@ def test_only_coder_repairs_tool_arguments_by_default(name: str, tmp_path: Path,
 @pytest.mark.parametrize('provider', PROVIDERS)
 @pytest.mark.parametrize(
     'name',
-    sorted(CAPABILITIES.keys() - EXEMPT.keys()) + sorted(VARIANTS.keys() | CONVERSATIONS.keys() - CAPABILITIES.keys()),
+    sorted(CAPABILITIES.keys() - UNBUILDABLE) + sorted(VARIANTS.keys() | CONVERSATIONS.keys() - CAPABILITIES.keys()),
 )
 async def test_conversation_only_appends(
     name: str, provider: Provider, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):
-    skip_unless_installed(name, OPTIONAL_DEPENDENCIES)
-    for key, value in ENV.get(name, {}).items():
-        monkeypatch.setenv(key, value)
+    if (case := CASES.get(name)) is not None:
+        skip_unless_installed(name, case.requires)
+        for key, value in case.env.items():
+            monkeypatch.setenv(key, value)
     check: Callable[[ConversationResult], None] | None = None
     if name in CONVERSATIONS:
         capabilities, scenario, check = CONVERSATIONS[name](tmp_path)
@@ -925,7 +686,7 @@ async def test_conversation_only_appends(
         fixture, scenario = VARIANTS[name]
         capabilities = build_capabilities(name, lambda: AbstractCapability, fixture, tmp_path)
     else:
-        capabilities = build_capabilities(name, CAPABILITIES[name].load, FIXTURES.get(name), tmp_path)
+        capabilities = build_capabilities(name, CAPABILITIES[name].load, CASES[name].fixture, tmp_path)
         scenario = SCENARIOS.get(name, Scenario())
     clock = inject_clock(monkeypatch)
     result = await run_conversation(provider, capabilities, scenario, clock)

@@ -26,7 +26,8 @@ _MODIFIERS = 4 | 8 | 16
 """Shift, Alt, and Ctrl add these to the button."""
 _REPORT = re.compile(r'\x1b\[<(\d{1,5});(\d{1,5});(\d{1,5})([mM])')
 """Bounded fields: a malformed report too long for `int` is not a report, rather than an error."""
-_URL = re.compile(r'https?://[^\s<>`]+')
+URL = re.compile(r'https?://[^\s<>`]+')
+"""A bare `http(s)` URL in plain text, before `trim_url` leaves out its trailing punctuation."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -157,7 +158,7 @@ def url_at(frame: ScreenBuffer, cell: Cell, *, rows: int, joins: Sequence[bool])
     cells = frame.chars[first * width : (last + 1) * width]
     text = ''.join(cells)
     offset = len(''.join(cells[: (row - first) * width + column]))
-    for match in _URL.finditer(text):
+    for match in URL.finditer(text):
         url = trim_url(match[0])
         if match.start() <= offset < match.start() + len(url):
             above = match.start() == 0 and first == 0 and _joined(joins, 0)

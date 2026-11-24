@@ -44,7 +44,7 @@ CLOSE = MenuResult(item=save_and_close_item())
 
 
 def recording(seen: list[str | None]) -> FunctionModel:
-    """A model that records the instructions of every request it gets; CLAI streams them all."""
+    """A model that records the instructions of every request it gets; Pax streams them all."""
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         seen.append(info.instructions)

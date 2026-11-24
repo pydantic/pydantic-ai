@@ -41,7 +41,7 @@ repos:
     rev: v2.3.0
     hooks:
       - id: codespell
-        args: ["--skip", "tests/*/cassettes/*,src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static/*,src/pydantic_ai_pax/web-ui/package-lock.json"]
+        args: ["--skip", "tests/*/cassettes/*,tests/json_schema_test_suite/*,src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static/*,src/pydantic_ai_pax/web-ui/package-lock.json"]
         additional_dependencies:
           - tomli
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
@@ -68,6 +68,12 @@ repos:
         types_or: [python, markdown]
         # `clai` never imports `pydantic-ai-pax`, so a commit confined to it cannot change the output.
         exclude: ^(src/pydantic_ai_pax|tests/pax)/
+        pass_filenames: false
+      - id: pax-docs-page
+        name: CLAI docs page
+        entry: python src/pydantic_ai_pax/scripts/sync_docs_page.py
+        language: python
+        files: ^(src/pydantic_ai_pax/(README\.md|scripts/sync_docs_page\.py)|docs/harness/clai2\.md)$
         pass_filenames: false
       - id: format
         name: Format

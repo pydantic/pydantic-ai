@@ -27,9 +27,10 @@ from pydantic_ai_pax.commands import Command, Commands, set_completions
 from pydantic_ai_pax.config import PluginSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import Plugin, TurnEnd, TurnStart
-from pydantic_ai_pax.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering.splash import Splash
 from tests.pax.cli_runner import CliRunner
+from tests.pax.surface_terminal import scrollback
 
 
 async def test_existing_handler_and_structured_output() -> None:
@@ -305,7 +306,7 @@ async def test_prompt_frame_stays_visible_during_tools(
             await working.wait()
             pipe.send_text('next message')
             await drafted.wait()
-            assert any(line.startswith('next message') for line in frame)
+            assert any(line.startswith('❯ next message') for line in frame)
             pipe.send_text('\r/set display.thinking false\rretained draft')
             await queued.wait()
             follow_up = next(row for row, line in enumerate(frame) if 'Follow-up: next message' in line)
@@ -327,7 +328,7 @@ async def test_prompt_frame_stays_visible_during_tools(
     assert 'Turn not saved' not in output.getvalue()
     assert calls == 1
     assert not store.load().thinking
-    printed = Text.from_ansi(output.getvalue().rsplit(LEAVE, 1)[1]).plain
+    printed = Text.from_ansi(scrollback(output.getvalue())).plain
     assert printed.index('Finished work') < printed.index('> next message\n')
 
 
@@ -475,8 +476,9 @@ async def test_live_editor_interrupts_slow_turn_hooks(
             pipe.send_text('\x15/exit\r')
             await done.wait()
     assert 'Goodbye.' in output.getvalue()
+    assert ('Done in ' in output.getvalue()) is (phase == 'end')  # Only a finished turn says it is done.
     if phase == 'start':
-        assert 'Turn cancelled. Use /exit to quit.' in output.getvalue()
+        assert 'Interrupted. Type what to do instead.' in output.getvalue()
         assert 'Press Ctrl-C again' not in output.getvalue()
         assert 'completed' not in output.getvalue()
 

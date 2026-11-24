@@ -1,13 +1,12 @@
 """`/update`: release lookup, install commands, the footer notice, and the shell exit after an install."""
 
 import argparse
-import base64
 import json
 import os
 import shlex
 import sys
 import threading
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from functools import partial
 from importlib import metadata
 from importlib.abc import MetaPathFinder
@@ -260,7 +259,7 @@ def test_archive_overrides_preserve_declared_extras() -> None:
 
 
 def test_skills_dependency_survives_overrides_from_older_builds() -> None:
-    """An older build's `/update` overrides the harness without its `skills` extra, so CLAI requires PyYAML itself."""
+    """An older build's `/update` overrides the harness without its `skills` extra, so Pax requires PyYAML itself."""
 
     def pyyaml(name: str) -> list[Requirement]:
         return [
@@ -362,7 +361,7 @@ def test_segment_ignores_a_result_for_another_channel() -> None:
 
 async def test_command_installs_and_restarts() -> None:
     updates, ran = _updates(['main'])
-    assert await updates.command([]) == 'Updated CLAI to 9e08a34ee (main). Restarting...'
+    assert await updates.command([]) == 'Updated Pax to 9e08a34ee (main). Restarting...'
     assert updates.restart_required
     assert updates.relaunch == '/tools/pax'
     [command] = ran
@@ -373,7 +372,7 @@ async def test_command_installs_and_restarts() -> None:
 
 async def test_command_reports_current_failure_and_manual_installs() -> None:
     current, ran = _updates(['main'], fetch=lambda channel: SHA)
-    assert await current.command([]) == 'CLAI 4bd401a55 is the newest on the main channel.'
+    assert await current.command([]) == 'Pax 4bd401a55 is the newest on the main channel.'
     failed, _ = _updates(['stable'], codes=[2])
     assert await failed.command([]) == 'uv exited with status 2; see its output above.'
     assert not failed.restart_required
@@ -381,12 +380,12 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     assert (await no_uv.command([])).endswith(
         'To update by hand, run:\nuv tool install --force --compile-bytecode pydantic-ai-pax==0.53.0'
     )
-    # A source checkout installs too, as a `uv tool` CLAI.
+    # A source checkout installs too, as a `uv tool` Pax.
     source, installs = _updates(['main'], current=Installed(version='0.52.0'))
-    assert await source.command([]) == 'Updated CLAI to 9e08a34ee (main). Restarting...'
+    assert await source.command([]) == 'Updated Pax to 9e08a34ee (main). Restarting...'
     assert len(installs) == 1
     lost, _ = _updates(['stable'], executable=None)
-    assert await lost.command([]) == 'Updated CLAI to 0.53.0 (stable). Exiting; start pax again to use it.'
+    assert await lost.command([]) == 'Updated Pax to 0.53.0 (stable). Exiting; start pax again to use it.'
     assert lost.restart_required
     assert lost.relaunch is None
     manual, _ = _updates(['main'], uv=None)
@@ -400,7 +399,7 @@ async def test_command_reports_current_failure_and_manual_installs() -> None:
     overrides.unlink()
     assert ran == []
     assert (current.failed, failed.failed, no_uv.failed, manual.failed, lost.failed) == (False, True, True, True, False)
-    assert await current.command(['now']) == 'CLAI 4bd401a55 is the newest on the main channel.'
+    assert await current.command(['now']) == 'Pax 4bd401a55 is the newest on the main channel.'
     with pytest.raises(ValueError, match='Usage: /update opens the update menu; /update now installs'):
         await current.command(['later'])
 
@@ -443,7 +442,7 @@ async def test_command_reports_its_progress() -> None:
     restarted.capture = lambda: True
     served = WebHandoff(port=4321, token=WEB_TOKEN)
     restarted.serving = lambda: served
-    assert await restarted.command([]) == 'Updated CLAI to 0.53.0 (stable). Restarting...'
+    assert await restarted.command([]) == 'Updated Pax to 0.53.0 (stable). Restarting...'
     assert restarted.web == served, 'the new build serves the page again'
     assert heard == [
         InstallProgress(stage='installing', target='0.53.0'),
@@ -540,7 +539,7 @@ async def test_command_refuses_while_other_processes_run_from_the_install(tmp_pa
         assert not (running / '4242-0a1b2c3d.lock').exists(), 'the check removes files nobody holds'
     # Once the siblings have exited, the kernel has released their locks and the install goes ahead.
     updated, ran = updates()
-    assert await updated.command([]) == 'Updated CLAI to 9e08a34ee (main). Exiting; start pax again to use it.'
+    assert await updated.command([]) == 'Updated Pax to 9e08a34ee (main). Exiting; start pax again to use it.'
     assert len(ran) == 1
     assert sorted(path.name for path in running.iterdir()) == ['1.lock', Path(held.name).with_suffix('.lock').name]
     held.close()
@@ -557,7 +556,7 @@ def test_hold_environment_only_in_a_writable_uv_tool_environment(tmp_path: Path)
 
 
 def test_hold_environment_without_a_lock_leaves_nothing_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Where the file system cannot lock, such as some network mounts, CLAI still starts."""
+    """Where the file system cannot lock, such as some network mounts, Pax still starts."""
     import fcntl
 
     def no_lock(file: object, operation: int) -> None:
@@ -607,19 +606,25 @@ def test_after_exit_script(tmp_path: Path) -> None:
 
 
 def test_install_after_exit_starts_windows_powershell() -> None:
-    started: list[Sequence[str]] = []
-    install_after_exit('Write-Host é', environ={'SystemRoot': r'D:\Win'}, start=started.append)
-    [argv] = started
-    assert argv[:5] == [
+    """The script goes in an environment variable, not on the command line, where antivirus flags `-EncodedCommand`."""
+    started: list[tuple[Sequence[str], Mapping[str, str]]] = []
+
+    def start(argv: Sequence[str], env: Mapping[str, str]) -> None:
+        started.append((argv, env))
+
+    install_after_exit('Write-Host é', environ={'SystemRoot': r'D:\Win'}, start=start)
+    [(argv, env)] = started
+    assert argv == [
         r'D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe',
         '-NoProfile',
         '-ExecutionPolicy',
         'Bypass',
-        '-EncodedCommand',
+        '-Command',
+        '$s = $env:CLAI_UPDATE_SCRIPT; Remove-Item Env:CLAI_UPDATE_SCRIPT; & ([ScriptBlock]::Create($s))',
     ]
-    assert base64.b64decode(argv[5]).decode('utf-16-le') == 'Write-Host é'
-    install_after_exit('', environ={}, start=started.append)
-    assert started[1][0] == r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+    assert env == {'SystemRoot': r'D:\Win', 'CLAI_UPDATE_SCRIPT': 'Write-Host é'}
+    install_after_exit('', environ={}, start=start)
+    assert started[1][0][0] == r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 
 
 async def test_windows_hands_the_install_off_and_exits() -> None:
@@ -629,14 +634,14 @@ async def test_windows_hands_the_install_off_and_exits() -> None:
     updates.hand_off = scripts.append
     message = await updates.command([])
     assert message == (
-        'Installing CLAI 9e08a34ee (main) in a new window once CLAI exits. Exiting; start pax again when it finishes.'
+        'Installing Pax 9e08a34ee (main) in a new window once Pax exits. Exiting; start pax again when it finishes.'
     )
     assert updates.restart_required
     assert ran == []
     [script] = scripts
     assert f'Wait-Process -Id {os.getpid()} ' in script
     assert "& '/bin/uv' 'tool' 'install' '--force' '--compile-bytecode' '--overrides' " in script
-    # The overrides file outlives CLAI; the script removes it after uv reads it.
+    # The overrides file outlives Pax; the script removes it after uv reads it.
     overrides = Path(script.split("Remove-Item -LiteralPath '")[1].split("'")[0])
     assert overrides.read_text(encoding='utf-8') == Update(channel='main', target=NEWER).overrides()
     assert script.splitlines()[2].endswith(" 'pydantic-ai-pax'")
@@ -744,7 +749,7 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
 
 
 class _NewBuild(MetaPathFinder):
-    """The code uv installed: once it has run, a CLAI module imported for the first time is the new build's."""
+    """The code uv installed: once it has run, a Pax module imported for the first time is the new build's."""
 
     def __init__(self) -> None:
         self.installed = False
@@ -939,7 +944,7 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
     )
     text = output.getvalue()
     assert channels == ['main']
-    assert 'Updated CLAI to 0.53.0 (stable). Exiting; start pax again to use it.' in text
+    assert 'Updated Pax to 0.53.0 (stable). Exiting; start pax again to use it.' in text
     assert 'Goodbye.' not in text
     assert len(ran) == 1
 
@@ -1000,14 +1005,14 @@ def test_the_about_menu_says_whether_a_newer_clai_is_out(tmp_path: Path, monkeyp
     assert note(source) == 'a new version 0.53.0 of pax is available on the stable channel (checked just now).'
     assert source.segment() == '', 'the footer still checks only `uv tool` installs'
     failing, _ = _updates(['stable'], fetch=offline)
-    assert note(failing) == 'Could not check for a newer CLAI: offline'
+    assert note(failing) == 'Could not check for a newer Pax: offline'
     assert failing.segment() == ''
     # The menu cannot redraw when the answer comes, so it waits a moment for it before it shows.
     monkeypatch.setattr(update_menu_module, 'CHECK_WAIT', 0.0)
     checks: list[Callable[[], None]] = []
     pending = Updates(channel=lambda: 'stable', current=TOOL, fetch=lambda channel: '0.53.0', spawn=checks.append)
-    assert note(pending) == 'Checking for a newer CLAI…'
-    assert note(pending) == 'Checking for a newer CLAI…' and len(checks) == 1, 'one check per channel'
+    assert note(pending) == 'Checking for a newer Pax…'
+    assert note(pending) == 'Checking for a newer Pax…' and len(checks) == 1, 'one check per channel'
     checks[0]()
     assert note(pending) == 'a new version 0.53.0 of pax is available on the stable channel (checked just now).'
 
@@ -1108,11 +1113,11 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
     if confirm:
         # No second list: the action closed the menu, and the install followed without `/update now` typed.
         assert shown.opened == ['list', 'choice']
-        assert text.index('Running /update now on the stable channel.') < text.index('Updated CLAI to 0.53.0')
+        assert text.index('Running /update now on the stable channel.') < text.index('Updated Pax to 0.53.0')
         assert len(ran) == 1
     else:
         assert shown.opened == ['list', 'choice', 'list'], 'Cancel returns to the menu'
-        assert 'Updated CLAI' not in text
+        assert 'Updated Pax' not in text
         assert ran == []
 
 
@@ -1120,7 +1125,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
 @pytest.mark.parametrize(
     ('code', 'exit_code', 'printed'),
     [
-        (0, 0, 'Updated CLAI to 9e08a34ee (main). Exiting; start pax again to use it.'),
+        (0, 0, 'Updated Pax to 9e08a34ee (main). Exiting; start pax again to use it.'),
         (2, 1, 'uv exited with status 2; see its output above.'),
     ],
 )
@@ -1202,7 +1207,7 @@ def test_update_flag_reports_a_failed_check(
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 1
-    assert capsys.readouterr().err == 'Could not check for a newer CLAI: offline\n'
+    assert capsys.readouterr().err == 'Could not check for a newer Pax: offline\n'
 
 
 @pytest.mark.parametrize(

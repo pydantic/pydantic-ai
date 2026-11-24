@@ -466,7 +466,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`, and runs its `shell` tool under [Azure Durable Task](azure-durable-task.md) and [Render Workflows](render-workflows.md); the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](../durable_execution/temporal.md#harness-command-timeouts) to raise it.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`, and runs its `shell` tool under [Azure Durable Task](azure-durable-task.md) and [Render Workflows](render-workflows.md); the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. A sticky `cd` is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, so a new worker continues in the same directory. A retried `start_command` reattaches to its job instead of starting a second process; if a launch failed partway, the retry reports a pending launch, and once the process has stopped you remove its files under `.pydantic-ai-harness/shell/`. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](../durable_execution/temporal.md#harness-command-timeouts) to raise it.
 
 ## Further reading
 

@@ -383,7 +383,7 @@ class _OnDemandToolset(AbstractToolset[None]):
     attach: Callable[[], Awaitable[AbstractToolset[None] | None]]
 
     @property
-    def id(self) -> str | None:  # pragma: no cover -- only durable execution, which CLAI does not use, asks.
+    def id(self) -> str | None:  # pragma: no cover -- only durable execution, which Pax does not use, asks.
         return None
 
     async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:

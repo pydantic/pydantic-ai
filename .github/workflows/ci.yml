@@ -7,7 +7,7 @@ on:
       - main
     tags:
       - "**"
-      # Moved by `clai2-bleeding.yml` for every CLAI change on `main`; not a release to build or publish.
+      # Moved by `clai2-bleeding.yml` for every Pax change on `main`; not a release to build or publish.
       - "!clai2-bleeding"
   pull_request: {}
   # The merge queue: a pull request reaches `main` only through a merge group that passed this
@@ -164,7 +164,7 @@ jobs:
           # Outside its own suite, only `pydantic-ai-pax` and the gh-aw shim (tested in `quality`, which
           # still runs) import `pydantic-ai-harness`; core and its tests merely probe whether it is
           # installed. So a change confined to the two packages and content runs the harness and
-          # CLAI 2 suites -- on every install shape, resolution, and Temporal leg -- and skips the jobs
+          # Pax suites -- on every install shape, resolution, and Temporal leg -- and skips the jobs
           # that exercise only the rest of the workspace. That includes a `pydantic-ai-pax` change that
           # also touches content. The harness `pyproject.toml` stays on the full path: its dependency
           # bounds feed the environment every package is tested in.
@@ -771,7 +771,7 @@ jobs:
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
-          # Install CLAI 2 alongside the harness to exercise the gh-aw launcher, which runs it by its
+          # Install Pax alongside the harness to exercise the gh-aw launcher, which runs it by its
           # published name, the `pydantic-clai2` shim over `pydantic-ai-pax`.
           - name: pydantic-ai-harness
             command: "--no-sync"
@@ -882,7 +882,7 @@ jobs:
       - run: uv sync --only-dev
 
       # A sync that selects two packages ignores root dependency groups, so `gh-aw-tracing` gets its own.
-      - name: install harness and CLAI 2 test dependencies
+      - name: install harness and Pax test dependencies
         if: matrix.install.name == 'pydantic-ai-harness'
         run: |
           uv sync ${{ matrix.install.sync_command }}
@@ -1716,6 +1716,8 @@ jobs:
       # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
       - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
       - run: uv run --no-sync coverage run -m pytest tests/harness/browser_use
+      # The capability contracts skip `BrowserUse` on every other job.
+      - run: uv run --no-sync coverage run -m pytest tests/harness/test_capability_contracts.py -k BrowserUse
       - run: uv run --no-sync pyright -p tests/harness/browser_use
         env:
           PYRIGHT_PYTHON_IGNORE_WARNINGS: 1
@@ -1731,7 +1733,7 @@ jobs:
           path: .coverage
           include-hidden-files: true
 
-  # CLAI2 pastes images through Pillow's native macOS and Windows clipboard readers and through
+  # Pax pastes images through Pillow's native macOS and Windows clipboard readers and through
   # `xclip` on Linux. Every other job runs on Linux and skips the opt-in native clipboard test, which
   # replaces the system clipboard: safe here, where each runner's clipboard belongs to this job alone.
   # Skipped on tags: a clipboard regression is caught on its PR and on `main`, and must not hold a release.
@@ -1907,7 +1909,9 @@ jobs:
       # binaries and data files; each hosted MCP capability's own module runs here. `tests/durable_exec` runs with `BLOCKBUSTER_ENABLED=false`, as in
       # `test-durable-exec`: Prefect writes its result cache from inside the event loop.
       # `tests/test_conftest.py` tests BlockBuster itself, which skips in lanes that turn it off; this
-      # is the only BlockBuster-on lane that uploads coverage.
+      # is the only BlockBuster-on lane that uploads coverage. `tests/test_history_append_only.py`
+      # builds the core `MCP` case, whose FastMCP import lives in `tests/capability_cases.py`, where
+      # the pattern doesn't look.
       # `--no-extra sentence-transformers`: no MCP test module imports it, and its torch and CUDA
       # wheels are about 2.6 GB of the 3.2 GB this step downloads on a uv cache miss. A slow download
       # of them has run this job past `timeout-minutes` (#13931), as in `test-durable-exec`. The
@@ -1926,6 +1930,7 @@ jobs:
             git grep -lE "$pattern" -- 'tests/**/test_*.py' 'tests/test_*.py'
             git grep -lE "$pattern" -- 'tests/**/conftest.py' | sed 's|/conftest\.py$||'
             echo tests/test_conftest.py
+            echo tests/test_history_append_only.py
           } | sort -u)
           durable=() other=()
           for module in "${modules[@]}"; do
@@ -2144,7 +2149,9 @@ jobs:
     services:
       redis:
         # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
-        image: redis:8
+        # Pinned by digest here and in the cluster step below: the cluster container exits on start
+        # on 8.12.0 (#14283).
+        image: redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
         ports:
           - 6379:6379
         options: >-
@@ -2174,7 +2181,7 @@ jobs:
       - name: Start a single-node Redis Cluster
         timeout-minutes: 2
         run: |
-          docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+          docker run -d --name redis-cluster -p 6380:6380 redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53 \
             redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
           until docker exec redis-cluster redis-cli -p 6380 ping; do sleep 1; done
           docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
@@ -2339,7 +2346,7 @@ jobs:
       - run: uv sync --group dev --group coverage
       - run: uv run --no-sync coverage combine
       # Only the `pydantic-ai-pax` cells ran for a change confined to it, so they can only vouch
-      # for its own tests; a `pydantic-ai-harness`-only change ran the harness and CLAI 2 suites,
+      # for its own tests; a `pydantic-ai-harness`-only change ran the harness and Pax suites,
       # which vouch for those and the harness source. The rest of the workspace is covered on the
       # full path. (`pydantic-ai-pax`'s source is not measured: see `[tool.coverage.run]`.)
       - name: coverage report

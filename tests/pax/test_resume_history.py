@@ -120,7 +120,7 @@ async def test_prompts_answers_thinking_and_tool_calls_render_like_a_live_turn()
         ModelResponse(parts=[TextPart('found it')]),
     ]
     text = await rendered(messages)
-    assert '> look\n[attachment]' in text
+    assert '> look\n  [attachment]' in text
     assert text.index('Thinking pondering') < text.index('checking') < text.index("● grep 'needle' in 'src'")
     assert text.index("● grep 'needle' in 'src'") < text.index('● lookup key="value"') < text.index('found it')
     assert 'system' not in text and 'web_search' not in text and 'output invalid' not in text
@@ -158,7 +158,8 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
             deps=None,
             console=Console(file=output, force_terminal=True, width=80, height=24),
             store=SettingsStore(tmp_path / 'settings.db'),
-            settings=Settings(model=None, session_namer=False),
+            # A compact panel prints the conversation into scrollback when `/resume` takes over.
+            settings=Settings(model=None, session_namer=False, full_screen=True),
         )
     text = '\n'.join(Text.from_ansi(row).plain for row in surfaces[0].transcript.frame(width=200, height=200).rows)
     assert '> hello' not in text and 'fresh answer' not in text

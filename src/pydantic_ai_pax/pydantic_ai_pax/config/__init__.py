@@ -117,7 +117,7 @@ class Settings(BaseModel):
     instructions: str = Field(
         default='',
         description=(
-            "Your own instructions, sent after CLAI's built-in, AGENTS.md, and plugin instructions. "
+            "Your own instructions, sent after Pax's built-in, AGENTS.md, and plugin instructions. "
             '/system_prompt edits them.'
         ),
     )
@@ -133,13 +133,18 @@ class Settings(BaseModel):
         description='User-only JSON list of trusted target directories for external instruction symlinks. Autoload only.',
     )
     session_namer: bool = Field(
-        default=False, description='Name saved sessions in the background using a model, at extra cost.'
+        default=True,
+        description=(
+            'Name saved sessions in the background using a model, at extra cost. By default only sessions held with '
+            'the current model are named; once saved, even as true, every session from any workspace is.'
+        ),
     )
     session_namer_model: str | None = Field(
         default=None, description='Naming model override; null uses the current model.'
     )
     theme: str = Field(
-        default='default', description='Keep CLAI colours, or select a bundled Termflow palette with /theme.'
+        default='default',
+        description='Keep Pax colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme.',
     )
     spinner: str = Field(
         default='working',
@@ -162,6 +167,13 @@ class Settings(BaseModel):
         ),
     )
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
+    full_screen: bool = Field(
+        default=False,
+        description=(
+            'Take the whole terminal height from the start, instead of starting compact below the shell '
+            'and growing as the session needs room. Takes effect next start.'
+        ),
+    )
     tool_calls: ToolCallDisplay = Field(
         default='detailed',
         description=(
@@ -191,7 +203,7 @@ class Settings(BaseModel):
     )
     update_channel: UpdateChannel = Field(
         default='stable',
-        description='Where /update looks: stable PyPI releases, or main for the newest CLAI commit on main.',
+        description='Where /update looks: stable PyPI releases, or main for the newest Pax commit on main.',
     )
     worktree_remove_commands: dict[str, list[str]] = Field(
         default={},
@@ -251,6 +263,7 @@ SETTING_FIELDS = {
     'display.spinner': 'spinner',
     'display.footer_fields': 'footer_fields',
     'display.splash': 'splash',
+    'display.full_screen': 'full_screen',
     'display.tool_calls': 'tool_calls',
     'display.tool_output': 'tool_output',
     'display.shell_lines': 'shell_lines',

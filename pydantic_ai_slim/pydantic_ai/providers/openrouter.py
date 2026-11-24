@@ -323,6 +323,12 @@ class OpenRouterProvider(_OpenAISDKProvider):
             # Only GLM-5.3's schema fix, without Z.AI's native thinking settings.
             profile = _glm_5_3_schema_profile(model_name)
 
+        if provider == 'moonshotai' and model_name.lower().startswith('kimi-k3'):
+            # OpenRouter serves JSON Schema output for Kimi K3 and K3.1 Pro, and sends a `json_schema` response format
+            # only to the endpoints that support it. `moonshotai_model_profile` leaves it off, as the other hosts that
+            # share it haven't been probed: https://github.com/pydantic/pydantic-ai/issues/12078
+            profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
+
         if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
             low_floor = model_name.lower().startswith(_LOW_REASONING_FLOOR_MODEL_PREFIXES.get(provider, ()))
             profile = merge_profile(

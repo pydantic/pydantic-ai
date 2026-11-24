@@ -288,8 +288,7 @@ secrets as workflow-side arguments; use a [payload codec](#large-payloads) to pr
 ### Harness Workspace Capabilities {#harness-workspace-capabilities}
 
 [Harness](../harness/index.md) workspace capabilities such as `Coder`, `Shell` and `FileSystem` work in a
-Temporal workflow; the [workspace guide](../workspace.md#harness-workspace-capabilities) shows what works
-on each engine. Three things are specific to Temporal.
+Temporal workflow, as they do on DBOS and Prefect. Three things are specific to Temporal.
 
 **Live events.** Tools that write files ask for approval and report the write from the workflow, so
 `FileChangeRequestedEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your
@@ -346,6 +345,8 @@ running.
 Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered activities for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.
 
 Capabilities that only observe the run are safe to attach per-run: their hooks read run state but don't contribute tools, toolsets, or durable operations. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is the built-in example and is exempt from the restriction. The current restriction is more conservative because third-party capabilities can't yet declare that they only observe the run. Deriving this from the hooks a capability overrides is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477); if you need a per-run capability inside a workflow, please share your use case there. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
+
+[`agent.override(capabilities=...)`][pydantic_ai.agent.AbstractAgent.override] replaces the agent's capabilities, so build its list from `agent.root_capability.capabilities` to keep the bound [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]: a list without it raises a [`UserError`][pydantic_ai.exceptions.UserError]. Inside a workflow, the capabilities the list adds are held to the same rule as `agent.run(capabilities=[...])`.
 
 ### Large Payloads
 
@@ -679,7 +680,7 @@ The deadline bounds the agent run, not the workflow: a workflow's `execution_tim
 
 ### Counting Tokens Before a Request
 
-With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count calls the provider in an `agent__{name}__model_count_tokens` activity ahead of each model request activity, configured like the model request activities. A model that can't count raises `NotImplementedError`, and a request it can't count raises [`UserError`][pydantic_ai.exceptions.UserError], in workflow code, without the activity being retried. Any other error from the count, a subclass of `UserError` included, fails the activity as it would fail a model request activity. A history recorded by an earlier version, which counted in workflow code, replays the same way: a `workflow.patched()` marker tells the two apart.
+With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count calls the provider in an `agent__{name}__model_count_tokens` activity ahead of each model request activity, configured like the model request activities. A model that can't count raises `NotImplementedError`, and a request it can't count raises [`UserError`][pydantic_ai.exceptions.UserError], in workflow code, without the activity being retried. `openai-codex:` and `openai-chatgpt:` models raise a `UserError` that is also a `NotImplementedError`, and it reaches workflow code as a `UserError`. Any other error from the count, another subclass of `UserError` included, fails the activity as it would fail a model request activity. A history recorded by an earlier version, which counted in workflow code, replays the same way: a `workflow.patched()` marker tells the two apart.
 
 ### Suspended Turns and Background Mode
 
