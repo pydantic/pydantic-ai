@@ -373,6 +373,23 @@ def test_every_dependency_resolution_runs_on_a_pull_request():
     assert _expand('test-lowest-versions', 'pull_request')
 
 
+@pytest.mark.parametrize('event_name', ('pull_request', 'merge_group'))
+def test_durable_exec_runs_each_suite_in_its_own_leg(event_name: str):
+    def suites(route: str) -> dict[tuple[str, str], set[str]]:
+        legs: dict[tuple[str, str], set[str]] = {}
+        for leg in _expand('test-durable-exec', event_name, route):
+            legs.setdefault((_text(leg['python-version']), _text(leg['resolution'])), set()).add(_text(leg['suite']))
+        return legs
+
+    full = suites('full')
+    assert all(legs == {'durable-exec', 'harness-temporal'} for legs in full.values())
+    # A `pydantic-ai-harness`-only change keeps every harness leg, and of `tests/durable_exec` only the
+    # 3.15 leg that runs the contract manifest freshness test.
+    assert suites('harness_only') == {
+        key: {'durable-exec', 'harness-temporal'} if key == ('3.15', 'locked') else {'harness-temporal'} for key in full
+    }
+
+
 # Steps that add coverage, or report to the author of the pull request.
 PULL_REQUEST_STEP_COMMANDS = ('coverage run', 'shard_durations.py report')
 

@@ -98,8 +98,10 @@ async def complex_agent_mcp() -> AsyncIterator[None]:
         await complex_mcp_transport.close()
 
 
-# One dev server (and thus one xdist group) per test module so the four temporal files can
-# run on four xdist workers concurrently instead of forming one serial chain. `start_local`
+# One dev server (and thus one xdist group) per test module so the temporal files can run on
+# separate xdist workers concurrently instead of forming one serial chain. Give a new module its
+# own `xdist_group` name: sharing another module's name starts no fewer servers, it only queues
+# both modules on one worker. `start_local`
 # picks the port: anyio's `free_tcp_port_factory` only probes and releases, so the port sits
 # unowned for the rest of fixture setup, and its dedup set is per factory instance — one per
 # xdist worker — so two workers can be handed the same port. The Temporal SDK instead allocates

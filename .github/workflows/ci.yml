@@ -1299,8 +1299,10 @@ jobs:
   # `tests/`, where the `test` job turns it on for the 3.13 cells (`test-all-extras` leaves it off).
   # The `lowest` resolution leg is the only place the declared minimum bounds
   # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips this directory.
+  # Each Python and resolution runs as two legs, one per `suite`, so neither suite's time counts
+  # against the other's `timeout-minutes` (#14423).
   test-durable-exec:
-    name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
+    name: test ${{ matrix.suite }} on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
     if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ${{ vars.CI_LINUX_RUNNER || 'ubuntu-latest' }}
@@ -1310,6 +1312,10 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
         resolution: [locked, lowest]
+        # `durable-exec` runs `tests/durable_exec`; `harness-temporal` runs the harness `temporal` tests.
+        suite: [durable-exec, harness-temporal]
+        # A `pydantic-ai-harness`-only change runs no `durable-exec` leg but the 3.15 one below.
+        harness_only: ["${{ needs.classify.outputs.harness_only }}"]
         # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
         # include one `lowest` leg (see the `test` job's matrix), the 3.13 `locked` leg that runs the
         # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below,
@@ -1326,12 +1332,18 @@ jobs:
           - pull_request: "true"
             python-version: "3.14"
             resolution: lowest
-        # 3.15 runs the `locked` leg only: `lowest` installs our declared minimums, and 13 of them
+          - harness_only: "true"
+            suite: durable-exec
+        # 3.15 runs the `locked` legs only: `lowest` installs our declared minimums, and 13 of them
         # have no 3.15 wheel (pydantic-core 2.41, numpy 2.3, tiktoken 0.12, ...), so the leg would
         # compile them from source past this job's timeout.
         include:
           - python-version: "3.15"
             resolution: locked
+            suite: durable-exec
+          - python-version: "3.15"
+            resolution: locked
+            suite: harness-temporal
     env:
       CI: true
       # Python 3.11 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
@@ -1343,11 +1355,13 @@ jobs:
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
       # The one leg that runs the Render local runtime tests (see that step).
-      RENDER_LOCAL_RUNTIME: ${{ matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
+      RENDER_LOCAL_RUNTIME: >-
+        ${{ matrix.suite == 'durable-exec' && matrix.python-version == '3.13' && matrix.resolution == 'locked' }}
       # The one leg that runs the contract manifest freshness test of a `pydantic-ai-harness`-only
-      # change (see the run tests step). On the full path, every leg runs it within
+      # change (see the run tests step). On the full path, every `durable-exec` leg runs it within
       # `tests/durable_exec`.
-      DURABLE_EXEC_MANIFEST_FRESHNESS: ${{ matrix.python-version == '3.15' && matrix.resolution == 'locked' }}
+      DURABLE_EXEC_MANIFEST_FRESHNESS: >-
+        ${{ matrix.suite == 'durable-exec' && matrix.python-version == '3.15' && matrix.resolution == 'locked' }}
       # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
       # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
       # wall-clock, so it measures runner contention as readily as a blocking call, and a
@@ -1408,26 +1422,27 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          # A `pydantic-ai-harness`-only change runs the harness `temporal` tests and, of
-          # `tests/durable_exec`, only the contract manifest freshness test, on the leg that sets
-          # `DURABLE_EXEC_MANIFEST_FRESHNESS`: the manifest also walks the Harness engines, so a
-          # harness change can leave it stale.
-          if [[ "$HARNESS_ONLY" != "true" ]]; then
+          if [[ "$SUITE" == "harness-temporal" ]]; then
+            # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
+            # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
+            mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
+            (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
+              "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
+          # A `pydantic-ai-harness`-only change runs, of `tests/durable_exec`, only the contract
+          # manifest freshness test, on the leg that sets `DURABLE_EXEC_MANIFEST_FRESHNESS`: the
+          # manifest also walks the Harness engines, so a harness change can leave it stale.
+          elif [[ "$HARNESS_ONLY" != "true" ]]; then
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
               "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
           elif [[ "$DURABLE_EXEC_MANIFEST_FRESHNESS" == "true" ]]; then
             uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
               "${runner[@]}" tests/durable_exec/test_durable_exec_contract_manifest.py
           fi
-          # Only modules that mention Temporal can hold `temporal` tests (`tests/harness/conftest.py` enforces it), so the
-          # workers don't spend over a minute collecting the rest of `tests/harness` just to deselect it.
-          mapfile -t temporal_modules < <(git grep -liE 'temporal' -- 'tests/harness/**/test_*.py' 'tests/harness/test_*.py')
-          (( ${#temporal_modules[@]} )) || { echo '::error::No harness module mentions Temporal.'; exit 1; }
-          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }} \
-            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal "${temporal_modules[@]}"
         env:
+          SUITE: ${{ matrix.suite }}
           HARNESS_ONLY: ${{ needs.classify.outputs.harness_only }}
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.suite }}-${{ matrix.resolution }}
 
       # The Render Workflows integration runs nested agents in separate worker processes on the
       # keyless local runtime from the Render CLI. It adds about a minute, so one leg runs it; the
@@ -1457,13 +1472,13 @@ jobs:
           uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra sentence-transformers' }}
           coverage combine
         env:
-          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.suite }}-${{ matrix.resolution }}
 
       - name: store coverage files
         if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+          name: coverage-${{ matrix.python-version }}-${{ matrix.suite }}-${{ matrix.resolution }}
           path: .coverage
           include-hidden-files: true
 
