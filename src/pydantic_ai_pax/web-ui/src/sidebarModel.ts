@@ -21,7 +21,7 @@ export interface Row extends SessionEntry {
 /** What a row's one glyph slot shows; `null` for a session that is idle and read. */
 export type Status = 'running' | 'queued' | 'asking' | 'busy' | 'failed' | 'cancelled' | 'unread' | null
 
-/** The statuses of a turn running, here or in another CLAI. */
+/** The statuses of a turn running, here or in another Pax. */
 export const WORKING: readonly Status[] = ['asking', 'queued', 'running', 'busy']
 
 /** A heading and its rows; `removed` collects the sessions whose folder is gone, folded by default. */
@@ -61,7 +61,7 @@ export function flatten(projects: Project[]): Row[] {
   return rows.sort(byCreation)
 }
 
-/** What a row's glyph shows: this CLAI's live state first, then the saved one, then whether it is unread. */
+/** What a row's glyph shows: this Pax's live state first, then the saved one, then whether it is unread. */
 export function status(row: Row, live: Record<string, LiveEntry>, unread: boolean): Status {
   const state = live[row.id]?.state
   if (state !== undefined && state !== 'idle') return state

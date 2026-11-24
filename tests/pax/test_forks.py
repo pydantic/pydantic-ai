@@ -528,7 +528,7 @@ async def test_cancelled_turn_takes_forks_down(tmp_path: Path, monkeypatch: pyte
         store=SettingsStore(tmp_path / 'config.db'),
     )
     text = output.getvalue()
-    assert 'Turn cancelled' in text
+    assert 'Interrupted. Type what to do instead.' in text
     assert 'Cancelled 1 running fork(s) with the turn.' in text
     assert 'fork #1 cancelled after' in text
 

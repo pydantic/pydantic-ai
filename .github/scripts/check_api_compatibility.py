@@ -67,10 +67,10 @@ class ModelNameLiteral(BaseModel):
 
 
 class GrowingCollection(BaseModel):
-    """A public `dict` or `set` constant that registers entries, such as CLAI's settings, which can gain entries without a waiver.
+    """A public `dict` or `set` constant that registers entries, such as Pax's settings, which can gain entries without a waiver.
 
     The constant can also be a comprehension over a tuple or list of names, such as the capability types registry,
-    or `tuple()` of a generator expression over one, such as CLAI's Codex model menu. It then gains entries when a
+    or `tuple()` of a generator expression over one, such as Pax's Codex model menu. It then gains entries when a
     name is added to that sequence.
 
     Removing an entry or changing an entry's value still needs a waiver.

@@ -1,4 +1,4 @@
-"""Plugins add `/login NAME` sign-ins next to CLAI's own `openai-codex` and `github-copilot`."""
+"""Plugins add `/login NAME` sign-ins next to Pax's own `openai-codex` and `github-copilot`."""
 
 import io
 from collections.abc import Sequence
@@ -84,7 +84,7 @@ def test_rejects_a_malformed_login_name(name: str) -> None:
 
 @pytest.mark.parametrize('name', ['codex', 'copilot', 'openai-codex', 'github-copilot'])
 def test_rejects_a_login_clai_already_has(name: str) -> None:
-    with pytest.raises(ValueError, match='sign-in CLAI already has'):
+    with pytest.raises(ValueError, match='sign-in Pax already has'):
         PluginLogin(name=name, handler=signed_in)
 
 

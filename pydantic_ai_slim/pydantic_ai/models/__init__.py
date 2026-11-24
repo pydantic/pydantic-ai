@@ -4188,7 +4188,7 @@ def _supported_native_tools(
             for t in unsupported_natives
             if t.unique_id in without_fallback and t.unique_id not in unapplied_settings
         ]
-        supported_names = [t.__name__ for t in supported_types]
+        supported_names = sorted(t.__name__ for t in supported_types)
         raise UserError(
             f'Native tool(s) {unsupported_names} not supported by this model. '
             f'Supported: {supported_names}. '
