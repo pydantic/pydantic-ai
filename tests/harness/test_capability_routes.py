@@ -8,7 +8,7 @@ same tools must run, too, so a call a route never makes can't pass.
 
 A route that breaks this for a case is a known finding, marked `xfail(strict=True)` in `KNOWN` with what fixes it, so
 the fix fails the suite until its entry is removed. A route that doesn't apply to a case is skipped with its reason.
-To add a route, add it to `Route` and `ROUTES` and give `_through` the way to run calls on it.
+To add a route, add it to `Route` and give `_through` the way to run calls on it.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import re
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 import anyio
 import pytest
@@ -81,17 +81,7 @@ Route = Literal[
 Temporal and DBOS are durable routes, which D1 covers per case.
 """
 
-ROUTES: tuple[Route, ...] = (
-    'code_mode',
-    'ipython_code_mode',
-    'tool_bridge',
-    'background_tools',
-    'sub_agent',
-    'prepare_hook',
-    'type_adapter',
-    'vercel_ai',
-    'ag_ui',
-)
+ROUTES: tuple[Route, ...] = get_args(Route)
 
 
 def _python_call(name: str, args: ToolArgs) -> str:
@@ -138,8 +128,9 @@ _ATTRIBUTE_FROM_TOOLSET = (
     f"{_PULL}14374: the call's capability is looked up from `ToolDefinition.capability_id`, which a prepare hook "
     'that rebuilds the definition leaves out'
 )
+_ISSUE = 'https://github.com/pydantic/pydantic-ai/issues/'
 _BACKGROUND_NAME = (
-    '`BackgroundTools` folds `ToolReturn.content` into its result frame, which keeps the frame but drops the '
+    f'{_ISSUE}12391: `BackgroundTools` folds `ToolReturn.content` into its result frame, which keeps the frame but drops the '
     'capability that wrote it (`background_tools/_capability.py`, `_format_background_result`)'
 )
 _PLAN_IN_CARRIER = (
