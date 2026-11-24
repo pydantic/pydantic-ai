@@ -399,8 +399,8 @@ class StructuredJudge(Evaluator[object, object, object]):
 
     A type cannot be written in a YAML or JSON dataset file, so only a question answered yes or no and the
     mapping of rubrics round-trip through [`Dataset.to_file`][pydantic_evals.dataset.Dataset.to_file]. Any other
-    `output_type` is written by name, and saving a dataset with a model of questions raises a `TypeError`, so
-    build a dataset that uses either in Python.
+    `output_type` is written by name, and a dataset with a model of questions can't be saved, so build a dataset
+    that uses either in Python.
     """
 
     # A Python class has no JSON schema, so only a question and the mapping form are offered to a dataset file.
