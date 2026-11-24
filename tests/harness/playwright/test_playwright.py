@@ -42,7 +42,6 @@ from pydantic_ai.models.instrumented import InstrumentationSettings, Instrumente
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness._browser_egress import url_host
 from pydantic_ai_harness.playwright import (
     DEFAULT_ACTION_TIMEOUT_MS,
     DEFAULT_ALLOWLIST_REACH,
@@ -5065,13 +5064,14 @@ class TestReviewFollowUps:
 
 
 @pytest.mark.parametrize(
-    ('url', 'host'),
+    ('url', 'reason'),
     [
-        ('https://example.com/a', 'example.com'),
-        ('https://example.com/a?b=c#d', 'example.com'),
-        ('https://example.com/a?b=c\\d', 'example.com'),
-        ('https://example.com\\a?b=c', None),
+        ('https://example.com/a', 'domain in blocked_domains'),
+        ('https://example.com/a?b=c#d', 'domain in blocked_domains'),
+        ('https://example.com/a?b=c\\d', 'domain in blocked_domains'),
+        ('https://example.com\\a?b=c', 'URL with no host'),
     ],
 )
-def test_url_host_parses_up_to_the_query(url: str, host: str | None) -> None:
-    assert url_host(url) == host
+def test_url_host_parses_up_to_the_query(url: str, reason: str) -> None:
+    policy = EgressPolicy(blocked_domains=['example.com'])
+    assert policy.refuse(EgressRequest(url=url, kind='navigation')) == reason
