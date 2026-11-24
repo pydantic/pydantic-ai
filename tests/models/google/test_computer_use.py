@@ -698,6 +698,7 @@ async def test_calls_gemini_did_not_make_go_back_as_function_calls(allow_model_r
         response = await model.request(history, None, _params(lookup))
 
     assert _names(gemini.bodies[0]) == ['lookup', 'computer']
-    # Gemini sent no ID, so the call keeps the one the part generated.
+    # Gemini sent no ID, so the call keeps the one the part generated, not one from the history.
     (call,) = response.parts
-    assert isinstance(call, ComputerCallPart) and call.tool_call_id
+    assert isinstance(call, ComputerCallPart)
+    assert call.tool_call_id.startswith('pyd_ai_')
