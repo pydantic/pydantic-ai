@@ -172,7 +172,7 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
-                # GPT-5.1 through GPT-5.5 reject `reasoning_effort='minimal'` on Chat Completions and Responses
+                # GPT-5.1 through GPT-5.5 reject `reasoning_effort='minimal'` on every OpenAI API that serves them
                 # (verified live, 2026-11). Set here rather than in `openai_model_profile` because OpenRouter accepts
                 # it for these models.
                 openai_supports_minimal_reasoning_effort=profile.get('openai_supports_minimal_reasoning_effort', True)
