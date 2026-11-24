@@ -47,19 +47,31 @@ The model must accept images. Every model gets `computer` as a regular function 
 | Sandbox | Turn on its screen |
 |---|---|
 | Docker | [`DockerContainer(desktop=True)`](../docker_container/#give-the-agent-a-desktop) |
+| boxd | [`BoxdSandbox(desktop=True)`](../boxd_sandbox/#give-the-agent-a-desktop) |
+| BoxLite | [`BoxLiteSandbox(desktop=True)`](../boxlite_sandbox/#give-the-agent-a-desktop) |
+| Daytona | [`DaytonaSandbox(desktop=True)`](../daytona_sandbox/#give-the-agent-a-desktop) |
+| E2B | [`E2BSandbox(desktop=True)`](../e2b_sandbox/#give-the-agent-a-desktop) |
+| Fly.io Sprites | [`SpritesSandbox(desktop=True)`](../sprites_sandbox/#give-the-agent-a-desktop) |
+| Kubernetes | [`KubernetesSandbox(warm_pool=..., desktop=True)`](../kubernetes_sandbox/#give-the-agent-a-desktop) |
+| Modal | [`ModalSandbox(desktop=True)`](../modal_sandbox/#give-the-agent-a-desktop) |
+| OpenSandbox | [`OpenSandbox(image=..., desktop=True)`](../opensandbox_sandbox/#give-the-agent-a-desktop) |
+| Render | [`RenderSandbox(desktop=True)`](../render_sandbox/#give-the-agent-a-desktop) |
+| smolvm | [`SmolSandbox(desktop=True)`](../smol_sandbox/#give-the-agent-a-desktop) |
 
 For any other workspace, see [Your own display](#your-own-display).
 
 ### What the display needs
 
-Every sandbox above runs a desktop that needs these programs:
+[Daytona](../daytona_sandbox/#give-the-agent-a-desktop) starts its own desktop. Every other sandbox above
+needs these programs:
 
 - Xvfb, unless an X server is already running
 - `xdotool`
 - `xwininfo` (Debian's `x11-utils`)
 - `scrot`
 - `setsid`
-- `fluxbox`, `tint2` and `xterm`, for the windows, the panel and its terminal
+- `fluxbox`, `tint2` and `xterm`, for the windows, the panel and its terminal, on every sandbox but
+  [E2B](../e2b_sandbox/#give-the-agent-a-desktop), which uses its template's XFCE desktop (`startxfce4`) instead
 
 The first use of the display installs any that are missing with `apt-get`, as root or with passwordless `sudo`. Add
 them to your image so the first use doesn't wait for the install. If one of the first five can't be installed, the run
