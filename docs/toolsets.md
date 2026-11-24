@@ -457,6 +457,8 @@ This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
+A prepare function can't change which capability a tool belongs to either: a definition it returns keeps the [`capability_id`][pydantic_ai.tools.ToolDefinition.capability_id] of the one it replaces, even if the function built a new `ToolDefinition`. The tool's content stays [held to that capability's authority](capabilities/custom.md#where-the-content-came-from).
+
 To chain transformations, call [`prepared()`][pydantic_ai.toolsets.AbstractToolset.prepared] on any toolset.
 
 ```python {title="prepared_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py"}
