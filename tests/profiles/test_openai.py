@@ -337,6 +337,38 @@ def test_cumulative_stream_usage_only_on_openai_provider_gemini_names(model_name
     assert shared_profile.get('openai_chat_streaming_repeats_usage_totals', False) is False
 
 
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        # OpenAI's API rejects `minimal` with a 400 (verified live on both APIs, 2026-11).
+        ('gpt-5.1', False),
+        ('gpt-5.1-2025-11-13', False),
+        ('gpt-5.2', False),
+        ('gpt-5.3-codex', False),
+        ('gpt-5.4', False),
+        ('gpt-5.4-mini', False),
+        ('gpt-5.4-nano', False),
+        ('gpt-5.5', False),
+        ('gpt-5.5-2026-04-23', False),
+        # Covered by the prefix only: no key reaches them.
+        ('gpt-5.3-codex-spark', False),
+        ('gpt-5.5-cyber-preview', False),
+        # The original GPT-5 family accepts `minimal`.
+        ('gpt-5', True),
+        ('gpt-5-mini', True),
+        ('gpt-5-nano', True),
+    ],
+)
+def test_minimal_reasoning_effort_off_only_on_openai_provider_gpt_5_1_to_5_5(model_name: str, expected: bool):
+    """The shared profile stays on, as OpenRouter accepts `minimal` for these models (verified live, 2026-11)."""
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_supports_minimal_reasoning_effort') is expected
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get('openai_supports_minimal_reasoning_effort') is True
+
+
 class TestEncryptedReasoningContent:
     """Tests for encrypted reasoning content support."""
 
