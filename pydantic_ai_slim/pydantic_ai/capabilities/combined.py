@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Self, cast
 from pydantic import ValidationError
 from typing_extensions import TypeIs
 
+from pydantic_ai._enqueue import hold_feedback
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
@@ -18,7 +19,7 @@ from pydantic_ai._instructions import (
     validate_instruction_id_segment,
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
-from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
+from pydantic_ai.exceptions import ModelRetry, RetryModelRequest, SkipModelRequest, UserError
 from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -750,7 +751,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 messages = request_context.messages
-                request_context = await capability.before_model_request(cap_ctx, request_context)
+                held = _held_to_ceiling(cap_ctx)
+                try:
+                    request_context = await capability.before_model_request(cap_ctx, request_context)
+                except SkipModelRequest as e:
+                    if held is not None:
+                        raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
+                    raise
+                except ModelRetry as e:
+                    hold_feedback(e, held)
+                    raise
                 keep_mirroring(messages, request_context)
         return request_context
 
@@ -773,9 +783,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                response = await capability.after_model_request(
-                    cap_ctx, request_context=request_context, response=response
-                )
+                held = _held_to_ceiling(cap_ctx)
+                try:
+                    returned = await capability.after_model_request(
+                        cap_ctx, request_context=request_context, response=response
+                    )
+                except ModelRetry as e:
+                    hold_feedback(e, held)
+                    raise
+                if held is not None and returned is not response:
+                    raise _writes_model_turn(held, 'return a different response from `after_model_request`')
+                response = returned
         return response
 
     async def wrap_model_request(
@@ -806,7 +824,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 if cap_ctx is None or not capability._handles_model_request_error(cap_ctx, request_context):
                     continue
                 try:
-                    return await capability.on_model_request_error(
+                    recovered = await capability.on_model_request_error(
                         cap_ctx, request_context=request_context, error=error
                     )
                 except RetryModelRequest:
@@ -816,6 +834,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     raise
                 except Exception as new_error:
                     error = new_error
+                    continue
+                if (held := _held_to_ceiling(cap_ctx)) is not None:
+                    raise _writes_model_turn(held, 'return a response from `on_model_request_error`')
+                return recovered
             raise error
         finally:
             # The raised error's traceback holds this frame; retaining error would keep ctx.deps in a cycle.
@@ -1128,11 +1150,36 @@ def _make_model_request_wrap(
     inner: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
 ) -> Callable[[ModelRequestContext], Awaitable[ModelResponse]]:
     async def wrapped(request_context: ModelRequestContext) -> ModelResponse:
-        return await cap.wrap_model_request(
-            _ctx_for_cap(cap, ctx),
-            request_context=request_context,
-            handler=inner,
-        )
+        cap_ctx = _ctx_for_cap(cap, ctx)
+        held = _held_to_ceiling(cap_ctx)
+        if held is None:
+            return await cap.wrap_model_request(cap_ctx, request_context=request_context, handler=inner)
+        # What the handler returned or raised is the model's or an inner capability's, not this one's.
+        from_handler: list[ModelResponse] = []
+        raised_by_handler: list[BaseException] = []
+
+        async def handler(request_context: ModelRequestContext) -> ModelResponse:
+            try:
+                response = await inner(request_context)
+            except BaseException as e:
+                raised_by_handler.append(e)
+                raise
+            from_handler.append(response)
+            return response
+
+        try:
+            response = await cap.wrap_model_request(cap_ctx, request_context=request_context, handler=handler)
+        except SkipModelRequest as e:
+            if any(e is raised for raised in raised_by_handler):
+                raise
+            raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
+        except ModelRetry as e:
+            if not any(e is raised for raised in raised_by_handler):
+                hold_feedback(e, held)
+            raise
+        if not any(response is returned for returned in from_handler):
+            raise _writes_model_turn(held, "return a response from `wrap_model_request` other than its handler's")
+        return response
 
     return wrapped
 
@@ -1352,3 +1399,27 @@ def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunConte
     # `_build_run_capabilities`), which is also the key they're registered under, so we read
     # it directly rather than resolving the instance back to its run-local registry id.
     return capability.id is not None and ctx._is_deferred_capability_dispatch_active(capability.id)  # pyright: ignore[reportPrivateUsage]
+
+
+def _held_to_ceiling(cap_ctx: RunContext[Any]) -> tuple[str, Authority] | None:
+    """The capability running a hook with `cap_ctx` and its authority, when that's below `'operator'`.
+
+    `None` for a capability at `'operator'`, and for an app-facing callback capability such as `Hooks`, whose
+    functions are the application's own.
+    """
+    capability = cap_ctx._capability  # pyright: ignore[reportPrivateUsage]
+    if capability is None or capability._emits_app_events:  # pyright: ignore[reportPrivateUsage]
+        return None
+    ceiling = capability._effective_authority  # pyright: ignore[reportPrivateUsage]
+    if ceiling == 'operator':
+        return None
+    capability_id = cap_ctx._calling_capability_id() or type(capability).__name__  # pyright: ignore[reportPrivateUsage]
+    return capability_id, ceiling
+
+
+def _writes_model_turn(held: tuple[str, Authority], what: str) -> UserError:
+    capability_id, ceiling = held
+    return UserError(
+        f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot {what}, which the model reads as its '
+        "own turn. Only a capability with operator authority can write the model's turns."
+    )

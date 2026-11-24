@@ -238,7 +238,9 @@ class _CapabilityAuthority:
     content you don't fully control, such as one built from a plugin or another team's code: as a class attribute of
     a subclass, or as a field of the capability's own. To lower one instance, use
     [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. The ceiling covers what the
-    capability sends mid-conversation, including its tools' `ToolReturn.content`. It doesn't cap the capability's
+    capability sends mid-conversation, including its tools' `ToolReturn.content`, and below `'operator'` its model
+    request hooks can't write the model's turn: a response they make up raises `UserError`, and a `ModelRetry` they
+    raise sends its message as the capability's own text. It doesn't cap the capability's
     instructions, its tool names and descriptions, or its tools' return values: review or leave those out yourself.
 
     For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the

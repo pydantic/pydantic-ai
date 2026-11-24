@@ -15,7 +15,7 @@ from ._capability_parts import operator_voice_lookalike
 from ._framing import resembles_frame
 from ._utils import fill_run_metadata
 from ._uuid import uuid7
-from .exceptions import UserError
+from .exceptions import ModelRetry, UserError
 from .messages import (
     Authority,
     CapabilityLoadDeltaPart,
@@ -665,3 +665,17 @@ def deliver_asap_messages(ctx: RunContext[Any], request_context: ModelRequestCon
     for event in events:
         ctx._emit_event(event)  # pyright: ignore[reportPrivateUsage]
     return request_context
+
+
+def hold_feedback(error: ModelRetry, held: tuple[str, Authority] | None) -> None:
+    """Mark retry feedback a capability below `'operator'` raised, so it reaches the model with that authority.
+
+    The innermost capability that raised it is the one that wrote it: one that only re-raised it leaves the mark.
+    """
+    if held is not None and feedback_held_to(error) is None:
+        error._held_to = held  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def feedback_held_to(error: ModelRetry) -> tuple[str, Authority] | None:
+    """The capability and authority `hold_feedback` marked `error` with, if any."""
+    return getattr(error, '_held_to', None)
