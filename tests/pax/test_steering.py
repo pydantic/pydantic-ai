@@ -24,7 +24,7 @@ from pydantic_ai_pax.ui.prompt.live_prompt import LivePrompt, PromptWakeup
 from pydantic_ai_pax.ui.rendering.rendering import StreamRenderer
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
-from tests.pax.test_live_prompt import editor, highlighted, popup_shows
+from tests.pax.test_live_prompt import editor
 
 
 @pytest.mark.parametrize('supplied_handler', [False, True])
@@ -578,10 +578,9 @@ async def test_esc_stops_editing_a_queued_prompt_before_it_interrupts() -> None:
             assert queue_rows(live) == ['Follow-up: follow up']
             live.feed('escape')
         assert completed == [False]
-        # The interrupt returns the queued prompt to the input instead of running it next.
-        assert (live.buffer.text, live.queued_messages) == ('follow up\ndraft', ())
-        live.submit('later')
-        assert await live.read() == 'later'
+        # The interrupt leaves the queued prompt to run next, and the draft where it was.
+        assert (live.buffer.text, live.queued_messages) == ('draft', ('follow up',))
+        assert await live.read() == 'follow up'
 
 
 async def test_esc_on_a_cleared_queued_prompt_removes_it() -> None:
@@ -596,7 +595,7 @@ async def test_esc_on_a_cleared_queued_prompt_removes_it() -> None:
             assert live.buffer.text == ''
             assert Text.from_ansi(live.frame()[-1]).plain == 'Removed the queued message. | queued: 1'
             live.feed('escape')
-        assert (live.buffer.text, live.queued_messages) == ('a', ())
+        assert (live.buffer.text, live.queued_messages) == ('', ('a',))
 
 
 async def test_a_draft_set_aside_to_edit_a_queued_prompt_keeps_its_images() -> None:
@@ -629,50 +628,27 @@ async def test_a_draft_down_restores_after_the_queue_runs_keeps_its_images() -> 
 
 
 @pytest.mark.parametrize('key', ['escape', 'ctrl-c'])
-async def test_interrupt_moves_queued_prompts_to_the_input(key: str) -> None:
+async def test_interrupt_leaves_the_queue_to_run_in_order(key: str) -> None:
     async with editor() as (live, _, _):
         async with running(live) as completed:
-            queue(live, 'first', 'second')
+            queue(live, 'first', '!pwd', 'second')
             live.submit(EOFError())
             live.buffer.replace('draft')
             live.feed(key)
         assert completed == [False]
-        assert live.buffer.text == 'first\nsecond\ndraft'
-        assert live.notice == 'Queued messages moved to the input. Press Enter to send them.'
-        # Only typed input moves; an exit signal still ends the session.
+        # Nothing moves into the input: prompts, shell lines and exit signals run next, in the order queued.
+        assert live.buffer.text == 'draft'
+        assert [await live.read() for _ in range(3)] == ['first', '!pwd', 'second']
         with pytest.raises(EOFError):
             await live.read()
 
 
 @pytest.mark.parametrize(
-    ('queued', 'expected'),
-    [
-        (('!pwd', 'printf injected'), 'printf injected'),
-        (('printf injected', '!pwd'), 'printf injected'),
-        (('/help', 'printf injected'), 'printf injected'),
-        (('!pwd',), ''),
-    ],
-)
-async def test_interrupt_keeps_queued_commands_and_shell_lines_apart_from_prompts(
-    queued: tuple[str, ...], expected: str
-) -> None:
-    async with editor() as (live, _, _):
-        async with running(live):
-            queue(live, *queued)
-            live.feed('escape')
-        # Joined after a `!` line, the prompt would be resent as another shell line; so each stays its own entry.
-        assert live.buffer.text == expected
-        kept = tuple(text for text in queued if text != expected)
-        assert live.queued_messages == kept
-        assert [await live.read() for _ in kept] == list(kept)
-
-
-@pytest.mark.parametrize(
     ('queued', 'ups', 'expected'),
-    [(('b',), 1, 'b2\ndraft'), (('a', 'b'), 1, 'a\nb2\ndraft'), (('a', 'b', 'c'), 2, 'a\nb2\nc\ndraft')],
+    [(('b',), 1, ('b2',)), (('a', 'b'), 1, ('a', 'b2')), (('a', 'b', 'c'), 2, ('a', 'b2', 'c'))],
 )
 async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_in_order_and_the_draft(
-    queued: tuple[str, ...], ups: int, expected: str
+    queued: tuple[str, ...], ups: int, expected: tuple[str, ...]
 ) -> None:
     async with editor() as (live, _, _):
         async with running(live):
@@ -682,22 +658,9 @@ async def test_ctrl_c_while_editing_a_queued_prompt_keeps_the_edit_in_order_and_
                 live.feed('up')
             live.buffer.insert('2')
             live.feed('ctrl-c')
-        assert (live.buffer.text, live.queued_messages) == (expected, ())
-
-
-async def test_queued_prompts_moved_to_the_input_drop_a_stale_suggestion() -> None:
-    async with editor() as (live, _, _):
-        async with running(live):
-            queue(live, 'queued')
-            live.feed('/')
-            live.feed('h')
-            await popup_shows(live, '/help')
-            assert highlighted(live)
-            live.feed('escape')
-        assert live.buffer.text == 'queued\n/h'
-        live.feed('enter')
-        # Enter sends what the input shows, not the suggestion picked for `/h` before the queue moved in.
-        assert await live.read() == 'queued\n/h'
+        # The edit keeps the prompt's place in the queue, and the draft from before Up comes back.
+        assert (live.buffer.text, live.queued_messages) == ('draft', expected)
+        assert [await live.read() for _ in expected] == list(expected)
 
 
 async def test_recalled_queued_prompt_edited_into_immediate_command_leaves_queue() -> None:
@@ -875,15 +838,6 @@ async def test_turn_drains_accepted_steering_before_finishing(
     assert not shell.steer('after turn')
 
 
-async def test_interrupt_keeps_a_bare_bang_prompt_from_joining_the_lines_after_it() -> None:
-    async with editor() as (live, _, _):
-        async with running(live):
-            queue(live, '!', 'printf injected')
-            live.feed('escape')
-        # `!` alone is a prompt, but followed by another line it would send that line to the shell.
-        assert (live.buffer.text, live.queued_messages) == ('printf injected', ('!',))
-
-
 async def test_removing_the_prompt_before_the_one_being_edited_keeps_its_place() -> None:
     async with editor() as (live, _, _):
         async with running(live):
@@ -895,7 +849,7 @@ async def test_removing_the_prompt_before_the_one_being_edited_keeps_its_place()
             live.feed('escape')
             assert live.queued_messages == ('a', 'c')
             live.feed('ctrl-c')
-        assert (live.buffer.text, live.queued_messages) == ('a\nc', ())
+        assert (live.buffer.text, live.queued_messages) == ('', ('a', 'c'))
 
 
 @pytest.mark.parametrize('edit', ['!printf injected', '!'])
@@ -907,19 +861,13 @@ async def test_ctrl_c_never_queues_an_edit_that_was_not_sent(edit: str) -> None:
             live.buffer.replace(edit)
             live.feed('ctrl-c')
         # Only Enter makes an edit runnable: the queued prompt returns unchanged, and Up finds the edit in history.
-        assert (live.buffer.text, live.queued_messages) == ('follow up', ())
+        assert (live.buffer.text, live.queued_messages) == ('', ('follow up',))
         assert live.buffer.history[-1] == edit
 
 
-@pytest.mark.parametrize(
-    ('queued', 'expected', 'notice'),
-    [
-        (('b',), 'draft', 'Removed the queued message.'),
-        (('a', 'b'), 'a\ndraft', 'Queued messages moved to the input. Press Enter to send them.'),
-    ],
-)
+@pytest.mark.parametrize(('queued', 'expected'), [(('b',), ()), (('a', 'b'), ('a',))])
 async def test_ctrl_c_removes_a_queued_prompt_whose_edit_was_cleared(
-    queued: tuple[str, ...], expected: str, notice: str
+    queued: tuple[str, ...], expected: tuple[str, ...]
 ) -> None:
     async with editor() as (live, _, _):
         async with running(live):
@@ -929,20 +877,11 @@ async def test_ctrl_c_removes_a_queued_prompt_whose_edit_was_cleared(
             live.buffer.replace('')
             live.feed('ctrl-c')
         # As Esc on a cleared edit does, and the draft from before Up comes back.
-        assert (live.buffer.text, live.queued_messages, live.notice) == (expected, (), notice)
-
-
-@pytest.mark.parametrize('draft', ['/help', '!ls'])
-async def test_ctrl_c_while_editing_puts_queued_prompts_ahead_of_a_command_draft(draft: str) -> None:
-    async with editor() as (live, _, _):
-        async with running(live):
-            queue(live, 'a')
-            live.buffer.replace(draft)
-            live.feed('up')
-            live.buffer.insert('2')
-            live.feed('ctrl-c')
-        # Ahead of the prompts, the command draft is just another line of the prompt Enter sends.
-        assert (live.buffer.text, live.queued_messages) == (f'a2\n{draft}', ())
+        assert (live.buffer.text, live.queued_messages, live.notice) == (
+            'draft',
+            expected,
+            'Removed the queued message.',
+        )
 
 
 async def test_removing_the_prompt_being_edited_keeps_the_edit_as_the_draft() -> None:
@@ -954,32 +893,12 @@ async def test_removing_the_prompt_being_edited_keeps_the_edit_as_the_draft() ->
             live.buffer.insert('2')
             # As the web UI removes the queued prompt the terminal is editing.
             live.discard(live.queued_prompts()[1])
-            # The draft set aside by Up follows the edit, as an interrupt leaves them.
+            # The draft set aside by Up follows the edit, as when the edit becomes the draft once idle.
             assert (live.buffer.text, live.queued_messages) == ('b2\ndraft', ('a',))
             # No edit remains, so Enter queues the draft as a new prompt.
             live.feed('enter')
             assert live.queued_messages == ('a', 'b2\ndraft')
             live.feed('ctrl-c')
-
-
-@pytest.mark.parametrize('key', ['escape', 'ctrl-c'])
-@pytest.mark.parametrize('shown', ['history', 'search'])
-async def test_interrupt_keeps_the_draft_not_the_history_entry_shown(key: str, shown: str) -> None:
-    async with editor() as (live, _, _):
-        live.buffer.history = ['old']
-        async with running(live):
-            queue(live, 'a')
-            live.buffer.replace('draft')
-            if shown == 'history':
-                # Past the queued prompt to the history entry before it.
-                live.feed('up')
-                live.feed('up')
-            else:
-                for key_ in ('ctrl-r', 'o', 'l'):
-                    live.feed(key_)
-            assert live.buffer.text == 'old'
-            live.feed(key)
-        assert (live.buffer.text, live.queued_messages) == ('a\ndraft', ())
 
 
 async def test_removing_the_front_prompt_returns_the_one_edited_after_it_to_the_front() -> None:

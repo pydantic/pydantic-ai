@@ -1275,7 +1275,7 @@ the number waiting when the `queued` footer field is visible. Press Up to edit o
 text are escaped in previews and prompt echoes; the submitted text is unchanged.
 
 Messages and slash commands run in submission order, after the current turn and its cleanup
-finish, unless you interrupt it, which moves queued messages into the input. They do not interrupt or
+finish, whether it ends or you interrupt it. They do not interrupt or
 steer the active turn. Bare settings menus such as
 `/set` are the exception: they open during the turn (see "Settings and commands"). An unsubmitted draft stays
 in the editor as turns finish. Queued messages are not saved as conversation turns
@@ -1421,17 +1421,13 @@ example with `export WT_SESSION=1` in the shell you start Pax from.
 ### Interrupting a turn
 
 Press Esc or Ctrl-C to cancel the active agent turn without discarding your draft.
-As in Claude Code and Codex, queued messages do not run after the
-interrupt: they move into the input, one per line and ahead of your draft, so you
-can edit them and press Enter to send them. Queued slash commands and `!` shell
-commands stay queued and run in order, since joined with the lines after them they
-would treat those as part of the command. While you edit a queued message, the
-first Esc stops editing instead of interrupting; Ctrl-C interrupts, keeping your edit in the
-input with the draft you had before pressing Up after it. An edit into a slash command or `!` shell
-command only runs once you press Enter, so Ctrl-C leaves the queued message unchanged; Up finds the
-edit in history. Turns cancelled from elsewhere, such as
-the web UI or a plugin's `host.interrupt()`, leave the queue to run as before.
-Tool cleanup finishes before the next prompt starts. Esc does not request
+Queued messages, slash commands, and `!` shell commands stay queued and run next, in
+the order you queued them. While you edit a queued message, the first Esc stops
+editing instead of interrupting. Ctrl-C interrupts: the message goes back to its
+place with your edit, and the draft you had before pressing Up comes back. An edit
+into a slash command or `!` shell command only runs once you press Enter, so Ctrl-C
+puts the queued message back unchanged; Up finds the edit in history.
+Tool cleanup finishes before the next queued message starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt-key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather
 than passing it to the agent turn; its behavior depends on that interface.
