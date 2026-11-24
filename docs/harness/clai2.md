@@ -32,7 +32,7 @@ commands, and menus without forking anything.
 Pax runs commands and edits files as you, with no sandbox and no approval step. Run it
 in a project you trust.
 
-**Contents:** [Pydantic AI, the Harness, and Pax](#pydantic-ai-the-harness-and-pax) · [Install](#install) · [First run](#first-run) · [Updating](#updating) ·
+**Contents:** [Pydantic AI, the harness SDK, `Coder`, and pax](#pydantic-ai-the-harness-sdk-coder-and-pax) · [Install](#install) · [First run](#first-run) · [Updating](#updating) ·
 [Models and accounts](#models-and-accounts) · [A tour](#a-tour) · [Make it yours](#make-it-yours) ·
 [Plugins](#plugins) · [Pax in your own code](#pax-in-your-own-code) · [Reference](#reference)
 
