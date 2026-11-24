@@ -12,9 +12,14 @@ import anyio
 from pydantic_ai.computer_use import Point, Region
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
-from pydantic_ai_harness._png import PNG_SIGNATURE
-
-from .computer_use import Display, DisplayAction, SupportsCursorPosition, SupportsZoom, UnsupportedActionError
+from pydantic_ai_harness.computer_use._png import PNG_SIGNATURE
+from pydantic_ai_harness.computer_use._protocol import (
+    Display,
+    DisplayAction,
+    SupportsCursorPosition,
+    SupportsZoom,
+    UnsupportedActionError,
+)
 
 T = TypeVar('T')
 
