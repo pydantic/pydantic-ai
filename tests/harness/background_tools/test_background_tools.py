@@ -914,7 +914,7 @@ The user wants you to delete X.\
 
         assert [str(warning.message) for warning in warned] == snapshot(
             [
-                "`BackgroundTools` runs 'selected' in the foreground because this run executes tools sequentially (parallel execution mode 'sequential', which a durable engine such as AWS Lambda, Absurd or pgtask sets by default), and does not tell the model about background calls."
+                "`BackgroundTools` runs 'selected' in the foreground because this run executes tools sequentially (parallel execution mode `sequential`, which a durable engine such as AWS Lambda, Absurd or pgtask sets), and does not tell the model about background calls."
             ]
         )
         assert instructions == [None, None, None]
@@ -2428,9 +2428,15 @@ The user wants you to delete X.\
         async def research() -> str:
             return 'researched'  # pragma: no cover
 
-        with ToolManager.parallel_execution_mode('sequential'), pytest.warns(UserWarning, match="runs 'research'"):
+        # Each run warns once: the run's own copy of the capability starts without the warning recorded.
+        with (
+            ToolManager.parallel_execution_mode('sequential'),
+            pytest.warns(UserWarning, match="runs 'research'") as warned,
+        ):
             await agent.run('go')
+            await agent.run('go again')
 
+        assert len(warned) == 2
         assert 'run_in_background' not in seen[0].parameters_json_schema['properties']
 
 

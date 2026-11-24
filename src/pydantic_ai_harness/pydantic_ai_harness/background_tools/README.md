@@ -77,8 +77,9 @@ Use `metadata={'background': 'optional'}` to let the model decide for each call.
 `run_in_background` argument, but your function does not receive it.
 
 A tool selected by `BackgroundTools(tools=...)` always runs in the background. Sequential tools,
-realtime sessions, and calls that code mode's `run_code` makes from its sandbox run normally, even
-with `run_in_background`. Do not use `run_in_background` as one of your function's own parameters.
+sequential runs (see [Durable execution](#durable-execution)), realtime sessions, and calls that
+code mode's `run_code` makes from its sandbox run normally, even with `run_in_background`. Do not
+use `run_in_background` as one of your function's own parameters.
 
 ```python
 from pydantic_ai import Agent
@@ -210,9 +211,9 @@ the agent's message history.
 
 `BackgroundTools` works with Temporal.
 
-A run that executes tools sequentially, as AWS Lambda, Absurd and pgtask do by default, runs
-background tools in the foreground. The model is not told about background calls, and a warning
-names the tools that run in the foreground.
+A run that executes tools sequentially runs background tools in the foreground. AWS Lambda does this
+in every durable run, and Absurd and pgtask do it by default. The model is not told about background
+calls, and a warning names the tools that run in the foreground.
 
 With DBOS, put durable work in an explicit DBOS step and call that step from the background tool.
 

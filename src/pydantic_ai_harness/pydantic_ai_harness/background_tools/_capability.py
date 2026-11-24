@@ -235,7 +235,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     """
 
     tools: ToolSelector[AgentDepsT] = field(default_factory=lambda: {'background': True})
-    """Which tools always run in the background.
+    """Which tools always run in the background, unless the run executes tools sequentially.
 
     Use `'all'`, a list of names, matching metadata, or a function that chooses each tool. The
     default is `{'background': True}`.
@@ -344,8 +344,8 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
             self._warned_foreground = True
             warnings.warn(
                 f'`BackgroundTools` runs {", ".join(map(repr, foreground))} in the foreground because this run '
-                "executes tools sequentially (parallel execution mode 'sequential', which a durable engine such as "
-                'AWS Lambda, Absurd or pgtask sets by default), and does not tell the model about background calls.',
+                'executes tools sequentially (parallel execution mode `sequential`, which a durable engine such as '
+                'AWS Lambda, Absurd or pgtask sets), and does not tell the model about background calls.',
                 UserWarning,
                 stacklevel=2,
             )

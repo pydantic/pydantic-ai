@@ -38,7 +38,7 @@ def test_sequential_durable_run_keeps_tools_in_the_foreground() -> None:
 
     assert [str(warning.message) for warning in warned] == snapshot(
         [
-            "`BackgroundTools` runs 'research' in the foreground because this run executes tools sequentially (parallel execution mode 'sequential', which a durable engine such as AWS Lambda, Absurd or pgtask sets by default), and does not tell the model about background calls."
+            "`BackgroundTools` runs 'research' in the foreground because this run executes tools sequentially (parallel execution mode `sequential`, which a durable engine such as AWS Lambda, Absurd or pgtask sets), and does not tell the model about background calls."
         ]
     )
     assert result.output == 'done'
