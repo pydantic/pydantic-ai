@@ -974,6 +974,33 @@ agent = Agent(
 
 The response's usage, and so its cost, stays the sum of the passes either way.
 
+## Computer use
+
+To let Claude use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+the Claude API and on Amazon Bedrock (the `AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle` clients), it sends
+each Claude model the computer use tool it was trained on, as a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]:
+
+| Models | Tool |
+|---|---|
+| Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` |
+| Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` |
+| Claude Haiku 4.5 | `computer_20250124` |
+
+Claude models not in the table, every model on Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any
+model with `ComputerUse(native=False)` get a regular function tool named `computer` instead.
+
+Keep the screen within the model's [image size limit](https://platform.claude.com/docs/en/build-with-claude/vision#evaluate-image-size).
+`computer_toolset_20260801` refuses a screenshot over 2576 pixels on its longer side or over 4784 image tokens (one
+token per 28x28 pixels), and the request fails with a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The older tools, and the function tool, shrink a larger
+screenshot without saying so, so Claude's clicks miss.
+
+To send Anthropic's tool to a model or client that isn't listed, add `ComputerTool` to the profile's
+[`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces the model's own
+list, and choose the tool with
+[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version]
+(default `computer_20250124`).
+
 ## Web Tool Callers
 
 On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions, or as the `20260318` versions when you use [web tool settings](#web-tool-settings). By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment.

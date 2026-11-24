@@ -33,7 +33,7 @@ _OPENAI_BASE_BUILTINS = frozenset(
 )
 """Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
-profile below."""
+profile below. `OpenAIProvider` adds `ComputerTool` for the models that OpenAI offers it on."""
 
 OpenAIReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """A `reasoning_effort` value accepted by the OpenAI API, from least to most reasoning."""
@@ -353,6 +353,17 @@ class OpenAIModelProfile(ModelProfile, total=False):
     When enabled, reaching clean EOF before any chunk supplies a `finish_reason` raises
     [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
     This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
+
+    openai_chat_streaming_repeats_usage_totals: bool
+    """Whether every streamed Chat Completions chunk repeats the running usage totals unprompted. Default: `False`.
+
+    When enabled, each chunk's usage replaces the usage recorded so far instead of adding to it, as
+    [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_continuous_usage_stats]
+    does, without sending `stream_options.continuous_usage_stats`.
+
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] enables it for `gemini*` model names, including
+    through a custom `base_url`. A server that serves these names and reports per-chunk deltas instead would have its
+    usage under-reported, so turn this off in the model's profile."""
 
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
@@ -745,6 +756,18 @@ def is_openai_live_model(model_name: str) -> bool:
     them — see [`OpenAILiveModel`][pydantic_ai.realtime.openai_live.OpenAILiveModel].
     """
     return model_name.startswith('gpt-live')
+
+
+def is_openai_computer_use_model(model_name: str) -> bool:
+    """Whether OpenAI offers its native computer tool on this model.
+
+    GPT-5.4 (with mini and pro), GPT-5.5 (with pro), GPT-5.6 and GPT-6 accept it. GPT-5.4 nano, GPT-5.3 Codex and
+    GPT-5.2 reject it, though they accept tool search. A new model family gets the `computer` function tool until it
+    is added here.
+    """
+    return model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith('gpt-5.4-nano')
 
 
 def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
