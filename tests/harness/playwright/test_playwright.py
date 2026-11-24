@@ -1431,6 +1431,7 @@ _PUBLIC_ADDRESS_HOSTS = [
     'localhost.example.com',
     'my-localhost.dev',
     '2606:4700:4700:1111::808:808',
+    '::ffff:8.8.8.8',
 ]
 
 
