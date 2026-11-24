@@ -42,6 +42,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseRejectedEvent,
     ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
@@ -183,6 +184,7 @@ from ..clock_utils import LONG_TIMEOUT, Clock
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from ..rejected_response_utils import (
+    ANNOUNCEMENT,
     ANSWER,
     RejectAnnouncements,
     RetryAnnouncements,
@@ -516,6 +518,14 @@ rejection_stream_agent = Agent(
     capabilities=[DBOSDurability(event_stream_handler=_collect_rejection_events)],
 )
 rejection_stream_agent.output_validator(reject_announcements)
+
+_yielded_rejections: list[ModelResponseRejectedEvent] = []
+
+
+@rejection_stream_agent.on_event(ModelResponseRejectedEvent)
+async def _record_yielded_rejection(ctx: RunContext[None], event: ModelResponseRejectedEvent) -> None:
+    _yielded_rejections.append(event)
+
 
 hooked_rejection_stream_agent = Agent(
     FunctionModel(stream_function=announce_then_answer),
@@ -978,6 +988,60 @@ async def test_dbos_reports_a_rejected_streamed_response_between_the_attempts(
     assert [event.event_kind for event in _rejection_events] == snapshot(
         ['part_start', 'final_result', 'part_end', 'model_response_rejected', 'part_start', 'final_result', 'part_end']
     )
+
+
+@pytest.mark.parametrize('patch', ['patched', 'recorded before the patch', 'probe interrupted'])
+async def test_dbos_rejected_event_dispatch_is_gated_by_a_patch(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch, patch: str
+) -> None:
+    """Only a workflow with the patch marker hands `ModelResponseRejectedEvent` to the `event_stream_handler`.
+
+    A workflow recorded before the patch has no step for the rejection, so recovering it under this code must not
+    start one. Faking `DBOS.patch_async` stands in for the code before the upgrade, which never called it, and for
+    a probe another step interrupted, which records nothing. The rejection is yielded either way.
+
+    Not a VCR test: it pins the steps DBOS records; the model is a `FunctionModel`.
+    """
+    _rejection_events.clear()
+    _yielded_rejections.clear()
+    workflow_id = str(uuid.uuid4())
+
+    async def before_the_patch(patch_name: str) -> bool:
+        return False
+
+    async def interrupted(patch_name: str) -> bool:
+        raise DBOSPatchNondeterminismError(workflow_id, patch_name, 'another step started during the probe')
+
+    if patch == 'recorded before the patch':
+        monkeypatch.setattr(DBOS, 'patch_async', before_the_patch)
+    elif patch == 'probe interrupted':
+        monkeypatch.setattr(DBOS, 'patch_async', interrupted)
+
+    @DBOS.workflow()
+    async def run_rejection_workflow() -> str:
+        return (await rejection_stream_agent.run('When does the store open?')).output
+
+    with SetWorkflowID(workflow_id):
+        assert await run_rejection_workflow() == ANSWER
+
+    assert [event.response.text for event in _yielded_rejections] == [ANNOUNCEMENT]
+    handled = [event.event_kind for event in _rejection_events]
+    steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)]
+    if patch == 'patched':
+        assert 'model_response_rejected' in handled
+        assert steps == snapshot(
+            [
+                'rejection_stream_agent__model.request_stream',
+                'DBOS.patch-pydantic_ai:rejected_event_dispatch',
+                'rejection_stream_agent__event_stream_handler',
+                'rejection_stream_agent__model.request_stream',
+            ]
+        )
+    else:
+        assert 'model_response_rejected' not in handled
+        assert steps == snapshot(
+            ['rejection_stream_agent__model.request_stream', 'rejection_stream_agent__model.request_stream']
+        )
 
 
 async def test_dbos_reports_a_rejection_that_ends_the_run_before_the_error(

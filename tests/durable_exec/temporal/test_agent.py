@@ -229,6 +229,7 @@ with workflow.unsafe.imports_passed_through():
         model,
         model_settings,
         parallel_test_graph,
+        scheduled_activity_types,
         simple_temporal_agent,
         workflow_activity_raises,
         workflow_raises,
@@ -4290,6 +4291,15 @@ _rejection_durable_agent = Agent(
 )
 _rejection_durable_agent.output_validator(reject_announcements)
 
+_yielded_rejections: list[ModelResponseRejectedEvent] = []
+"""The rejections `_rejection_durable_agent` yields workflow-side, visible to a test only in an unsandboxed worker."""
+
+
+@_rejection_durable_agent.on_event(ModelResponseRejectedEvent)
+async def _record_yielded_rejection(ctx: RunContext[None], event: ModelResponseRejectedEvent) -> None:
+    _yielded_rejections.append(event)
+
+
 _hooked_rejection_durable_agent = Agent(
     FunctionModel(stream_function=announce_then_answer),
     name='durability_hooked_rejection_agent',
@@ -4504,6 +4514,58 @@ async def test_temporal_rejected_streamed_response_is_reported_between_the_attem
     rejected = next(event for event, _ in _durability_handler_events if isinstance(event, ModelResponseRejectedEvent))
     assert rejected.response.text == ANNOUNCEMENT
     assert isinstance(rejected.reason, RetryFeedbackPart)
+
+
+@pytest.mark.parametrize('patched', [True, False], ids=['patched', 'recorded before the patch'])
+async def test_temporal_rejected_event_dispatch_is_gated_by_a_patch(
+    client: Client, monkeypatch: pytest.MonkeyPatch, patched: bool
+) -> None:
+    """Only a history with the patch marker hands `ModelResponseRejectedEvent` to the `event_stream_handler`.
+
+    A history recorded before the patch schedules no handler activity for the rejection, so replaying it under
+    this code must not schedule one either. Faking `workflow.patched` off for this patch stands in for the code
+    before the upgrade, which never called it. The rejection is yielded workflow-side either way. Unsandboxed, so
+    the module-level lists see the workflow-side events.
+    """
+    _durability_handler_events.clear()
+    _yielded_rejections.clear()
+    if not patched:
+        real_patched = workflow.patched
+
+        def before_the_patch(patch_id: str) -> bool:
+            return patch_id != 'pydantic_ai:rejected_event_dispatch' and real_patched(patch_id)
+
+        monkeypatch.setattr(workflow, 'patched', before_the_patch)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RejectionDurableAgentWorkflow],
+        plugins=[AgentPlugin(_rejection_durable_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            RejectionDurableAgentWorkflow.run,
+            args=['When does the store open?'],
+            id=f'{RejectionDurableAgentWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        assert await handle.result() == ANSWER
+    monkeypatch.undo()
+
+    assert [event.response.text for event in _yielded_rejections] == [ANNOUNCEMENT]
+    handled = [event.event_kind for event, _ in _durability_handler_events]
+    assert ('model_response_rejected' in handled) is patched
+    history = await handle.fetch_history()
+    assert scheduled_activity_types(history).count('agent__durability_rejection_agent__event_stream_handler') == int(
+        patched
+    )
+
+    replay = await Replayer(
+        workflows=[RejectionDurableAgentWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ).replay_workflow(history)
+    assert replay.replay_failure is None
 
 
 async def test_temporal_event_stream_handler_rejects_enqueue(client: Client) -> None:

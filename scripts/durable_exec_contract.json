@@ -4504,6 +4504,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
       ]
     },
+    "ModelResponseRejectedEvent": {
+      "engines": [
+        "dbos",
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>"
+      ]
+    },
     "ModelResponseRejectedEvent.event_kind": {
       "engines": [
         "temporal"
