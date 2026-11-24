@@ -1479,6 +1479,17 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
 
     # --- Configuration assembly -------------------------------------------------------------------
 
+    def _recorded_model_settings(self, model_settings: RealtimeModelSettings) -> RealtimeModelSettings:
+        """The settings that instrumentation records, without the custom-LLM request body or the `secret__` dynamic variables."""
+        recorded = ElevenLabsAgentsRealtimeModelSettings(**model_settings)
+        recorded.pop('elevenlabs_agents_custom_llm_extra_body', None)
+        if dynamic_variables := recorded.get('elevenlabs_agents_dynamic_variables'):
+            if kept := {name: value for name, value in dynamic_variables.items() if not name.startswith('secret__')}:
+                recorded['elevenlabs_agents_dynamic_variables'] = kept
+            else:
+                del recorded['elevenlabs_agents_dynamic_variables']
+        return recorded
+
     def _check_settings(self, settings: ElevenLabsAgentsRealtimeModelSettings) -> None:
         """Reject shared settings whose intent the agent WebSocket cannot honor."""
         # `TurnDetection` knobs and `input_transcription_model=None` are ignored, as on a standard model: the

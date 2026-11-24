@@ -40,7 +40,7 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     repo = tmp_path / 'source repo'
     repo.mkdir()
     git(repo, 'init')
-    git(repo, 'config', 'user.name', 'CLAI Test')
+    git(repo, 'config', 'user.name', 'Pax Test')
     git(repo, 'config', 'user.email', 'clai@example.com')
     (repo / '.clai').mkdir()
     (repo / '.clai/settings.json').write_text('{"shell_lines": 7}')

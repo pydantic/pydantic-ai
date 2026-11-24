@@ -17,6 +17,7 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
+boxd = "2026-11-23T10:00:00Z"
 cassetter = false
 genai-prices = false
 k8s-agent-sandbox = "2026-11-12T19:37:00Z"
@@ -969,7 +970,7 @@ wheels = [
 
 [[package]]
 name = "boxd"
-version = "0.2.20"
+version = "0.3.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
@@ -978,9 +979,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/19/69db3c22bd64cf84f88855b5747496fa1b98e88424612c3581a38bf43150/boxd-0.2.20.tar.gz", hash = "sha256:697d23250a3c4fc7e30c4effa8d16c9ae6382b032b044590875eb1ab78060be4", size = 228125, upload-time = "2026-10-27T23:55:11.41Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/29/4cf553469083feebaffbebd14a92c7a1807f29bc3f847fed22f4b5af5b2d/boxd-0.3.4.tar.gz", hash = "sha256:ab4827f7139659de6d83319ace668e3a40631868f33ef1ab562c799f2a05991f", size = 312337, upload-time = "2026-11-23T09:58:25.413Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/d7/618f1fbc42b05de518a5379f3ce4b9e36726a123d3df9792a11fa2c17552/boxd-0.2.20-py3-none-any.whl", hash = "sha256:9ab22af1b759bea1d37dc82043dff54b642be13ddad77d775c10d64b035cb93c", size = 152475, upload-time = "2026-10-27T23:55:10.258Z" },
+    { url = "https://files.pythonhosted.org/packages/54/bf/43d4dbfce0c6c8a0b7b2105b903ba22d4c90bf59471e27de2714ae3fe543/boxd-0.3.4-py3-none-any.whl", hash = "sha256:d3d505022ae2587b34fe4c84aead938404892c6528b4606158badc3a4ceeb6da", size = 201797, upload-time = "2026-11-23T09:58:24.322Z" },
 ]
 
 [[package]]
@@ -7334,6 +7335,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "rich" },
     { name = "twelvelabs" },
+    { name = "twilio" },
     { name = "uvicorn" },
 ]
 
@@ -7358,6 +7360,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.17" },
     { name = "rich", specifier = ">=13.9.2" },
     { name = "twelvelabs", specifier = ">=1.2.8" },
+    { name = "twilio", specifier = ">=9.0.0" },
     { name = "uvicorn", specifier = ">=0.32.0" },
 ]
 
@@ -7393,6 +7396,10 @@ boxd = [
 boxlite = [
     { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')" },
 ]
+cdp-browser = [
+    { name = "idna" },
+    { name = "websockets" },
+]
 cli = [
     { name = "pydantic-ai-slim", extra = ["cli"] },
 ]
@@ -7406,6 +7413,7 @@ codemode = [
 ]
 coder = [
     { name = "json-repair" },
+    { name = "pillow" },
     { name = "ripgrep", marker = "sys_platform != 'android'" },
 ]
 day-ai = [
@@ -7530,7 +7538,7 @@ requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.11,<0.12" },
     { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<4" },
     { name = "beartype", marker = "python_full_version >= '3.15' and extra == 'stackone'", specifier = ">=0.23.0rc2" },
-    { name = "boxd", marker = "extra == 'boxd'", specifier = ">=0.2.20,<0.3" },
+    { name = "boxd", marker = "extra == 'boxd'", specifier = ">=0.3.3,<0.4" },
     { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite')", specifier = ">=0.10.7,<0.11" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.226.1,<1" },
@@ -7541,6 +7549,7 @@ requires-dist = [
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<5" },
     { name = "genai-prices", specifier = ">=0.0.71" },
     { name = "httpx2", specifier = ">=2.7" },
+    { name = "idna", marker = "extra == 'cdp-browser'", specifier = ">=3.4" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "ipykernel", marker = "python_full_version >= '3.15' and extra == 'ipython'", specifier = ">=6.30.0" },
     { name = "ipykernel", marker = "extra == 'ipython'", specifier = ">=6.29.0" },
@@ -7552,6 +7561,7 @@ requires-dist = [
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "opensandbox", marker = "extra == 'opensandbox'", specifier = ">=1.1.1,<2" },
     { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
+    { name = "pillow", marker = "extra == 'coder'", specifier = ">=12.3.0" },
     { name = "pixeltable", marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'pixeltable'", specifier = ">=0.7.21" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
@@ -7588,9 +7598,10 @@ requires-dist = [
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
+    { name = "websockets", marker = "extra == 'cdp-browser'", specifier = ">=14.0" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cdp-browser", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-pax"
@@ -10309,6 +10320,21 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/5f/24/2604563f5a528bf5f12f9bbb7e3102e91c0e4f9bfd7aeb9963dced3a0b0f/twelvelabs-1.2.8.tar.gz", hash = "sha256:bb0846cc839845c800de8061bb7b99212a472e24bf20770d569f6f620b845e3c", size = 178449, upload-time = "2026-06-18T06:38:48.135Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/4e/a6/6380129c65222bb2497cbef27334a496a1a31f4f38973fac46b62b9224fc/twelvelabs-1.2.8-py3-none-any.whl", hash = "sha256:c0487dd892b03728ac2afe3e4ebd4ea5e30ff404b61896667eb5a39264db282b", size = 372073, upload-time = "2026-06-18T06:38:46.747Z" },
+]
+
+[[package]]
+name = "twilio"
+version = "9.13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "aiohttp-retry" },
+    { name = "pyjwt" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/56/6f/f892d801a16b1de21e03ec3786ded94599499193429dccae5e7f95489192/twilio-9.13.0.tar.gz", hash = "sha256:3d110011db53354b7fe8480b469db0d4fcf082fafb73b50820c7d7d6e1c9dac1", size = 1817289, upload-time = "2026-11-06T09:35:59.568Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2c/50/069e982c83c8a864a97cb0a247562233b230686d8c201572d1054c541be5/twilio-9.13.0-py2.py3-none-any.whl", hash = "sha256:a73eb7139f47ed0ad934e9cf0a26cd0add6b86e6ca4aec5964624a9ea588c11c", size = 2527728, upload-time = "2026-11-06T09:35:57.824Z" },
 ]
 
 [[package]]

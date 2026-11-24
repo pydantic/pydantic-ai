@@ -184,7 +184,7 @@ class TestShellPassthrough:
         assert 'Interrupted (' in output.getvalue()
 
     async def test_ctrl_c_interrupts_command_not_clai(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The shell signals CLAI as the terminal would on Ctrl-C, and CLAI forwards it to the command.
+        # The shell signals Pax as the terminal would on Ctrl-C, and Pax forwards it to the command.
         started = time.monotonic()
         text = await shell_session(
             tmp_path, monkeypatch, ['!kill -INT $PPID; exec sleep 30', '!printf after > marker.txt', '/exit']
@@ -635,7 +635,7 @@ async def test_terminal_command_runs_with_the_screen_released(
     with holding_output(hold):
         context = await run_in_terminal(command, console=Console(file=output), cwd=tmp_path)
     assert events == ['hold leave_screen=True ran=False', 'release ran=True']
-    # The command wrote to CLAI's own standard streams, not to pipes CLAI reads.
+    # The command wrote to Pax's own standard streams, not to pipes Pax reads.
     assert capfd.readouterr() == ('secret', 'oops')
     assert 'secret' not in output.getvalue()
     assert 'oops' not in output.getvalue()
@@ -647,7 +647,7 @@ async def test_terminal_command_runs_with_the_screen_released(
 async def test_forced_terminal_command_saves_only_its_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    """`!!` hands over the terminal; Ctrl-C reaches the command, not CLAI, and output stays unsaved."""
+    """`!!` hands over the terminal; Ctrl-C reaches the command, not Pax, and output stays unsaved."""
     requests: list[ModelRequestContext] = []
     handler = signal.getsignal(signal.SIGINT)
     command = "kill -INT $PPID; printf 'hid''den'; : > marker"
@@ -727,7 +727,7 @@ async def test_ctrl_c_is_left_alone_off_the_main_thread() -> None:
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX pseudo-terminal')
 async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ctrl-C reaches CLAI as a key, not SIGINT, which the Daytona SDK's socket client takes to cancel every task."""
+    """Ctrl-C reaches Pax as a key, not SIGINT, which the Daytona SDK's socket client takes to cancel every task."""
     import termios
 
     leader, follower = os.openpty()
@@ -768,7 +768,7 @@ async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, mon
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell syntax')
 async def test_commands_run_in_the_sessions_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`!pwd` prints the session's directory, not the one CLAI was started in."""
+    """`!pwd` prints the session's directory, not the one Pax was started in."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / 'repo').mkdir()
     output = io.StringIO()

@@ -1,4 +1,4 @@
-"""Real-browser regressions run once in the dedicated CLAI 2 web CI job."""
+"""Real-browser regressions run once in the dedicated Pax web CI job."""
 
 from collections.abc import AsyncIterator, Callable, Generator
 from contextlib import AbstractContextManager, contextmanager

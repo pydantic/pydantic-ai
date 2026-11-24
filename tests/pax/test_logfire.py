@@ -31,6 +31,7 @@ from pydantic_ai_pax import DEFAULT_PLUGINS
 from pydantic_ai_pax.builtin_plugins import logfire as logfire_plugin
 from pydantic_ai_pax.builtin_plugins.logfire import CREDENTIALS_FILE, PROJECT, LogfirePlugin, LogfireSource
 from pydantic_ai_pax.builtin_plugins.logfire_destination import logfire_dir
+from pydantic_ai_pax.cli.self_update import installed
 from pydantic_ai_pax.commands import Commands
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.api_keys import save_key
@@ -68,6 +69,7 @@ class Recorder:
         local: bool,
         send_to_logfire: Literal[False, 'if-token-present'],
         service_name: str,
+        service_version: str,
         console: Literal[False],
         inspect_arguments: bool,
         config_dir: Path,
@@ -96,6 +98,7 @@ class Recorder:
             local=local,
             send_to_logfire=False,
             service_name=service_name,
+            service_version=service_version,
             console=console,
             inspect_arguments=inspect_arguments,
             config_dir=config_dir,
@@ -298,6 +301,8 @@ async def test_content_settings(recorder: Recorder, content: bool) -> None:
     assert ('plain answer' in serialized) == content
     assert base64.b64encode(b'image bytes').decode() not in serialized
     assert spans[0].resource.attributes['service.name'] == 'custom-clai'
+    # Pax's own version, not the commit of the repository it was launched in.
+    assert spans[0].resource.attributes['service.version'] == installed().label
     assert recorder.options[0]['send_to_logfire'] is False
 
 
@@ -656,7 +661,7 @@ async def test_turn_failures_outside_the_run_are_recorded_with_their_traceback(
     finally:
         await close(plugin)
     spans = recorder.spans()
-    root = next(span for span in spans if span.name == 'CLAI session')
+    root = next(span for span in spans if span.name == 'Pax session')
     run = next(span for span in spans if operation(span) == 'invoke_agent')
     # The run's own span already holds the error that left it, so only turns that failed outside a run are logged.
     assert [(event.attributes or {}).get('exception.type') for event in run.events] == ['RuntimeError']
@@ -778,7 +783,7 @@ async def test_ui_events_can_be_explicitly_disabled(recorder: Recorder) -> None:
     finally:
         await close(plugin)
     # The root's announcement is not a UI event: it is sent either way.
-    assert messages(recorder) == ['CLAI session opened', 'CLAI session']
+    assert messages(recorder) == ['Pax session opened', 'Pax session']
 
 
 @pytest.mark.parametrize('model', [Settings().model, None])
@@ -799,12 +804,12 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(
         await close(plugin)
     telemetry.record('after the plugin unloaded')
     assert messages(recorder) == [
-        'CLAI session opened',
+        'Pax session opened',
         'session started',
         'turn cancelled',
         'setting sessions.naming changed',
         'not a UI event',
-        'CLAI session',
+        'Pax session',
     ]
     _, started, _, changed, other, _ = recorder.spans()
     # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
@@ -1093,7 +1098,7 @@ async def test_one_configuration_serves_every_live_session_with_a_root_each(tmp_
     roots = {
         root.context.span_id: (root.attributes or {})['agent_session_id']
         for root in recorder.spans()
-        if root.name == 'CLAI session' and root.context is not None
+        if root.name == 'Pax session' and root.context is not None
     }
     assert set(roots.values()) == {'conversation-a', 'conversation-b'}
     turns = [span for span in recorder.spans() if span.name == 'turn {outcome}']

@@ -293,7 +293,7 @@ async def test_browser_sign_in_is_an_auth_the_transport_client_accepts() -> None
 
 
 async def test_an_unfinished_sign_in_never_holds_up_loading(tmp_path: Path) -> None:
-    """Loading waits for every plugin, so a browser left open at load would leave CLAI unable to run anything."""
+    """Loading waits for every plugin, so a browser left open at load would leave Pax unable to run anything."""
     SignIn.unfinished = True
     for terminal in (True, False):
         folder = tmp_path / f'terminal-{terminal}'

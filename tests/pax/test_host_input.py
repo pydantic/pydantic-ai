@@ -161,7 +161,7 @@ async def test_interrupt_cancels_the_running_turn(tmp_path: Path) -> None:
     assert [(turn.text, turn.outcome) for turn in Recorder.turns] == [('wait forever', 'cancelled')]
     assert [event.text for event in Recorder.commands] == ['/plugins list', '/exit']
     assert 'recorder' in Recorder.commands[0].output, 'ran over the turn, before it was interrupted'
-    assert 'Turn cancelled' in output.getvalue()
+    assert 'Interrupted. Type what to do instead.' in output.getvalue()
     await shell.loader.close('exit')
 
 

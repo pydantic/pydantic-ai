@@ -8,7 +8,7 @@ Content the other agent's harness added on the user's channel, rather than its u
 tell it apart from what the user typed, as they do a harness capability's content.
 
 A summary the other agent wrote when it compacted its conversation is imported as `imported_summary`,
-stored as CLAI's own compaction stores its summaries.
+stored as Pax's own compaction stores its summaries.
 """
 
 from __future__ import annotations
@@ -154,7 +154,7 @@ def imported_context(
 def imported_summary(content: str, *, source: str, at: datetime) -> CompactionPart:
     """The summary `source` wrote when it compacted its conversation, stored as `SummarizingCompaction` stores its own.
 
-    Marked as a summary, so CLAI's compaction builds on it rather than summarizing it again, and with its
+    Marked as a summary, so Pax's compaction builds on it rather than summarizing it again, and with its
     `origin` and `source` as `imported_context` has them, so it stays recognizable as the other agent's.
     """
     metadata = {

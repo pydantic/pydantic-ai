@@ -147,6 +147,6 @@ async def test_without_a_terminal_or_dialogs_it_refuses() -> None:
     """A plain prompt would read EOF there and return as if cancelled."""
     with (
         without_terminal('/login paste'),
-        pytest.raises(ValueError, match=r'/login paste .* this CLAI has no terminal'),
+        pytest.raises(ValueError, match=r'/login paste .* this Pax has no terminal'),
     ):
         await read_line('> ', console=Console(file=io.StringIO()))

@@ -1,4 +1,4 @@
-"""The `slack` plugin's browser sign-in: set up the user's CLAI Slack app, sign in with PKCE, renew each turn."""
+"""The `slack` plugin's browser sign-in: set up the user's Pax Slack app, sign in with PKCE, renew each turn."""
 
 import json
 import time
@@ -83,7 +83,7 @@ def signed_in_tokens(
 
 CLIENT_ID = Asked(
     kind='text',
-    title="Paste your CLAI Slack app's Client ID (Basic Information > App Credentials)",
+    title="Paste your Pax Slack app's Client ID (Basic Information > App Credentials)",
     label='Client ID',
     placeholder='Looks like 1234567890.1234567890',
     description=f'To create the app, open this URL, pick a workspace, and click Create:\n\n{slack_app.create_app_url()}',

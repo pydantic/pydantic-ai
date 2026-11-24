@@ -1,7 +1,7 @@
 """Fan messages out to the connected browsers, and answer `ask_user` questions from whichever side answers first.
 
 Each browser watches some live sessions, by conversation ID: it gets their messages and the global
-ones. One that never says which watches the default session, as every browser did before CLAI ran several.
+ones. One that never says which watches the default session, as every browser did before Pax ran several.
 """
 
 import asyncio

@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import pytest
 
@@ -19,6 +19,16 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
+from tests.conftest import try_import
+
+with try_import() as openai_imports_successful:
+    from openai.types import responses
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+    from tests.models.mock_openai import MockOpenAIResponses, response_message
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -48,6 +58,8 @@ __all__ = (
     'IsPartialDict',
     'IsStr',
     'agent_run_names',
+    'openai_imports_successful',
+    'openai_without_token_counting',
 )
 
 # Temporal markers live in `tests/harness/_temporal.py`: modules defining workflows must not import
@@ -164,6 +176,37 @@ class CountingModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> RequestUsage:
         return RequestUsage(input_tokens=self.input_tokens)
+
+
+def openai_without_token_counting(provider: Literal['openai-codex', 'openai-chatgpt'], text: str) -> Model:
+    """A model on `provider`, which can't count tokens, whose mock client streams `text` as every response.
+
+    Neither provider serves `responses/input_tokens`. The mock client keeps every request, and the token refresh
+    a real client would make, in the process.
+    """
+    response = response_message([])
+    client = MockOpenAIResponses.create_mock_stream(
+        [
+            responses.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0),
+            responses.ResponseTextDeltaEvent(
+                type='response.output_text.delta',
+                delta=text,
+                item_id='msg_1',
+                output_index=0,
+                content_index=0,
+                logprobs=[],
+                sequence_number=1,
+            ),
+            responses.ResponseCompletedEvent(
+                response=response.model_copy(update={'status': 'completed'}),
+                type='response.completed',
+                sequence_number=2,
+            ),
+        ]
+    )
+    if provider == 'openai-codex':
+        return OpenAICodexModel('gpt-5.5', provider=OpenAICodexProvider(openai_client=client))
+    return OpenAIResponsesModel('gpt-5.5', provider=OpenAIChatGPTProvider(openai_client=client))
 
 
 def agent_run_names(capfire: CaptureLogfire) -> list[str]:
