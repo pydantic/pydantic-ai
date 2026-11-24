@@ -12,6 +12,7 @@ from typing import TypeVar
 import anyio
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import Authority
 from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceRef, WorkspaceTimeoutError
 
 # Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
@@ -122,7 +123,7 @@ async def stop_shielded(stop: Callable[[], Awaitable[object]], *, grace: float =
             with anyio.CancelScope(shield=True):
                 while True:
                     try:
-                        await asyncio.sleep(0)
+                        await asyncio.sleep(0)  # noqa: TID251  (not converted to anyio yet)
                     except asyncio.CancelledError:
                         continue
                     break
@@ -250,6 +251,19 @@ def check_working_dir(value: str | None) -> None:
     """Raise `UserError` unless a provider's `working_dir` is an absolute POSIX path or `None`."""
     if value is not None and not posixpath.isabs(value):
         raise UserError(f'working_dir must be an absolute POSIX path or None, got {value!r}.')
+
+
+def check_path_authority(path_authority: Mapping[str, Authority] | None) -> None:
+    """Raise `UserError` for a `path_authority` key starting with `~`, which a sandbox or remote host doesn't expand.
+
+    `AuthorityWorkspace` refuses it too, but only when the run builds the workspace; this fails where it's written.
+    """
+    for path in path_authority or ():
+        if path.startswith('~'):
+            raise UserError(
+                f'`path_authority` paths are paths on the sandbox or host, so `~` is not expanded: got {path!r}. '
+                'Pass an absolute path, or one relative to the working directory.'
+            )
 
 
 def check_integer(name: str, value: int | None, *, minimum: int = 1, optional: bool = False) -> None:

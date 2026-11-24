@@ -359,6 +359,9 @@ class FileMemoryStore:
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:
         return await self._list_paths(prefix, limit=limit, nested=True)
 
+    async def list_child_paths(self, prefix: str, *, limit: int) -> list[str]:
+        return await self._list_paths(prefix, limit=limit, nested=False)
+
     async def _list_paths(self, prefix: str, *, limit: int, nested: bool) -> list[str]:
         """List paths below `prefix`; with `nested=False`, only those directly below it."""
         validate_store_prefix(prefix)

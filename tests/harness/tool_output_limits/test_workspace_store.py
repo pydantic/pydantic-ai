@@ -90,6 +90,9 @@ def _call_big_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelRespon
 class _Ctx:
     workspace: Workspace
 
+    def tool_name_for_kind(self, kind: object) -> str | None:
+        return None
+
 
 class TestDefaultStore:
     async def test_spill_and_read_back_through_the_workspace(self, tmp_path: Path):

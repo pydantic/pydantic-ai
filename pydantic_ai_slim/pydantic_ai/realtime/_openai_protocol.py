@@ -58,6 +58,7 @@ from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     FilePart,
     FinishReason,
@@ -596,6 +597,8 @@ async def _seed_request_items(
                 | ToolAvailabilityDeltaPart()
                 | CapabilityLoadDeltaPart()
                 | ModelSettingsDeltaPart()
+                # Rendered into the parts below by `wrap_seeded_system_prompts` before seeding.
+                | CapabilityPart()
             ):
                 # System prompts are seeded through session instructions, and tool-availability news
                 # from a prior standard run is stale here: the session advertises its own tools.
@@ -1352,7 +1355,7 @@ async def expect_event(
     deadline = time.monotonic() + timeout
     while True:
         try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
+            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError:
             expected = ' or '.join(map(repr, expected_types))
             raise RealtimeHandshakeError(f'timed out waiting for a {expected} event') from None

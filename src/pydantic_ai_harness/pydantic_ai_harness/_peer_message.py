@@ -11,5 +11,8 @@ PEER_MESSAGE_ORIGIN = 'pydantic-ai-harness.peers.message.v1'
 
 
 def is_peer_message(part: ModelRequestPart) -> TypeGuard[UserPromptPart]:
-    """Whether a part carries host-supplied peer-message provenance, rather than the user's own words."""
+    """Whether a part is a peer message an earlier version delivered as a `UserPromptPart`, not the user's own words.
+
+    `Peers` now delivers a `PeerMessagePart`, which is never taken for a user prompt.
+    """
     return isinstance(part, UserPromptPart) and tagged_text(part.content, PEER_MESSAGE_ORIGIN) is not None

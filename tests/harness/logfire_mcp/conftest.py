@@ -7,12 +7,19 @@ from collections.abc import AsyncIterator
 import anyio
 import pytest
 
-# The `mcp` SDK's server, not FastMCP's: the slim install has only the FastMCP client.
+# The `mcp` SDK's server, not FastMCP's: the slim install has only the FastMCP client. SDK v2 renamed it to
+# `MCPServer` and moved `stateless_http` from the server to the app it builds.
 _WHOAMI_SERVER = """
 import asyncio, socket, uvicorn
-from mcp.server.fastmcp import Context, FastMCP
-
-mcp = FastMCP('whoami', stateless_http=True)
+try:
+    from mcp.server.mcpserver import Context, MCPServer
+except ImportError:  # MCP SDK v1
+    from mcp.server.fastmcp import Context, FastMCP
+    mcp = FastMCP('whoami', stateless_http=True)
+    app_options = {}
+else:
+    mcp = MCPServer('whoami')
+    app_options = {'stateless_http': True}
 
 @mcp.tool()
 async def whoami(ctx: Context) -> str:
@@ -21,7 +28,7 @@ async def whoami(ctx: Context) -> str:
 
 server_socket = socket.create_server(('127.0.0.1', 0))
 print(server_socket.getsockname()[1], flush=True)
-uvicorn.run(mcp.streamable_http_app(), fd=server_socket.fileno(), log_level='warning')
+uvicorn.run(mcp.streamable_http_app(**app_options), fd=server_socket.fileno(), log_level='warning')
 """
 
 

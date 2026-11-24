@@ -17,7 +17,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError, ModelUnavailableError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -137,7 +137,10 @@ def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: st
     suggested_model_id = None
     if code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-    category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
+    # Groq's 498 means its flex service tier is out of capacity; its docs say to retry later.
+    category = _model_errors.openai_compatible_category(status_code, code, error_type, message) or (
+        ModelUnavailableError if status_code == 498 else None
+    )
     return ModelHTTPError.for_category(
         category,
         status_code=status_code,
@@ -453,17 +456,7 @@ class GroqModel(Model[AsyncGroq]):
 
         groq_messages = await self._map_messages(messages, model_request_parameters)
 
-        response_format: chat.completion_create_params.ResponseFormat | None = None
-        if model_request_parameters.output_mode == 'native':
-            output_object = model_request_parameters.output_object
-            assert output_object is not None
-            response_format = self._map_json_schema(output_object)
-        elif (
-            model_request_parameters.output_mode == 'prompted'
-            and not tools
-            and self.profile.get('supports_json_object_output', False)
-        ):  # pragma: no branch
-            response_format = {'type': 'json_object'}
+        response_format = self._response_format(model_request_parameters, tools)
 
         # The Groq SDK merges headers into its defaults case-sensitively, so a user-agent replaces its default
         # `User-Agent` only under that spelling.
@@ -763,6 +756,27 @@ class GroqModel(Model[AsyncGroq]):
                 'parameters': f.parameters_json_schema,
             },
         }
+
+    def _response_format(
+        self, model_request_parameters: ModelRequestParameters, tools: list[chat.ChatCompletionToolParam]
+    ) -> chat.completion_create_params.ResponseFormat | None:
+        """Return the response format the output mode asks for."""
+        if model_request_parameters.output_mode == 'native':
+            # Groq returns a 400 for `response_format` combined with function tools.
+            if model_request_parameters.function_tools:
+                raise UserError(
+                    'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                )
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            return self._map_json_schema(output_object)
+        if (
+            model_request_parameters.output_mode == 'prompted'
+            and not tools
+            and self.profile.get('supports_json_object_output', False)
+        ):  # pragma: no branch
+            return {'type': 'json_object'}
+        return None
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
         response_format_param: chat.completion_create_params.ResponseFormatResponseFormatJsonSchema = {

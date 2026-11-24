@@ -222,7 +222,7 @@ async def run_command(
     Exceptions from Render propagate unchanged, and no command is replayed.
     """
     capture = _Capture()
-    deadline = asyncio.timeout(timeout)
+    deadline = asyncio.timeout(timeout)  # noqa: TID251  (not converted to anyio yet)
     try:
         async with deadline:
             await _consume(client, sandbox_id, command.launch, capture)

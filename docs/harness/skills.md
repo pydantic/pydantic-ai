@@ -83,7 +83,9 @@ coding agents do, see [Layer project and personal skills](#layer-project-and-per
 
 !!! note
     `Skills` loads instructions from `SKILL.md` and tells the model where the
-    skill's directory is. It does not load bundled resources or run scripts itself.
+    skill's directory is. It does not run scripts. With `read_files=True`, it
+    gives the model a tool to read a loaded skill's bundled files; see
+    [Bundled files](#bundled-files).
 
 ## How it works
 
@@ -137,12 +139,11 @@ installed unzipped.
 
 The model sees each skill's name and description in the catalog, and loading a
 skill returns its heading and `SKILL.md` body. The loaded instructions do not
-name the skill's directory, and `Skills` gives the model no tools, so the model
-cannot read a skill's `references/` or run its `scripts/` from here. For a skill
-whose bundled files the model should use, put its library in the run's
-workspace instead and give the agent file or shell tools there, such as
-`LocalWorkspace(APP_DIR)` with `FileSystem` or `Shell`; see
-[Bundled files](#bundled-files).
+name the skill's directory, since the model's file and shell tools don't work
+there. Pass `read_files=True` to let the model read a loaded skill's
+`references/` and other text files from `APP_DIR`. To run its `scripts/`, put
+its library in the run's workspace instead and give the agent `Shell` there;
+see [Bundled files](#bundled-files).
 
 The same backend works when the agent's own workspace is a sandbox: `Skills`
 reads the skills from your application's files, and the agent's tools act in the
@@ -294,23 +295,56 @@ ones the model is pointed at.
 ## Bundled files
 
 Agent Skill packages can contain directories such as `references/`, `assets/`,
-and `scripts/`. `Skills` does not enumerate, read, or execute those files.
+and `scripts/`. `Skills` does not run those files, and reads them only with
+`read_files=True`.
 
 The loaded instructions name the skill's directory in the run's workspace, so a
 model with file or shell tools, such as those from `FileSystem` or `Shell`, can
 follow a relative reference like `references/guide.md` or run
-`scripts/check.py`. Skills read from a `workspace=` backend are not where those
-tools work, so their instructions leave the directory out. Placeholders such as
-`${CLAUDE_SKILL_DIR}` remain unchanged in the body.
+`scripts/check.py`. `${CLAUDE_SKILL_DIR}` and `${SKILL_DIR}` in the body become
+that directory. Skills read from a `workspace=` backend are not where those
+tools work, so their instructions leave the directory out and keep the
+placeholders as written.
+
+To let the model read a loaded skill's files without giving it general file
+access, pass `read_files=True`:
+
+```python
+from pydantic_ai_harness import Skills
+
+skills = Skills('.agents/skills', read_files=True)
+```
+
+The model gets a `read_skill_file` tool that takes a skill name and a path
+relative to its directory, such as `references/guide.md`. It reads from the
+workspace the skill came from, including a `workspace=` backend, so it also
+works for [skills shipped with your application](#ship-skills-with-your-application).
+A read returns at most 50,000 characters, and says which `offset` to pass to
+read on. A file over 10 MiB is refused.
+
+The tool refuses a skill the model has not loaded with `load_capability`, an
+absolute path, a path that leads outside the skill's directory through `..` or
+a symlink, and a file that is not UTF-8 text. It does not read a skill with
+`disable-model-invocation: true`, even after a host sends its `render()` as a
+prompt. A host-rendered skill the model can load becomes readable once the
+model loads it. The tool reads nothing from a workspace whose backend
+implements neither `SupportsRealpath` nor `SupportsCommands`, since it cannot
+resolve symlinks. When two `Skills` combine, only the libraries of one with
+`read_files=True` are readable. With a `scanner`, the text a read returns is
+scanned first, along with 1,000 characters on each side, and withheld if
+flagged, with a zero-duration `artifact_scan flagged` span whose action is
+`withheld`.
 
 `Skills` reads the libraries itself: the model does not need `FileSystem` or
 `Shell` to load a skill, and adding either does not change which files `Skills`
 reads.
 
-For tools scoped to a loaded skill's own files, see
 [`pydantic-ai-skills`](https://github.com/DougTrajano/pydantic-ai-skills), a
 community package by [Doug Trajano](https://github.com/DougTrajano) that builds
-on `Skills`.
+on `Skills`, was the first to offer skill-scoped file tools. It also runs a skill's
+scripts through sandboxed executors and loads skill libraries from Git and S3.
+For a library kept elsewhere, you can also sync it to a directory in the
+workspace and point `Skills` at that directory.
 
 ## Compatibility with existing skill libraries
 
@@ -439,7 +473,7 @@ agent = Agent(
 )
 ```
 
-A flagged skill is left out of the catalog with a `UserWarning`, and a zero-duration `artifact_scan flagged` span. `Skills.load()` reports it as a `SkippedSkill` with `reason='flagged'` and the findings in `scan`. Bundled files are not scanned, since `Skills` does not load them. The scanner belongs to the `Skills` it is passed to, so when two combine, a vetted library can go unscanned while an agent-written one is scanned.
+A flagged skill is left out of the catalog with a `UserWarning`, and a zero-duration `artifact_scan flagged` span. `Skills.load()` reports it as a `SkippedSkill` with `reason='flagged'` and the findings in `scan`. Bundled files are scanned only when the model reads them with `read_files=True`. The scanner belongs to the `Skills` it is passed to, so when two combine, a vetted library can go unscanned while an agent-written one is scanned.
 
 ## Configuration
 
@@ -454,6 +488,7 @@ Skills(
     unknown_names: Literal['error', 'skip'] = 'error',
     workspace: WorkspaceBackend | None = None,
     scanner: ArtifactScanner | None = None,
+    read_files: bool = False,
 )
 ```
 

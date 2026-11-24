@@ -13,7 +13,13 @@ from typing_extensions import TypedDict, override
 from .. import _model_errors, usage
 from .._run_context import RunContext
 from .._utils import is_str_dict
-from ..exceptions import ModelAPIError, ModelHTTPError, ModelRequestRejectedError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelRequestRejectedError,
+    UserError,
+)
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -64,7 +70,7 @@ try:
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
     from .openai._chat_completions import LenientChatCompletion, LenientChatCompletionChunk
-    from .openai._errors import flags_input
+    from .openai._errors import flags_input, metadata_raw_reports_context_window
     from .openai._response_fields import map_usage as _map_openai_usage
 except ImportError as _import_error:
     raise ImportError(
@@ -470,6 +476,8 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
     the response's own status was 200.
     """
     category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
+    if category is ModelRequestRejectedError and metadata_raw_reports_context_window(error.metadata):
+        category = ModelContextWindowExceededError
     if error.code == 403 and flags_input(error.metadata):
         # A 403 for flagged input is a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
@@ -775,7 +783,8 @@ def _openrouter_settings_to_openai_settings(
     # `merge_model_settings` can return the model's own `settings` by identity, so popping in place
     # would drop the keys on the next request.
     model_settings = model_settings.copy()
-    extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
+    configured = model_settings.get('extra_body')
+    extra_body: dict[str, object] = {} if configured is None else dict(cast(dict[str, object], configured))
 
     if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models
@@ -1292,31 +1301,33 @@ class OpenRouterModel(OpenAIChatModel):
         self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool:
         thinking = self._request_thinks(model_settings, model_request_parameters)
-        # Where forcing isn't supported while thinking, OpenRouter doesn't reject the request: it drops `reasoning`
-        # and answers without any, so a resolved forced choice falls back to `'auto'` rather than losing it. An
-        # explicit forcing `tool_choice` only conflicts with thinking the user asked for; thinking the model does by
-        # default, or at its lowest effort on `thinking=False`, gives way to it, as on the direct API.
-        requested_thinking = (
-            thinking
-            and model_request_parameters.thinking is not False
-            and (
-                'openrouter_reasoning' in model_settings
-                or model_settings.get('openai_reasoning_effort') is not None
-                or model_request_parameters.thinking is not None
+        profile = self._resolved_profile
+        disables_thinking = profile.get('forced_tool_choice_disables_thinking', False)
+        # A route that can't force while thinking returns a 400 whenever the request reasons. On Anthropic routes,
+        # where a forced choice answers without thinking, OpenRouter instead drops `reasoning` and answers without any,
+        # so a resolved forced choice falls back to `'auto'` rather than losing it, and an explicit forcing
+        # `tool_choice` only conflicts with thinking the user asked for: thinking the model does by default, or at its
+        # lowest effort on `thinking=False`, gives way to it, as on the direct API.
+        forcing_thinking = thinking
+        thinking_remedy = "Disable thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`"
+        if disables_thinking:
+            forcing_thinking = (
+                thinking
+                and model_request_parameters.thinking is not False
+                and (
+                    'openrouter_reasoning' in model_settings
+                    or model_settings.get('openai_reasoning_effort') is not None
+                    or model_request_parameters.thinking is not None
+                )
             )
-        )
+            thinking_remedy = f'OpenRouter would silently drop reasoning. {thinking_remedy}'
         return support_tool_forcing(
             self.model_name,
             model_settings,
-            tool_forcing_unavailable_reason(
-                self._resolved_profile,
-                thinking=requested_thinking,
-                thinking_remedy=(
-                    'OpenRouter would silently drop reasoning. Disable thinking with `thinking=False` or '
-                    "`openrouter_reasoning={'enabled': False}`"
-                ),
-            ),
-            disables_thinking=thinking and self._resolved_profile.get('forced_tool_choice_disables_thinking', False),
+            tool_forcing_unavailable_reason(profile, thinking=forcing_thinking, thinking_remedy=thinking_remedy),
+            disables_thinking=thinking and disables_thinking,
+            # Outside Anthropic routes, a route that can't force while thinking returns a 400 for it.
+            api_rejects=not disables_thinking and profile.get('supports_forced_tool_choice', True),
         )
 
     @override
@@ -1423,9 +1434,13 @@ class OpenRouterModel(OpenAIChatModel):
         if previous_tail is not None:
             self._add_cache_control_to_message(openai_messages[previous_tail], cache_messages)
         # A request-scoped prompt ends the request as its own user message (see `_request_scoped_tail_texts`),
-        # and the next request won't send it, so the breakpoint goes on the message before it.
+        # and the next request won't send it, so the breakpoint goes on the message before it. So does a downgraded
+        # capability part's frame, with any `system` message that a route takes after the user turn behind it.
         end, _ = _request_scoped_suffix_start(
-            openai_messages, _request_scoped_tail_texts(messages), _request_scoped_message_text
+            openai_messages,
+            _request_scoped_tail_texts(messages),
+            _request_scoped_message_text,
+            is_after_tail=lambda message: message['role'] == 'system',
         )
         if end:
             self._add_cache_control_to_message(openai_messages[end - 1], cache_messages)

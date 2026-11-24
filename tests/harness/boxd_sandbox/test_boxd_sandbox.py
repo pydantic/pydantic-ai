@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,10 @@ from pydantic_ai_harness.shell import Shell
 from .._tool_calls import call_tools
 from .fake_boxd import FakeBoxd, wait_until_gone
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
+pytestmark = [
+    pytest.mark.anyio(backends=['asyncio']),
+    pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
+]
 
 
 def _ctx() -> RunContext[None]:
@@ -241,12 +245,15 @@ async def test_fork_copies_a_machine_and_closes_the_client_it_opened(host: FakeB
 def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([BoxdSandbox])['$defs']
     assert sorted(definitions['spec_params_BoxdSandbox']['properties']) == [
+        'authority',
         'auto_suspend_timeout',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
         'org',
+        'path_authority',
         'secrets',
         'snapshot',
         'vcpu',
@@ -264,6 +271,7 @@ def test_from_spec_forwards_the_spec_fields(size: dict[str, Any]) -> None:
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
         'secrets': ['GH_TOKEN'],
+        'desktop': (1280, 800),
         **size,
     }
     assert BoxdSandbox[None].from_spec(**spec_fields) == BoxdSandbox[None](**spec_fields)
