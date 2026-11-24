@@ -126,7 +126,7 @@ Daytona's default snapshot has a desktop with a terminal and Chromium. A custom 
 - A public sandbox gets no desktop, since its preview link needs no token and anyone with it can control the desktop: the run fails with `UserError`.
 - Where the snapshot's Chromium can't run its own sandbox, as in Daytona's default snapshot, `desktop=True` adds `--no-sandbox` to its flags through a file in `/etc/chromium.d/`, written as root or with passwordless `sudo`. The file stays after the run, also on a sandbox you attached with `ref=` or `sandbox=`, so a page that breaks out of Chromium's renderer reaches the rest of the sandbox. A custom snapshot whose Chromium sandbox works is left alone.
 - On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
-- The desktop can't press print screen, pause, scroll lock or the menu key, use the side mouse buttons, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one.
+- The desktop can't press print screen, pause, scroll lock or the menu key, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one.
 
 ## Clean up
 
@@ -226,7 +226,7 @@ git config --global credential.https://github.com.helper '!f() { echo username=x
 | `client` | A `daytona.AsyncDaytona` to share across runs on one event loop, or to configure its API URL or target. Default: `None`, a client each run opens from `DAYTONA_API_KEY` and closes when it ends. You close a client you pass. |
 | `snapshot` | Daytona snapshot a new sandbox starts from. Default: `None`, Daytona's default. An unknown snapshot fails on first use. |
 | `auto_stop_interval` | Idle minutes before Daytona stops a new sandbox. `0` disables it. Default: `None`, Daytona's default of 15 minutes for a container. A VM pauses after 60 minutes instead. |
-| `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. `False` blocks all outbound traffic on every tier, including package registries, GitHub and AI APIs. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). |
+| `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. `False` blocks everything only for Tier 3 and 4 organizations. Lower tiers can still reach package registries, GitHub and AI APIs, so `False` doesn't stop data leaving the sandbox there. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/daytona`. Created on a new sandbox. On an attached one, it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
 | `secrets` | Daytona Secrets for a new sandbox, as a map from environment variable name to the name of an existing organization Secret. Passed to `AsyncDaytona.create` unchanged. Default: `None`. An attached sandbox keeps the ones it was created with. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). |

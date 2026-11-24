@@ -425,8 +425,8 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   its output (`start_command` already does). On Daytona and boxd, `run()` returns when the command exits, without
   what the child prints later.
 - `DaytonaSandbox(desktop=True)` gives a new sandbox a 1280x800 XFCE desktop for `ComputerUse()`; `desktop=(w, h)`
-  sets another size, fixed at creation. It can't press print screen, pause, scroll lock or the menu key, use side mouse
-  buttons, or type characters beyond U+FFFF (most emoji). Anyone with the preview link can control the desktop, so a public sandbox gets none: its first
+  sets another size, fixed at creation. It can't press print screen, pause, scroll lock or the menu key, or type
+  characters beyond U+FFFF (most emoji). Anyone with the preview link can control the desktop, so a public sandbox gets none: its first
   desktop use or shell command raises `UserError`.
   Where Chromium can't run its own sandbox, as in the default snapshot, it adds `--no-sandbox` through a file in
   `/etc/chromium.d/` (as root or passwordless `sudo`) that stays after the run, also on an attached sandbox.
