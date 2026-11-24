@@ -21,6 +21,7 @@ from pydantic_ai._telemetry import (
     current_span,
     open_span,
     record_decision,
+    records_content,
     run_telemetry_scope,
     set_content_attribute,
 )
@@ -97,8 +98,11 @@ async def test_content_is_left_out_without_include_content(instrumented: Instrum
     )
 
 
-async def test_a_parents_content_setting_does_not_turn_on_a_sub_agents_content():
-    """Agents on one tracer provider share tracers, so the parent's published telemetry matches the child's tracer."""
+@pytest.mark.parametrize(('parent_content', 'child_content'), [(True, False), (False, True), (True, True)])
+async def test_a_sub_agent_on_its_parents_tracer_follows_its_own_content_setting(
+    parent_content: bool, child_content: bool
+):
+    """Agents on one tracer provider share tracers, but a sub-agent's `for_run` still follows the sub-agent's setting."""
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -106,13 +110,13 @@ async def test_a_parents_content_setting_does_not_turn_on_a_sub_agents_content()
         TestModel(),
         capabilities=[
             TraceWhenPrepared(),
-            Instrumentation(settings=InstrumentationSettings(tracer_provider=provider, include_content=False)),
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=provider, include_content=child_content)),
         ],
     )
     parent = Agent(
         TestModel(call_tools=['ask_child']),
         capabilities=[
-            Instrumentation(settings=InstrumentationSettings(tracer_provider=provider, include_content=True))
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=provider, include_content=parent_content))
         ],
     )
 
@@ -122,9 +126,11 @@ async def test_a_parents_content_setting_does_not_turn_on_a_sub_agents_content()
 
     await parent.run('go')
 
-    assert example_spans(exporter) == snapshot(
-        [{'name': 'example prepare', 'example.kind': 'setup'}, {'name': 'example decided', 'example.kind': 'setup'}]
-    )
+    content = [{'example.input': 'a', 'example.output': 'b'}, {'example.detail': 'c'}] if child_content else [{}, {}]
+    assert example_spans(exporter) == [
+        {'name': 'example prepare', 'example.kind': 'setup', **content[0]},
+        {'name': 'example decided', 'example.kind': 'setup', **content[1]},
+    ]
 
 
 @dataclass
@@ -190,6 +196,7 @@ def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():
 
     assert span is INVALID_SPAN
     assert current_span(ctx) is INVALID_SPAN
+    assert records_content(ctx) is False
 
 
 async def test_code_without_a_ctx_traces_to_the_calling_run(instrumented: Instrumented):
@@ -210,31 +217,38 @@ async def test_code_without_a_ctx_traces_to_the_calling_run(instrumented: Instru
         assert span is INVALID_SPAN
 
 
+@pytest.mark.parametrize('include_content', [True, False])
 @pytest.mark.parametrize(
     ('error', 'not_errors', 'status'),
     [
         (asyncio.CancelledError('private'), (), 'ERROR'),
         (asyncio.CancelledError('private'), (asyncio.CancelledError,), 'UNSET'),
+        (ValueError('private'), (), 'ERROR'),
         (FileNotFoundError('private'), (FileNotFoundError,), 'UNSET'),
     ],
 )
 def test_an_escaping_exception_is_recorded_by_its_type(
-    error: BaseException, not_errors: tuple[type[BaseException], ...], status: str
+    error: BaseException, not_errors: tuple[type[BaseException], ...], status: str, include_content: bool
 ):
-    """A cancellation is an error like any other unless the caller expects it; the message stays out without content."""
+    """A cancellation is an error like any other unless the caller expects it; the message needs content."""
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
 
     with pytest.raises(type(error)):
         with open_span(
-            RunTelemetry(provider.get_tracer('test'), include_content=False), 'example work', not_errors=not_errors
+            RunTelemetry(provider.get_tracer('test'), include_content=include_content),
+            'example work',
+            not_errors=not_errors,
         ):
             raise error
 
     [span] = exporter.get_finished_spans()
     assert span.status.status_code.name == status
-    assert [dict(event.attributes or {}).get('exception.message') for event in span.events] == [None]
+    [event] = span.events
+    assert str((event.attributes or {})['exception.type']).endswith(type(error).__qualname__)
+    recorded = f'{span.status.description} {event.attributes}'
+    assert ('private' in recorded) is include_content
 
 
 def test_a_telemetry_scope_publishes_for_its_block_only():

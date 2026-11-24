@@ -39,6 +39,7 @@ __all__ = (
     'open_span',
     'publish_run_telemetry',
     'record_decision',
+    'records_content',
     'run_telemetry_scope',
     'set_content_attribute',
 )
@@ -48,8 +49,8 @@ __all__ = (
 class RunTelemetry:
     """The tracer a run's spans go to, and whether they may record content.
 
-    Not `InstrumentationSettings`: a durable worker combines its own settings with the run's
-    serialized content flag. A published value is compared by identity, so each publish is a distinct
+    Not `InstrumentationSettings`: in a durable unit both come from the rebuilt `ctx`, whose content flag
+    the engine narrowed to the worker's setting. A published value is compared by identity, so each publish is a distinct
     run's telemetry; one built from a `ctx` is used for a single call and never published.
     """
 
@@ -153,8 +154,13 @@ def set_content_attribute(
 
     For content known when the span opens, pass `content=` to `open_span` instead.
     """
-    if (telemetry := _telemetry_of(ctx)) is not None and telemetry.include_content:
+    if records_content(ctx):
         span.set_attribute(key, value)
+
+
+def records_content(ctx: RunContext[Any] | RunTelemetry | None) -> bool:
+    """Whether the run's spans record content, to skip building a content value that costs something or can raise."""
+    return (telemetry := _telemetry_of(ctx)) is not None and telemetry.include_content
 
 
 def current_span(ctx: RunContext[Any] | RunTelemetry | None) -> Span:
@@ -182,14 +188,8 @@ def _telemetry_of(ctx: RunContext[Any] | RunTelemetry | None) -> RunTelemetry | 
     # other raises. Work in a unit that didn't carry the tracer goes untraced rather than failing.
     if not _TRACE_FIELDS <= ctx.__dataclass_fields__.keys():
         return None
-    # Telemetry published for the same tracer can only narrow content: a durable worker that doesn't record
-    # content publishes that, while `ctx` still carries the run's own flag. Agents sharing a tracer provider
-    # share tracers too, so a parent's published telemetry must not turn on a child's content.
-    published = _current.get()
-    include_content = ctx.trace_include_content
-    if published is not None and published.tracer is ctx.tracer:
-        include_content = include_content and published.include_content
-    return _run_telemetry(ctx.tracer, include_content)
+    # `ctx` is the only source: in a durable unit the engine already narrowed its flag to the worker's setting.
+    return _run_telemetry(ctx.tracer, ctx.trace_include_content)
 
 
 def _with_content(
