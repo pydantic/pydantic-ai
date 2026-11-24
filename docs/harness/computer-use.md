@@ -90,6 +90,8 @@ async def ask_before_acting(ctx, *, call, tool_def, args):
     return args
 ```
 
+A read-only workspace gets no `computer` tool, since actions on the screen can change anything the workspace holds.
+
 ## Durable execution
 
 Use `TemporalDurability` or `PrefectDurability`; the deprecated `TemporalAgent`, `PrefectAgent` and `DBOSAgent` can't
