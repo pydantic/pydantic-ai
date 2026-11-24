@@ -142,6 +142,10 @@ class TestCDPBrowser:
         assert args[0] == '/opt/chrome/chrome'
         assert '--no-sandbox' in args and '--headless=new' not in args
 
+    async def test_chrome_launches_with_the_guard_flags(self, chrome: FakeChrome):
+        await Agent(calls_then_reply(), capabilities=[CDPBrowser()]).run('hi')
+        assert '--disable-features=FedCm' in chrome.launches[0]
+
     async def test_disallowed_commands_and_urls_are_refused(self, chrome: FakeChrome):
         agent = Agent(
             calls_then_reply(

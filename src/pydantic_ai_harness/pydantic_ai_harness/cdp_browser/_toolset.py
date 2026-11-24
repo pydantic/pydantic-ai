@@ -68,6 +68,9 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 SETUP_TIMEOUT_SECONDS = 10.0
 """How long Chrome gets to attach its first tab once it is running."""
 
+GUARD_ARGS = ('--disable-features=FedCm',)
+"""Chrome flags `CDPBrowser` always launches with."""
+
 MAX_SCREENSHOT_BYTES = 5_000_000
 """Largest screenshot returned as image content, the strictest per-image limit among mainstream model providers.
 
@@ -193,7 +196,7 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
                 proxy_port = await stack.enter_async_context(websocket_proxy(self.policy))
                 self._client = await stack.enter_async_context(
                     launch_chrome(
-                        extra_args=proxy_args(proxy_port),
+                        extra_args=[*proxy_args(proxy_port), *GUARD_ARGS],
                         headless=self.headless,
                         chrome_path=self.chrome_path,
                         sandbox=self.chrome_sandbox,
