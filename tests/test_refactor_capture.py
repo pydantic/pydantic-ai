@@ -2576,7 +2576,7 @@ To resolve this, you can:
 async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
     """A stream holds what the run iterating it holds, like its dependencies, so the capture holds it only while the
     recording of its iteration lives. The response it builds is recorded once iteration ends, and again when the test
-    ends if the stream still lives then; one that can't be written is left `None`, never raised.
+    ends if the stream still lives then; one that can't be written is recorded as the error, never raised.
 
     Garbage collection is off, as in `tests/test_run_reference_cycles.py`, so only reference counting frees them.
     """
@@ -2620,7 +2620,9 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
         capture.pytest_unconfigure()
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
     *streams, unwritten = [record for record in records if record['kind'] == 'stream']
-    assert unwritten['response'] is None
+    assert unwritten['response'] == snapshot(
+        {'unrecorded': 'PydanticSerializationError: Error serializing to JSON: RuntimeError: unwritable'}
+    )
     assert [
         (record['stream'], record['response']['parts'][0]['content'], record['response']['provider_details'])
         for record in streams
@@ -2660,6 +2662,7 @@ def test_capture_wraps_a_module_now_or_once_it_runs(tmp_path: Path, monkeypatch:
         try:
             not_run = weakref.ref(spec.loader)
             del spec
+            assert not_run() is None
         finally:
             gc.enable()
         module = importlib.import_module('watched_module')
@@ -2669,7 +2672,6 @@ def test_capture_wraps_a_module_now_or_once_it_runs(tmp_path: Path, monkeypatch:
         capture.pytest_unconfigure()
         for name in ('watched_module', 'unwatched_module'):
             sys.modules.pop(name, None)
-    assert not_run() is None
     assert wrapped == ['json', 1]
     assert 'exec_module' not in vars(module.__loader__)
     assert not any(isinstance(finder, ImportWatcher) for finder in sys.meta_path)
