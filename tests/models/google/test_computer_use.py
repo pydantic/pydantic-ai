@@ -308,6 +308,28 @@ async def test_a_function_tool_named_like_a_predefined_function_is_refused(allow
             await model.request([ModelRequest.user_text_prompt('Go.')], None, _params(click))
 
 
+async def test_an_optional_computer_tool_falls_back_beside_a_clashing_function_tool(allow_model_requests: None) -> None:
+    """`ComputerUse` sends an optional `ComputerTool`, so a clashing name sends the `computer` function tool instead."""
+    gemini = _Gemini([_call('click', x=1, y=2)])
+    click = ToolDefinition(name='click', parameters_json_schema={'type': 'object'})
+    params = ModelRequestParameters(
+        function_tools=[COMPUTER, click],
+        native_tools=[ComputerTool(display_size=FAKE_DISPLAY_SIZE, optional=True)],
+        allow_text_output=True,
+    )
+    async with gemini.model() as model:
+        response = await model.request([ModelRequest.user_text_prompt('Go.')], None, params)
+
+    (body,) = gemini.bodies
+    tools = body['tools']
+    assert isinstance(tools, list) and GOOGLE_COMPUTER_USE not in tools
+    assert "'name': 'computer'" in str(tools) and "'name': 'click'" in str(tools)
+    # Gemini's `click` call goes to the function tool of that name, not to the computer.
+    (call,) = response.parts
+    assert isinstance(call, ToolCallPart) and not isinstance(call, ComputerCallPart)
+    assert call.tool_name == 'click'
+
+
 async def test_calls_go_back_as_geminis_and_changed_calls_as_pixels(allow_model_requests: None) -> None:
     """An unchanged call goes back as Gemini sent it. A call a hook changed goes back as a plain `computer` call."""
     gemini = _Gemini(

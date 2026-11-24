@@ -2474,6 +2474,9 @@ def _requested_native_computer(
     # The request keeps a `ComputerTool` only beside a `computer` tool to run its calls.
     name = model_request_parameters.available_tool_names_for_kind(COMPUTER_KIND)[0]
     if clashing := sorted(_google_computer.COMPUTER_FUNCTIONS & model_request_parameters.declared_tool_defs.keys()):
+        if tool.optional:
+            # Left out like any optional native tool that can't be sent: the `computer` function tool goes instead.
+            return None
         raise UserError(
             f"Google's computer use tool has predefined functions named {', '.join(map(repr, clashing))}, "
             "so a function tool can't have those names beside it. Rename the function tool."

@@ -627,8 +627,7 @@ and Gemini 3 Flash Preview. Other models, every model on Vertex AI, and any mode
 regular function tool named `computer` instead.
 
 Google's tool can't zoom or read the pointer position. It can't be sent beside a function tool named like one of its
-functions, such as `click` or `type`: the request raises [`UserError`][pydantic_ai.exceptions.UserError], so rename the
-function tool.
+functions, such as `click` or `type`, so with such a tool the model gets the `computer` function tool instead.
 
 ### Actions that need approval
 
