@@ -3,10 +3,11 @@
 from __future__ import annotations as _annotations
 
 import warnings
-from typing import Any, get_args
+from typing import Any, Literal, get_args
 
 from openai.types import responses
 from openai.types.shared import ReasoningEffort
+from openai.types.shared_params import Reasoning
 
 from ...messages import ThinkingPart
 from ...profiles.openai import OPENAI_REASONING_EFFORT_MAP, SAMPLING_PARAMS, OpenAIModelProfile, OpenAIReasoningEffort
@@ -37,6 +38,13 @@ def resolve_openai_thinking_effort(
         if thinking == 'max' and supports_max:
             return 'max'
         return OPENAI_REASONING_EFFORT_MAP[thinking]
+    return closest_accepted_reasoning_effort(thinking, supported, supports_max=supports_max)
+
+
+def closest_accepted_reasoning_effort(
+    thinking: ThinkingLevel, supported: frozenset[OpenAIReasoningEffort], *, supports_max: bool
+) -> ReasoningEffort:
+    """Map unified thinking to the closest of the efforts the model accepts, or `None` when it accepts none."""
     accepted: list[OpenAIReasoningEffort] = sorted(
         (effort for effort in supported if effort != 'max' or supports_max), key=_REASONING_EFFORT_ORDER.index
     )
@@ -112,6 +120,35 @@ def drop_sampling_params_for_reasoning(
 
     for k in SAMPLING_PARAMS:
         model_settings.pop(k, None)
+
+
+def set_reasoning_context(
+    reasoning: Reasoning,
+    reasoning_context: Literal['auto', 'current_turn', 'all_turns'] | None,
+    profile: OpenAIModelProfile,
+) -> None:
+    """Set the `context` of a Responses request's reasoning, where the model accepts it.
+
+    Mutates `reasoning`.
+    """
+    if reasoning_context is None:
+        # Default to `all_turns` on models that support it, so earlier-turn reasoning stays
+        # available without opting in — consistent with sending prior thinking (including
+        # "foreign" thinking parts from another model) back to every other model. Models
+        # without `all_turns` support get no `context` at all, never `auto`.
+        if profile.get('openai_responses_supports_reasoning_context', False):
+            reasoning['context'] = 'all_turns'
+    else:
+        # Support is per-value, not per-field: every reasoning model accepts `auto` and
+        # `current_turn`, while `all_turns` is limited to the families that persist reasoning
+        # across turns. Gating the whole field on the narrower fact would silently discard a
+        # value the user explicitly set.
+        if reasoning_context == 'all_turns':
+            supports_reasoning_context = profile.get('openai_responses_supports_reasoning_context', False)
+        else:
+            supports_reasoning_context = profile.get('openai_supports_reasoning', False)
+        if supports_reasoning_context:
+            reasoning['context'] = reasoning_context
 
 
 def map_reasoning_item(item: responses.ResponseReasoningItem, provider_name: str) -> list[ThinkingPart]:

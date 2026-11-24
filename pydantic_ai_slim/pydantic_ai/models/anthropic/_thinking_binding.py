@@ -5,7 +5,7 @@ from __future__ import annotations as _annotations
 import warnings
 from typing import cast
 
-from anthropic import APIStatusError, Omit, omit as OMIT
+from anthropic import Omit, omit as OMIT
 from anthropic.types.beta import BetaThinkingBlockBindingParam, BetaThinkingConfigParam
 
 from ... import _utils
@@ -64,7 +64,8 @@ def can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
 def is_stale_thinking_block_error(
     profile: ModelProfile,
     thinking: dict[str, object] | Omit,
-    error: APIStatusError,
+    status_code: int,
+    body: object | None,
 ) -> bool:
     """Whether Anthropic rejected a replayed thinking block that the request can be retried without.
 
@@ -73,11 +74,11 @@ def is_stale_thinking_block_error(
     fail, and an explicit `'drop_block'` cannot produce this error. A thinking type other than
     `adaptive` is out too; see `can_add_drop_block`.
     """
-    if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
+    if status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
         return False
     if not can_add_drop_block(thinking):
         return False
-    reported = reported_error_body(error.body)
+    reported = reported_error_body(body)
     return (
         _utils.is_str_dict(reported)
         and isinstance(message := reported.get('message'), str)
@@ -166,10 +167,10 @@ def thinking_with_stale_block_history(
     return OMIT, betas | {ANTHROPIC_THINKING_BINDING_BETA}, thinking_override, thinking_override
 
 
-def warn_stale_thinking_block_recovery(model_name: str) -> None:
+def warn_stale_thinking_block_recovery(model_name: str, *, stacklevel: int = 2) -> None:
     warnings.warn(
-        f'{model_name!r} rejected a replayed thinking block: the conversation prefix changed '
-        'between requests, which Anthropic enforces for accounts created on or after 2026-08-31. '
+        f'{model_name!r} rejected a replayed thinking block: Anthropic binds each thinking block '
+        'to the conversation prefix that produced it, and that prefix changed between requests. '
         "Pydantic AI retried with `prefix_mismatch_behavior='drop_block'`, so the run continued "
         "without that turn's reasoning. The cause is something earlier in the request that is not "
         'byte-stable between turns — commonly instructions carrying a per-request value such as a '
@@ -184,5 +185,5 @@ def warn_stale_thinking_block_recovery(model_name: str) -> None:
         'https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding and '
         'https://platform.claude.com/docs/en/build-with-claude/preserved-thinking',
         AnthropicStaleThinkingBlockWarning,
-        stacklevel=2,
+        stacklevel=stacklevel,
     )

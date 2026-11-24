@@ -1,17 +1,17 @@
-"""Ask before tool calls that write files or run commands, by permission mode."""
+"""Ask before tool calls that write files or run commands, by permission mode and rules."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Awaitable, Callable, MutableSet, Sequence
-from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal, NamedTuple
+from dataclasses import KW_ONLY, dataclass, field, replace
+from typing import Any, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import ApprovalRequired, UserError
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UserError
+from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolApprovalResult,
@@ -21,9 +21,12 @@ from pydantic_ai.tools import (
     ToolApproved,
     ToolDefinition,
     ToolDenied,
+    matches_tool_selector,
 )
 from pydantic_ai_harness._durable import in_durable_context
-from pydantic_ai_harness.filesystem._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
+from pydantic_ai_harness._shell_command import shell_command, shell_command_arg
+from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
+from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, decide
 
 PermissionMode = Literal['full', 'auto', 'read-only']
 """How much the agent may do without asking.
@@ -35,6 +38,8 @@ PermissionMode = Literal['full', 'auto', 'read-only']
 
 PermissionAction = Literal['command', 'write']
 """What a call that asks would do: run a shell command, or write a file."""
+
+_WHAT: dict[PermissionAction, str] = {'command': 'command', 'write': 'file write'}
 
 DEFAULT_ASK_COMMANDS: tuple[str, ...] = (
     r'\brm\s+(-\S*[rRf]|--recursive\b|--force\b)',
@@ -74,6 +79,17 @@ class _AnsweredMetadata(BaseModel):
     permissions: _Answered
 
 
+class _Remembered(BaseModel):
+    conversation_id: str | None
+    subject: str
+
+
+class _RememberedMetadata(BaseModel):
+    """What `Permissions` attaches to the return of a call remembered inside a durable run, read back from history."""
+
+    permissions: _Remembered
+
+
 class RememberedApproval(NamedTuple):
     """A call approved with `remember=True`: the same tool on the same subject runs without asking in its conversation."""
 
@@ -101,7 +117,7 @@ class PermissionRequest:
     """The command, or the path written."""
 
     reason: str
-    """Why the current mode asks about this call, for the person deciding."""
+    """Why the current mode or a rule asks about this call, for the person deciding."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -124,7 +140,7 @@ Approver = Callable[[PermissionRequest], Awaitable[PermissionDecision]]
 
 @dataclass
 class Permissions(AbstractCapability[AgentDepsT]):
-    """Ask before tool calls that write files or run shell commands, according to a permission mode.
+    """Ask before file writes and shell commands by permission mode, and allow, ask, or deny tool calls by rule.
 
     A call the mode asks about raises [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired], so it
     joins the run's deferred approval flow: a
@@ -132,11 +148,14 @@ class Permissions(AbstractCapability[AgentDepsT]):
     `ask_permissions` puts it to a person inline, and without one the run ends with it in its
     [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output.
 
-    File writes are the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`, recognized by
-    their tool kind whatever they are named. Commands are the tools whose metadata declares
-    `code_arg_language='shell'` and a `code_arg_name`, as the `Shell` tools that take a command do. Other
-    tools are not checked, and neither are sub-agents' runs this capability does not reach: pass it in
-    `SubAgents(shared_capabilities=[...])` to check them too.
+    `rules` decide calls to any tool before the mode does: a matching `'allow'` rule runs the call, `'ask'`
+    holds it, and `'deny'` refuses it with a `ToolReturnPart` whose `outcome` is `'denied'`, even when it was
+    approved. Calls no rule matches follow the mode.
+
+    The mode checks file writes, the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`,
+    recognized by their tool kind whatever they are named, and commands, the tools whose metadata declares
+    `code_arg_language='shell'` and a `code_arg_name`, as the `Shell` tools that take a command do. Sub-agents'
+    runs this capability does not reach are not checked: pass it in `SubAgents(shared_capabilities=[...])`.
 
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.
@@ -147,6 +166,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
 
+    rules: Sequence[PermissionRule[AgentDepsT]] = ()
+    """Rules that allow, ask about, or deny matching calls, checked before the mode."""
+
     ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS
     """Regular expressions for the commands `'auto'` asks about, searched for anywhere in the command."""
 
@@ -156,7 +178,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
     """Calls approved with `remember=True`, which run without asking.
 
     The caller owns it: pass one to share it, bound it, or drop it with the conversation it is for. It is
-    in-process memory, so inside a durable workflow or flow it is neither read nor written: every call asks.
+    in-process memory, so inside a durable workflow or flow it is not used: approvals are remembered in the
+    message history instead, in the metadata of the approved call's `ToolReturnPart`.
     """
 
     _patterns: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
@@ -173,6 +196,27 @@ class Permissions(AbstractCapability[AgentDepsT]):
         """Return the stable name used in agent specs."""
         return 'Permissions'
 
+    @classmethod
+    def from_spec(
+        cls,
+        mode: PermissionMode = 'full',
+        *,
+        rules: Sequence[PermissionRuleSpec] = (),
+        ask_commands: Sequence[str] = DEFAULT_ASK_COMMANDS,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+    ) -> Permissions[AgentDepsT]:
+        """Build the serializable configuration: a fixed mode, and rules as mappings of `PermissionRule` fields."""
+        return cls(
+            mode,
+            rules=[PermissionRule[AgentDepsT](**rule) for rule in rules],
+            ask_commands=ask_commands,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+        )
+
     def mode_for(self, ctx: RunContext[AgentDepsT]) -> PermissionMode:
         """The permission mode for `ctx`'s run, as it stands now."""
         return self.mode(ctx) if callable(self.mode) else self.mode
@@ -185,55 +229,138 @@ class Permissions(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        """Hold a call the mode asks about until it is approved, unless approved for the conversation already."""
-        asked = self._asks(ctx, tool_def=tool_def, args=args)
+        """Refuse a call a rule denies, and hold one asked about until it is approved, unless remembered."""
+        asked = await self._asks(ctx, tool_def=tool_def, args=args)
         if asked is None:
             return args
-        # In-process memory would not survive a replay or a move to another worker.
-        key = (
-            None if in_durable_context(ctx) else RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject)
-        )
         if ctx.tool_call_approved:
-            if key is not None and _remember(ctx.tool_call_metadata):
-                self.remembered.add(key)
+            if not in_durable_context(ctx) and _remember(ctx.tool_call_metadata):
+                self.remembered.add(RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject))
             return args
-        if key is not None and key in self.remembered:
+        if in_durable_context(ctx):
+            # In-process memory would not survive a replay or a move to another worker; history does.
+            if _remembered_in(
+                ctx.messages, _Remembered(conversation_id=ctx.conversation_id, subject=asked.subject), call.tool_name
+            ):
+                return args
+        elif RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject) in self.remembered:
             return args
         raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
 
-    def _asks(self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]) -> _Asked | None:
-        """What to ask about this call in the current mode, or `None` to run it."""
-        mode = self.mode_for(ctx)
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        result: Any,
+    ) -> Any:
+        """Inside a durable run, record a call approved with `remember=True` in its `ToolReturnPart`'s metadata."""
+        if not (ctx.tool_call_approved and in_durable_context(ctx) and _remember(ctx.tool_call_metadata)):
+            return result
+        asked = await self._asks(ctx, tool_def=tool_def, args=args)
+        if asked is None or _nests_tool_return(result):
+            return result
+        tool_return = cast(ToolReturn[Any], result) if isinstance(result, ToolReturn) else ToolReturn[Any](result)
+        existing: object = {} if tool_return.metadata is None else tool_return.metadata
+        if not isinstance(existing, dict) or 'permissions' in existing:
+            return tool_return
+        remembered = _RememberedMetadata(
+            permissions=_Remembered(conversation_id=ctx.conversation_id, subject=asked.subject)
+        )
+        return replace(tool_return, metadata={**existing, **remembered.model_dump()})
+
+    async def _asks(
+        self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> _Asked | None:
+        """What to ask about this call, or `None` to run it; raises `SkipToolExecution` when a rule denies it."""
+        command = shell_command(tool_def, args)
+        rules = [rule for rule in self.rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
+        posix = ctx.workspace.platform != 'windows'
+        rule = decide(rules, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
+        if rule is not None and rule.verdict != 'allow':
+            return _rule_asks(ctx, rule, _subject(tool_def, args, command))
+        return self._mode_asks(
+            self.mode_for(ctx), tool_def=tool_def, args=args, command=command, allowed=rule is not None
+        )
+
+    def _mode_asks(
+        self,
+        mode: PermissionMode,
+        *,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        command: str | None,
+        allowed: bool,
+    ) -> _Asked | None:
+        """What the mode asks about a call; a rule's allow skips read-only's blanket ask, not `ask_commands`."""
         if mode == 'full':
             return None
         if tool_def.tool_kind in _WRITE_KINDS:
             # The file tools only reach files inside their root, so `'auto'` lets them write.
             path = args.get('path')
-            if mode == 'read-only' and isinstance(path, str):
+            if mode == 'read-only' and not allowed and isinstance(path, str):
                 return _Asked(action='write', subject=path, reason='Read-only mode asks before every file write.')
             return None
-        command = _command(tool_def, args)
         if command is None:
             return None
-        if mode == 'read-only':
+        if mode == 'read-only' and not allowed:
             return _Asked(action='command', subject=command, reason='Read-only mode asks before every command.')
         if any(pattern.search(command) for pattern in self._patterns):
+            label = 'Auto' if mode == 'auto' else 'Read-only'
             return _Asked(
                 action='command',
                 subject=command,
-                reason='Auto mode asks before commands that delete, push, install, or reach the network.',
+                reason=f'{label} mode asks before commands that delete, push, install, or reach the network.',
             )
         return None
 
 
-def _command(tool_def: ToolDefinition, args: dict[str, Any]) -> str | None:
-    """The shell command a call runs, when its tool declares one."""
-    metadata = tool_def.metadata or {}
-    name = metadata.get('code_arg_name')
-    if metadata.get('code_arg_language') != 'shell' or not isinstance(name, str):
-        return None
-    command = args.get(name)
-    return command if isinstance(command, str) else None
+def _subject(
+    tool_def: ToolDefinition, args: dict[str, Any], command: str | None
+) -> tuple[PermissionAction, str] | None:
+    """Whether a call runs a command or writes a file, and which; `None` for any other call."""
+    if command is not None:
+        return 'command', command
+    path = args.get('path')
+    if tool_def.tool_kind in _WRITE_KINDS and isinstance(path, str):
+        return 'write', path
+    return None
+
+
+def _rule_asks(
+    ctx: RunContext[AgentDepsT], rule: PermissionRule[Any], subject: tuple[PermissionAction, str] | None
+) -> _Asked | None:
+    """What an `'ask'` rule asks about a call; raises `SkipToolExecution` for a `'deny'` rule."""
+    what = 'tool call' if subject is None else _WHAT[subject[0]]
+    if rule.verdict == 'deny':
+        message = f'A permission rule denied this {what}, so it did not run. Do not retry it.'
+        raise SkipToolExecution(ToolDenied(f'{message} Reason: {rule.reason}' if rule.reason else message))
+    if subject is None:
+        # Not a command or file write, so it takes the plain approval flow, like `requires_approval=True`.
+        if ctx.tool_call_approved:
+            return None
+        raise ApprovalRequired(metadata={'reason': rule.reason} if rule.reason else None)
+    reason = rule.reason or f'A permission rule asks before this {what}.'
+    return _Asked(action=subject[0], subject=subject[1], reason=reason)
+
+
+def _nests_tool_return(result: object) -> bool:
+    """Whether `result` is a list holding a `ToolReturn`, which core rejects with a clear error."""
+    return isinstance(result, list) and any(isinstance(item, ToolReturn) for item in cast(list[object], result))
+
+
+def _remembered_in(messages: Sequence[ModelMessage], remembered: _Remembered, tool_name: str) -> bool:
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, ToolReturnPart) and part.tool_name == tool_name:
+                try:
+                    if _RememberedMetadata.model_validate(part.metadata).permissions == remembered:
+                        return True
+                except ValidationError:
+                    continue
+    return False
 
 
 def _remember(metadata: object) -> bool:
@@ -280,6 +407,5 @@ async def ask_permissions(requests: DeferredToolRequests, approver: Approver) ->
 
 def denial_message(request: PermissionRequest, *, reason: str | None = None) -> str:
     """What the model is told when `request` is denied, with the person's `reason` when they gave one."""
-    what = 'command' if request.action == 'command' else 'file write'
-    message = f'The user denied this {what}, so it did not run.'
+    message = f'The user denied this {_WHAT[request.action]}, so it did not run.'
     return f'{message} Their reason: {reason}' if reason else message

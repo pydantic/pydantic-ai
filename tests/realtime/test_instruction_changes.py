@@ -69,7 +69,7 @@ def _changing_agent() -> tuple[Agent[None, str], dict[str, str | None]]:
 
 
 async def test_named_dynamic_instruction_is_tagged_at_connect() -> None:
-    """A dynamic block with a name goes out as a `<context>` element, as a standard run's append-mode prefix does."""
+    """A dynamic block with a name goes out as a `<pyai:context>` element, as a standard run's append-mode prefix does."""
     agent, _ = _changing_agent()
 
     @agent.instructions
@@ -82,10 +82,10 @@ async def test_named_dynamic_instruction_is_tagged_at_connect() -> None:
     assert model.last_instructions == snapshot("""\
 You are a voice assistant.
 
-<context id="agent:mood">
+<pyai:context id="agent:mood">
 Be cheerful.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
 
 Unnamed text.\
 """)
@@ -116,9 +116,9 @@ async def test_change_after_a_response_is_delivered_as_a_system_message() -> Non
     (change,) = connection.sent
     assert isinstance(change, InstructionChangeContext)
     assert change.system_prompt == snapshot("""\
-<context id="agent:mood">
+<pyai:context id="agent:mood">
 Be calm.
-</context>\
+</pyai:context>\
 """)
     request = session.all_messages()[-1]
     assert isinstance(request, ModelRequest)
@@ -159,9 +159,9 @@ async def test_change_without_a_system_channel_is_system_tagged_text() -> None:
     (change,) = connection.sent
     assert type(change) is TextContext
     assert change.text == snapshot("""\
-<system><context id="agent:mood">
+<system><pyai:context id="agent:mood">
 Be calm.
-</context></system>\
+</pyai:context></system>\
 """)
 
 
@@ -199,14 +199,14 @@ async def test_later_changes_fold_onto_earlier_ones() -> None:
         snapshot(
             [
                 """\
-<context id="agent:counter">
+<pyai:context id="agent:counter">
 Turn 2.
-</context>\
+</pyai:context>\
 """,
                 """\
-<context id="agent:counter">
+<pyai:context id="agent:counter">
 Turn 3.
-</context>\
+</pyai:context>\
 """,
             ]
         )
@@ -231,9 +231,9 @@ async def test_withdrawn_instruction() -> None:
     (change,) = connection.sent
     assert isinstance(change, InstructionChangeContext)
     assert change.system_prompt == snapshot("""\
-<context id="agent:mood">
+<pyai:context id="agent:mood">
 This context has been withdrawn.
-</context>\
+</pyai:context>\
 """)
 
 
@@ -289,17 +289,17 @@ async def test_appending_system_prompt_is_tagged_at_connect_and_restated_when_it
         _ = [event async for event in session]
 
     assert model.last_instructions == snapshot("""\
-<context id="system_prompt:caller">
+<pyai:context id="system_prompt:caller">
 The caller is unknown.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
     (change,) = connection.sent
     assert isinstance(change, InstructionChangeContext)
     assert change.system_prompt == snapshot("""\
-<context id="system_prompt:caller">
+<pyai:context id="system_prompt:caller">
 The caller is Jamie.
-</context>\
+</pyai:context>\
 """)
     request = session.all_messages()[-1]
     assert isinstance(request, ModelRequest)
@@ -341,10 +341,10 @@ async def test_seeded_appending_system_prompt_is_tagged_at_connect() -> None:
         _ = [event async for event in session]
     # The seeded prompt is the standing one the session opens with, and its current value is what it's sent.
     assert model.last_instructions == snapshot("""\
-<context id="system_prompt:dynamic_prompt">
+<pyai:context id="system_prompt:dynamic_prompt">
 Current value.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
     assert connection.sent == []
 
@@ -499,22 +499,22 @@ async def test_loaded_capability_block_changes_are_delivered_and_left_out_of_the
     assert model.last_instructions == snapshot("""\
 Be helpful.
 
-<context id="capability:deferred_capabilities">
+<pyai:context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - accent: Speak with an accent.
-</context>
+</pyai:context>
 
-<context id="capability:accent">
+<pyai:context id="capability:accent">
 Speak like a pirate.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
     (change,) = connection.sent
     assert isinstance(change, InstructionChangeContext)
     assert change.system_prompt == snapshot("""\
-<context id="capability:accent">
+<pyai:context id="capability:accent">
 Speak like a cowboy.
-</context>\
+</pyai:context>\
 """)
     request = session.all_messages()[-1]
     assert isinstance(request, ModelRequest)

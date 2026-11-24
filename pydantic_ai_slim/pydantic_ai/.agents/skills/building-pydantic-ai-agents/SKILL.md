@@ -255,6 +255,12 @@ always the end of audible speech: on WebRTC sidebands, track playback with `Real
 later response for them (history keeps them). Before
 passing raw microphone bytes to `send_audio`, convert them to mono PCM16 at `session.audio_input_sample_rate`; raw
 chunks carry no sample-rate metadata.
+On OpenAI GPT-Live, the agent's instructions go to the delegated backend; to change how the voice model speaks
+mid-call, use `session.append_voice_instructions(text)` (at most 500 tokens per call; other models raise `UserError`,
+their voice model takes the agent's instructions). For phone calls over Twilio Media Streams, follow
+`docs/realtime/deployment.md#twilio-media-streams`: convert the line's 8 kHz mu-law, send a `mark` after each chunk
+and pass the bytes of acknowledged marks to `interrupt(played_bytes=...)`, and drop pending marks before `clear`
+while still counting their bytes toward later positions.
 After `RealtimeTurnCompleteEvent` (or a greeting's finalized `SpeechPart`), await
 `session.wait_for_playback()` before closing the session or opening the microphone. It waits for the single
 device-paced `stream_audio()` view to account for all audio emitted so far — played, discarded on a barge-in or a
@@ -341,7 +347,7 @@ Key facts for building realtime agents:
   OpenAI/Azure, a contextual update on ElevenLabs Agents, a note to GPT-Live's voice model, `<system>`-tagged
   user text elsewhere), is recorded as a `SystemPromptPart`, and with the default `respond=True` gets a reply.
 - **Instructions are re-resolved before each model turn**, as in a standard run, and every change is appended (a
-  `<context>` element on the same operator channel, recorded as an `InstructionDeltaPart`; on GPT-Live, appended to
+  `<pyai:context>` element on the same operator channel, recorded as an `InstructionDeltaPart`; on GPT-Live, appended to
   the backend's instructions), whatever the block's `on_change`. Only instructions with an id can change: name an
   instruction function (`@agent.instructions(name=...)`) whose text changes mid-call, or the session warns and keeps
   the text it opened with.
@@ -502,7 +508,7 @@ These are mistakes agents commonly make with Pydantic AI. Getting these wrong pr
 - **Hook decorator names on `.on` don't repeat `on_`**: Use `hooks.on.run_error` and `hooks.on.model_request_error` — not `hooks.on.on_run_error`.
 - **`history_processors=` was removed in v2; use `capabilities=[ProcessHistory(p), ...]`**, or hook `before_model_request` directly via `capabilities=[Hooks(before_model_request=fn)]`. `ProcessHistory` is a thin wrapper around that hook — the hook itself is the underlying primitive. Passing `history_processors=` to `Agent` raises `TypeError`.
 - **Domain checks belong in an output validator, not after `run()`**: checking `result.output` against deps or a database once the run has returned loses the retry. Raise `ModelRetry` from `@agent.output_validator` so the model corrects its output in the same run. See [Validate Output Against Your Domain](./references/AGENTS-CORE.md#validate-output-against-your-domain).
-- **A failed run's work isn't lost**: `UsageLimitExceeded` and other run errors don't carry the run's messages (except `RunCancelled`, whose `all_messages()` holds them), but `with capture_run_messages() as messages:` around the run records them. Resume with `agent.run(message_history=messages)` and no prompt, instead of re-running the prompt and repeating its tool calls. See [Recover a Failed Run](./references/TESTING-AND-DEBUGGING.md#recover-a-failed-run).
+- **A failed run's work isn't lost**: an `AgentRunError` (`UsageLimitExceeded`, model errors, `RunCancelled`) carries the run's conversation as `error.conversation`, and `with capture_run_conversation() as captured:` around the run gets it as `captured.conversation` for any exception, including a tool's own. Resume with `agent.run(conversation=...)` and no prompt, which carries the usage forward, or save it to a `ConversationStore`, instead of re-running the prompt and repeating its tool calls. `capture_run_messages()` still records just the messages. See [Recover a Failed Run](./references/TESTING-AND-DEBUGGING.md#recover-a-failed-run).
 - **Enter the agent once in a long-lived service**: without `async with agent:`, a model name passed as `agent.run(..., model='provider:name')` creates a new provider and HTTP client for each run, Pydantic AI never closes the client of the agent's own model, and a run on a new event loop (a second `asyncio.run()`, or `run_sync()` from a different worker thread than the last call) replaces that client without closing it, so a thread pool leaks a client and its connections each time the thread changes: give each thread its own model, or enter the agent in each thread. Inside the block, runs reuse one provider per model name, and each `Model` instance a model selector returns more than once, and the agent closes the clients on exit. An `http_client` or SDK client you pass in is never replaced, so it fails on a new event loop with the SDK's own error. To tune timeouts or connection pool limits, pass `http_client=create_async_httpx2_client(timeout=..., limits=...)` (from `pydantic_ai.models`) to the provider (Groq, Cohere and GitHub take a legacy `httpx.AsyncClient` instead); a client you pass in is yours to close.
 
 ## Task-Family References

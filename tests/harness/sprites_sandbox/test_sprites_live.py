@@ -3,8 +3,8 @@
 The fake-backed suites cover the harness-owned logic: deadline handling, cancellation, and
 exception mapping. This live tier admits only what a correctly written fake could not catch: real
 process execution in a Sprite, `env` layered on the Sprite's environment, output reaching the
-client before a command ends, a closed exec connection stopping a timed-out command, and deletion
-as the Sprites control plane reports it.
+client before a command ends, a closed exec connection stopping a timed-out command, creation
+refusing an existing name with a 409, and deletion as the Sprites control plane reports it.
 
 Admission rule:
   A test belongs here only when its docstring can name the fake-encoded assumption it
@@ -98,6 +98,15 @@ async def test_creates_a_fresh_sprite_and_runs_a_command(client: AsyncSpritesCli
 
         assert backend.ref is not None
         assert (result.stdout.strip(), result.stderr.strip(), result.exit_code) == ('out', 'err', 3)
+
+
+async def test_creating_a_name_that_exists_is_refused_with_409(client: AsyncSpritesClient) -> None:
+    """Validates the fake-encoded assumption that sending a create again under a name that already exists
+    cannot make a second Sprite: Sprites refuses it with a 409, which `_create_refused` treats as committed."""
+    async with _owned(client) as backend:
+        assert backend.ref is not None
+        with pytest.raises(SpriteError, match=r'\(status 409\)'):
+            await client.create_sprite(backend.ref.id)
 
 
 async def test_destroy_ref_does_not_attach(client: AsyncSpritesClient) -> None:

@@ -4,7 +4,8 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Genera
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, assert_never, cast
+from functools import cached_property
+from typing import Any, Literal, assert_never, cast, get_args
 
 import httpx2
 import pydantic_core
@@ -16,6 +17,7 @@ from .._http import HTTPTimeout
 from .._run_context import RunContext
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
+    has_yaml_structured_suffix as _has_yaml_structured_suffix,
     is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
     number_to_datetime,
@@ -56,6 +58,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.mistral import MistralModelProfile, MistralReasoningEffort
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
@@ -138,7 +141,15 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
     except httpx2.HTTPStatusError as e:
         # A retrying transport raises this for a status it gave up on, and `mistralai` lets it through unwrapped.
-        raise _model_errors.transport_status_error(model_name, e.response) from e
+        body, _, text = _model_errors.transport_error_body(e.response)
+        raise _status_error(
+            model_name,
+            status_code=e.response.status_code,
+            body=body,
+            parsed=body,
+            headers=dict(e.response.headers),
+            text=text,
+        ) from e
     except httpx2.TransportError as e:
         # `mistralai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -150,22 +161,48 @@ def _map_status_error(e: MistralError, model_name: str) -> ModelHTTPError:
         error = pydantic_core.from_json(e.body)
     except ValueError:
         error = None
-    code = error.get('code') if _utils.is_str_dict(error) else None
-    error_type = error.get('type') if _utils.is_str_dict(error) else None
-    # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
+    return _status_error(
+        model_name,
+        status_code=e.status_code,
+        body=e.body,
+        parsed=error,
+        headers=dict(e.headers),
+    )
+
+
+def _status_error(
+    model_name: str,
+    *,
+    status_code: int,
+    body: object,
+    parsed: object,
+    headers: dict[str, str],
+    text: str | None = None,
+) -> ModelHTTPError:
+    """The error for a Mistral API error status, classified by `parsed`, the error object its `body` holds.
+
+    Without a message in `parsed`, the status is classified with `text`, the body's text if no SDK read it.
+    """
+    code = parsed.get('code') if _utils.is_str_dict(parsed) else None
+    error_type = parsed.get('type') if _utils.is_str_dict(parsed) else None
+    error_message = parsed.get('message') if _utils.is_str_dict(parsed) else None
+    message = error_message if isinstance(error_message, str) else text
+    # Mistral sends its numeric error codes as strings.
     code = str(code) if isinstance(code, str | int) else None
-    message = error.get('message') if _utils.is_str_dict(error) else None
+    # Mistral sends a context window overflow with the type `invalid_request_prompt_too_long` (code `'3059'`).
+    # `'3051'` is its generic invalid arguments code, so it only means an overflow when the message says so.
     category = (
         ModelContextWindowExceededError
-        if code == '3051'
-        else _model_errors.http_status_category(e.status_code, message)
+        if error_type == 'invalid_request_prompt_too_long'
+        or (code == '3051' and isinstance(error_message, str) and 'maximum context length' in error_message.lower())
+        else _model_errors.http_status_category(status_code, message)
     )
     return ModelHTTPError.for_category(
         category,
-        status_code=e.status_code,
+        status_code=status_code,
         model_name=model_name,
-        body=e.body,
-        headers=dict(e.headers),
+        body=body,
+        headers=headers,
         provider_error_code=code,
         provider_error_type=error_type if isinstance(error_type, str) else None,
     )
@@ -210,12 +247,15 @@ _MISTRAL_REASONING_EFFORT_MAP: dict[ThinkingLevel, Literal['none', 'high']] = {
     'xhigh': 'high',
     'max': 'high',
 }
-"""Maps the unified `thinking` setting to Mistral's `reasoning_effort`.
+"""Maps the unified `thinking` setting to `reasoning_effort` when the profile sets no `mistral_reasoning_efforts`.
 
-Mistral only exposes `'high'` (full thinking) and `'none'` (thinking suppressed), so every
+Small 4 and Medium 3.5 accept only `'high'` (full thinking) and `'none'` (thinking suppressed), so every
 enabled level maps to `'high'`; only `thinking=False` maps to `'none'`. See
 https://docs.mistral.ai/capabilities/reasoning/.
 """
+
+_MISTRAL_REASONING_EFFORT_ORDER: tuple[MistralReasoningEffort, ...] = get_args(MistralReasoningEffort)
+"""Every `reasoning_effort` value, from least to most reasoning."""
 
 
 class MistralModelSettings(ModelSettings, total=False):
@@ -246,7 +286,9 @@ class MistralModel(Model[Mistral]):
 
     # Mistral's chat API reads PDFs and takes text files inlined into the prompt, and has no audio or video part.
     _unsupported_file_inputs = frozenset({'audio', 'video'})
-    _supported_document_media_types = frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
+    _supported_media_types = {'document': frozenset({'application/pdf', *TEXT_DOCUMENT_MEDIA_TYPES})}
 
     _model_name: MistralModelName = field(repr=False)
     _provider: Provider[Mistral] = field(repr=False)
@@ -297,6 +339,11 @@ class MistralModel(Model[Mistral]):
     def system(self) -> str:
         """The model provider."""
         return self._provider.name
+
+    @cached_property
+    def profile(self) -> MistralModelProfile:
+        """The model profile."""
+        return cast(MistralModelProfile, super().profile)
 
     async def request(
         self,
@@ -669,17 +716,49 @@ class MistralModel(Model[Mistral]):
     def _translate_thinking(
         self,
         model_request_parameters: ModelRequestParameters,
-    ) -> Literal['none', 'high'] | MistralUnset:
+    ) -> MistralReasoningEffort | MistralUnset:
         """Map the unified `thinking` setting to Mistral's `reasoning_effort`.
 
-        Only models with adjustable reasoning accept `reasoning_effort`; always-on models (the dated
-        `magistral` ids) reason unconditionally and have no effort to turn down, so they receive nothing,
-        not even for `thinking=False`.
+        A model whose profile sets `mistral_reasoning_efforts` (Mistral Large 4) gets the closest effort it
+        accepts. Otherwise, a model with adjustable reasoning gets `'high'` or `'none'`, and a model that always
+        reasons with no effort to set (the dated `magistral` ids) receives nothing, not even for `thinking=False`.
         """
         thinking = model_request_parameters.thinking
-        if thinking is None or self.profile.get('thinking_always_enabled', False):
+        if thinking is None:
+            return UNSET
+        if (accepted := self.profile.get('mistral_reasoning_efforts')) is not None:
+            return self._closest_reasoning_effort(thinking, accepted)
+        if self.profile.get('thinking_always_enabled', False):
             return UNSET
         return _MISTRAL_REASONING_EFFORT_MAP[thinking]
+
+    @staticmethod
+    def _closest_reasoning_effort(
+        thinking: ThinkingLevel, accepted: frozenset[MistralReasoningEffort]
+    ) -> MistralReasoningEffort | MistralUnset:
+        """Map the unified `thinking` setting to the closest `reasoning_effort` the model accepts.
+
+        `thinking=False` maps to `'none'` if accepted, else the lowest accepted effort.
+        """
+        requested: MistralReasoningEffort
+        if thinking is False:
+            requested = 'none'
+        elif thinking in ('minimal', 'low'):
+            requested = 'low'
+        elif thinking == 'medium':
+            requested = 'medium'
+        # `True` asks for `'high'`, Mistral's recommended default.
+        elif thinking is True or thinking in ('high', 'xhigh', 'max'):
+            requested = 'high'
+        else:
+            assert_never(thinking)
+        order = _MISTRAL_REASONING_EFFORT_ORDER
+        accepted_in_order: list[MistralReasoningEffort] = [effort for effort in order if effort in accepted]
+        # The lowest accepted effort at or above the requested one, else the highest.
+        for effort in accepted_in_order:
+            if order.index(effort) >= order.index(requested):
+                return effort
+        return accepted_in_order[-1] if accepted_in_order else UNSET
 
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[MistralMessages]:
         file_content: list[UserContent] = []
@@ -811,7 +890,10 @@ class MistralModel(Model[Mistral]):
         return MistralImageURLChunk(image_url=image_url, type='image_url')
 
     def _map_binary_content(self, item: BinaryContent) -> MistralContentChunk:
-        if _is_text_like_media_type(item.media_type):
+        # An `image/*+yaml` type is an image, and keeps its image chunk.
+        if _is_text_like_media_type(item.media_type) or (
+            _has_yaml_structured_suffix(item.media_type) and not item.is_image
+        ):
             return MistralTextChunk(
                 text=self._format_inlined_text_file(
                     item.data.decode('utf-8'),

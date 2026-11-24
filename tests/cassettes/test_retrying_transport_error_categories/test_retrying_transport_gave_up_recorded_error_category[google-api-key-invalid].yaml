@@ -1,0 +1,61 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "116"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: hello
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 400
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=45
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        error:
+          code: 400
+          message: API key not valid. Please pass a valid API key.
+          status: INVALID_ARGUMENT
+          details:
+          - "@type": type.googleapis.com/google.rpc.ErrorInfo
+            reason: API_KEY_INVALID
+            domain: googleapis.com
+            metadata:
+              service: generativelanguage.googleapis.com
+          - "@type": type.googleapis.com/google.rpc.LocalizedMessage
+            locale: en-US
+            message: API key not valid. Please pass a valid API key.
+  recorded_at: 2026-11-14T20:36:38.612681+00:00

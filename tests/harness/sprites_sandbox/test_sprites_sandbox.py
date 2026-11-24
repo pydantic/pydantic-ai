@@ -55,6 +55,8 @@ from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBa
 from .conftest import live_token
 from .fake_sprites import FakeExecSocket, SpriteTransport
 
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
+
 
 def context(conversation: str = 'chat') -> RunContext[None]:
     return RunContext(deps=None, model=TestModel(), usage=RunUsage(), conversation_id=conversation, run_id='run')
@@ -543,22 +545,93 @@ class TestSpritesSandbox:
         assert transport.created == [sprite.name]
         assert await backend.get_sandbox() is sprite
 
-    async def test_lost_create_reply_before_lookup_visible_preserves_cleanup_ref(
+    async def test_lost_create_reply_keeps_the_cleanup_ref_and_the_next_attempt_finds_the_sprite(
         self, transport: SpriteTransport
     ) -> None:
         backend = SpritesSandboxBackend()
         transport.create_error_after_commit = NetworkError('lost reply')
-        transport.get_error_once = NotFoundError('not visible yet')
+        transport.get_error_once = NetworkError('lookup lost too')
         with pytest.raises(NetworkError, match='lost reply'):
             await backend.get_sandbox()
         [name] = transport.created
         assert backend.ref == WorkspaceRef(provider='sprites', id=name)
-        # A 404 while the created Sprite becomes visible is a transport failure, not a missing Sprite.
-        transport.get_error_once = NotFoundError('still not visible')
-        with pytest.raises(NetworkError, match='may still be becoming visible'):
-            await backend.get_sandbox()
+        # Sending the create again is refused with a 409, and the lookup that follows finds the Sprite.
         assert (await backend.get_sandbox()).name == name
         assert transport.created == [name]
+
+    async def test_refused_create_whose_name_is_not_found_is_unavailable(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error_after_commit = NetworkError('lost reply')
+        transport.get_error = NotFoundError('gone')
+        with pytest.raises(NetworkError, match='lost reply'):
+            await backend.get_sandbox()
+        # As with boxd: a 409 for a name nothing can be found under is a refusal, not a transient failure.
+        with pytest.raises(WorkspaceUnavailableError, match='status 409'):
+            await backend.get_sandbox()
+
+    async def test_create_lost_before_it_reached_sprites_is_sent_again(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError, match='lost request'):
+            await backend.get_sandbox()
+        assert backend.ref is not None
+        transport.create_error = None
+        assert (await backend.get_sandbox()).name == backend.ref.id
+        assert transport.created == [backend.ref.id]
+
+    async def test_lost_create_whose_lookup_also_fails_reports_the_create_error(
+        self, transport: SpriteTransport
+    ) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        transport.get_error = NetworkError('lookup lost too')
+        with pytest.raises(NetworkError, match='lost request'):
+            await backend.get_sandbox()
+        assert backend.ref is not None
+
+    async def test_stalled_create_sent_again_reports_a_creation_timeout(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError):
+            await backend.get_sandbox()
+        transport.create_error = None
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._ACQUIRE_TIMEOUT', 0.05)
+        transport.release_create = asyncio.Event()
+        with pytest.raises(TimeoutError, match='Sprite creation did not complete'):
+            await backend.get_sandbox()
+
+    async def test_cancelled_create_sent_again_still_records_the_sprite(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError):
+            await backend.get_sandbox()
+        transport.create_error = None
+        transport.release_create = asyncio.Event()
+        task = asyncio.create_task(backend.get_sandbox())
+        await transport.create_started.wait()
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        transport.release_create.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert backend.ref is not None
+        assert transport.created == [backend.ref.id]
+        assert (await backend.get_sandbox()).name == backend.ref.id
+
+    async def test_create_sent_again_and_refused_otherwise_is_reported(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        transport.create_error = NetworkError('lost request')
+        with pytest.raises(NetworkError):
+            await backend.get_sandbox()
+        transport.create_error = refused = SpriteError('Failed create sprite (status 400): unknown runtime')
+        with pytest.raises(WorkspaceUnavailableError) as caught:
+            await backend.get_sandbox()
+        assert type(caught.value) is WorkspaceUnavailableError
+        assert caught.value.__cause__ is refused
+        assert str(caught.value) == f'Could not start Sprites sandbox: {refused}'
 
     async def test_auth_error_reports_safe_reason_without_token(self, transport: SpriteTransport) -> None:
         secret = 'secret-sprite-token-123'
@@ -594,7 +667,7 @@ class TestSpritesSandbox:
         assert ('connection' if attach else 'creation') in str(caught.value)
         assert transport.execs == []
 
-    async def test_run_deadline_starts_once_the_sprite_is_acquired(
+    async def test_only_the_handshake_bound_applies_while_the_exec_socket_opens(
         self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         transport.names.add('remote')
@@ -617,7 +690,9 @@ class TestSpritesSandbox:
         backend = SpritesSandboxBackend(ref=WorkspaceRef(provider='sprites', id='remote'))
 
         assert (await backend.run(['echo', 'ok'], timeout=60)).stdout == 'ok\n'
-        assert deadlines[-1] >= acquired_at[0] + 60
+        # Only the handshake's bound, taken after acquisition, applies; the command's 60 s start once the socket opens.
+        handshake_timeout = _backend._HANDSHAKE_TIMEOUT  # pyright: ignore[reportPrivateUsage]
+        assert acquired_at[0] + handshake_timeout <= deadlines[-1] < acquired_at[0] + 60
 
     async def test_a_created_sprite_gets_its_working_directory(self, transport: SpriteTransport) -> None:
         directory = transport.root / 'new' / 'nested'
@@ -887,13 +962,23 @@ class TestSpritesSandbox:
         # Three attempts for the command; with no socket opened there is no stderr capture to read back.
         assert (transport.connects, transport.execs) == (3, [])
 
-    async def test_timeout_during_a_stalled_handshake_reads_no_capture(self, transport: SpriteTransport) -> None:
+    async def test_the_command_timeout_starts_once_the_exec_socket_is_open(self, transport: SpriteTransport) -> None:
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        # The handshake alone outlasts the timeout; the command itself is fast.
+        transport.exec_latency = 0.5
+        assert (await backend.run(['echo', 'ok'], timeout=0.3)).stdout == 'ok\n'
+
+    async def test_a_stalled_handshake_fails_after_its_retries(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr('pydantic_ai_harness.sprites_sandbox._backend._HANDSHAKE_TIMEOUT', 0.05)
         backend = SpritesSandboxBackend()
         await backend.get_sandbox()
         transport.exec_latency = 5
-        with pytest.raises(WorkspaceTimeoutError):
+        with pytest.raises(NetworkError, match='handshake'):
             await backend.run(['true'], timeout=0.3)
-        assert (transport.connects, transport.execs) == (1, [])
+        assert (transport.connects, transport.execs) == (3, [])
 
     async def test_exec_handshake_retries_when_command_cannot_have_started(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
@@ -1190,6 +1275,35 @@ class TestSpritesSandbox:
         assert not Path(socket.query['cmd'][4]).exists()
         assert (await backend.run('echo oops >&2', shell=True)).stderr == 'oops\n'
 
+    async def test_a_cancelled_command_removes_its_stderr_file_over_a_slow_exec(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        running = tmp_path / 'running'
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        # Deadlines read the event loop's clock: the read-back's handshake moves it on instead of taking that long.
+        loop = asyncio.get_running_loop()
+        real_loop_time = loop.time
+        skipped = 0.0
+        monkeypatch.setattr(loop, 'time', lambda: real_loop_time() + skipped)
+        connect = transport.connect
+
+        async def slow_connect(url: str, **kwargs: object) -> FakeExecSocket:
+            nonlocal skipped
+            if transport.execs:
+                # Only the exec that reads the capture back is slow: more than the default stop grace, less than the
+                # handshake timeout.
+                skipped += 5
+            return await connect(url, **kwargs)
+
+        monkeypatch.setattr('sprites.websocket.connect', slow_connect)
+        async with anyio.create_task_group() as group:
+            group.start_soon(backend.run, ['sh', '-c', f'echo secret >&2; : > {running}; exec sleep 30'])
+            while not running.exists():  # real-wait: the command runs in a real subprocess, which sets no event
+                await anyio.sleep(0.01)
+            group.cancel_scope.cancel()
+        assert not Path(transport.execs[0].query['cmd'][4]).exists()
+
     @pytest.mark.parametrize('timeout', [0, -1, float('inf'), '5'])
     async def test_invalid_timeout(self, transport: SpriteTransport, timeout: object) -> None:
         with pytest.raises(ValueError, match=r'^timeout must be a positive finite number or None, got '):
@@ -1253,10 +1367,12 @@ async def test_trio_is_refused_before_any_sprites_call(transport: SpriteTranspor
 def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([SpritesSandbox])['$defs']
     assert sorted(definitions['spec_params_SpritesSandbox']['properties']) == [
+        'authority',
         'defer_loading',
         'description',
         'env',
         'id',
+        'path_authority',
         'runtime',
         'working_dir',
     ]

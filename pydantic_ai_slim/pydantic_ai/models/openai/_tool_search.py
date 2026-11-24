@@ -3,9 +3,11 @@
 from __future__ import annotations as _annotations
 
 from collections import deque
+from collections.abc import Sequence
 from typing import Any, Literal, cast
 
 from openai.types import responses
+from openai.types.responses.namespace_tool import ToolFunction
 from openai.types.responses.response_tool_search_call import ResponseToolSearchCall
 from openai.types.responses.response_tool_search_output_item_param_param import ResponseToolSearchOutputItemParamParam
 from typing_extensions import Protocol
@@ -120,8 +122,15 @@ def tool_search_call_ids_by_output(response: responses.Response) -> dict[str, st
         for item in response.output
         if isinstance(item, responses.ResponseToolSearchCall) and item.execution == 'server'
     }
+    return pair_tool_search_outputs(response.output, server_call_ids, pending_call_ids)
+
+
+def pair_tool_search_outputs(
+    output: Sequence[responses.ResponseOutputItem], server_call_ids: set[str], pending_call_ids: deque[str]
+) -> dict[str, str]:
+    """Pair each hosted tool-search output in `output` with its call, consuming `pending_call_ids` in order."""
     output_call_ids: dict[str, str] = {}
-    for item in response.output:
+    for item in output:
         if not isinstance(item, responses.ResponseToolSearchOutputItem) or item.execution != 'server':
             continue
         if item.call_id is not None and item.call_id not in server_call_ids:
@@ -272,13 +281,16 @@ def build_tool_search_return_part(
     stashes the provider item identity and state on `provider_details` for replay.
     """
     matches: list[ToolSearchMatch] = []
-    # `output_item.tools` is a union of OpenAI Responses tool variants; only
-    # function tools carry a stable `name` field. Other variants (file_search,
-    # image generation, etc.) can't appear here in practice but aren't
-    # statically excluded from the union, so we filter by type.
+    # `output_item.tools` is a union of OpenAI Responses tool variants. A match
+    # arrives as a bare function tool, or as a namespace wrapping the deferred
+    # function. Other variants (file_search, image generation, etc.) can't appear
+    # here in practice but aren't statically excluded from the union, so we
+    # filter by type.
     for t in output_item.tools:
         if isinstance(t, responses.FunctionTool):
             matches.append({'name': t.name})
+        elif isinstance(t, responses.NamespaceTool):
+            matches.extend({'name': f.name} for f in t.tools if isinstance(f, ToolFunction))
     return NativeToolSearchReturnPart(
         provider_name=provider_name,
         content={'discovered_tools': matches},

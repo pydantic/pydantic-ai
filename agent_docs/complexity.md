@@ -112,7 +112,7 @@ The function was already over the limit, and the change made it worse. Keep the 
 
 **Shape**: terminal UI and reports: Rich tables and panels, menus, frames, diff rows and prompt loops.
 
-**Fix**: build each row, card or frame in its own method, and use guard clauses. `task_row` in `pydantic_clai2/runtime/tasks.py` is such a builder.
+**Fix**: build each row, card or frame in its own method, and use guard clauses. `task_row` in `pydantic_ai_pax/runtime/tasks.py` is such a builder.
 
 ### algorithm
 
@@ -138,7 +138,7 @@ C001, C002. Return early for the cases you can rule out, and skip unwanted items
 
 C003, C005.
 
-- Make the block a private method on the class, or a private function next to its only caller in the same module.
+- Make the block a private method on the class, or a private function next to its only caller in the same module. In a package whose `AGENTS.md` assigns module-level helpers to submodules by concern, follow that file.
 - Never extract it as a nested `def`. complexipy counts a nested `def` toward the enclosing function, one level deeper.
 - A local variable does not simplify a compound condition: `ok = a and b` costs what `if a and b:` costs. Name the condition as a predicate method instead.
 

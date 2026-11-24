@@ -16,7 +16,7 @@ import httpx2
 
 from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._context_size import mark_context_input_tokens
-from .._gateway_cost import fill_gateway_header_cost
+from .._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from .._run_context import RunContext
 from ..exceptions import (
     ModelAPIError,
@@ -74,6 +74,7 @@ from ..profiles.google import (
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
+    _with_google_cloud_media_types,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
@@ -177,6 +178,8 @@ _NATIVE_TOOL_NAME_TO_TOOL_TYPE: dict[str, ToolType] = {v: k for k, v in _TOOL_TY
 LatestGoogleModelNames = Literal[
     'gemini-4-carbon',
     'gemini-4-argon',
+    'gemini-4-hydrogen',
+    'gemini-4-neon',
     'gemini-3.1-pro-preview',
     'gemini-3.8-flash',
     'gemini-3.5-flash-lite',
@@ -215,8 +218,11 @@ _FINISH_REASON_MAP: dict[str, FinishReason | None] = {
     GoogleFinishReason.MALFORMED_FUNCTION_CALL.value: 'error',
     GoogleFinishReason.IMAGE_SAFETY.value: 'content_filter',
     GoogleFinishReason.UNEXPECTED_TOOL_CALL.value: 'error',
+    GoogleFinishReason.TOO_MANY_TOOL_CALLS.value: 'error',
     GoogleFinishReason.IMAGE_PROHIBITED_CONTENT.value: 'content_filter',
     GoogleFinishReason.NO_IMAGE.value: 'error',
+    GoogleFinishReason.IMAGE_RECITATION.value: 'content_filter',
+    GoogleFinishReason.IMAGE_OTHER.value: None,
     'MODEL_ARMOR': 'content_filter',
 }
 
@@ -431,9 +437,16 @@ def _map_api_error(
     """Map a `google.genai` API error or a transport failure to the pydantic-ai exception to raise in its place."""
     if isinstance(e, httpx2.HTTPStatusError):
         # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
-        error = _model_errors.transport_status_error(model_name, e.response)
-        error.retry_after = _model_errors.google_retry_after(error)
-        return error
+        body, status, message = _model_errors.google_transport_error_fields(e.response)
+        return _http_error(
+            model_name,
+            model_id_namespace,
+            status_code=e.response.status_code,
+            status=status,
+            message=message,
+            body=body,
+            headers=dict(e.response.headers),
+        )
     if isinstance(e, httpx2.TransportError):
         # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
         timeout = isinstance(e, httpx2.TimeoutException)
@@ -470,26 +483,23 @@ def _http_error(
     suggested_model_id = None
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-    category = _model_errors.google_status_category(status, message, body)
-    error = ModelHTTPError.for_category(
-        category or _model_errors.http_status_category(status_code, message),
+    return _model_errors.google_status_error(
+        model_name,
         status_code=status_code,
-        model_name=model_name,
+        status=status,
+        message=message,
         body=body,
         headers=headers,
         suggested_model_id=suggested_model_id,
-        provider_error_code=status,
         in_stream=in_stream,
     )
-    error.retry_after = _model_errors.google_retry_after(error)
-    return error
 
 
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str) -> Generator[None]:
     try:
         yield
-    except (errors.APIError, httpx2.TransportError) as e:
+    except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
         raise _map_api_error(e, model_name, model_id_namespace) from e
 
 
@@ -542,6 +552,47 @@ def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str
     return True
 
 
+def _request_http_options(client: Client, model_settings: ModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
+    """The per-request HTTP options for `client`: headers, plus the `timeout` and `max_retries` settings."""
+    # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
+    # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
+    # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
+    # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
+    # unless the caller sent their own in `extra_headers`.
+    if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
+        headers['X-Server-Timeout'] = headers.pop(caller_name)
+    elif client_timeout_ms := client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
+        server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
+        headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
+    # With no user-agent from the caller, our per-request `user-agent` replaces the client's own, so carry over
+    # a value the user set on a client they built, and add ours unless the client has it.
+    client_headers = client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
+    client_user_agent = client_headers.get('user-agent', '')
+    if not _move_caller_user_agent(headers, client_headers) and get_user_agent() not in client_user_agent:
+        headers['user-agent'] = f'{client_user_agent} {get_user_agent()}'.strip()
+    http_options: HttpOptionsDict = {'headers': headers}
+    if (timeout := model_settings.get('timeout')) is not None:
+        if isinstance(timeout, int | float):
+            http_options['timeout'] = int(1000 * timeout)
+        else:
+            raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+    if (max_retries := model_settings.get('max_retries')) is not None:
+        # Per-request `retry_options` replace the client's outright, so carry over everything but the count.
+        client_retry_options = (
+            client._api_client._http_options.retry_options  # pyright: ignore[reportPrivateUsage]
+            or HttpRetryOptions()
+        )
+        http_options['retry_options'] = {
+            'attempts': max_retries + 1,
+            'initial_delay': client_retry_options.initial_delay,
+            'max_delay': client_retry_options.max_delay,
+            'exp_base': client_retry_options.exp_base,
+            'jitter': client_retry_options.jitter,
+            'http_status_codes': client_retry_options.http_status_codes,
+        }
+    return http_options
+
+
 def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     """Normalize unified thinking effort to a Gemini thinking level."""
     level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
@@ -549,9 +600,10 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
         'low': 'LOW',
         'medium': 'MEDIUM',
         'high': 'HIGH',
-        # Gemini has nothing above `HIGH`; map the higher levels to it.
-        'xhigh': 'HIGH',
-        'max': 'HIGH',
+        # Models whose level set lacks `XHIGH` snap these to `HIGH`. `google-genai`'s `ThinkingLevel` doesn't list
+        # `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends it anyway.
+        'xhigh': 'XHIGH',
+        'max': 'XHIGH',
     }
     return level_by_effort[thinking]
 
@@ -570,20 +622,20 @@ _GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
 def _snap_thinking_level(
     level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
 ) -> GoogleThinkingLevel:
-    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH` scale.
+    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH < XHIGH` scale.
 
-    Equidistant levels round down to the cheaper one. `None` means the model takes the whole scale, so
-    the level passes through. Shared with the Live path, which differs only in where its level set
+    Equidistant levels round down to the cheaper one. `None` means the model takes the default
+    `GOOGLE_THINKING_LEVELS`. Shared with the Live path, which differs only in where its level set
     comes from.
     """
     if levels is None:
-        return level
+        levels = GOOGLE_THINKING_LEVELS
     if not levels:
         raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
-    if unknown := levels - GOOGLE_THINKING_LEVELS:
+    if unknown := levels - frozenset(GOOGLE_THINKING_LEVEL_SCALE):
         raise UserError(
             f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
-            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
+            f'expected a subset of {sorted(GOOGLE_THINKING_LEVEL_SCALE)!r}'
         )
     requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
     return min(
@@ -630,6 +682,10 @@ class GoogleModel(Model[Client]):
     """
 
     unsupported_settings = frozenset({'extra_body', 'logit_bias', 'parallel_tool_calls'})
+    # A tool's files that a tool result can't carry here go on the user channel, framed.
+    _relocates_tool_files = True
+    # The API takes a lookalike note ahead of a request's tool results.
+    _lookalike_notes_precede_tool_results = True
 
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
@@ -709,19 +765,40 @@ class GoogleModel(Model[Client]):
         return frozenset({self.system})
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+        """Set the profile defaults that follow the client's transport, before the user's `profile=` applies.
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
+        The Gemini API rejects `presence_penalty` and `frequency_penalty` for every model (verified live 2026-11-04),
+        while Google Cloud accepts them for the models `google_model_profile` says do. Google Cloud also reads more
+        image and document media types than the Gemini API.
+        On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`.
         """
-        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+        if self._is_google_cloud:
+            profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=False))
+            return _with_google_cloud_media_types(profile)
+        profile = merge_profile(
+            profile, GoogleModelProfile(google_supports_batch_api=True, google_supports_penalties=False)
+        )
+        # Verified live 2026-11-23 against the Gemini API: `gemini-2.5-flash-lite` rejects a `thinking_budget` below 512
+        # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex documents the
+        # same minimum but is not probed, so it keeps 128: https://github.com/pydantic/pydantic-ai/issues/14206
+        if self._model_name == 'gemini-2.5-flash-lite':
+            profile = merge_profile(profile, GoogleModelProfile(google_minimal_thinking_budget=512))
+        return profile
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('google_supports_penalties', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'frequency_penalty', 'presence_penalty'}
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
         """The model profile.
 
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
-        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
-        `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+        `google_thinking_levels` of `MINIMAL` and `HIGH`, and `gemini-4-neon` models to `LOW`, `MEDIUM`, `HIGH` and
+        `XHIGH`; on Vertex AI both keep the default levels. A `google_thinking_levels` set by the provider or the
+        `profile=` argument takes precedence.
 
         On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
         marked always-on there and gets `google_disables_thinking_with_zero_budget`, unless the provider or
@@ -746,6 +823,21 @@ class GoogleModel(Model[Client]):
             and not self._is_google_cloud
         ):
             return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
+        # Verified live 2026-11-18 against the Gemini API: `gemini-4-neon` accepts `LOW`, `MEDIUM`, `HIGH` and
+        # `XHIGH`, and returns 400 `Thinking level MINIMAL is not supported for this model`. Vertex is not probed and
+        # its thinking table doesn't list the model, so Vertex keeps the default levels.
+        # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+        if (
+            self._model_name.startswith('gemini-4-neon')
+            and 'google_thinking_levels' not in profile
+            and not self._is_google_cloud
+        ):
+            return {
+                **profile,
+                'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH')),
+                'google_supports_minimal_thinking_level': False,
+            }
         # Google documents Gemini 3 Pro as unable to turn thinking off, and the Gemini API 400s
         # `thinking_budget=0` for it, but Vertex (`global`) accepts it and returns no thoughts: verified live
         # 2026-10-23 on `gemini-3.1-pro-preview` and its `-customtools` variant, 8 of 8 reasoning prompts.
@@ -925,7 +1017,7 @@ class GoogleModel(Model[Client]):
                     contents=contents,
                     config=config,
                 )
-        except errors.APIError as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -1159,46 +1251,6 @@ class GoogleModel(Model[Client]):
         # An explicit thinking config replaces the unified one in `_translate_thinking`.
         return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
 
-    def _build_http_options(self, model_settings: GoogleModelSettings, headers: dict[str, str]) -> HttpOptionsDict:
-        """The per-request HTTP options: headers, plus the `timeout` and `max_retries` settings."""
-        # The SDK sends the client's timeout, which the provider pins to the HTTP client's read timeout, as
-        # `X-Server-Timeout`: a deadline for the whole request. A read timeout only bounds the wait between bytes,
-        # so the server would cut off a response that streams for longer. The SDK leaves the header alone when
-        # it's already set (in this exact spelling), so ask for at least Google's long-decode figure instead,
-        # unless the caller sent their own in `extra_headers`.
-        if caller_name := next((name for name in headers if name.lower() == 'x-server-timeout'), None):
-            headers['X-Server-Timeout'] = headers.pop(caller_name)
-        elif client_timeout_ms := self.client._api_client._http_options.timeout:  # pyright: ignore[reportPrivateUsage]
-            server_timeout = max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)
-            headers['X-Server-Timeout'] = str(math.ceil(server_timeout))
-        # With no user-agent from the caller, our per-request `user-agent` replaces the client's own, so carry over
-        # a value the user set on a client they built, and add ours unless the client has it.
-        client_headers = self.client._api_client._http_options.headers or {}  # pyright: ignore[reportPrivateUsage]
-        client_user_agent = client_headers.get('user-agent', '')
-        if not _move_caller_user_agent(headers, client_headers) and get_user_agent() not in client_user_agent:
-            headers['user-agent'] = f'{client_user_agent} {get_user_agent()}'.strip()
-        http_options: HttpOptionsDict = {'headers': headers}
-        if (timeout := model_settings.get('timeout')) is not None:
-            if isinstance(timeout, int | float):
-                http_options['timeout'] = int(1000 * timeout)
-            else:
-                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
-        if (max_retries := model_settings.get('max_retries')) is not None:
-            # Per-request `retry_options` replace the client's outright, so carry over everything but the count.
-            client_retry_options = (
-                self.client._api_client._http_options.retry_options  # pyright: ignore[reportPrivateUsage]
-                or HttpRetryOptions()
-            )
-            http_options['retry_options'] = {
-                'attempts': max_retries + 1,
-                'initial_delay': client_retry_options.initial_delay,
-                'max_delay': client_retry_options.max_delay,
-                'exp_base': client_retry_options.exp_base,
-                'jitter': client_retry_options.jitter,
-                'http_status_codes': client_retry_options.http_status_codes,
-            }
-        return http_options
-
     def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
@@ -1229,7 +1281,7 @@ class GoogleModel(Model[Client]):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             budget_map: dict[ThinkingEffort, int] = {
-                'minimal': _GEMINI_2_5_PRO_MIN_THINKING_BUDGET,
+                'minimal': profile.get('google_minimal_thinking_budget', _GEMINI_2_5_PRO_MIN_THINKING_BUDGET),
                 'low': 2048,
                 'medium': 8192,
                 'high': 24576,
@@ -1280,7 +1332,8 @@ class GoogleModel(Model[Client]):
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
-        http_options = self._build_http_options(model_settings, headers)
+        http_options = _request_http_options(self.client, model_settings, headers)
+        supports_penalties = 'presence_penalty' not in self._unsupported_settings()
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
@@ -1293,8 +1346,8 @@ class GoogleModel(Model[Client]):
             top_k=model_settings.get('top_k'),
             max_output_tokens=model_settings.get('max_tokens'),
             stop_sequences=model_settings.get('stop_sequences'),
-            presence_penalty=model_settings.get('presence_penalty'),
-            frequency_penalty=model_settings.get('frequency_penalty'),
+            presence_penalty=model_settings.get('presence_penalty') if supports_penalties else None,
+            frequency_penalty=model_settings.get('frequency_penalty') if supports_penalties else None,
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=self._translate_thinking(model_settings, model_request_parameters),
@@ -1728,7 +1781,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     yield event
             for event in self._map_trailing_grounding():
                 yield event
-        except (errors.APIError, httpx2.TransportError) as e:
+        except (errors.APIError, httpx2.TransportError, httpx2.HTTPStatusError) as e:
             raise _map_api_error(e, self._model_name, self._model_id_namespace) from e
 
     def _map_chunk(self, chunk: GenerateContentResponse) -> Iterator[ModelResponseStreamEvent]:
@@ -1765,7 +1818,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
         parts = candidate.content.parts
         if not parts:
-            return  # pragma: no cover
+            return
 
         if not self._has_tool_invocations:
             self._has_tool_invocations = _has_native_tool_invocations(parts)
@@ -1836,6 +1889,10 @@ class GeminiStreamedResponse(StreamedResponse):
             yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=web_fetch_return)
 
     def _map_part(self, part: Part) -> Iterator[ModelResponseStreamEvent]:
+        # The gateway reports a stream's cost on the final chunk's last part, which can be an empty text part it adds.
+        # `_map_chunk` adds the chunk's usage before mapping its parts, so that usage doesn't replace this cost.
+        if part.part_metadata and (cost := gateway_reported_cost({'usage': part.part_metadata})) is not None:
+            self._usage.cost = cost
         provider_details = _thought_signature_details(part)
         if part.text is not None and len(part.text) == 0 and not provider_details:
             return
@@ -1905,7 +1962,7 @@ class GeminiStreamedResponse(StreamedResponse):
     def _map_inline_data(
         self, inline_data: Blob, thought: bool | None, provider_details: dict[str, Any] | None
     ) -> Iterator[ModelResponseStreamEvent]:
-        if thought:  # pragma: no cover
+        if thought:
             # Per https://ai.google.dev/gemini-api/docs/image-generation#thinking-process:
             # > The model generates up to two interim images to test composition and logic. The last image within Thinking is also the final rendered image.
             # We currently don't expose these image thoughts as they can't be represented with `ThinkingPart`
@@ -2317,16 +2374,24 @@ def _map_response_part(part: Part, provider_name: str) -> ModelResponsePart | No
     if part.tool_response:
         return _map_tool_response(part.tool_response, provider_name)
     if inline_data := part.inline_data:
-        data = inline_data.data
-        mime_type = inline_data.mime_type
-        assert data and mime_type, 'Inline data must have data and mime type'
-        content = BinaryContent(data=data, media_type=mime_type)
-        return FilePart(content=BinaryContent.narrow_type(content))
+        return _map_inline_data_part(inline_data, part.thought)
     if _is_signature_only_part(part):
         # Vertex AI reports agentic media-processing steps as signature-only parts. There is nothing to
         # show, and both backends reject them when replayed ("Invalid thought signature").
         return None
     raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
+
+
+def _map_inline_data_part(inline_data: Blob, thought: bool | None) -> FilePart | None:
+    """Map an inline file, or return `None` for an interim image the model produced while thinking."""
+    if thought:
+        # See the thought-image comment in `GeminiStreamedResponse._map_inline_data`.
+        return None
+    data = inline_data.data
+    mime_type = inline_data.mime_type
+    assert data and mime_type, 'Inline data must have data and mime type'
+    content = BinaryContent(data=data, media_type=mime_type)
+    return FilePart(content=BinaryContent.narrow_type(content))
 
 
 def _character_index(text: str, byte_index: int) -> int | None:
