@@ -133,7 +133,11 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
             return self._map_stop(event)
         elif isinstance(event, gi.InteractionCompletedEvent):
             return self._map_completed(event)
-        elif isinstance(event, (gi.InteractionCreatedEvent, gi.InteractionStatusUpdate)):
+        elif isinstance(event, gi.InteractionCreatedEvent):
+            # A request resumed from a checkpoint follows steps the dropped request never stopped. A file part is
+            # only emitted when its step stops, so stop them now to keep their parts before the resumed request's.
+            return self._stop_open_steps()
+        elif isinstance(event, gi.InteractionStatusUpdate):
             return ()
         elif isinstance(event, gi.ErrorEvent):
             body = JSON_OBJECT.validate_python(event.error.model_dump(exclude_none=True) if event.error else {})
@@ -222,10 +226,14 @@ class GoogleInteractionsStreamedResponse(StreamedResponse):
                 events.append(self._parts_manager.handle_part(vendor_part_id=(event.index, index), part=part))
         return events
 
-    def _map_completed(self, event: gi.InteractionCompletedEvent) -> Iterable[ModelResponseStreamEvent]:
+    def _stop_open_steps(self) -> list[ModelResponseStreamEvent]:
         events: list[ModelResponseStreamEvent] = []
         for index in list(self._content_buffers):
             events.extend(self._map_stop(gi.StepStop(index=index)))
+        return events
+
+    def _map_completed(self, event: gi.InteractionCompletedEvent) -> Iterable[ModelResponseStreamEvent]:
+        events = self._stop_open_steps()
         raw = JSON_OBJECT.validate_python(event.interaction.model_dump(mode='json', by_alias=True, exclude_none=True))
         raw['steps'] = [self._steps[index] for index in sorted(self._steps)]
         response = build_response(

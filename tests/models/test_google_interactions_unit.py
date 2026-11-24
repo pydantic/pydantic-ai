@@ -771,6 +771,38 @@ async def test_stream_resumed_from_checkpoint_after_pending_mcp_call():
     assert [(part.provider_details or {})['google_interactions_step_index'] for part in result.parts] == [0, 1, 2]
 
 
+async def test_stream_resumed_from_checkpoint_after_open_media_step():
+    """A file the dropped request was still streaming comes out before the resumed request's parts.
+
+    Not recorded: the resume comes from google-genai 2.34, which the locked SDK predates. A file part is only emitted
+    when its step stops, and the dropped request's step never does.
+    """
+    values: list[dict[str, JsonValue]] = [
+        {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
+        {'event_type': 'step.start', 'index': 0, 'step': {'type': 'model_output'}},
+        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'image', 'mime_type': 'image/png', 'data': 'YWJj'}},
+        {'event_type': 'interaction.status_update', 'status': 'in_progress', 'continuation_token': 'checkpoint'},
+        {'event_type': 'interaction.created', 'interaction': {'object': 'interaction', 'model': 'gemini-test'}},
+        {'event_type': 'step.start', 'index': 0, 'step': {'type': 'model_output'}},
+        {'event_type': 'step.delta', 'index': 0, 'delta': {'type': 'text', 'text': 'after'}},
+        {'event_type': 'step.stop', 'index': 0},
+        {'event_type': 'interaction.completed', 'interaction': {'status': 'completed'}},
+    ]
+    response = GoogleInteractionsStreamedResponse(
+        ModelRequestParameters(), iter_events(values), 'gemini-test', 'google', 'https://example.com'
+    )
+    events = [event async for event in response]
+
+    assert [(event.index, event.part.part_kind) for event in events if isinstance(event, PartStartEvent)] == [
+        (0, 'file'),
+        (1, 'text'),
+    ]
+    assert [
+        (part.part_kind, (part.provider_details or {})['google_interactions_step_index'])
+        for part in response.get().parts
+    ] == [('file', 0), ('text', 1)]
+
+
 @pytest.mark.parametrize(
     'values,match',
     [
@@ -1452,6 +1484,8 @@ async def test_video_resolution_and_per_file_overrides(
             'ultra_high',
         ),
         ({'media_resolution': {}}, None, default_resolution),
+        # Interactions has no `unspecified` level and answers 400, so the file keeps the default as on `GoogleModel`.
+        ({'media_resolution': {'level': 'MEDIA_RESOLUTION_UNSPECIFIED'}}, None, default_resolution),
         ({'media_resolution': 'MEDIA_RESOLUTION_HIGH'}, None, 'high'),
     ]
     video = BinaryContent(b'video', media_type='video/mp4')

@@ -693,10 +693,10 @@ class GoogleInteractionsModel(Model[Client]):
         if 'media_resolution' in metadata:
             resolution = metadata['media_resolution']
             level = resolution.get('level') if _utils.is_str_dict(resolution) else resolution
-            if isinstance(level, str):
-                value['resolution'] = _CONTENT_RESOLUTION.validate_python(
-                    level.removeprefix('MEDIA_RESOLUTION_').lower()
-                )
+            name = level.removeprefix('MEDIA_RESOLUTION_').lower() if isinstance(level, str) else None
+            # Interactions has no `unspecified` level and rejects it, where `GoogleModel` keeps the default.
+            if name is not None and name != 'unspecified':
+                value['resolution'] = _CONTENT_RESOLUTION.validate_python(name)
         if 'media_processing' in metadata:
             value['processing'] = metadata['media_processing']
 
