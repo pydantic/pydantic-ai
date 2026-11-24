@@ -571,8 +571,9 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         assert self._client is not None and self._ref is not None
         client, machine_id = self._client, self._ref.id
         if self._panel_start_pending:
-            self._panel_start_pending = False
+            # Cleared only once the start returns, so a call cancelled during it tries again next time.
             await _start_panel(client, machine_id)
+            self._panel_start_pending = False
         return client.machines.computer, machine_id
 
     async def _start_display(self, size: tuple[int, int]) -> None:

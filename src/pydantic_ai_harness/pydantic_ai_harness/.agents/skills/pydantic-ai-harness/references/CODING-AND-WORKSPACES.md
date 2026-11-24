@@ -411,8 +411,7 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
 - `BoxdSandbox(desktop=True)` gives the agent the machine's 1280x800 desktop for `ComputerUse()`; `desktop=(w, h)`
   sets another size. It needs a machine on boxd's current default image, not a fork or snapshot of an older one. A
   top panel's Terminal button opens `xterm` and its Chromium button opens agent-browser's Chromium; from a shell,
-  `agent-browser open <url>` opens a URL in it. The agent can type any text, emoji included. Anyone in the boxd organization can watch the desktop in the console, and may be able to click
-  and type on it.
+  `agent-browser open <url>` opens a URL in it. The agent can type any text, emoji included. Anyone in the boxd organization can watch the desktop in the console.
 - `workspace=` wins over the ref in `message_history`, and UI adapters strip refs from client-sent
   history, so keep the ref server-side. Attaching to a gone sandbox raises `WorkspaceUnavailableError`
   (so do rejected credentials); no empty replacement is created unless you pass `workspace='new'`.
