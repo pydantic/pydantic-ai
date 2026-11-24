@@ -202,6 +202,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_supports_phase': False,
     'openai_supports_prompt_cache_breakpoints': False,
     'openai_responses_supports_prompt_cache_diagnostics': False,
+    'openai_responses_stable_instructions_as_input': False,
     'openai_responses_tool_choice_accepts_additional_tools': False,
     'openai_chat_supports_document_input': True,
     # AnthropicModelProfile subclass defaults
@@ -700,10 +701,17 @@ def test_openrouter_gpt_6_1_sol(model_name: str):
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-6.2-sol', 'gpt-6.2-astra'])
 def test_openai_gpt_6_2(model_name: str):
-    """GPT-6.2 Sol and Astra resolve GPT-6 Astra's capabilities: neither accepts `effort='none'`."""
+    """GPT-6.2 Sol and Astra resolve GPT-6 Astra's capabilities: neither accepts `effort='none'`.
+
+    They also take the stable instructions as leading input messages, since they put the top-level field after it.
+    """
 
     profile = OpenAIProvider.model_profile(model_name)
-    assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-astra'))
+    assert profile is not None
+    assert profile.get('openai_responses_stable_instructions_as_input') is True
+    assert _normalize(profile) == _normalize(
+        {**(OpenAIProvider.model_profile('gpt-6-astra') or {}), 'openai_responses_stable_instructions_as_input': True}
+    )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
