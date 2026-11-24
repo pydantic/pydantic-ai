@@ -1463,6 +1463,16 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             except (exceptions.CallDeferred, exceptions.ApprovalRequired) as e:
                 return index, e
 
+        def record_completed_results(tasks: list[asyncio.Task[tuple[int, _ToolCallPayload[NodeRunEndT]]]]) -> None:
+            for task in tasks:
+                if task.done() and not task.cancelled() and task.exception() is None:
+                    index, payload = task.result()
+                    if index not in function_parts and isinstance(payload, tuple):
+                        tool_parts, tool_user_content = payload
+                        function_parts[index] = tool_parts
+                        if tool_user_content:
+                            function_user_parts[index] = self._tool_user_part(self.tool_calls[index], tool_user_content)
+
         # Track appends per index rather than with a single flag: the append loop below yields
         # events between extends (output events, ordered result events, availability-delta
         # events), and a consumer closing or throwing at any of those suspension points would
@@ -1507,9 +1517,11 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                     yield result_event
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks, msg=e.args[0] if len(e.args) != 0 else None)
+                    record_completed_results(tasks)
                     raise
                 except BaseException:
                     await cancel_and_drain(*tasks)
+                    record_completed_results(tasks)
                     raise
 
             # Pick the winner: first valid output by emission order (or the streamed-in result).

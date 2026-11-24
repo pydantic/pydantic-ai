@@ -76,7 +76,9 @@ def _fail_first_tool() -> None:
     raise RuntimeError('first tool failed')
 
 
-def _parallel_sibling_tools_agent(first_tool_action: Callable[[], None]) -> Agent[None, str]:
+def _parallel_sibling_tools_agent(
+    first_tool_action: Callable[[], None], *, end_strategy: Literal['early', 'graceful', 'exhaustive'] = 'graceful'
+) -> Agent[None, str]:
     """An agent whose first-emitted tool waits until its sibling task has completed, then runs `first_tool_action`."""
     fast_finished = asyncio.Event()
 
@@ -94,7 +96,7 @@ def _parallel_sibling_tools_agent(first_tool_action: Callable[[], None]) -> Agen
             1: DeltaToolCall(name='fast_tool', json_args='{}', tool_call_id='call_fast'),
         }
 
-    agent = Agent(FunctionModel(call_tools, stream_function=stream_call_tools))
+    agent = Agent(FunctionModel(call_tools, stream_function=stream_call_tools), end_strategy=end_strategy)
 
     @agent.tool_plain
     async def first_tool() -> str:
@@ -162,6 +164,33 @@ async def test_external_cancellation_keeps_completed_tool_result(
     agent = _parallel_sibling_tools_agent(cancel_run)
 
     with capture_run_messages() as messages, agent.parallel_tool_call_execution_mode(mode):
+        run_task = asyncio.create_task(agent.run('go'))
+        with pytest.raises(asyncio.CancelledError):
+            await run_task
+
+    _assert_interrupted_fast_result(messages[-1])
+
+
+async def test_exhaustive_keeps_completed_tool_return_when_sibling_raises() -> None:
+    """An exhaustive sibling's completed return is recorded when another tool raises."""
+    agent = _parallel_sibling_tools_agent(_fail_first_tool, end_strategy='exhaustive')
+
+    with capture_run_messages() as messages:
+        with pytest.raises(RuntimeError, match='first tool failed'):
+            await agent.run('go')
+
+    _assert_interrupted_fast_result(messages[-1])
+
+
+async def test_exhaustive_keeps_completed_tool_return_on_cancellation() -> None:
+    """An exhaustive sibling's completed return is recorded when the run is cancelled."""
+
+    def cancel_run() -> None:
+        run_task.cancel()
+
+    agent = _parallel_sibling_tools_agent(cancel_run, end_strategy='exhaustive')
+
+    with capture_run_messages() as messages:
         run_task = asyncio.create_task(agent.run('go'))
         with pytest.raises(asyncio.CancelledError):
             await run_task
