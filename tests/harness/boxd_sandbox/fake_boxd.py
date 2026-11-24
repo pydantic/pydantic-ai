@@ -202,7 +202,9 @@ class _FakeTransport:
     def __init__(self, owner: FakeBoxd) -> None:
         self._owner = owner
 
-    async def bidi(self, method: str, requests: AsyncIterator[Any]) -> _FakeExecCall:
+    async def bidi(
+        self, method: str, requests: AsyncIterator[Any], *, region: str | None = None, machine: str | None = None
+    ) -> _FakeExecCall:
         assert method == 'Exec'
         self._owner.check_call()
         return _FakeExecCall(self._owner, requests)
@@ -284,7 +286,7 @@ class _FakeFsTransport:
                 _FakeRpcError(grpc.StatusCode.FAILED_PRECONDITION, 'the boxd agent is too old', 'agent_outdated')
             )
 
-    async def call(self, method: str, request: Any) -> Any:
+    async def call(self, method: str, request: Any, *, region: str | None = None) -> Any:
         if method == 'FsWrite':
             return await self._write(request)
         self._check(method, request.vm_id)
@@ -309,7 +311,7 @@ class _FakeFsTransport:
         except OSError as error:
             raise _fs_failure(error, path) from None
 
-    async def server_stream(self, method: str, request: Any) -> AsyncIterator[Any]:
+    async def server_stream(self, method: str, request: Any, *, region: str | None = None) -> AsyncIterator[Any]:
         self._check(method, request.vm_id)
         path = os.fsdecode(request.path)
         try:

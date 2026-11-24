@@ -228,44 +228,8 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
     if window is not None and window.queue is not ctx.pending_messages:
         window = None
     in_tool_call = window is None and ctx.tool_call_id is not None
-    if window is None and not in_tool_call:
-        raise UserError(
-            '`ctx.load_capability()` can only be called where a model request follows: from a `before_run` or '
-            '`before_model_request` hook, from `after_model_request` on a response with tool calls the run executes, '
-            'from a tool function, or from a tool hook such as `after_tool_execute`.'
-        )
-    tool_manager = ctx.tool_manager
-    pending_messages = ctx.pending_messages
-    # Durable engines swap the run's queue for a guard inside an activity, step, or task. Checked
-    # first: a Temporal activity's context raises on most other fields, including `ctx.realtime`'s.
-    if (in_tool_call and tool_manager is None) or not isinstance(pending_messages, PendingMessageQueue):
-        raise UserError(
-            '`ctx.load_capability()` is not supported inside a durable execution activity, step, or task, '
-            'whose recorded result is replayed without re-running your code. '
-            'Load the capability from a tool hook such as `after_tool_execute` instead.'
-        )
-    if ctx.realtime:
-        raise UserError('`ctx.load_capability()` is not supported in a realtime session.')
-    if in_tool_call:
-        assert tool_manager is not None
-        tool_def = tool_manager.get_tool_def(ctx.tool_name) if ctx.tool_name is not None else None
-        if tool_def is not None and tool_def.kind == 'output':
-            raise UserError('`ctx.load_capability()` cannot be called from an output tool, which ends the run.')
-
-    if isinstance(capability, str):
-        capability_id = capability
-    elif capability.id in ctx.capabilities:
-        # By `id` rather than identity, so a per-run copy made by `for_run` still resolves.
-        capability_id = capability.id
-    else:
-        # A capability without an explicit `id` is registered under a derived one.
-        capability_id = next((key for key, cap in ctx.capabilities.items() if cap is capability), None)
-        if capability_id is None:
-            raise UserError(
-                f'Capability {type(capability).__name__}(id={capability.id!r}) is not registered in this run.'
-            )
-    if capability_id not in ctx.capabilities:
-        raise UserError(f'No capability with id {capability_id!r} is registered in this run.')
+    pending_messages = _queue_for_load(ctx, window, in_tool_call=in_tool_call)
+    capability_id = _registered_capability_id(capability, ctx)
 
     # The model's own calls in the response being handled decide: the one being executed during a tool call, or the
     # one `after_model_request` is handling. Before a request, the last response's calls have already run.
@@ -293,6 +257,55 @@ def load_capability(capability: str | AbstractCapability[AgentDepsT], ctx: RunCo
     # ends the run instead (a tool call needs approval or is deferred, or output is produced), the load is dropped
     # rather than forcing a request. `False` if an earlier or parallel call already queued it.
     return pending_messages.append_capability_load(capability_id, records)
+
+
+def _queue_for_load(
+    ctx: RunContext[AgentDepsT], window: _LoadWindow | None, *, in_tool_call: bool
+) -> PendingMessageQueue:
+    """The run's queue a load from here is recorded on, or a `UserError` where `load_capability` can't load."""
+    if window is None and not in_tool_call:
+        raise UserError(
+            '`ctx.load_capability()` can only be called where a model request follows: from a `before_run` or '
+            '`before_model_request` hook, from `after_model_request` on a response with tool calls the run executes, '
+            'from a tool function, or from a tool hook such as `after_tool_execute`.'
+        )
+    tool_manager = ctx.tool_manager
+    pending_messages = ctx.pending_messages
+    # Durable engines swap the run's queue for a guard inside an activity, step, or task. Checked
+    # first: a Temporal activity's context raises on most other fields, including `ctx.realtime`'s.
+    if (in_tool_call and tool_manager is None) or not isinstance(pending_messages, PendingMessageQueue):
+        raise UserError(
+            '`ctx.load_capability()` is not supported inside a durable execution activity, step, or task, '
+            'whose recorded result is replayed without re-running your code. '
+            'Load the capability from a tool hook such as `after_tool_execute` instead.'
+        )
+    if ctx.realtime:
+        raise UserError('`ctx.load_capability()` is not supported in a realtime session.')
+    if in_tool_call:
+        assert tool_manager is not None
+        tool_def = tool_manager.get_tool_def(ctx.tool_name) if ctx.tool_name is not None else None
+        if tool_def is not None and tool_def.kind == 'output':
+            raise UserError('`ctx.load_capability()` cannot be called from an output tool, which ends the run.')
+    return pending_messages
+
+
+def _registered_capability_id(capability: str | AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]) -> str:
+    """The id `capability` is registered under in this run, or a `UserError` if it isn't registered."""
+    if isinstance(capability, str):
+        capability_id = capability
+    elif capability.id in ctx.capabilities:
+        # By `id` rather than identity, so a per-run copy made by `for_run` still resolves.
+        capability_id = capability.id
+    else:
+        # A capability without an explicit `id` is registered under a derived one.
+        capability_id = next((key for key, cap in ctx.capabilities.items() if cap is capability), None)
+        if capability_id is None:
+            raise UserError(
+                f'Capability {type(capability).__name__}(id={capability.id!r}) is not registered in this run.'
+            )
+    if capability_id not in ctx.capabilities:
+        raise UserError(f'No capability with id {capability_id!r} is registered in this run.')
+    return capability_id
 
 
 def _part_of_unloaded_group_message(ctx: RunContext[Any], capability_id: str) -> str:

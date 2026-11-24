@@ -67,7 +67,7 @@ async def install_git_plugin(
     url, name = parse_repository(source)
     if name in names:
         raise ValueError(f'Plugin {name} already exists; choose a repository with a different name.')
-    # Keep incomplete checkouts out of drop-in discovery, including in other running CLAI sessions.
+    # Keep incomplete checkouts out of drop-in discovery, including in other running Pax sessions.
     destination = await to_thread.run_sync(checkout_dir, plugins_dir, name)
     try:
         await to_thread.run_sync(partial(destination.mkdir, parents=True))
@@ -171,7 +171,7 @@ async def clone_repository(url: str, destination: Path) -> tuple[int, bytes]:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         ),
-        name='clai-plugin-clone',
+        name='pax-plugin-clone',
     )
     try:
         process = await asyncio.shield(spawn)

@@ -10,7 +10,7 @@ the next turn, and a deleted key fails the run instead of connecting without it.
 The non-secret options live in the plugin's settings and are edited in the menu that `/plugins configure posthog`
 opens, or the web UI's plugins panel. The plugin always builds its own FastMCP client: harness `PostHog`'s `auth` connects only to the US endpoint
 and `auth='oauth'` keeps browser tokens in memory with a 5-second connect timeout, so the region, the project and
-organization pins, and keyring-backed sign-in all need a client of CLAI's own.
+organization pins, and keyring-backed sign-in all need a client of Pax's own.
 
 The browser sign-in runs only from the settings menu or `/posthog login`, never while loading or in a prompt; see
 `pydantic_ai_pax.plugins.sign_in`.
@@ -353,7 +353,7 @@ _ROWS = (
         label='Server mode',
         description=(
             'cli wraps every PostHog tool in one `posthog` tool the agent drives with commands; tools registers each '
-            'one separately. auto lets the server choose, which is cli for CLAI.'
+            'one separately. auto lets the server choose, which is cli for Pax.'
         ),
         default='auto',
         choices=('auto', 'cli', 'tools'),

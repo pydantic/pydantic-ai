@@ -61,8 +61,9 @@ async def test_render_edge_events(show_tool_output: bool) -> None:
             FunctionToolCallEvent(part=ToolCallPart('grep', {'pattern': 'x'}, tool_call_id='g'))
         )
         await renderer.on_stream_event(FunctionToolResultEvent(part=content))
-    # A retried call carries the error, not matches, so it is not rendered as search results.
-    assert output.getvalue().count('tool did not return text results') == (2 if show_tool_output else 0)
+    # A retried call carries the error, not matches, so it gets the failure row instead of search results.
+    assert output.getvalue().count('tool did not return text results') == (1 if show_tool_output else 0)
+    assert "● grep 'x' in '.'\n  ⎿ retry\n\n" in output.getvalue()
     for operation in ('write', 'create_directory'):
         await renderer.on_stream_event(
             FileChangeRequestedEvent(
@@ -196,7 +197,7 @@ async def test_echo_prompt_idle_is_literal() -> None:
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
     await renderer.echo_prompt('[bold]first[/bold]\nsecond\tline\x07')
     await renderer.finish()
-    assert output.getvalue() == '> [bold]first[/bold]\nsecond  line\\x07\n\n'
+    assert output.getvalue() == '> [bold]first[/bold]\n  second  line\\x07\n\n'
 
 
 async def test_echo_prompt_stands_apart_from_answers() -> None:
@@ -207,13 +208,27 @@ async def test_echo_prompt_stands_apart_from_answers() -> None:
     renderer = StreamRenderer(console, stop_loading=lambda: None)
     await renderer.echo_prompt('first\nsecond')
     echoed = Text.from_ansi(output.getvalue())
-    assert echoed.plain.rstrip('\n') == '> first\nsecond'
+    assert echoed.plain.rstrip('\n') == '> first\n  second'
     assert output.getvalue().endswith('\n\n')
-    marker, first, second = (echoed.get_style_at_offset(Console(), offset) for offset in (0, 2, 8))
+    marker, first, second = (echoed.get_style_at_offset(Console(), offset) for offset in (0, 2, 10))
     assert marker.bold and marker.color is not None and marker.color.triplet is not None
     assert marker.color.triplet.hex == theme.LITHIUM.lower()
     assert first.bold and first.color is None
     assert second.bold
+
+
+async def test_echo_prompt_wraps_under_its_text_at_every_width() -> None:
+    """Wrapped rows start under the text, not under the marker, also once the terminal is resized."""
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (24, 24))
+    renderer = StreamRenderer(Console(file=surface, force_terminal=True, width=24), stop_loading=lambda: None)
+    await renderer.echo_prompt('read src/parser/parser.rs and fix the bug')
+
+    def rows(width: int) -> list[str]:
+        items = surface.transcript.ids()
+        return [Text.from_ansi(row).plain for item in items for row in surface.transcript.rows(item, width=width)]
+
+    assert rows(24)[:4] == ['> read', '  src/parser/parser.rs', '  and fix the bug', '']
+    assert rows(40)[:3] == ['> read src/parser/parser.rs and fix the', '  bug', '']
 
 
 @pytest.mark.parametrize('surface_output', [False, True])
