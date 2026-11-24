@@ -50,6 +50,7 @@ from pydantic_ai_harness import (
     ClearToolResults,
     Coder,
     CompactOnRequest,
+    ComputerUse,
     CurrentTime,
     DayAI,
     DeduplicateFileReads,
@@ -133,6 +134,7 @@ from ._counting_clients import (
     judge_relevant,
 )
 from ._mcp_server import MCPServer
+from .computer_use.display_fakes import ScreenProvider
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
@@ -343,6 +345,11 @@ def _check_sub_agents(merged: SubAgents[None]) -> None:
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
+def _check_computer_use(merged: ComputerUse[None]) -> None:
+    # One display: the later configuration wins, defaults included.
+    assert (merged.settle_seconds, merged.native) == (2, False)
+
+
 def _check_ssh_workspace(merged: SSHWorkspace[None]) -> None:
     assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
 
@@ -459,6 +466,16 @@ CASES: dict[str, CapabilityCase] = {
             _check_summarizing,
         ),
         build=lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
+    ),
+    'ComputerUse': CapabilityCase(
+        Combines(
+            'an agent has one display: the later configuration wins',
+            # Both without the native tool, which reads the display's size, so each runs with no display.
+            lambda: (ComputerUse[None](native=False, settle_seconds=1), ComputerUse[None](native=False)),
+            _check_computer_use,
+        ),
+        # The fake screen never changes, so settling after an action would only wait out its interval.
+        build=lambda _: [ScreenProvider().capability(), ComputerUse(settle_seconds=0)],
     ),
     'SystemReminders': CapabilityCase(
         Combines(

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         TieredCompaction,
         WarnNearLimits,
     )
+    from .computer_use import ComputerUse
     from .conversation_search import ConversationSearch
     from .current_time import CurrentTime
     from .day_ai import DayAI
@@ -136,6 +137,7 @@ __all__ = [
     'CodeMode',
     'Coder',
     'CompactOnRequest',
+    'ComputerUse',
     'ConversationSearch',
     'CurrentTime',
     'DEFAULT_CROSS_MODEL_NOTICE',
@@ -268,6 +270,7 @@ _LAZY_EXPORTS = {
     'CodeMode': 'code_mode',
     'Coder': 'coder',
     'CompactOnRequest': 'compaction',
+    'ComputerUse': 'computer_use',
     'ConversationSearch': 'conversation_search',
     'CurrentTime': 'current_time',
     'DayAI': 'day_ai',
