@@ -1,7 +1,7 @@
 """Anthropic's computer use tools, sent in place of a tool of the `computer` kind.
 
 These aren't recorded (VCR) tests. They check the exact request and stream shapes, which the cassettes' body matching
-can miss. They also cover cases no live model produces, such as stored histories and cut-off streams. The recorded
+can miss. They also cover cases no live model produces, such as stored histories. The recorded
 runs are in `tests/harness/computer_use/`.
 """
 
