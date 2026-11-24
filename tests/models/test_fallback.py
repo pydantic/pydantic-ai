@@ -1201,6 +1201,7 @@ async def test_streaming_error_before_first_event_falls_back() -> None:
                 error="ModelHTTPError: status_code: 503, model_name: test-function-model, body: {'error': 'overloaded'}",
                 timestamp=IsDatetime(),
                 duration=IsInstance(timedelta),
+                usage=RequestUsage(input_tokens=50),
             )
         ]
     )

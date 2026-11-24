@@ -1303,7 +1303,7 @@ async def test_stream_error_before_first_event_falls_back():
     response = stream.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert _described(response.failed_attempts) == snapshot(
-        [('failure', 'function', 'error', 'ModelAPIError: overloaded', None)]
+        [('failure', 'function', 'error', 'ModelAPIError: overloaded', RequestUsage(input_tokens=50))]
     )
 
 

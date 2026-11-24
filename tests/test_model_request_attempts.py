@@ -1056,7 +1056,7 @@ async def test_a_streamed_attempt_billed_before_it_failed_keeps_its_usage(moved_
     )
 
 
-async def _consume(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+async def _consume(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
     async for _ in events:
         pass
 
