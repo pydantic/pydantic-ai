@@ -807,7 +807,8 @@ class ContinueAsNewEnqueueWorkflow:
         async with self.events:
             async with _continue_as_new_agent.iter(None if history else 'Hello', message_history=history) as run:
                 async for node in run:
-                    if history is None and Agent.is_call_tools_node(node):
+                    # Only for the tool call: a run that doesn't continue would otherwise enqueue at every answer.
+                    if history is None and Agent.is_call_tools_node(node) and node.model_response.tool_calls:
                         run.enqueue('Follow-up')
         assert run.result is not None
         return run.result.all_messages()
