@@ -100,6 +100,7 @@ from pydantic_ai_harness.sub_agents import (
     is_task_report,
     serialize_message,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness._rendering import sent_messages
 
 from .._deferred_tools import pending_agent
@@ -3100,7 +3101,8 @@ class TestTaskControlBoundaries:
         )
         runs: list[list[str]] = []
         for _ in range(2):
-            result = await parent.run('Go.', run_id='run-1')
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                result = await parent.run('Go.', run_id='run-1')
             runs.append(sorted(task_id_in(receipt) for receipt in tool_returns(result.all_messages())))
         # Outside durable execution too, a rerun with the same `run_id` gives its tasks the same IDs.
         expected = sorted(uuid5(NAMESPACE_URL, f'run-1:{tool_call_id}').hex for tool_call_id in ('call_a', 'call_b'))
