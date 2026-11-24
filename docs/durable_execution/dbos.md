@@ -448,7 +448,7 @@ async def main():
     await DBOS.register_queue_async('research', worker_concurrency=4)  # (2)!
 ```
 
-1. `SetWorkflowTimeout(None)` keeps the parent's deadline off the child. The run ID, run step and tool call ID are stable when the parent is recovered, so the ID is too; as in [Tools with Side Effects](#tools-with-side-effects), the run step tells apart tool calls that reuse an ID.
+1. `SetWorkflowTimeout(None)` keeps the parent's deadline off the child. Unless you pass `run_id=` to the run, the run ID is derived from the workflow ID, so like the key in [Tools with Side Effects](#tools-with-side-effects) it's stable when the parent is recovered and changes in a fork. The run step tells apart tool calls that reuse an ID.
 2. A queue only for the children: the workflows running `lead` don't take its slots, so a waiting parent can't keep its children from starting.
 
 ### Concurrent Agent Runs
