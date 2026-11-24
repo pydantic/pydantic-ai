@@ -1861,7 +1861,7 @@ The user wants you to delete X.\
             return 'unreachable'  # pragma: no cover
 
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(agent.run('go'), timeout=5)
+            await asyncio.wait_for(agent.run('go'), timeout=READINESS_WAIT_TIMEOUT)
         assert sibling_cancelled.is_set()
         # Without a pending cancellation the run ends, but telling that apart from one needs a checkpoint
         # that changes how the task unwinds, so the span records `interrupted`, as for a cancelled run.
