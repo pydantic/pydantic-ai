@@ -1,4 +1,7 @@
-"""`FakeComputer`, the `computer` tool the model adapter tests use, returns results in the shape Pydantic AI Harness's tool does."""
+"""`FakeComputer`, the `computer` tool the model adapter tests use, returns results in the shape Pydantic AI Harness's tool does.
+
+Not a VCR test: the fake tool and `FunctionModel` make no provider request, so a cassette would record nothing.
+"""
 
 from __future__ import annotations
 
