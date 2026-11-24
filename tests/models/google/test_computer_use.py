@@ -55,7 +55,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
     from pydantic_ai_harness.computer_use import ComputerUse
 
-    from ...harness.display_fakes import ScreenBackend, ScreenProvider
+    from ...harness.computer_use.display_fakes import ScreenBackend, ScreenProvider
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai or pydantic-ai-harness not installed')
 
