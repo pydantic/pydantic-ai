@@ -170,6 +170,10 @@ def _sketch_sequence(items: Sequence[object]) -> str:
     return f'[{len(items)} items of {elem}]'
 
 
+RERUN_NOTE = '; rerun the original tool for the full output'
+"""How a marker on a lossy reduction, which keeps no handle, tells the model to recover the rest."""
+
+
 def _tail_line_start(text: str, count: int) -> int:
     """Find the last N LF/CRLF lines without splitting the entire payload."""
     end = len(text) - int(text.endswith('\n'))
@@ -193,11 +197,11 @@ def truncate_text(text: str, max_chars: int, strategy: TruncationStrategy, *, ke
         return text
     tail_chars = total - _tail_line_start(text, keep_tail_lines) if keep_tail_lines else 0
     if tail_chars > max_chars:
-        return truncate_tail(text, max_chars)
+        return truncate_tail(text, max_chars, note=RERUN_NOTE)
     if tail_chars == max_chars:
         return text[-max_chars:]
     if strategy is TruncationStrategy.tail:
-        truncated = truncate_tail(text, max_chars)
+        truncated = truncate_tail(text, max_chars, note=RERUN_NOTE)
         if tail_chars and not truncated.endswith(text[total - tail_chars :]):
             return text[-max_chars:]
         return truncated
@@ -213,11 +217,11 @@ def _truncate_head_and_tail(text: str, max_chars: int, strategy: TruncationStrat
     for retained in range(max_chars, max(1, tail_chars) - 1, -1):
         head_chars = (retained - tail_chars) * head_share // 5
         if strategy is TruncationStrategy.head and not tail_chars:
-            marker = f'\n\n[truncated: showing first {retained:,} of {total:,} chars]'
+            marker = f'\n\n[truncated: showing first {retained:,} of {total:,} chars{RERUN_NOTE}]'
         else:
             marker = (
                 f'\n\n[truncated: {total - retained:,} chars omitted from the middle; '
-                f'showing first {head_chars:,} + last {retained - head_chars:,} of {total:,} chars]\n\n'
+                f'showing first {head_chars:,} + last {retained - head_chars:,} of {total:,} chars{RERUN_NOTE}]\n\n'
             )
         if retained + len(marker) <= max_chars:
             break

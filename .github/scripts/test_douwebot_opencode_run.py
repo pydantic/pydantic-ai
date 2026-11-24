@@ -22,7 +22,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import category_classify_opencode
 import douwebot_opencode_run
-from douwebot_opencode_run import OPENCODE_GO, OPENCODE_ZEN_FREE, ZAI, ZAI_BACKUP, Provider, check_symlinks
+from douwebot_opencode_run import (
+    MODEL_DECLARATIONS,
+    OPENCODE_GO,
+    OPENCODE_ZEN_FREE,
+    ZAI,
+    ZAI_BACKUP,
+    Provider,
+    check_symlinks,
+    read_only_config,
+)
 
 LIMIT = (
     'OpenCode Go 5 hour usage limit reached. Switch to a free model, '
@@ -222,8 +231,8 @@ def fake_opencode(
 
 
 def assert_runs_on(launch: Launch, provider: Provider) -> None:
-    """The run names `provider`'s model, declares it only for a configured link, allows only that provider, and holds
-    only its key."""
+    """The run names `provider`'s model, declares it only for a configured link or a Coding Plan account, allows only
+    that provider, and holds only its key."""
     assert launch.args[launch.args.index('--model') + 1] == provider.model
     assert launch.config.agents['title']['model'] == provider.model
     assert launch.config.agents['compaction']['model'] == provider.model
@@ -233,13 +242,29 @@ def assert_runs_on(launch: Launch, provider: Provider) -> None:
         {'action': 'provider.use', 'resource': provider.name, 'effect': 'allow'},
     ]
     model = provider.model.partition('/')[2]
-    assert launch.config.providers == ({provider.name: {'models': {model: {}}}} if provider.declares_model else {})
+    declared = {provider.name: {'models': {model: MODEL_DECLARATIONS.get(provider.model, {})}}}
+    assert launch.config.providers == (declared if provider.declares_model else {})
     secrets = {'OPENCODE_API_KEY': 'go-key', 'ZAI_API_KEY': 'zai-key', 'ZAI_BACKUP_API_KEY': 'zai-backup-key'}
     names = {*secrets, OPENCODE_GO.key_variable, ZAI.key_variable}
     assert {name: value for name, value in launch.env.items() if name in names} == (
         {provider.key_variable: secrets[provider.secret_variable]} if provider.secret_variable else {}
     )
     assert 'GH_TOKEN' not in launch.env
+
+
+@pytest.mark.parametrize('provider', [ZAI, ZAI_BACKUP])
+def test_coding_plan_runs_declare_glm_5_4_with_its_limits_at_low_effort(provider: Provider) -> None:
+    """OpenCode 2.2.5's catalog lacks GLM-5.4, so each Coding Plan run declares its limits and Z.AI's low effort."""
+    assert read_only_config(agent='reviewer', provider=provider)['providers'] == {
+        'zai-coding-plan': {
+            'models': {
+                'glm-5.4': {
+                    'limit': {'context': 1_000_000, 'output': 131_072},
+                    'settings': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoningEffort': 'low'},
+                }
+            }
+        }
+    }
 
 
 def test_launcher_sends_shared_review_and_restricts_environment(
@@ -305,9 +330,9 @@ GO_LIMIT_LOG = (
 NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with no error type.'
 TO_ZAI_LOG = (
     'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
-    'retrying on zai-coding-plan/glm-5.3-flash on the primary Coding Plan.'
+    'retrying on zai-coding-plan/glm-5.4 on the primary Coding Plan.'
 )
-ZAI_LOG = 'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan'
+ZAI_LOG = 'OpenCode run on zai-coding-plan/glm-5.4 on the primary Coding Plan'
 # What OpenCode 2.2.5 writes when the Coding Plan's quota refuses the first request: Z.AI code 1308 or 1310.
 PLAN_REFUSED: list[dict[str, object]] = [
     REFUSED[0],
@@ -340,7 +365,7 @@ def test_go_refusal_reruns_the_review_on_the_coding_plan(
     assert capsys.readouterr().out == (
         f'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type {kind}, status 429.\n'
         f'{TO_ZAI_LOG}\n'
-        'OpenCode run served by zai-coding-plan/glm-5.3-flash on the primary Coding Plan.\n'
+        'OpenCode run served by zai-coding-plan/glm-5.4 on the primary Coding Plan.\n'
     )
 
 
@@ -368,7 +393,7 @@ def test_coding_plan_refusal_reruns_the_review_on_the_other_account(
     assert_runs_on(invoked[1], first)
     assert_runs_on(invoked[2], second)
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode-zai\n'
-    model = 'zai-coding-plan/glm-5.3-flash'
+    model = 'zai-coding-plan/glm-5.4'
     assert capsys.readouterr().out == (
         f'{GO_LIMIT_LOG}\n'
         f'opencode-go/deepseek-v4.1-flash refused the run before its first step; retrying on {model} on {first.plan}.\n'
@@ -521,6 +546,7 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.plan': 'OpenCode Go',
             'opencode_fallback.attempt': '1',
             'opencode_fallback.provider': 'opencode-go',
+            'opencode_fallback.model': 'opencode-go/deepseek-v4.1-flash',
             'opencode_fallback.steps': '0',
             'opencode_fallback.tokens': '0',
             'opencode_fallback.error_type': 'provider.go-limit',
@@ -534,6 +560,7 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.plan': 'the primary Coding Plan',
             'opencode_fallback.attempt': '2',
             'opencode_fallback.provider': 'zai-coding-plan',
+            'opencode_fallback.model': 'zai-coding-plan/glm-5.4',
             'opencode_fallback.steps': '0',
             'opencode_fallback.tokens': '0',
             'opencode_fallback.error_type': 'provider.rate-limit',
@@ -546,6 +573,7 @@ def test_logfire_token_exports_a_span_per_run(
             'opencode_fallback.plan': 'the backup Coding Plan',
             'opencode_fallback.attempt': '3',
             'opencode_fallback.provider': 'zai-coding-plan',
+            'opencode_fallback.model': 'zai-coding-plan/glm-5.4',
             'opencode_fallback.steps': '1',
             'opencode_fallback.tokens': '0',
             **failure,
@@ -603,7 +631,7 @@ def test_coding_plan_rate_limit_after_a_step_restarts_the_review_on_the_other_ac
         (first, 'provider.rate-limit', '1302', True),
         (second, None, None, None),
     ]
-    model = 'zai-coding-plan/glm-5.3-flash'
+    model = 'zai-coding-plan/glm-5.4'
     assert capsys.readouterr().out == (
         f'{GO_LIMIT_LOG}\n'
         f'opencode-go/deepseek-v4.1-flash refused the run before its first step; retrying on {model} on {first.plan}.\n'
@@ -810,7 +838,7 @@ def test_coding_plan_failure_names_its_error_type(
     assert capsys.readouterr().out == f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n{ZAI_LOG} failed with {described}.\n'
 
 
-GLM = 'zai-coding-plan/glm-5.3-flash'
+GLM = 'zai-coding-plan/glm-5.4'
 # The example value `.github/workflows/AGENTS.md` gives for `PR_REVIEW_MODEL_CHAIN`, so the tests keep it valid.
 HY4_CHAIN = (WORKFLOW.parent / 'AGENTS.md').read_text(encoding='utf-8').partition('```json\n')[2].partition('```')[0]
 GO_DEEPSEEK = replace(OPENCODE_GO, declares_model=True)
@@ -833,9 +861,15 @@ def review_on(review_env: Path, configured_chain: str, matrix_index: int = 0) ->
 
 
 def test_configured_chain_runs_each_link_in_order_and_zen_without_a_key(
-    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exported: list[dict[str, object]],
 ) -> None:
-    """Each configured link runs its entry's model, declared in its config, and Zen's free tier runs with no key."""
+    """Each configured link runs its entry's model, declared in its config, and Zen's free tier runs with no key.
+
+    Each run's span names its model, so the two Go links tell apart.
+    """
     refusal = subprocess.CalledProcessError(1, 'opencode')
     plan_refused = [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.quota', 'status': 429}}]
     invoked = fake_opencode(
@@ -852,6 +886,9 @@ def test_configured_chain_runs_each_link_in_order_and_zen_without_a_key(
     assert_runs_on(invoked[2], replace(ZAI_BACKUP, declares_model=True))
     assert_runs_on(invoked[3], GO_HY4)
     assert_runs_on(invoked[4], ZEN_HY4)
+    assert [span_attributes(span)['opencode_fallback.model'] for span in exported] == [
+        link.model for link in (GO_DEEPSEEK, ZAI, ZAI_BACKUP, GO_HY4, ZEN_HY4)
+    ]
     limit = 'failed with error type provider.go-limit, status 429, 5 hour limit, retry after 120000 ms.'
     go_hy4 = 'opencode-go/hy4-flash-free on OpenCode Go'
     zen = 'opencode/hy4-flash-free on the OpenCode Zen free tier'

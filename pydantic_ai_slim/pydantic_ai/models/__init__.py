@@ -116,9 +116,15 @@ from .._special_tokens import (
     restore_special_tokens_in_response,
     restore_special_tokens_in_stream,
 )
-from .._unsupported_settings import SUPPRESSED_WARNINGS, warn_unsupported_settings
+from .._tool_status import TOOL_STATUS_TEXTS
+from .._unsupported_settings import (
+    DEPRECATED_MODEL_WARNING_SUPPRESSED,
+    SUPPRESSED_WARNINGS,
+    warn_unsupported_settings,
+)
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
-from ..exceptions import ModelAPIError, UserError
+from ..computer_use import COMPUTER_KIND
+from ..exceptions import DeprecatedModelWarning, ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     STANDING_PROMPT_PLANTED_KEY,
@@ -158,6 +164,8 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolKind,
+    ToolKindLike,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -178,7 +186,7 @@ from ..messages import (
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, ComputerTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
 from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import (
@@ -304,9 +312,11 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'nebius',
         'ollama',
         'openrouter',
+        'otari',
         'ovhcloud',
         'sambanova',
         'snowflake',
+        'stav',
         'together',
         'vercel',
         'vllm',
@@ -326,6 +336,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'openrouter',
         'ovhcloud',
         'sambanova',
+        'stav',
         'together',
     ],
 )
@@ -539,6 +550,23 @@ class ModelRequestParameters:
         # per-tool loops.
         tool_def = self.tool_defs.get(tool_name)
         return 'withheld' if tool_def is not None and tool_def.defer_loading else 'visible'
+
+    def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
+        """The names of the function tools of this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
+
+        A tool with `defer_loading=True` is included only once the message history has revealed it.
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] also returns a deferred tool,
+        so instructions that name it don't change when it is revealed.
+
+        Args:
+            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
+        """
+        kind_id = kind.id if isinstance(kind, ToolKind) else kind
+        return [
+            t.name
+            for t in self.function_tools
+            if t.tool_kind == kind_id and (not t.defer_loading or t.name in self.revealed_tool_names)
+        ]
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
@@ -1875,6 +1903,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 ]
             )
         model_settings = merge_model_settings(self.settings, model_settings)
+        self._warn_if_deprecated()
         self._warn_unsupported_settings(model_settings, model_request_parameters)
 
         customized_params = self.customize_request_parameters(model_request_parameters)
@@ -1987,6 +2016,21 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_settings, params
 
+    def _warn_if_deprecated(self) -> None:
+        """Warn when the profile has a `deprecation`, unless framework code prepares the request without sending it."""
+        deprecation = self.profile.get('deprecation')
+        if deprecation is None or DEPRECATED_MODEL_WARNING_SUPPRESSED.get():
+            return
+        retirement = f', with a retirement date of {deprecation.retirement_date}' if deprecation.retirement_date else ''
+        replacement = f' It recommends {deprecation.replacement!r} instead.' if deprecation.replacement else ''
+        # Attributed to this line, so the default filters don't repeat it for a model until something changes the filters.
+        warnings.warn(
+            f'Model {self.model_id!r} is deprecated by its provider{retirement}.{replacement} '
+            f'See {deprecation.source_url}',
+            DeprecatedModelWarning,
+            stacklevel=1,
+        )
+
     def _unsupported_settings(self) -> frozenset[str]:
         """The settings this model ignores: its class's `unsupported_settings`, plus any its profile adds."""
         return self.unsupported_settings
@@ -2083,7 +2127,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         tool results in each request in the order of the calls they answer, so the request bytes
         (and the provider's prompt cache) don't depend on the order a history happened to store
         them in. When the profile sets `tool_call_id_length`, tool call IDs that don't fit it are
-        replaced with stable hashes that do.
+        replaced with stable hashes that do. When it sets `needs_json_string_tool_returns`, a successful
+        tool return of a string goes out as a `{"tool_output": ...}` JSON string field.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -2177,6 +2222,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 sealed=self._seals_system_blocks,
             )
         )
+
+    def _json_string_tool_returns_pass(self, projection: _Projection) -> _Projection:
+        # Ahead of the file replacement, so a note the framework puts in place of an unreadable file isn't wrapped.
+        return projection.with_messages(_tool_returns_as_json_strings(projection.messages, self.profile))
 
     def _unsupported_tool_return_files_pass(self, projection: _Projection) -> _Projection:
         return projection.with_messages(_replace_unsupported_tool_return_files(projection.messages, self.profile))
@@ -2300,6 +2349,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             reads=frozenset({SystemPromptPart}),
             consumes=frozenset({RetryFeedbackPart, RetryPromptPart}),  # pyright: ignore[reportDeprecated]
         ),
+        _ProjectionPass('json_string_tool_returns', _json_string_tool_returns_pass),
         _ProjectionPass('unsupported_tool_return_files', _unsupported_tool_return_files_pass),
         _ProjectionPass('special_tokens', _special_tokens_pass),
         _ProjectionPass('tool_results_first', _tool_results_first_pass, reads=frozenset({SystemPromptPart})),
@@ -4310,6 +4360,32 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
+def _drop_unrunnable_computer_tool(
+    params: ModelRequestParameters, natives: list[AbstractNativeTool]
+) -> list[AbstractNativeTool]:
+    """The native tools, keeping a `ComputerTool` only when the request has exactly one `computer` tool to run its calls."""
+    # A tool that is left out because a native tool is sent in its place can't run any calls.
+    native_tool_ids = {t.unique_id for t in natives}
+    computer_tool_names = [
+        name
+        for name in params.available_tool_names_for_kind(COMPUTER_KIND)
+        if params.tool_defs[name].unless_native not in native_tool_ids
+    ]
+    kept: list[AbstractNativeTool] = []
+    for native_tool in natives:
+        if isinstance(native_tool, ComputerTool) and not computer_tool_names:
+            if native_tool.optional:
+                continue
+            raise UserError('`ComputerTool` needs a `computer` tool the model can call, and this request has none.')
+        if isinstance(native_tool, ComputerTool) and len(computer_tool_names) > 1:
+            # Which of them ran a call would depend on the order of the tools.
+            raise UserError(
+                '`ComputerTool` needs a `computer` tool the model can call, and this request has more than one.'
+            )
+        kept.append(native_tool)
+    return kept
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -4342,7 +4418,7 @@ def _supported_native_tools(
             for t in unsupported_natives
             if t.unique_id in without_fallback and t.unique_id not in unapplied_settings
         ]
-        supported_names = [t.__name__ for t in supported_types]
+        supported_names = sorted(t.__name__ for t in supported_types)
         raise UserError(
             f'Native tool(s) {unsupported_names} not supported by this model. '
             f'Supported: {supported_names}. '
@@ -4400,17 +4476,19 @@ def resolve_request_tools(
        into `tool_visibility` exactly once. A caller without a `can_withhold_tool_schemas` answer
        (the realtime session path) can't withhold schemas at all.
 
-    On top of the filter, two narrower drops apply, kept independent:
+    On top of the filter, three narrower drops apply, kept independent. `optional=True` decides
+    the outcome of each one:
 
-    * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
-      optional native tool is silently dropped (no error raised). It does NOT govern the
-      corpus-empty drop.
+    * An optional native tool that this model doesn't support is silently dropped (no error raised).
     * The corpus-empty drop is specific to the framework-managed tool-search native tool's
       corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
       searchable, since sending it with no corpus to search would waste a tool slot. A
-      non-optional `ToolSearchTool` stays — the user asked explicitly. Other native tools
-      don't have a corpus and aren't subject to this drop, so making `optional` a base-class
+      non-optional `ToolSearchTool` stays, because the user asked for it explicitly. Other native
+      tools don't have a corpus and aren't subject to this drop, so making `optional` a base-class
       field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
+    * An optional `ComputerTool` is dropped when the request has no `computer` tool to run its
+      calls. A required `ComputerTool` in that case raises `UserError`, as does any `ComputerTool`
+      when the request has more than one `computer` tool.
 
     This is a module-level function rather than a `Model` method so both the classic agent-run
     path (via `Model._resolve_request_tools`, which passes its profile-derived
@@ -4429,6 +4507,8 @@ def resolve_request_tools(
     supported_natives = [
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
+    # After the tool search drop, so a tool kept because tool search isn't sent can run a `ComputerTool`'s calls.
+    supported_natives = _drop_unrunnable_computer_tool(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:
     # rule 1 must not drop a local fallback for a native tool that just left.
@@ -5294,6 +5374,39 @@ def _text_file_content(item: object) -> str | None:
     if isinstance(item, BinaryContent) and _utils.is_text_like_media_type(item.media_type):
         return item.data.decode(errors='replace')
     return None
+
+
+def _tool_returns_as_json_strings(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
+    """Send each successful string tool return as a JSON string field, where the profile asks for it.
+
+    See [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns]. Parts are
+    replaced one for one, and only in the outgoing copy. The status text Pydantic AI writes for an output tool or a
+    skipped call isn't a tool's output, so it's left as is. Returns the original list when nothing changed.
+    """
+    if not profile.get('needs_json_string_tool_returns', False):
+        return messages
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [_as_json_string_tool_return(part) for part in message.parts]
+            if _parts_changed(parts, message.parts):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _as_json_string_tool_return(part: ModelRequestPart) -> ModelRequestPart:
+    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful string return of a tool's text."""
+    if (
+        not isinstance(part, ToolReturnPart)
+        or part.outcome != 'success'
+        or not isinstance(part.content, str)
+        or part.content in TOOL_STATUS_TEXTS
+    ):
+        return part
+    return replace(part, content=json.dumps({'tool_output': part.content}, ensure_ascii=False))
 
 
 def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:

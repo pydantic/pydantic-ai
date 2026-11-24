@@ -20,6 +20,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelSettings,
+    ModelSettingsDeltaPart,
     ThinkingPart,
     UsageLimits,
 )
@@ -557,6 +558,45 @@ async def test_anthropic_count_recovery_marker_survives_normalization_with_expli
     assert get_mock_chat_completion_kwargs(mock_client)[0]['thinking'] == expected_thinking
     assert message(result.all_messages(), ModelRequest).metadata == snapshot(
         {'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}}
+    )
+
+
+async def test_anthropic_count_recovery_marks_a_request_whose_settings_delta_the_count_drops(
+    allow_model_requests: None,
+):
+    """The count marks the stored request even when it sends that request without its `ModelSettingsDeltaPart`.
+
+    A run that sets `thinking` records the effort on its request as a part, which the count drops, since the
+    effort goes out as the request-level setting. Dropping it copies the request.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], usage=BetaUsage(input_tokens=10, output_tokens=1))
+    )
+    count_requests: list[dict[str, Any]] = []
+
+    async def count_tokens(**kwargs: Any) -> BetaMessageTokensCount:
+        count_requests.append(kwargs)
+        if len(count_requests) == 1:
+            raise stale_thinking_block_error()
+        return BetaMessageTokensCount(input_tokens=10)
+
+    mock_client.beta.messages.count_tokens = count_tokens
+    model = AnthropicModel('claude-fable-5-1', provider=AnthropicProvider(anthropic_client=mock_client))
+    agent = Agent(model, model_settings={'thinking': 'high'})
+    usage_limits = UsageLimits(count_tokens_before_request=True, input_tokens_limit=100)
+
+    with pytest.warns(AnthropicStaleThinkingBlockWarning, match='rejected a replayed thinking block'):
+        first = await agent.run('What is 2+2?', usage_limits=usage_limits)
+    await agent.run('And again?', message_history=first.all_messages(), usage_limits=usage_limits)
+
+    request = message(first.all_messages(), ModelRequest)
+    assert any(isinstance(part, ModelSettingsDeltaPart) for part in request.parts)
+    assert request.metadata == snapshot(
+        {'__pydantic_ai__': {'anthropic_count_tokens_drop_stale_thinking_blocks': True}}
+    )
+    assert len(count_requests) == 3
+    assert count_requests[2]['extra_body'] == snapshot(
+        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
     )
 
 

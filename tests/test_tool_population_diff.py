@@ -42,6 +42,7 @@ from .conftest import IsDatetime, IsStr, RequestCapture, try_import
 with try_import() as imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
     from fastmcp.server import Context, FastMCP
+    from mcp import types as mcp_types
     from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
 
     from pydantic_ai.mcp import MCPToolset
@@ -137,7 +138,8 @@ def _mcp_list_changed_agent(model: Any) -> Agent[Any, str]:
     async def unlock(ctx: Context) -> str:
         """Add a tool and tell the client its list changed."""
         server.add_tool(later)
-        await ctx.session.send_tool_list_changed()
+        # Through the FastMCP context: on FastMCP 4, `ctx.session.send_tool_list_changed()` sends nothing.
+        await ctx.send_notification(mcp_types.ToolListChangedNotification())
         return 'unlocked'
 
     return Agent(model, toolsets=[MCPToolset(server)])
