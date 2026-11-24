@@ -262,7 +262,8 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
-        # Pyright strict reads `isinstance` on the `Any` that `handle_call` can return as `ToolReturn[Unknown]`.
+        # Pyright strict reads `isinstance` on the `Any` that `handle_call` can return as `ToolReturn[Unknown]`, so
+        # both returns below, the `ToolReturn` with no content included, carry an unknown-type ignore.
         if isinstance(result, ToolReturn) and result.content:
             # Held to the bridged tool's capability's authority, as if the model had called the tool itself.
             content = NestedCallContent([(target.tool_def.capability_id, result.content)])
