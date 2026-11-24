@@ -594,6 +594,7 @@ markers = [
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "render_live: runs against a real Render sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
+    "runta_live: runs against the real Runta API; needs credentials",
     "daytona_live: runs against a real Daytona control plane; needs credentials",
     "boxd_live: runs against a real boxd control plane; needs credentials",
     "opensandbox_live: runs against a real OpenSandbox server; needs one running",

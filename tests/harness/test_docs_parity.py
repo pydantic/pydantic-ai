@@ -170,6 +170,7 @@ _CAPABILITY_PAGE_META = {
     'kubernetes-sandbox.md': ('kubernetes_sandbox', 'Kubernetes Sandbox'),
     'render-sandbox.md': ('render_sandbox', 'Render Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'runta-sandbox.md': ('runta_sandbox', 'Runta Sandbox'),
     'model-router.md': ('model_router', 'Model Router'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),

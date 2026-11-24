@@ -107,6 +107,7 @@ _PROVIDER_CAPABILITIES = {
     'e2b': 'E2BSandbox()',
     'render': 'RenderSandbox()',
     'sprites': 'SpritesSandbox()',
+    'runta': 'RuntaSandbox()',
     'daytona': 'DaytonaSandbox()',
     'boxd': 'BoxdSandbox()',
     'kubernetes': 'KubernetesSandbox(warm_pool=...)',

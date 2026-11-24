@@ -624,6 +624,7 @@ CASES: dict[str, CapabilityCase] = {
     ),
     'RenderSandbox': CapabilityCase(Anonymous(_SANDBOX)),
     'SpritesSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='sprites'),
+    'RuntaSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='websockets'),
     'DaytonaSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='daytona'),
     'BoxdSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='boxd'),
     'SmolSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='smol'),

@@ -27,6 +27,7 @@ CAPABILITIES: dict[str, dict[str, str]] = {
     'ModalSandbox': {},
     'OpenSandbox': {'image': 'python:3.13-slim'},
     'RenderSandbox': {},
+    'RuntaSandbox': {},
     'SmolSandbox': {},
     'SpritesSandbox': {},
     'SSHWorkspace': {'destination': 'user@host', 'working_dir': '/work'},

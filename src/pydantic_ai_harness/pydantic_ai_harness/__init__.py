@@ -92,6 +92,7 @@ if TYPE_CHECKING:
     from .report_tool_errors import ReportToolErrors
     from .require_verification import DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS, RequireVerification
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
+    from .runta_sandbox import RuntaSandbox, RuntaSandboxBackend
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
     from .smart_search import SmartSearch
@@ -216,6 +217,8 @@ __all__ = [
     'SlidingWindowCompaction',
     'SmartSearch',
     'SmolSandbox',
+    'RuntaSandbox',
+    'RuntaSandboxBackend',
     'SmolSandboxBackend',
     'SpendLimits',
     'SpritesSandbox',
@@ -343,6 +346,8 @@ _LAZY_EXPORTS = {
     'SlidingWindowCompaction': 'compaction',
     'SmartSearch': 'smart_search',
     'SmolSandbox': 'smol_sandbox',
+    'RuntaSandbox': 'runta_sandbox',
+    'RuntaSandboxBackend': 'runta_sandbox',
     'SmolSandboxBackend': 'smol_sandbox',
     'SpendLimits': 'spend_limits',
     'SpritesSandbox': 'sprites_sandbox',
