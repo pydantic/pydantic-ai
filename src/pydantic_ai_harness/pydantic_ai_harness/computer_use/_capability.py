@@ -8,7 +8,7 @@ import weakref
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
@@ -91,29 +91,12 @@ def _shell_instructions(ctx: RunContext[Any]) -> str | None:
     return None
 
 
-_ObservingAction = Wait | Screenshot | Zoom | CursorPosition
-"""The actions that change nothing on the screen, so a read-only workspace allows them."""
-
 _ACTIONS_DESCRIPTION = 'The actions to run, in order.'
 
 
-async def _read_only_computer_signature(
-    actions: Annotated[
-        list[Annotated[_ObservingAction, Field(discriminator='type')]],
-        Field(min_length=1, description=_ACTIONS_DESCRIPTION),
-    ],
-) -> None:
-    """The `computer` tool's signature on a read-only workspace, whose schema offers only the actions that look."""
-
-
-_READ_ONLY_PARAMETERS_SCHEMA = Tool(_read_only_computer_signature).tool_def.parameters_json_schema
-
-
-async def _narrow_schema_when_read_only(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
-    """On a read-only workspace, offer only the actions that look, as `FileSystem` offers only its reading tools there."""
-    if not ctx.workspace.read_only:
-        return tool_def
-    return replace(tool_def, parameters_json_schema=_READ_ONLY_PARAMETERS_SCHEMA)
+async def _omit_on_read_only_workspace(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition | None:
+    """Offer no `computer` tool on a read-only workspace, as `Shell` offers none there: the screen can change anything."""
+    return None if ctx.workspace.read_only else tool_def
 
 
 _SCREEN_LOCKS: weakref.WeakValueDictionary[object, anyio.Lock] = weakref.WeakValueDictionary()
@@ -169,11 +152,6 @@ def _this_runs_pressed_buttons(ctx: RunContext[Any]) -> _RunPressedButtons | Non
 _NO_DISPLAY = (
     "`ComputerUse` needs a workspace with a display, and this run's has none. Start a sandbox with one, such as "
     '`DockerContainer(desktop=True)`.'
-)
-
-_READ_ONLY = (
-    'This workspace is read-only, so the `computer` tool can only look: take screenshots, zoom, read the pointer '
-    'position and wait. No action ran.'
 )
 
 _INTERRUPTED = (
@@ -522,7 +500,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             name='computer',
             description='Run actions on the screen in order, then return a screenshot of the result.',
             sequential=True,
-            prepare=_narrow_schema_when_read_only,
+            prepare=_omit_on_read_only_workspace,
             tool_kind=COMPUTER_KIND,
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
@@ -541,9 +519,6 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         ],
     ) -> ToolReturn:
         found_call = _find_computer_call(ctx)
-        changes_screen = not all(isinstance(action, _ObservingAction) for action in actions)
-        if changes_screen and ctx.workspace.read_only:
-            raise ToolFailed(_READ_ONLY)
         run_buttons = _this_runs_pressed_buttons(ctx)
         buttons_outlive_call = run_buttons is not None
         # Without the run's record, as for a capability loaded mid-run, each call releases its own buttons, and
@@ -705,7 +680,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
         """The provider's own computer tool, sized to the screenshot the model gives positions on.
 
         That's the latest screenshot, or the display's size before the first screenshot. It's worked out again for
-        each model a step tries. A read-only workspace gets none: its actions can't be narrowed to the ones that look.
+        each model a step tries. A read-only workspace gets none, as it gets no `computer` tool.
         """
         if ctx.workspace.read_only:
             return None
