@@ -57,6 +57,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -196,6 +197,57 @@ async def test_exhaustive_keeps_completed_tool_return_on_cancellation() -> None:
             await run_task
 
     _assert_interrupted_fast_result(messages[-1])
+
+
+async def test_exhaustive_keeps_tool_user_content_when_sibling_raises() -> None:
+    """An exhaustive sibling's `ToolReturn.content` is kept in the interrupted request's user channel."""
+    fast_finished = asyncio.Event()
+
+    def call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('first_tool', {}, tool_call_id='call_first'),
+                ToolCallPart('fast_tool', {}, tool_call_id='call_fast'),
+            ]
+        )
+
+    async def stream_call_tools(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {
+            0: DeltaToolCall(name='first_tool', json_args='{}', tool_call_id='call_first'),
+            1: DeltaToolCall(name='fast_tool', json_args='{}', tool_call_id='call_fast'),
+        }
+
+    agent = Agent(FunctionModel(call_tools, stream_function=stream_call_tools), end_strategy='exhaustive')
+
+    @agent.tool_plain
+    async def first_tool() -> str:
+        await fast_finished.wait()
+        raise RuntimeError('first tool failed')
+
+    @agent.tool_plain
+    async def fast_tool() -> ToolReturn:
+        task = asyncio.current_task()
+        assert task is not None
+        task.add_done_callback(lambda _: fast_finished.set())
+        return ToolReturn(return_value='fast result', content='fast tool says: use the result')
+
+    with capture_run_messages() as messages:
+        with pytest.raises(RuntimeError, match='first tool failed'):
+            await agent.run('go')
+
+    request = messages[-1]
+    assert isinstance(request, ModelRequest)
+    assert request.parts == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='fast_tool',
+                content='fast result',
+                tool_call_id='call_fast',
+                timestamp=IsNow(tz=UTC),
+            ),
+            UserPromptPart(content='fast tool says: use the result', timestamp=IsNow(tz=UTC)),
+        ]
+    )
 
 
 @pytest.mark.parametrize('message', [None, '', 'stop tools'])
