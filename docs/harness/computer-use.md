@@ -50,15 +50,15 @@ For any other workspace, see [Your own display](#your-own-display).
 
 ### What the display needs
 
-[E2B](e2b-sandbox.md#give-the-agent-a-desktop) starts its own desktop. Every other sandbox above runs one that needs
-these programs:
+Every sandbox above needs these programs:
 
 - Xvfb, unless an X server is already running
 - `xdotool`
 - `xwininfo` (Debian's `x11-utils`)
 - `scrot`
 - `setsid`
-- `fluxbox`, `tint2` and `xterm`, for the windows, the panel and its terminal
+- `fluxbox`, `tint2` and `xterm`, for the windows, the panel and its terminal, on every sandbox but
+  [E2B](e2b-sandbox.md#give-the-agent-a-desktop), which uses its template's XFCE desktop (`startxfce4`) instead
 
 The first use of the display installs any that are missing with `apt-get`, as root or with passwordless `sudo`. Add
 them to your image so the first use doesn't wait for the install. If one of the first five can't be installed, the run
