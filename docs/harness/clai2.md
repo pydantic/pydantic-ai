@@ -1,19 +1,28 @@
 ---
 title: Pax
-description: "Pax is a coding agent for your terminal, built on Pydantic AI and the Pydantic AI Harness."
+description: "Pax is a coding agent TUI built on the Pydantic AI Harness SDK's Coder, and a terminal interface for any Pydantic AI agent."
 ---
 
 <!-- Generated from src/pydantic_ai_pax/README.md by src/pydantic_ai_pax/scripts/sync_docs_page.py. Edit the README instead. -->
 
 # Pax
 
-A coding agent for your terminal, built on [Pydantic AI](https://pydantic.dev/docs/ai/).
+A coding agent TUI for your own harness, or for the default one: built on the
+[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) SDK's
+[`Coder`](https://pydantic.dev/docs/ai/harness/coder/), and a terminal
+[interface](https://pydantic.dev/docs/ai/overview/interfaces/) for any
+[Pydantic AI](https://pydantic.dev/docs/ai/) agent.
 
 Pax reads your code, edits files, and runs commands, and you see every step as it
 happens. Use the model you like: sign in with your ChatGPT or GitHub Copilot
 subscription, or bring an API key for OpenAI, Anthropic, or another provider Pydantic AI
-supports. The coding tools and integrations are plugins, so you can add tools,
-commands, and menus without forking anything.
+supports.
+
+Everything in Pax is a plugin, the coding agent included, so you can add tools,
+commands and menus without forking anything, swap any piece out, or point it at an
+agent of your own with `pax --agent mymodule:agent`. Plugins also carry the parts that
+are still arriving, such as sandboxes today and remote workspaces and remote computer
+use as they land.
 
 ![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
