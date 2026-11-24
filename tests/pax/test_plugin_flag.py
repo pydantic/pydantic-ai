@@ -32,7 +32,8 @@ class Probe(Plugin[ProbeSettings]):
     """Adds a `probe` tool, and counts its starts in its saved settings."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        def probe() -> str:  # pragma: no cover - only its presence among the tools is checked.
+        # Only its presence among the tools is checked.
+        def probe() -> str:  # pragma: no cover
             return 'probed'
 
         return [Toolset(FunctionToolset([probe]))]
@@ -166,7 +167,8 @@ async def test_a_project_declaration_needs_approval_first(tmp_path: Path) -> Non
 def test_unknown_plugin_lists_the_available_ones(
     tmp_path: Path, run_cli: CliRunner, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def chat(*args: object, **kwargs: object) -> None:  # pragma: no cover - the launch fails first.
+    # The launch fails first.
+    async def chat(*args: object, **kwargs: object) -> None:  # pragma: no cover
         raise AssertionError('started')
 
     monkeypatch.setattr('pydantic_ai_pax.app.chat', chat)
