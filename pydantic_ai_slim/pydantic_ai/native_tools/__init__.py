@@ -911,6 +911,7 @@ class ComputerTool(AbstractNativeTool):
 
     Supported by:
 
+    * Anthropic, on the models listed under [Anthropic](../models/anthropic.md#computer-use)
     * OpenAI Responses, on the models listed under [OpenAI](../models/openai.md#computer-use)
     """
 

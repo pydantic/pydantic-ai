@@ -40,7 +40,7 @@ clicks and types until it has the answer, and prints it. The container keeps run
 
 ## Models
 
-The model must accept images. On the models listed under [OpenAI](https://pydantic.dev/docs/ai/models/openai/#computer-use), it gets its provider's own computer use
+The model must accept images. On the models listed under [OpenAI](https://pydantic.dev/docs/ai/models/openai/#computer-use) and [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use), it gets its provider's own computer use
 tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
 tool.
 
@@ -143,6 +143,8 @@ For the `zoom` and `cursor_position` actions, also implement
   on prompt caching, and a long run can reach a provider's image limit: Claude refuses a request with more than 100
   images on its models with a 200k-token context.
 - A 1280x800 screen suits every model. A larger one costs more tokens per screenshot.
+- On Claude, a screenshot over the model's image size limit fails the request or makes clicks miss; see
+  [Anthropic](https://pydantic.dev/docs/ai/models/anthropic/#computer-use).
 - If the screen changes size, a call that gives positions is refused until the model takes a new screenshot.
 - When one `computer` call in a model response fails, the response's later `computer` calls don't run, and the model
   is told so.
