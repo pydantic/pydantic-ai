@@ -661,6 +661,14 @@ CASES = [
         attrs={'status_code': 401, 'provider_error_code': '401'},
     ),
     Case(
+        id='openrouter-http-metadata-raw-context-window-401-stream',
+        model=_openrouter,
+        handler=_json(401, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 401)),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': '401'},
+        stream=True,
+    ),
+    Case(
         id='openrouter-http-metadata-raw-context-window-403',
         model=_openrouter,
         handler=_json(403, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 403)),
@@ -678,11 +686,30 @@ CASES = [
         attrs={'status_code': 403, 'provider_error_code': '403'},
     ),
     Case(
+        id='openrouter-http-metadata-raw-context-window-403-flagged-input-stream',
+        model=_openrouter,
+        handler=_json(
+            403,
+            _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 403, flagged_input='text', reasons=['violence']),
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 403, 'provider_error_code': '403'},
+        stream=True,
+    ),
+    Case(
         id='openrouter-http-metadata-raw-context-window-404',
         model=_openrouter,
         handler=_json(404, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 404)),
         categories=_NOT_FOUND,
         attrs={'status_code': 404, 'provider_error_code': '404'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-404-stream',
+        model=_openrouter,
+        handler=_json(404, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 404)),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': '404'},
+        stream=True,
     ),
     Case(
         id='openrouter-http-metadata-raw-context-window-402',
@@ -692,6 +719,14 @@ CASES = [
         attrs={'status_code': 402, 'provider_error_code': '402'},
     ),
     Case(
+        id='openrouter-http-metadata-raw-context-window-402-stream',
+        model=_openrouter,
+        handler=_json(402, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 402)),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 402, 'provider_error_code': '402'},
+        stream=True,
+    ),
+    Case(
         id='openrouter-http-metadata-raw-context-window-429',
         model=_openrouter,
         handler=_json(429, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 429)),
@@ -699,11 +734,27 @@ CASES = [
         attrs={'status_code': 429, 'provider_error_code': '429'},
     ),
     Case(
+        id='openrouter-http-metadata-raw-context-window-429-stream',
+        model=_openrouter,
+        handler=_json(429, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 429)),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '429'},
+        stream=True,
+    ),
+    Case(
         id='openrouter-http-metadata-raw-context-window-503',
         model=_openrouter,
         handler=_json(503, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 503)),
         categories={ModelHTTPError, ModelUnavailableError},
         attrs={'status_code': 503, 'provider_error_code': '503'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-503-stream',
+        model=_openrouter,
+        handler=_json(503, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 503)),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'provider_error_code': '503'},
+        stream=True,
     ),
     Case(
         id='openrouter-http-metadata-raw-context-window-model-not-found',
