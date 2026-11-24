@@ -108,6 +108,7 @@ from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, Peers
 from pydantic_ai_harness.planning import SqlitePlanStore
+from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.slack import Slack
@@ -196,6 +197,20 @@ def _read_file_key(call: ToolCallPart) -> str | None:
 def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[None]]:
     (tmp_path / 'notes.md').write_text('Sunny.\n')
     return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+def _pydantic_ai_docs(tmp_path: Path) -> list[AbstractCapability[None]]:
+    (tmp_path / 'docs').mkdir()
+    (tmp_path / 'docs' / 'hooks.md').write_text('# Hooks\n')
+    return [PydanticAIDocs(local_docs_path=tmp_path / 'docs', cache=False), LocalWorkspace(tmp_path)]
+
+
+def _macroscope(tmp_path: Path) -> list[AbstractCapability[None]]:
+    """`Macroscope` running a stand-in CLI that reports a finished review with no issues, on stderr as it does."""
+    command = tmp_path / 'macroscope'
+    command.write_text("#!/bin/sh\nprintf 'review_id=review\\nissue_status=completed\\n' >&2\n")
+    command.chmod(0o755)
+    return [Macroscope(command=str(command), base='main'), LocalWorkspace(tmp_path)]
 
 
 def _capability_creation(tmp_path: Path) -> list[AbstractCapability[None]]:
@@ -906,7 +921,8 @@ CASES: dict[str, CapabilityCase] = {
         Narrows(
             'one `read_pyai_docs` tool per id; two that differ need their own ids and PrefixTools',
             lambda cls: (cls(), cls(cache=False)),
-        )
+        ),
+        calls=Calls((('read_pyai_docs', {'topic': 'hooks'}),), _pydantic_ai_docs),
     ),
     'Notion': CapabilityCase(
         Narrows(
@@ -928,6 +944,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(timeout=10.0), cls(timeout=20.0)),
         ),
         build=_workspace(Macroscope),
+        calls=Calls((('run_macroscope_review', {}),), _macroscope),
     ),
     'LocalStack': CapabilityCase(
         Narrows(

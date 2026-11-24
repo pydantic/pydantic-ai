@@ -539,7 +539,7 @@ fi
 # and the capability conformance checklist when the PR changes a capability or its case.
 echo "  - AGENTS.md files (repo-root + changed directories + touched durable-exec contract + capability conformance)"
 CAPABILITY_CONFORMANCE=agent_docs/capability-conformance.md
-CAPABILITY_PATHS='^(pydantic_ai_slim/pydantic_ai/capabilities/|src/pydantic_ai_harness/pydantic_ai_harness/|tests/(harness/)?capability_cases\.py$)'
+CAPABILITY_PATHS='^(pydantic_ai_slim/pydantic_ai/capabilities/|pydantic_ai_slim/pydantic_ai/models/(anthropic/__init__|openai/_compaction)\.py$|src/pydantic_ai_harness/pydantic_ai_harness/|tests/(harness/)?capability_cases\.py$)'
 > "$CTX/agents-md.txt"
 {
   if [ -f ./AGENTS.md ]; then

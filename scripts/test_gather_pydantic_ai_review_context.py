@@ -482,6 +482,8 @@ def test_a_typechange_keeps_both_halves_of_its_diff(tmp_path: Path, script: Path
     [
         ('src/pydantic_ai_harness/pydantic_ai_harness/memory/_capability.py', True),
         ('pydantic_ai_slim/pydantic_ai/capabilities/caching.py', True),
+        ('pydantic_ai_slim/pydantic_ai/models/anthropic/__init__.py', True),
+        ('pydantic_ai_slim/pydantic_ai/models/openai/_compaction.py', True),
         ('tests/harness/capability_cases.py', True),
         ('pydantic_ai_slim/pydantic_ai/messages.py', False),
         ('tests/harness/capability_cases.py.orig', False),

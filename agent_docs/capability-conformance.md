@@ -8,6 +8,8 @@ A capability is conformant when its entry in `CASES` (`tests/capability_cases.py
 
 Each area says what it requires, how the suite checks it, and which session owns the section. Contracts are `Contract(applies, exempt)` entries in `CONTRACTS`, run by `tests/harness/test_capability_contracts.py`; an exempt case must still break its contract, so fixing the capability fails the suite until the exemption is removed. Link an exemption that records a bug to the issue that tracks it.
 
+The contracts are numbered C0, C1, … in the order they land. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
+
 ## Coverage
 
 **Requirements**

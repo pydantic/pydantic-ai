@@ -802,11 +802,7 @@ DECLARES_CALLS = Contract(
             'a durable engine: its wrapper toolset runs tools only inside a Durable Task worker'
         ),
         'BubblewrappedWorkspace': Exempt('needs a sandbox backend: the `bwrap` binary and user namespaces'),
-        'Macroscope': Exempt('runs the `macroscope` CLI as a subprocess against a git repository'),
         'PlaywrightBrowser': Exempt('needs a browser that Playwright launches'),
-        'PydanticAIDocs': Exempt(
-            'fetches the docs from GitHub through an HTTP client of its own, which a case cannot replace'
-        ),
         **dict.fromkeys(('BackgroundTools', 'CodeMode', 'IPythonCodeMode', 'ToolBridge', 'ToolSearch'), Exempt(_ROUTE)),
         **dict.fromkeys(
             (
