@@ -105,7 +105,7 @@ from pydantic_ai import DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai.capabilities import HandleDeferredToolCalls
 
 
-async def approve_other_calls(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+async def approve_other_calls(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
     return DeferredToolResults(
         approvals={
             call.tool_call_id: input(f'Run {call.tool_name}({call.args_as_dict()})? [y/N] ') == 'y'
@@ -148,3 +148,12 @@ permissions = Permissions(lambda ctx: current)
 - [Approval Reviewer](https://pydantic.dev/docs/ai/harness/approval-reviewer/): let a second model approve the low-risk calls that need approval.
 - [Tool Call Judge](https://pydantic.dev/docs/ai/harness/tool-call-judge/): let a second model block calls.
 - [Ask User](https://pydantic.dev/docs/ai/harness/ask-user/): let the model ask a person multiple-choice questions.
+
+
+## API reference
+
+- [`Permissions`](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/permissions/_capability.py) configures permission modes and rules for an agent.
+- [`PermissionRule`](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/permissions/_rules.py) defines an allow, ask, or deny rule.
+- [`PermissionRuleSpec`](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/permissions/_rules.py) is the serializable mapping form for a rule.
+
+Import them from `pydantic_ai_harness.permissions`.
