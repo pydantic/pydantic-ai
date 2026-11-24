@@ -247,8 +247,6 @@ result = agent.run_sync([
 
 A `CachePoint` that opens a user message marks the end of the previous message instead, such as the tool result before it, the same as on Anthropic and Bedrock. On the Responses API, assistant output can't carry a breakpoint, so it goes on the closest earlier input instead. One with no earlier content in the conversation raises a [`UserError`][pydantic_ai.exceptions.UserError].
 
-On GPT-6.2 and later, the Responses API [appends the top-level `instructions` after the input and bills them at the uncached rate](https://developers.openai.com/api/docs/guides/prompt-caching). Pydantic AI sends an agent's instructions in that field unless `openai_cache_instructions` moves them into the input, so on those models they can be cached only with it on: set it directly, or let `cache=True` set it when no other OpenAI cache setting is present, within the limits below.
-
 To cache the instructions without the unified setting, set [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]:
 
 ```python {test="skip"}
@@ -272,10 +270,17 @@ The breakpoint is placed after the last static instruction, so dynamic [instruct
 
 On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the instructions are sent as leading input messages instead. Because a stored response keeps its input and replays it to the request that continues it, this has some limits:
 
-- It only happens on requests that don't continue server-side state. When [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set, or the history has been [compacted](../capabilities/compaction.md), the setting leaves the instructions where they would otherwise go (normally the top-level field) and adds no breakpoint.
+- It only happens on requests that don't use server-side state. When [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] or [`openai_conversation_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_conversation_id] is set (as [`openai_transport='websocket'`](#responses-websockets) does by default, and even on a request that ends up resending the full history), or the history has been [compacted](../capabilities/compaction.md), the setting leaves the instructions where they would otherwise go (normally the top-level field) and adds no breakpoint.
 - With `openai_previous_response_id='auto'`, that includes the first request, which has no response to continue yet. Otherwise its relocated instructions would be replayed next to every later request's own [instructions](../agent.md#instructions), which may belong to a different agent.
-- Don't continue a response created with `openai_cache_instructions` (which `cache=True` turns on) through `openai_previous_response_id` later on, since its stored input includes the instructions it was created with.
-- Requests that continue server-side state still get OpenAI's implicit breakpoint with the default `mode='implicit'`. What they give up is a breakpoint at the end of the instructions, which lets separate conversations share the cached instructions. Agent runs send the full message history by default, so this only affects runs that opt into server-side state.
+- Don't continue a response created with `openai_cache_instructions` (which `cache=True` turns on), or on `gpt-6.2-sol` or `gpt-6.2-astra` (see below), through a concrete `openai_previous_response_id` without its `message_history`, since its stored input includes the instructions it was created with ([ways to avoid it](#referencing-earlier-responses)). With the `message_history`, the request [sends the full history](#referencing-earlier-responses) instead, because such a response has no digest, or one that records instructions this request keeps in the top-level field. It keeps the instructions in the top-level field, so on `gpt-6.2-sol` and `gpt-6.2-astra` neither it nor the requests that continue from it read them from the cache.
+- Requests that use server-side state still get OpenAI's implicit breakpoint with the default `mode='implicit'`. What they give up is a breakpoint at the end of the instructions, which lets separate conversations share the cached instructions. Agent runs send the full message history by default, so this only affects runs that opt into server-side state.
+
+On `gpt-6.2-sol` and `gpt-6.2-astra`, OpenAI [puts the top-level `instructions` after `input` and bills them at the uncached rate](https://developers.openai.com/api/docs/guides/prompt-caching#how-prefix-matching-works) on every request. So with no setting, the static instructions and the [`on_change='append'`](../agent.md#appending-instruction-changes) instructions go out as leading input messages, where they're cached along with the conversation, and the model reads an appended change after them. Dynamic instructions that rewrite the prefix stay in the top-level field, with `openai_cache_instructions` too: the model reads them after the conversation, and a change to them leaves the cached conversation intact. To keep all instructions in the top-level field, pass `profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=False)` to the model (see [`openai_responses_stable_instructions_as_input`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_stable_instructions_as_input]).
+
+The limits above apply the same way, except with `openai_previous_response_id='auto'`, which [`openai_transport='websocket'`](#responses-websockets) also uses by default. There the request that starts the chain or resends the history sends these instructions as leading input messages, with `openai_cache_instructions` adding its breakpoint after the static ones, and a request that continues the chain leaves them out, since the stored response already holds them. Each response's [history digest](#referencing-earlier-responses) records them, so a request with different ones, such as after a handoff to another agent, resends the history with its own.
+
+!!! note
+    In a conversation where an `on_change='append'` instruction has already changed, the next change to an instruction that rewrites the prefix moves the latest appended values into the leading messages, and on the default settings that request misses the cache.
 
 Caching requires a prefix of at least 1024 tokens; shorter prefixes are not cached even when explicitly marked. With `mode='implicit'` (the default), OpenAI may write one implicit and up to three explicit breakpoints. With `mode='explicit'`, it may write up to four explicit breakpoints and no implicit breakpoint. If a request sets more breakpoints than that, OpenAI writes only the last four, and the instruction breakpoint is the earliest one in a request, so it is the first to be dropped. The TTL is request-wide, configured through [`openai_prompt_cache_options`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_options]: `'30m'` (the default) or, on the Responses API only, `'12h'`. Chat Completions rejects `'12h'` with a 400. Pydantic AI ignores the generic per-marker [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] value on OpenAI.
 
@@ -377,27 +382,25 @@ The Responses API has native tools that you can use instead of building your own
 
 Web search, Code interpreter, Image generation, and File search are natively supported through the [Native tools](../native-tools.md) feature.
 
-Computer use can be enabled by passing an [`openai.types.responses.ComputerToolParam`](https://github.com/openai/openai-python/blob/main/src/openai/types/responses/computer_tool_param.py) in the `openai_native_tools` setting on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. It doesn't currently generate [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] or [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] parts in the message history, or streamed events; please submit an issue if you need native support for this native tool.
+#### Computer use {#computer-use}
 
-```python {title="computer_use_tool.py" test="skip"}
-from openai.types.responses import ComputerToolParam
+To let a model use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+`OpenAIResponsesModel` with `OpenAIProvider` or `BedrockMantleProvider`, these models get OpenAI's own computer tool:
 
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+- GPT-5.4, except GPT-5.4 nano
+- GPT-5.5
+- GPT-5.6
+- GPT-6
 
-model_settings = OpenAIResponsesModelSettings(
-    openai_native_tools=[
-        ComputerToolParam(
-            type='computer',
-        )
-    ],
-)
-model = OpenAIResponsesModel('{{ openai:medium.name }}')
-agent = Agent(model=model, model_settings=model_settings)
+Other models and providers, including Azure, and any model with `ComputerUse(native=False)`, get a regular function
+tool. OpenAI's tool can't zoom, triple-click, hold a key down, press or release a mouse button on its own, or read the
+pointer position; the function tool can.
 
-result = agent.run_sync('Open a new browser tab')
-print(result.output)
-```
+Pydantic AI picks the tool by provider class, not by the server it calls. If `OpenAIProvider(base_url=...)` points at
+a server without the computer tool, remove it in the model's `profile=` argument:
+`profile=lambda p: {**p, 'supported_native_tools': p['supported_native_tools'] - {ComputerTool}}`. Use
+`| {ComputerTool}` instead to send it through another provider whose server supports it. Setting it in the provider's
+profile has no effect.
 
 #### Referencing earlier responses
 
@@ -406,7 +409,7 @@ The Responses API supports referencing earlier model responses in a new request 
 
 When the field is set to `'auto'`, Pydantic AI automatically selects the most recent `provider_response_id` from the message history and omits messages that came before it, letting the OpenAI API reconstruct them from server-side state. The same chaining is applied inside a run across tool-call continuations and retries, so OpenAI never sees duplicate copies of the same messages.
 
-A response is only continued from while it and the messages before it are unchanged. Each response created with the setting, or with [`openai_transport='websocket'`](#responses-websockets), records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response without a digest, created without either setting or before digests were recorded, is treated the same way: the next request sends the full history, which costs no extra tokens, and records a digest that later requests can continue from.
+A response is only continued from while it and the messages before it are unchanged. Each response created with the setting, or with [`openai_transport='websocket'`](#responses-websockets), records a digest of its parts and the history it was created from as [`ModelResponse.history_digest`][pydantic_ai.messages.ModelResponse.history_digest]. If the response or those messages have changed since, because a [history processor](../message-history.md#processing-message-history), [compaction](../capabilities/compaction.md) or your own code redacted, trimmed or rewrote them, the request sends the full history instead, so the model sees the change rather than the server's copy. A response without a digest, created without either setting or before digests were recorded, is treated the same way: the next request sends the full history, which adds no extra tokens, and records a digest that later requests can continue from. On `gpt-6.2-sol` and `gpt-6.2-astra`, the digest also records the static and `on_change='append'` instructions an `'auto'` chain [sends as leading input messages](#prompt-caching), so a request with different ones sends the full history too.
 
 !!! note "Clear the ID when you edit a response's text"
     The Responses API uses its stored copy of an item sent with its ID and ignores the text sent alongside, so a [history processor](../message-history.md#processing-message-history) that changes a [`TextPart`][pydantic_ai.messages.TextPart]'s `content` needs to set its [`id`][pydantic_ai.messages.TextPart.id] to `None` too. This applies whether or not you use `openai_previous_response_id`.
@@ -459,6 +462,8 @@ result = agent.run_sync('What is the secret code?', model_settings=model_setting
 print(result.output)
 #> 1234
 ```
+
+On `gpt-6.2-sol` and `gpt-6.2-astra`, a response created without server-side state, or with `'auto'`, [stores its static and `on_change='append'` instructions in its input](#prompt-caching), so a seed without `message_history` sends them again: twice for the same agent, and the previous agent's for a different one. To avoid that, pass the `message_history` with the seed, continue with `openai_previous_response_id='auto'` and the `message_history` instead of a concrete seed, or pass `profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=False)` to the model.
 
 An encrypted [`CompactionPart`][pydantic_ai.messages.CompactionPart] ends the response-ID chain, even with a concrete seed, when it was produced by [another compatible provider](#message-compaction) (such as the [Codex backend](openai-codex.md#continuing-on-the-openai-api)) or by an endpoint that doesn't share server state with this one. The next request sends the compaction item and later messages instead of continuing the older stored response. Inline compactions from an endpoint that shares server state remain chainable.
 

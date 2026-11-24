@@ -248,6 +248,7 @@ def check_stock(args: LookupArgs) -> LookupResult:
 - `part.typed_args` is the validated `LookupArgs` and `part.typed_content` the validated `LookupResult`, or `None` while the arguments stream in or if they don't fit. Don't redeclare `args` or `content`.
 - The base's type parameter must match the kind's shape (`ToolCallPart[LookupArgs]` for `args=LookupArgs`); a mismatch is a type error and raises `UserError` when the class is defined. A kind without shapes takes a bare `ToolCallPart` / `ToolReturnPart`.
 - A typed part may only add properties. Any field raises `UserError` when the class is defined.
+- A kind can also declare `metadata=`, the shape of the `metadata` its tool returns through `ToolReturn`. Metadata stays in the history and is never sent to the model. The return part then takes both shapes, as in `ToolReturnPart[LookupResult, LookupMetadata]`. `part.typed_metadata` is the validated metadata, or `None` if it doesn't fit. Metadata doesn't change whether a part is promoted.
 - `tool_kind` is accepted by `Tool`, the `@agent.tool` / `@agent.tool_plain` / `FunctionToolset.tool` decorators and `ToolDefinition` (e.g. `replace(tool_def, tool_kind=lookup)` in `prepare`), as the `ToolKind` or its id.
 - A run raises `UserError` for a kind that isn't defined, or when the tool's parameters don't fit `args` or its return type doesn't fit `content` (a required field missing or optional, or a mismatched JSON type). Type checkers check the return type already.
 - Call and return parts are promoted whenever a `ModelResponse` / `ModelRequest` is built, so hooks and history processors can use `isinstance(part, LookupCallPart)`.
@@ -261,6 +262,7 @@ To make a tool step aside when a more general tool is on the agent, set `ToolDef
 - A deferred (`defer_loading`) tool counts as present, so the answer doesn't change when it is revealed.
 - A tool is only left out in favor of a tool that stays; when tools would each be left out in favor of the other, the one listed first stays. The kind doesn't need to be defined: only ids are compared, so an unknown kind means there's nothing to step aside for.
 - `tool_name_for_kind` returns the prefixed name, `None` when no tool has the kind, and the first in `ctx.tools` order when several do. Instruction functions see the current step's tools; `get_tools` / `prepare_tools` see the previous step's.
+- In a model adapter, `model_request_parameters.available_tool_names_for_kind(kind)` lists the tools of the kind that the model can call on this request. It leaves out a tool with `defer_loading=True` until the history reveals it.
 
 See [Superseding a tool by kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#unless-tool-kind).
 

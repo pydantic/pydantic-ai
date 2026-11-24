@@ -18,8 +18,8 @@ from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
-per-model in the profile below."""
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated per model in the profile below,
+and `ComputerTool`, which `AnthropicProvider` adds per model."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -73,6 +73,9 @@ model, because `models/bedrock.py` cannot import from `models/anthropic/` withou
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
+
+AnthropicComputerToolVersion: TypeAlias = Literal['computer_toolset_20260801', 'computer_20251124', 'computer_20250124']
+"""Anthropic computer use tool version to send for `ComputerTool`."""
 
 _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -198,6 +201,12 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports `output_config.task_budget`. Default: `False`.
 
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
+    """
+
+    anthropic_computer_tool_version: AnthropicComputerToolVersion
+    """Which Anthropic computer use tool or toolset is sent for a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]. Default: `'computer_20250124'`.
+
+    Whether `ComputerTool` is sent at all depends on `supported_native_tools`.
     """
 
     anthropic_supports_on_demand_compaction: bool
