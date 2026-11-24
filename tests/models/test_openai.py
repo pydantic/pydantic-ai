@@ -8668,7 +8668,7 @@ async def test_chat_usage_total_gap_shapes(
     model_name: str,
     profile: OpenAIModelProfile | None,
     wire_usage: dict[str, object],
-    expected: RequestUsage,
+    expected: RunUsage,
 ):
     """A gap between `total_tokens` and the sum of the other two counts as output only under the profile flag.
 
