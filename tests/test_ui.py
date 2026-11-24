@@ -486,12 +486,12 @@ def _restarted_tool_call() -> list[NativeEvent]:
 
 def _encode_ag_ui(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
     # Pinned to the declared floor, so the thinking envelope is the same on every installed SDK.
-    event_stream = AGUIEventStream[None, Any](thread_id='thread_1', run_id='run_1', ag_ui_version='0.1.10')
+    event_stream = AGUIEventStream[None, str](thread_id='thread_1', run_id='run_1', ag_ui_version='0.1.10')
     return event_stream.encode_stream(event_stream.transform_stream(events))
 
 
 def _encode_vercel_ai(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
-    event_stream = VercelAIEventStream[None, Any]()
+    event_stream = VercelAIEventStream[None, str]()
     return event_stream.encode_stream(event_stream.transform_stream(events))
 
 
