@@ -465,9 +465,20 @@ class TestCDPBrowser:
             assert commands(chrome, None).count('Browser.close') == 0
         assert len(chrome.launches) == 1 and commands(chrome, None).count('Browser.close') == 1
 
-    def test_policy_excludes_the_shorthands(self):
+    @pytest.mark.parametrize(
+        ('allowed_domains', 'block_private_addresses'),
+        [
+            pytest.param(['example.com'], True, id='allowed_domains'),
+            pytest.param(None, False, id='block_private_addresses'),
+        ],
+    )
+    def test_policy_excludes_the_shorthands(self, allowed_domains: list[str] | None, block_private_addresses: bool):
         with pytest.raises(UserError, match='Pass either policy or the allowed_domains/block_private_addresses'):
-            CDPBrowser(policy=EgressPolicy(), allowed_domains=['example.com'])
+            CDPBrowser(
+                policy=EgressPolicy(),
+                allowed_domains=allowed_domains,
+                block_private_addresses=block_private_addresses,
+            )
 
     async def test_a_policy_decides_alone(self, chrome: FakeChrome):
         policy = EgressPolicy(blocked_domains=['ads.example.com'], block_private_addresses=False)
