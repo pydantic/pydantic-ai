@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Self
+from dataclasses import KW_ONLY, dataclass, field, replace
+from typing import TYPE_CHECKING, Self, overload
+from weakref import ReferenceType, WeakKeyDictionary, ref
 
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler, on_event
 from pydantic_ai.durable_exec import BaseDurabilityCapability
@@ -13,8 +14,10 @@ from pydantic_ai.messages import EnqueuedMessagesEvent, ModelResponse
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
 from pydantic_ai_harness._combine import one_per_id
+from pydantic_ai_harness.peers._inbox import LocalPeerInbox
 from pydantic_ai_harness.peers._message import make_peer_message
-from pydantic_ai_harness.peers._types import MAX_MESSAGE_BYTES, PeerInbox, PeerInfo, PeerNetwork
+from pydantic_ai_harness.peers._network import InMemoryPeerNetwork
+from pydantic_ai_harness.peers._types import MAX_MESSAGE_BYTES, PeerConnection, PeerInbox, PeerInfo
 
 if TYPE_CHECKING:
     from pydantic_ai import AgentRunResult
@@ -28,17 +31,32 @@ _INSTRUCTIONS = (
     'A peer reads your message at its next model request, which may be much later. Do not wait for a reply.'
 )
 
+_memberships: WeakKeyDictionary[
+    InMemoryPeerNetwork, dict[str, tuple[ReferenceType[object], PeerConnection, LocalPeerInbox]]
+] = WeakKeyDictionary()
+"""The members `Peers` joined to each `InMemoryPeerNetwork`, by handle: the agent, its connection and its inbox.
 
-@dataclass(kw_only=True)
+A new `Peers(network)` bound to the same agent, as a run capability or from a capability function, reuses the
+member instead of joining again. A collected agent's entry stays, as its handle stays taken on the network.
+"""
+
+
+@dataclass
 class Peers(AbstractCapability[AgentDepsT]):
-    """Let an agent list and message other sessions over a host-provided network.
+    """Let an agent list and message other sessions over a network.
 
-    Bind the recipient's inbox to this capability to read its messages before and after each model
-    request. Whether a message starts an idle recipient's run is the host's policy, not this capability's.
+    Given an `InMemoryPeerNetwork`, the agent joins it when the agent is built, under `handle` or the agent's
+    `name`, receiving in `inbox` or a new `LocalPeerInbox`. Given a host's `PeerConnection`, pass the inbox its
+    transport delivers to; without one, the agent only sends. `Peers` reads that inbox before and after each
+    model request. Whether a message starts an idle recipient's run is the host's policy, not this capability's.
     """
 
-    network: PeerNetwork
+    network: PeerConnection | InMemoryPeerNetwork
+    """An in-process network to join, or this peer's connection to a host network."""
+    _: KW_ONLY
     inbox: PeerInbox | None = None
+    handle: str | None = None
+    """The handle to join an `InMemoryPeerNetwork` under, instead of the agent's `name`."""
     max_messages_per_run: int = 10
     max_message_bytes: int = MAX_MESSAGE_BYTES
     max_listed: int = 30
@@ -46,6 +64,51 @@ class Peers(AbstractCapability[AgentDepsT]):
     _reading: bool = field(default=False, init=False, repr=False, compare=False)
     _delivering: dict[str, str] = field(default_factory=dict[str, str], init=False, repr=False, compare=False)
     """Enqueue IDs of taken messages awaiting delivery, mapped to their message IDs."""
+
+    if TYPE_CHECKING:
+
+        @overload
+        def __init__(
+            self,
+            network: InMemoryPeerNetwork,
+            *,
+            inbox: LocalPeerInbox | None = None,
+            handle: str | None = None,
+            max_messages_per_run: int = 10,
+            max_message_bytes: int = MAX_MESSAGE_BYTES,
+            max_listed: int = 30,
+            id: str | None = 'peers',
+            description: str | None = None,
+            defer_loading: bool = False,
+        ) -> None: ...
+
+        @overload
+        def __init__(
+            self,
+            network: PeerConnection,
+            *,
+            inbox: PeerInbox | None = None,
+            max_messages_per_run: int = 10,
+            max_message_bytes: int = MAX_MESSAGE_BYTES,
+            max_listed: int = 30,
+            id: str | None = 'peers',
+            description: str | None = None,
+            defer_loading: bool = False,
+        ) -> None: ...
+
+        def __init__(
+            self,
+            network: PeerConnection | InMemoryPeerNetwork,
+            *,
+            inbox: PeerInbox | None = None,
+            handle: str | None = None,
+            max_messages_per_run: int = 10,
+            max_message_bytes: int = MAX_MESSAGE_BYTES,
+            max_listed: int = 30,
+            id: str | None = 'peers',
+            description: str | None = None,
+            defer_loading: bool = False,
+        ) -> None: ...
 
     def __post_init__(self) -> None:
         if min(self.max_messages_per_run, self.max_message_bytes, self.max_listed) < 1:
@@ -62,7 +125,10 @@ class Peers(AbstractCapability[AgentDepsT]):
         return None
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, object]) -> AbstractCapability[AgentDepsT]:
-        """Reject durable execution: the engine records neither inbox reads nor sends, so a replay could diverge."""
+        """Join an `InMemoryPeerNetwork` as this agent, and reject durable execution.
+
+        The engine records neither inbox reads nor sends, so a replay could diverge.
+        """
         siblings: list[AbstractCapability[AgentDepsT]] = []
         agent.root_capability.apply(siblings.append)
         if any(isinstance(sibling, BaseDurabilityCapability) for sibling in siblings):
@@ -70,7 +136,37 @@ class Peers(AbstractCapability[AgentDepsT]):
                 'Peers does not support durable execution: inbox reads and peer sends are not recorded, '
                 'so a replay could deliver different messages.'
             )
-        return self
+        network = self.network
+        if not isinstance(network, InMemoryPeerNetwork):
+            if self.handle is not None:
+                raise UserError(
+                    '`Peers(handle=...)` names an `InMemoryPeerNetwork` member; a host connection has its own.'
+                )
+            return self
+        # Only the in-memory network is joined here: `PeerConnection` has no `join`. A protocol for joinable
+        # networks waits until a second joinable network exists to shape it; adding one then is additive.
+        return self._join(network, agent)
+
+    def _join(self, network: InMemoryPeerNetwork, agent: AbstractAgent[AgentDepsT, object]) -> Peers[AgentDepsT]:
+        handle = self.handle or agent.name
+        if not handle:
+            raise UserError(
+                "`Peers` joins an `InMemoryPeerNetwork` under the agent's `name`: "
+                'give the agent a `name`, or pass `Peers(network, handle=...)`.'
+            )
+        memberships = _memberships.setdefault(network, {})
+        member = memberships.get(handle)
+        if member is not None and member[0]() is agent:
+            _, connection, inbox = member
+            if self.inbox is not None and self.inbox is not inbox:
+                raise UserError(f'The agent already joined as {handle!r} with another inbox; pass that inbox.')
+            return replace(self, network=connection, inbox=inbox, handle=None)
+        inbox = self.inbox or LocalPeerInbox()
+        if not isinstance(inbox, LocalPeerInbox):
+            raise UserError('`InMemoryPeerNetwork` delivers to a `LocalPeerInbox`; pass one as `inbox`.')
+        connection = network.join(handle=handle, inbox=inbox)
+        memberships[handle] = (ref[object](agent), connection, inbox)
+        return replace(self, network=connection, inbox=inbox, handle=None)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Self:
         """Start each run with its own send count, duplicate set and taken messages."""
@@ -80,7 +176,9 @@ class Peers(AbstractCapability[AgentDepsT]):
         return _INSTRUCTIONS
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
-        return _PeerTools(self)
+        network = self.network
+        assert not isinstance(network, InMemoryPeerNetwork), '`for_agent` replaces the network with a connection'
+        return _PeerTools(self, network)
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[object]:
         try:
@@ -124,9 +222,10 @@ class Peers(AbstractCapability[AgentDepsT]):
 
 
 class _PeerTools(FunctionToolset[AgentDepsT]):
-    def __init__(self, capability: Peers[AgentDepsT]) -> None:
+    def __init__(self, capability: Peers[AgentDepsT], network: PeerConnection) -> None:
         super().__init__()
         self.capability = capability
+        self.network = network
         self._sent: set[tuple[str, str]] = set()
         self._count = 0
         self.add_function(self.list_peers)
@@ -137,7 +236,7 @@ class _PeerTools(FunctionToolset[AgentDepsT]):
 
         Each entry includes its id, handle, status, and count of messages it has not read yet.
         """
-        peers = await self.capability.network.peers()
+        peers = await self.network.peers()
         filtered = [
             peer
             for peer in peers
@@ -169,7 +268,7 @@ class _PeerTools(FunctionToolset[AgentDepsT]):
             raise ModelRetry('A peer message must not be empty.')
         if len(text.encode('utf-8')) > capability.max_message_bytes:
             raise ModelRetry(f'A peer message must be at most {capability.max_message_bytes} UTF-8 bytes.')
-        peers = await capability.network.peers()
+        peers = await self.network.peers()
         recipient = next((peer for peer in peers if to == peer.id), None) or next(
             (peer for peer in peers if to == peer.handle), None
         )
@@ -186,7 +285,7 @@ class _PeerTools(FunctionToolset[AgentDepsT]):
         try:
             try:
                 key = f'{ctx.run_id}:{ctx.run_step}:{ctx.tool_call_id}'
-                result = await capability.network.send(recipient.id, text, key=key, reply_to=reply_to)
+                result = await self.network.send(recipient.id, text, key=key, reply_to=reply_to)
             except LookupError as exc:
                 raise ModelRetry(f'Peer {to!r} is no longer available. Call `list_peers` again.') from exc
             accepted = result.status != 'refused'

@@ -17,7 +17,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError, ModelUnavailableError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -137,7 +137,10 @@ def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: st
     suggested_model_id = None
     if code == 'model_not_found':
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-    category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
+    # Groq's 498 means its flex service tier is out of capacity; its docs say to retry later.
+    category = _model_errors.openai_compatible_category(status_code, code, error_type, message) or (
+        ModelUnavailableError if status_code == 498 else None
+    )
     return ModelHTTPError.for_category(
         category,
         status_code=status_code,

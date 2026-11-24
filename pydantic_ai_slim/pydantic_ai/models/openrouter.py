@@ -13,7 +13,13 @@ from typing_extensions import TypedDict, override
 from .. import _model_errors, usage
 from .._run_context import RunContext
 from .._utils import is_str_dict
-from ..exceptions import ModelAPIError, ModelHTTPError, ModelRequestRejectedError, UserError
+from ..exceptions import (
+    ModelAPIError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelRequestRejectedError,
+    UserError,
+)
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -64,7 +70,7 @@ try:
 
     from .openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIStreamedResponse
     from .openai._chat_completions import LenientChatCompletion, LenientChatCompletionChunk
-    from .openai._errors import flags_input
+    from .openai._errors import flags_input, metadata_raw_reports_context_window
     from .openai._response_fields import map_usage as _map_openai_usage
 except ImportError as _import_error:
     raise ImportError(
@@ -470,6 +476,8 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
     the response's own status was 200.
     """
     category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
+    if category is ModelRequestRejectedError and metadata_raw_reports_context_window(error.metadata):
+        category = ModelContextWindowExceededError
     if error.code == 403 and flags_input(error.metadata):
         # A 403 for flagged input is a rejected request, not a credentials problem.
         category = ModelRequestRejectedError
@@ -775,7 +783,8 @@ def _openrouter_settings_to_openai_settings(
     # `merge_model_settings` can return the model's own `settings` by identity, so popping in place
     # would drop the keys on the next request.
     model_settings = model_settings.copy()
-    extra_body = dict(cast(dict[str, Any], model_settings.get('extra_body', {})))
+    configured = model_settings.get('extra_body')
+    extra_body: dict[str, object] = {} if configured is None else dict(cast(dict[str, object], configured))
 
     if models := model_settings.pop('openrouter_models', None):
         extra_body['models'] = models

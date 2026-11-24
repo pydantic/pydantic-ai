@@ -79,7 +79,7 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
 
     def __init__(self, iterable: Sequence[_messages.AgentStreamEvent] = ()):
         super().__init__(iterable)
-        self.waiters: list[asyncio.Event] = []
+        self.waiters: list[asyncio.Event] = []  # noqa: TID251  (not converted to anyio yet)
 
     def append(self, event: _messages.AgentStreamEvent) -> None:
         super().append(event)
@@ -731,6 +731,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
             self._anchored_evidence.loaded_capability_ids & self._deferred_capability_ids
         )
 
+    def _is_deferred_capability_dispatch_active(self, capability_id: str) -> bool:
+        """`capability_id in self._dispatch_active_capability_ids` for a configured deferred capability.
+
+        Answers without building the set, which hook dispatch would otherwise do once per capability. A
+        deferred id is never in the always-on part of that set, since ids are unique once duplicates are
+        combined, so it is in the set exactly when a load record or the anchored evidence names it.
+        """
+        return (
+            capability_id in self.loaded_capability_ids
+            or capability_id in self._anchored_evidence.loaded_capability_ids
+        )
+
     @property
     @deprecated(
         '`available_capability_ids` is deprecated, use `active_capability_ids` instead: for a '
@@ -820,14 +832,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # Both halves are load-bearing. The capability must still be *configured* deferred, not just
         # named by a load record in history: a capability that has since been reconfigured as
         # always-on never announced its tools as a bundle, so a stale record must not reveal them.
-        evidence = self._anchored_evidence
         if (
             capability_id is not None
             and capability_id in self._deferred_capability_ids
-            and capability_id in self.loaded_capability_ids | evidence.loaded_capability_ids
+            and self._is_deferred_capability_dispatch_active(capability_id)
         ):
-            return capability_id in self._dispatch_active_capability_ids
-        if tool_def.name not in self.discovered_tool_names | evidence.discovered_tool_names:
+            return True
+        if tool_def.name not in self.discovered_tool_names | self._anchored_evidence.discovered_tool_names:
             return False
         # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
         # evidence and only answers the middle step, so it can name a tool whose capability was
@@ -1042,9 +1053,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end; at a deferred-tool pause the
-                    content is added to the history instead, unless every call in the paused step
-                    was deferred). From a `before_model_request`
+                    or a redirect if the agent would otherwise end; a run that pauses adds the
+                    content to the history instead, or leaves it queued; see
+                    [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run)).
+                    From a `before_model_request`
                     hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.

@@ -7,7 +7,6 @@ Requires pytest and the anyio pytest plugin.
 
 from __future__ import annotations
 
-import base64
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, suppress
@@ -62,11 +61,18 @@ def _powershell_assignments(args: tuple[str, ...]) -> str:
 
 
 def _powershell_start(script: str, *args: str, window: str) -> str:
-    """PowerShell that starts `script`, with `args` as `$a0`, ..., in a PowerShell of its own, without waiting."""
-    encoded = base64.b64encode((_powershell_assignments(args) + script).encode('utf-16-le')).decode('ascii')
+    """PowerShell that starts `script`, with `args` as `$a0`, ..., in a PowerShell of its own, without waiting.
+
+    The script goes through a temporary file, which the new PowerShell reads and deletes, rather than on its
+    command line, where antivirus software flags an `-EncodedCommand` launch.
+    """
     return (
-        f'Start-Process {window} -FilePath (Get-Process -Id $PID).Path '
-        f"-ArgumentList '-NoProfile', '-NonInteractive', '-EncodedCommand', '{encoded}'"
+        '$start = [IO.Path]::GetTempFileName(); '
+        f'[IO.File]::WriteAllText($start, {_powershell_literal(_powershell_assignments(args) + script)}); '
+        f'Start-Process {window} -FilePath (Get-Process -Id $PID).Path -ArgumentList '
+        "('-NoProfile -NonInteractive -Command \"$s = [IO.File]::ReadAllText(''{0}''); [IO.File]::Delete(''{0}''); "
+        '& ([ScriptBlock]::Create($s))"\' -f '
+        '[Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($start))'
     )
 
 

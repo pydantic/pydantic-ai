@@ -118,6 +118,7 @@ with try_import() as google_available:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.google_decisions import GoogleDecisionsModel
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as groq_available:
     from pydantic_ai.models.groq import GroqModel
@@ -530,7 +531,8 @@ def xai_sdk_probe(build: Callable[[AsyncXaiClient], Model]) -> Probe:
     return probe
 
 
-xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4', provider=XaiProvider(xai_client=client)))
+# Grok 4.20's non-reasoning models are the only ones that accept `stop_sequences`.
+xai_probe = xai_sdk_probe(lambda client: XaiModel('grok-4.20-non-reasoning', provider=XaiProvider(xai_client=client)))
 
 
 async def mcp_sampling_probe(settings: ModelSettings) -> ProbeResult:
@@ -710,7 +712,8 @@ def _cohere(client: httpx.AsyncClient) -> Model:
 
 
 def _google(client: httpx2.AsyncClient) -> Model:
-    return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
+    # Google Cloud, since the Gemini API rejects `presence_penalty` and `frequency_penalty` for every model.
+    return GoogleModel('gemini-2.5-flash', provider=GoogleCloudProvider(api_key=PROBE_KEY, http_client=client))
 
 
 def _google_decisions(client: httpx2.AsyncClient) -> Model:
@@ -872,6 +875,21 @@ async def test_supported_by_lists_match_the_wire(case: Case, allow_model_request
 
     warned |= (await case.probe({'max_retries': 0})).observed.warned
     assert warned == unsupported & WARNED_SETTINGS
+
+
+@pytest.mark.parametrize(
+    'case',
+    [
+        pytest.param(case, id=case.id, marks=case.marks)
+        for case in CASES
+        if case.id in {'CerebrasModel', 'OpenRouterModel', 'SnowflakeModel', 'ZaiModel'}
+    ],
+)
+async def test_extra_body_none_sends_the_same_request(case: Case, allow_model_requests: None):
+    """`extra_body=None` means no extra body on the models whose converters merge their own fields into it."""
+    baseline = (await case.probe({})).payload
+    assert baseline is not None
+    assert (await case.probe({'extra_body': None})).payload == baseline
 
 
 def test_hand_maintained_fields_are_the_only_unprobed_ones():

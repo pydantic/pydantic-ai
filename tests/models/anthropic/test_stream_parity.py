@@ -9,6 +9,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 import itertools
+import json
 from typing import Any
 
 import httpx2
@@ -24,7 +25,7 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from anthropic import NOT_GIVEN, AsyncAnthropic, AsyncStream
     from anthropic.lib.streaming import BetaAsyncMessageStream
-    from anthropic.types.beta import BetaRawMessageStreamEvent, BetaServerToolUseBlock
+    from anthropic.types.beta import BetaRawMessageStreamEvent, BetaServerToolUseBlock, BetaUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -80,6 +81,20 @@ async def _streamed_and_complete(
         return await client.beta.messages.create(model=model_name, max_tokens=1, messages=[], stream=True)
 
     message = await BetaAsyncMessageStream(await open_stream(), output_format=NOT_GIVEN).get_final_message()
+    # The SDK's accumulator copies only the usage fields it knows from `message_delta`, so it drops the cost that
+    # Pydantic AI Gateway reports there. The streamed response reads it, as `_process_response` does on a complete
+    # message from the gateway, so the reference gets it back from the final `message_delta`.
+    delta_usages: list[dict[str, object]] = [
+        json.loads(line.removeprefix('data: '))['usage']
+        for line in interaction['response']['body']['content'].splitlines()
+        if line.startswith('data: ') and '"type":"message_delta"' in line.replace(' ', '')
+    ]
+    if gateway_usage := {
+        key: value
+        for key, value in (delta_usages[-1] if delta_usages else {}).items()
+        if key in ('logfire_ai_gateway', 'pydantic_ai_gateway')
+    }:
+        message.usage = BetaUsage.model_validate({**message.usage.model_dump(), **gateway_usage})
     # Both drop a server tool call whose tool the request didn't enable, which depends on request parameters the
     # recording doesn't keep, so every server tool in the response counts as enabled.
     server_tool_names = frozenset(block.name for block in message.content if isinstance(block, BetaServerToolUseBlock))

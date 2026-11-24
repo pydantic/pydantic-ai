@@ -227,15 +227,16 @@ on Meta but accepted on Google Vertex.
 
 _MID_CONVERSATION_EFFORT_MODEL_PREFIXES: dict[str, tuple[str, ...]] = {
     'anthropic': ('claude-fable-5-1', 'claude-fable-5-2', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'),
-    'openai': ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'),
+    'openai': ('gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6.2-astra'),
 }
 """Model-name prefixes, per upstream provider, of the OpenRouter routes that accept a mid-conversation effort change.
 
 OpenRouter routes a request carrying a `configuration_update` only to endpoints that accept it, and rejects it with a
 400 ("Mid-conversation reasoning effort (configuration_update) is not supported") on every other model, so this lists
-the models live probes found accepting it (2026-10-26, and 2026-11-10 for Claude Fable 5.2): Claude Fable 5.1 and 5.2,
-Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5, and GPT-6 Astra, Sol and Luna and GPT-6.1 Sol. Claude Fable 5 and Sonnet 5,
-GPT-6.1 Terra and GPT-5.6 are rejected, as is every `-pro` variant, which `OpenRouterProvider.model_profile` excludes.
+the models live probes found accepting it (2026-10-26, 2026-11-10 for Claude Fable 5.2, and 2026-11-17 for GPT-6.2):
+Claude Fable 5.1 and 5.2, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5, and GPT-6 Astra, Sol and Luna, GPT-6.1 Sol, and
+GPT-6.2 Sol and Astra. Claude Fable 5 and Sonnet 5, GPT-6.1 Terra and GPT-5.6 are rejected, as is every `-pro` variant,
+which `OpenRouterProvider.model_profile` excludes.
 https://openrouter.ai/docs/guides/best-practices/reasoning-tokens#changing-effort-mid-conversation
 """
 
@@ -322,6 +323,12 @@ class OpenRouterProvider(_OpenAISDKProvider):
             # Only GLM-5.3's schema fix, without Z.AI's native thinking settings.
             profile = _glm_5_3_schema_profile(model_name)
 
+        if provider == 'moonshotai' and model_name.lower().startswith('kimi-k3'):
+            # OpenRouter serves JSON Schema output for Kimi K3 and K3.1 Pro, and sends a `json_schema` response format
+            # only to the endpoints that support it. `moonshotai_model_profile` leaves it off, as the other hosts that
+            # share it haven't been probed: https://github.com/pydantic/pydantic-ai/issues/12078
+            profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
+
         if model_name.lower().startswith(_MANDATORY_REASONING_MODEL_PREFIXES.get(provider, ())):
             low_floor = model_name.lower().startswith(_LOW_REASONING_FLOOR_MODEL_PREFIXES.get(provider, ()))
             profile = merge_profile(
@@ -358,7 +365,8 @@ class OpenRouterProvider(_OpenAISDKProvider):
 
         # Three-layer merge:
         # 1. Fallback layer — `OpenAIJsonSchemaTransformer` is the default unless an upstream profile sets one explicitly
-        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`).
+        #    (e.g. `_openrouter_google_model_profile` installs `_OpenRouterGoogleJsonSchemaTransformer`), and video input
+        #    is off unless the upstream profile turns it on.
         # 2. Upstream profile — model-specific traits from the lab's profile function.
         # 3. Gateway-specific overrides — wins on every key it sets, because the upstream profile can't know what
         #    the OpenRouter gateway adds (web plugin, file URLs, custom thinking field, cache capabilities). OpenRouter
@@ -368,7 +376,13 @@ class OpenRouterProvider(_OpenAISDKProvider):
         #    It keeps mid-conversation system messages only on some routes (see `_INLINE_SYSTEM_PROMPT_MODEL_PREFIXES`)
         #    and moves or rewrites them on the others, so those get the deliberate `<system>`-wrapped fallback.
         return merge_profile(
-            OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+            OpenAIModelProfile(
+                json_schema_transformer=OpenAIJsonSchemaTransformer,
+                # OpenRouter answers 404 "No endpoints found that support input video" for a model without video
+                # input (checked live with Claude, GPT and DeepSeek routes, 2026-11-12), so video is off unless the
+                # upstream profile turns it on, as Google's and Amazon Nova's do.
+                supports_video_input=False,
+            ),
             profile,
             OpenRouterModelProfile(
                 openai_chat_send_back_thinking_parts='field',

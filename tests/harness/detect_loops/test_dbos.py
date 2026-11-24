@@ -102,6 +102,8 @@ def test_a_loop_within_a_response_reaches_the_same_decision_without_the_judge(db
         attempts.append(agent.run_sync('Is the config fine?').all_messages())
         if len(attempts) == 1:
             raise _Crash
+        # Recovery runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing else closes.
+        asyncio.get_event_loop().close()
 
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id), pytest.raises(_Crash):

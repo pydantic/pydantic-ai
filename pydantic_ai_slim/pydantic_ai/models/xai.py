@@ -370,8 +370,6 @@ _XAI_MODEL_SETTINGS_MAPPING: dict[str, str] = {
     'max_tokens': 'max_tokens',
     'stop_sequences': 'stop',
     'parallel_tool_calls': 'parallel_tool_calls',
-    'presence_penalty': 'presence_penalty',
-    'frequency_penalty': 'frequency_penalty',
     'seed': 'seed',
     'xai_logprobs': 'logprobs',
     'xai_top_logprobs': 'top_logprobs',
@@ -392,7 +390,19 @@ class XaiModel(Model[AsyncClient]):
     # Tool results are text-only here, so a tool's files go on the user channel, framed.
     _relocates_tool_files = True
 
-    unsupported_settings = frozenset({'extra_body', 'extra_headers', 'logit_bias', 'max_retries', 'timeout', 'top_k'})
+    # Every Grok model rejects `presence_penalty` and `frequency_penalty` with a 400 (verified live 2026-11-04).
+    unsupported_settings = frozenset(
+        {
+            'extra_body',
+            'extra_headers',
+            'frequency_penalty',
+            'logit_bias',
+            'max_retries',
+            'presence_penalty',
+            'timeout',
+            'top_k',
+        }
+    )
 
     _model_name: str
     _provider: Provider[AsyncClient]
@@ -442,6 +452,11 @@ class XaiModel(Model[AsyncClient]):
     @cached_property
     def profile(self) -> GrokModelProfile:
         return cast(GrokModelProfile, super().profile)
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('grok_supports_stop_sequences', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'stop_sequences'}
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -696,12 +711,13 @@ class XaiModel(Model[AsyncClient]):
                 ),
             )
         elif item.tool_name == WebSearchTool.kind:
+            function_name = (item.provider_details or {}).get('function_name', WebSearchTool.kind)
             return chat_types.chat_pb2.ToolCall(
                 id=item.tool_call_id,
                 type=chat_types.chat_pb2.TOOL_CALL_TYPE_WEB_SEARCH_TOOL,
                 status=chat_types.chat_pb2.TOOL_CALL_STATUS_COMPLETED,
                 function=chat_types.chat_pb2.FunctionCall(
-                    name=WebSearchTool.kind,
+                    name=function_name,
                     arguments=item.args_as_json_str(),
                 ),
             )
@@ -976,7 +992,7 @@ class XaiModel(Model[AsyncClient]):
             response_format = _map_json_object()
 
         # Map model settings to xAI SDK parameters
-        xai_settings = _map_model_settings(model_settings)
+        xai_settings = _map_model_settings(model_settings, self._unsupported_settings())
 
         # Fall back to unified thinking when xai_reasoning_effort is not set.
         if 'reasoning_effort' not in xai_settings and model_request_parameters.thinking is not None:
@@ -1502,12 +1518,12 @@ def _map_json_object() -> chat_pb2.ResponseFormat:
     return chat_pb2.ResponseFormat(format_type=chat_pb2.FORMAT_TYPE_JSON_OBJECT)
 
 
-def _map_model_settings(model_settings: XaiModelSettings) -> dict[str, Any]:
-    """Map pydantic_ai ModelSettings to xAI SDK parameters."""
+def _map_model_settings(model_settings: XaiModelSettings, unsupported: frozenset[str]) -> dict[str, Any]:
+    """Map pydantic_ai ModelSettings to xAI SDK parameters, leaving out the ones the model doesn't support."""
     xai_settings = {
         _XAI_MODEL_SETTINGS_MAPPING[key]: value
         for key, value in model_settings.items()
-        if key in _XAI_MODEL_SETTINGS_MAPPING
+        if key in _XAI_MODEL_SETTINGS_MAPPING and key not in unsupported
     }
     # xAI has only a standard and a priority tier: `'auto'` and `'flex'` are omitted.
     if (service_tier := model_settings.get('service_tier')) in ('default', 'priority'):
@@ -1588,7 +1604,7 @@ def _get_native_tools(model_request_parameters: ModelRequestParameters) -> list[
                 )
             )
         else:  # pragma: no cover
-            supported = ', '.join(t.__name__ for t in XaiModel.supported_native_tools())
+            supported = ', '.join(sorted(t.__name__ for t in XaiModel.supported_native_tools()))
             raise UserError(
                 f'`{builtin_tool.__class__.__name__}` is not supported by `XaiModel`. '
                 f'Supported built-in tools: {supported}.'

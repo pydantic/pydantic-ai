@@ -681,7 +681,8 @@ async def test_a_deletion_ending_a_command_is_unavailable(fake_boxlite: FakeBoxL
     backend = BoxLiteSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
     assert backend.ref is not None
-    command = asyncio.create_task(backend.run(['sleep', '3']))
+    # Outlives the wait below, so only the deletion ends it.
+    command = asyncio.create_task(backend.run(['sleep', '30']))
     await _command_started(fake_boxlite)
     script = fake_boxlite.spawned[-1]
     fake_boxlite.remove_gate = gate = asyncio.Event()

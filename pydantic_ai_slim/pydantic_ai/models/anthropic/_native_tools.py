@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Literal, TypeAlias, assert_never, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, assert_never, cast, get_args
 
 import pydantic_core
 from anthropic.types.beta import (
@@ -71,10 +71,21 @@ from ...messages import (
     ToolSearchReturnPart,
     UserPromptPart,
 )
-from ...native_tools import AdvisorTool, CodeExecutionTool, MCPServerTool, WebFetchTool, WebSearchTool
-from ...native_tools._tool_search import ToolSearchArgs, ToolSearchMatch
+from ...native_tools import (
+    AbstractNativeTool,
+    AdvisorTool,
+    CodeExecutionTool,
+    ComputerTool,
+    MCPServerTool,
+    WebFetchTool,
+    WebSearchTool,
+)
+from ...native_tools._tool_search import ToolSearchArgs, ToolSearchMatch, ToolSearchTool
 from ...profiles.anthropic import AnthropicCodeExecutionToolVersion
 from ...tools import ToolDefinition
+
+if TYPE_CHECKING:
+    from . import AnthropicModelSettings
 
 _AnthropicCodeExecutionToolName: TypeAlias = Literal[
     'code_execution', 'bash_code_execution', 'text_editor_code_execution'
@@ -356,7 +367,7 @@ def map_mcp_server_tool(tool: MCPServerTool) -> BetaRequestMCPServerURLDefinitio
             enabled=bool(tool.allowed_tools),
             allowed_tools=tool.allowed_tools,
         )
-    if tool.authorization_token:  # pragma: no cover
+    if tool.authorization_token:
         mcp_server_url_definition_param['authorization_token'] = tool.authorization_token
     return mcp_server_url_definition_param
 
@@ -396,6 +407,7 @@ def map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) 
         provider_details: dict[str, Any] = {
             'strategy': 'regex' if item.name == 'tool_search_tool_regex' else 'bm25',
             **anthropic_caller_provider_details(item.caller),
+            **tool_search_extra_input_provider_details(tool_args, item.name),
         }
         return NativeToolSearchCallPart(
             provider_name=provider_name,
@@ -453,6 +465,17 @@ def normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str)
     return {'queries': queries}
 
 
+def tool_search_extra_input_provider_details(tool_args: dict[str, Any] | None, tool_name: str) -> dict[str, Any]:
+    """Keep the input fields that `ToolSearchArgs` has no slot for, such as `limit`, for replay.
+
+    Replay has to send the exact input the model gave: a thinking block that follows the search is bound
+    to it, and Anthropic rejects the thinking signature if a field is missing.
+    """
+    wire_key = 'pattern' if tool_name == 'tool_search_tool_regex' else 'query'
+    extra_input = {key: value for key, value in (tool_args or {}).items() if key != wire_key}
+    return {'extra_input': extra_input} if extra_input else {}
+
+
 def finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> NativeToolSearchCallPart:
     """Finalize a streamed tool-search call's args.
 
@@ -476,7 +499,14 @@ def finalize_streamed_tool_search_call_part(part: NativeToolSearchCallPart) -> N
     # input key (`pattern` vs `query`) is honored.
     strategy = (part.provider_details or {}).get('strategy')
     tool_name = 'tool_search_tool_regex' if strategy == 'regex' else 'tool_search_tool_bm25'
-    return replace(part, args=normalize_tool_search_args(parsed, tool_name))
+    return replace(
+        part,
+        args=normalize_tool_search_args(parsed, tool_name),
+        provider_details={
+            **(part.provider_details or {}),
+            **tool_search_extra_input_provider_details(parsed, tool_name),
+        },
+    )
 
 
 def map_tool_search_tool_result_block(
@@ -616,3 +646,25 @@ def map_mcp_server_result_block(
         content=item.model_dump(mode='json', include={'content', 'is_error'}),
         tool_call_id=item.tool_use_id,
     )
+
+
+def native_tool_is_a_tools_entry(tool: AbstractNativeTool) -> bool:
+    """Whether `_add_native_tools` sends this native tool as an entry in the request's `tools`.
+
+    An MCP server goes in `mcp_servers` instead, and a custom tool search strategy is served by the
+    `search_tools` function tool, which `function_tools` already carries. A `ComputerTool` replaces the
+    `computer` function tool, so it is added to `tools` only when that function tool is declared.
+    """
+    if isinstance(tool, MCPServerTool | ComputerTool):
+        return False
+    return not (isinstance(tool, ToolSearchTool) and tool.strategy == 'custom')
+
+
+def code_execution_may_call_web_tools(supports_dynamic_filtering: bool, model_settings: AnthropicModelSettings) -> bool:
+    """Whether code execution may call the web tools.
+
+    Models with dynamic filtering allow it by default. Without it, the web tools are called directly unless
+    `anthropic_web_tools_allowed_callers` names a code execution caller.
+    """
+    allowed_callers = model_settings.get('anthropic_web_tools_allowed_callers') or []
+    return supports_dynamic_filtering or any(caller != 'direct' for caller in allowed_callers)
