@@ -49,10 +49,10 @@ from .._utils import client_error_text
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
     COMPACTION_DATA_TYPE,
-    DATA_CHUNK_TYPES,
     ENQUEUED_MESSAGES_DATA_TYPE,
     MODEL_SETTINGS_DELTA_DATA_TYPE,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
+    DataCarryingChunk,
     dump_message_metadata,
     dump_provider_metadata,
     dump_text_metadata,
@@ -494,7 +494,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
         # A data-carrying chunk payload (`DataChunk`, `SourceUrlChunk`, etc.) is passed through verbatim,
         # mirroring the tool-return metadata passthrough.
         payload = event.to_payload()
-        if isinstance(payload, DATA_CHUNK_TYPES):
+        if isinstance(payload, DataCarryingChunk):
             yield payload
         else:
             # The data is always the bare payload, whether or not the event is tool-scoped: a

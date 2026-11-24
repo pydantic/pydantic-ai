@@ -26,7 +26,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool, ProcessHistory
 from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord, InMemoryConversationStore
-from pydantic_ai.durable_exec._codec import JSON_CODEC
+from pydantic_ai.durable_exec import JSON_CODEC
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -2969,7 +2969,7 @@ async def test_run_stream_native_tool_search_tool_kind_metadata(sdk_version: Lit
 
 @pytest.mark.parametrize('durable_round_trip', [False, True], ids=['in-memory', 'durable'])
 async def test_run_stream_tool_metadata_single_chunk(durable_round_trip: bool):
-    """A metadata chunk is yielded both directly and after the durable codec round trip."""
+    """A metadata chunk is yielded both directly and after the `JSON_CODEC` round trip a durable engine journals it through."""
 
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo

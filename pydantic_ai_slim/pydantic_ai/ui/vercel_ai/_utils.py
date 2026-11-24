@@ -335,14 +335,13 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 # If the Vercel AI SDK introduces new data-carrying UIMessagePart variants,
 # the corresponding chunk type should be added here.
 DataCarryingChunk: TypeAlias = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
-DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
 _data_carrying_chunk_ta: TypeAdapter[DataCarryingChunk] = TypeAdapter(DataCarryingChunk)
 
 
 def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[DataCarryingChunk]:
     """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
-    Used by both the streaming and dump paths. Only `DATA_CHUNK_TYPES` are
+    Used by both the streaming and dump paths. Only `DataCarryingChunk`s are
     yielded; protocol-control chunks are filtered out. MCP Apps data that
     `MCPToolset` attached becomes a single `data-mcp-apps` chunk.
 
@@ -360,7 +359,7 @@ def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[DataCarryingCh
     from_metadata = bool(tool_result.metadata)
 
     def as_chunk(value: object) -> DataCarryingChunk | None:
-        if isinstance(value, DATA_CHUNK_TYPES):
+        if isinstance(value, DataCarryingChunk):
             return value
         if from_metadata and is_str_dict(value) and 'type' in value:
             try:
