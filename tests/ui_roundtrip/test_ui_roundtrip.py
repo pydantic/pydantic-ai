@@ -731,7 +731,7 @@ _AGUI_ACTIVITY = (
     "With `framing_announcement='when_needed'`, a dropped mid-conversation system prompt also takes the framing "
     "announcement out of the standing prompt on the next turn; accepted, and documented: UI apps set `'always'`"
 )
-_AGUI_FILE_IDENTIFIER = "`AGUIAdapter.dump_messages` doesn't carry a user file's custom `identifier`; no issue yet"
+_AGUI_FILE_IDENTIFIER = "`AGUIAdapter.dump_messages` doesn't carry a user file's custom `identifier`; #14284"
 _RETRY = (
     "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
     '`outcome="failed"` instead of `"retried"`; #8185'
