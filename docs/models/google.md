@@ -653,7 +653,7 @@ async def ask_a_person(ctx: RunContext, requests: DeferredToolRequests) -> Defer
 
 
 agent = Agent(
-    'google:gemini-3.8-flash',
+    '{{ google:medium }}',
     capabilities=[my_desktop_sandbox, ComputerUse(), HandleDeferredToolCalls(handler=ask_a_person)],
 )
 ```
