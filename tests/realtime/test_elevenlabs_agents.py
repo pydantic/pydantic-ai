@@ -357,6 +357,7 @@ def test_profile() -> None:
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_appending_voice_instructions=False,
         supports_thinking=False,
         async_tool_call_mode='never',
         supports_async_tool_calls=False,

@@ -14,6 +14,8 @@ from termflow.ansi.utils import visible_length
 from termflow.themes import PALETTES
 
 from pydantic_ai_pax.ui.prompt.prompt_transcript import (
+    DROP,
+    PREVIEW,
     MarkdownBlock,
     TranscriptBuffer,
     TranscriptDecoder,
@@ -245,25 +247,31 @@ def test_colour_reset_does_not_close_a_hyperlink_across_lines() -> None:
     assert text.get_style_at_offset(console, -1).link is None
 
 
-def _block(buffer: TranscriptBuffer, *, width: int = 40) -> MarkdownBlock:
+def _block(buffer: TranscriptBuffer, *, width: int = 40, streaming: bool = False) -> MarkdownBlock:
     def render(*, source: str, width: int) -> str:
         return f'rendered at {width}: {source}\n'
 
-    return buffer.markdown(render=render, width=width, changed=lambda: None)
+    return buffer.markdown(render=render, width=width, changed=lambda: None, streaming=streaming)
 
 
 def test_markdown_part_starts_on_its_own_row_and_keeps_its_id() -> None:
     buffer = TranscriptBuffer()
     buffer.write('tool header')
-    block = _block(buffer)
+    block = _block(buffer, streaming=True)
     assert buffer.ids() == range(0, 3)
     block.extend('**hi**')
     block.write('streamed\npartial')
     block.flush()
     buffer.write('after\n')
     assert plain(buffer, width=40) == ['tool header', 'streamed', 'partial', 'after', '']
+    assert plain(buffer, width=7) == ['tool he', 'ader', 'streame', 'd', 'partial', 'after', ''], (
+        'a part still streaming wraps its streamed rows at a new width'
+    )
+    block.end()
     assert plain(buffer, width=30) == ['tool header', 'rendered at 30: **hi**', 'after', '']
-    assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['streamed', 'partial']
+    assert [Text.from_ansi(row).plain for row in buffer.rows(1, width=40)] == ['rendered at 40: **hi**'], (
+        'shown at another width while streaming, so its streamed rows may mix widths'
+    )
 
 
 def test_printed_skips_output_already_in_scrollback_and_cleared_output() -> None:
@@ -307,6 +315,39 @@ def test_oversized_markdown_keeps_a_bounded_tail_and_does_not_evict_itself() -> 
     buffer.write('new\nnext\n')
     block.write('evicted block still receiving output')
     assert plain(buffer, width=40) == ['new', 'next', '']
+
+
+def test_a_long_preview_cannot_evict_the_lines_it_is_shown_after() -> None:
+    """A preview is replaced at its newline or fence, so only what replaces it may push lines out."""
+    buffer = TranscriptBuffer(max_lines=4, max_chars=30)
+    block = _block(buffer)
+    block.write('a\nb\n')
+    block.write(f'{PREVIEW}1\n2\n3\n4\n5\n{"p" * 20}')
+    assert plain(buffer, width=40) == ['a', 'b', '2', '3', '4', '5', 'p' * 20, ''], 'the preview prunes itself'
+    block.write(f'{DROP}c\n')
+    assert plain(buffer, width=40) == ['a', 'b', 'c', '']
+
+
+def test_a_preview_left_by_an_aborted_part_counts_against_the_budget() -> None:
+    """Nothing replaces it once the part freezes, so it stays, and repeated cancels must not grow past the limit."""
+    buffer = TranscriptBuffer(max_chars=20)
+    for _ in range(4):
+        block = _block(buffer)
+        block.write(f'{PREVIEW}{"p" * 9}')
+        block.abort()
+    assert plain(buffer, width=40) == ['p' * 9, 'p' * 9, '']
+
+
+def test_a_part_over_the_budget_still_replaces_its_preview() -> None:
+    """Dropping the source to stay in budget must not keep the preview, or its replacement shows it twice."""
+    buffer = TranscriptBuffer(max_chars=20)
+    block = _block(buffer)
+    block.extend('hello')
+    block.write(f'{PREVIEW}hello')
+    block.extend(' ' * 20)
+    assert block.source is None
+    block.write(f'{DROP}hello\n')
+    assert plain(buffer, width=40) == ['hello', '']
 
 
 def test_markdown_drops_source_when_rendered_output_exceeds_the_shared_budget() -> None:
@@ -373,13 +414,16 @@ def test_live_transcript_rebinds_nested_markdown_state_without_resetting_output(
     transcript.write('notice\n')
     block = _block(transcript)
     block.extend('answer')
-    block.write('answer\n')
+    block.write(f'answer\n{PREVIEW}mo')
+    # Blocks from before parts ended had neither flag; a reload happens between turns.
+    del vars(block)['streaming'], vars(block)['_resized_while_streaming']
     for _ in range(2):
         assert TranscriptBuffer.rebind(transcript) is transcript
-        assert plain(transcript, width=40) == ['notice', 'answer', '']
+        assert plain(transcript, width=40) == ['notice', 'answer', 'mo', '']
     block.extend(' more')
-    block.write('more\n')
+    block.write(f'{DROP}more\n')
     assert plain(transcript, width=40) == ['notice', 'answer', 'more', '']
+    assert plain(transcript, width=30) == ['notice', 'rendered at 30: answer more', '']
     transcript.max_lines = 1
     transcript.write('latest\n')
     assert plain(transcript, width=40) == ['latest', '']
@@ -479,6 +523,15 @@ def test_recolor_accepts_spans_styled_by_name() -> None:
     assert isinstance(style, Style)
     assert style.bold and style.color is not None and style.color.name == TOKYO_MUTED
     assert text.spans[0].style == f'bold {theme.GREY}', 'the retained line is unchanged'
+
+
+def test_recolor_to_default_follows_the_terminal_background() -> None:
+    text = Text('muted', spans=[Span(0, 5, TOKYO_MUTED)])
+    for background, shade in (('#FFFFFF', '#6c6c6c'), ('#000000', theme.GREY.lower())):
+        with theme.use(lambda: 'default', background=background):
+            style = recolor(text, source='tokyo_night', target='default').spans[0].style
+        assert isinstance(style, Style) and style.color is not None
+        assert style.color.name == shade
 
 
 def test_rebind_assumes_the_current_theme_for_lines_retained_without_one() -> None:

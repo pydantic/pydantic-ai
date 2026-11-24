@@ -1,9 +1,9 @@
-"""Run a `!` command on a pseudo-terminal, handing it CLAI's terminal once it goes full screen.
+"""Run a `!` command on a pseudo-terminal, handing it Pax's terminal once it goes full screen.
 
 A command that sees a terminal behaves as it does in a shell: it can prompt, and a full-screen program
 such as `nano`, `vim`, `less`, or `htop` can draw. Its output is captured as with a pipe, without
 colours, until the program switches to the alternate screen, as full-screen programs do. From then on
-it owns CLAI's terminal and nothing more is captured. No list of programs is involved.
+it owns Pax's terminal and nothing more is captured. No list of programs is involved.
 
 POSIX only: Windows has no pseudo-terminal in the standard library, so commands there keep pipes.
 """
@@ -38,14 +38,14 @@ COMMAND_ENVIRONMENT = {'PAGER': 'cat', 'GIT_PAGER': 'cat'}
 
 @dataclass(frozen=True, kw_only=True)
 class Terminal:
-    """The terminal CLAI runs on: the file descriptors keys arrive on and output goes to."""
+    """The terminal Pax runs on: the file descriptors keys arrive on and output goes to."""
 
     input: int = 0
     output: int = 1
 
 
 def attached_terminal() -> Terminal | None:
-    """CLAI's terminal, or `None` on Windows or when its input or output is not a terminal."""
+    """Pax's terminal, or `None` on Windows or when its input or output is not a terminal."""
     if sys.platform == 'win32' or not (os.isatty(0) and os.isatty(1)):
         return None
     return Terminal()
@@ -105,23 +105,23 @@ def ctrl_c_as_key(terminal: Terminal, interrupt: Callable[[], object]) -> Genera
 
 
 class PtyRun:
-    """One command's pseudo-terminal, and the relay between it and CLAI's terminal.
+    """One command's pseudo-terminal, and the relay between it and Pax's terminal.
 
     Until the command goes full screen, its output goes to `capture` and keys go to it, except Ctrl-C,
-    which calls `interrupt` so CLAI interrupts the command as it does any other. Once it goes full
-    screen, `full_terminal()` takes CLAI's display off the screen and the relay passes everything through.
+    which calls `interrupt` so Pax interrupts the command as it does any other. Once it goes full
+    screen, `full_terminal()` takes Pax's display off the screen and the relay passes everything through.
     """
 
     def __init__(
         self, *, terminal: Terminal, capture: Callable[[bytes], None], interrupt: Callable[[], object]
     ) -> None:
-        """Open the pseudo-terminal at the size of CLAI's terminal."""
+        """Open the pseudo-terminal at the size of Pax's terminal."""
         self.terminal = terminal
         self.capture = capture
         self.interrupt = interrupt
         self.handed_over = False
         self.leader, self.follower = os.openpty()
-        # Keys the command is not reading are dropped rather than blocking CLAI.
+        # Keys the command is not reading are dropped rather than blocking Pax.
         os.set_blocking(self.leader, False)
         self.closed = asyncio.Event()
         self._text = TerminalText()
@@ -137,7 +137,7 @@ class PtyRun:
         return f'exec 3<>{shlex.quote(os.ttyname(self.follower))} 3>&-\n{command}'
 
     def start(self) -> None:
-        """Relay output and keys, with CLAI's terminal in raw mode so each key reaches the command."""
+        """Relay output and keys, with Pax's terminal in raw mode so each key reaches the command."""
         from prompt_toolkit.input.vt100 import raw_mode
 
         loop = self._loop = asyncio.get_running_loop()
@@ -152,7 +152,7 @@ class PtyRun:
         self._stack.callback(loop.remove_reader, self.terminal.input)
 
     def pass_through(self, data: bytes) -> None:
-        """Write `data` to CLAI's terminal as it is."""
+        """Write `data` to Pax's terminal as it is."""
         view = memoryview(data)
         while view:
             view = view[os.write(self.terminal.output, view) :]
@@ -163,7 +163,7 @@ class PtyRun:
             await asyncio.wait_for(self.closed.wait(), _DRAIN_GRACE)
 
     def close(self) -> None:
-        """Stop relaying, give CLAI's display its screen back, and restore the terminal's modes."""
+        """Stop relaying, give Pax's display its screen back, and restore the terminal's modes."""
         if not self.handed_over:
             self.capture(self._text.feed(b'', final=True))
         self._stack.close()
@@ -171,7 +171,7 @@ class PtyRun:
         os.close(self.leader)
 
     def _close_follower(self) -> None:
-        """Close CLAI's copy of the command's end, so the command's exit ends the output."""
+        """Close Pax's copy of the command's end, so the command's exit ends the output."""
         if self.follower >= 0:
             os.close(self.follower)
             self.follower = -1
@@ -212,7 +212,7 @@ class PtyRun:
         self._loop.call_soon_threadsafe(self._resize)
 
     def _resize(self) -> None:
-        """Give the pseudo-terminal CLAI's size, which signals the command when it changed."""
+        """Give the pseudo-terminal Pax's size, which signals the command when it changed."""
         import fcntl
         import termios
 

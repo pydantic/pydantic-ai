@@ -130,12 +130,12 @@ async def test_native_command(platform: str, monkeypatch: pytest.MonkeyPatch) ->
             [
                 '/usr/bin/osascript',
                 '-e',
-                'on run argv\n display notification (item 1 of argv) with title "CLAI2"\nend run',
+                'on run argv\n display notification (item 1 of argv) with title "Pax"\nend run',
                 message,
             ]
         ]
     elif platform == 'linux':
-        assert commands == [['/usr/bin/notify-send', '--app-name=CLAI2', '--', 'CLAI2', message]]
+        assert commands == [['/usr/bin/notify-send', '--app-name=Pax', '--', 'Pax', message]]
     else:
         assert commands == []
 

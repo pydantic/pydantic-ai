@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness.coder._capability import FILE_TOOL_NAMES, BenchmarkInstructions, Coder
+from pydantic_ai_harness.coder._capability import FILE_TOOL_NAMES, MAX_IMAGE_SIDE, BenchmarkInstructions, Coder
 from pydantic_ai_harness.coder._instructions import Autonomy
 from pydantic_ai_harness.coder._model_guidance import MODEL_GUIDANCE, Fragment, ModelGuidance
 
@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     'FILE_TOOL_NAMES',
+    'MAX_IMAGE_SIDE',
     'MODEL_GUIDANCE',
     'Autonomy',
     'BenchmarkInstructions',

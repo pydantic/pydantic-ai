@@ -116,6 +116,13 @@ class _ReportExhaustedRetries(AbstractCapability[AgentDepsT]):
 MAX_READ_CHARS = 50_000
 """Characters of complete lines per `read_file`, below the output cap."""
 
+MAX_IMAGE_SIDE = 1024
+"""Longest side, in pixels, of an image `read_file` returns; a larger one is downscaled to it.
+
+Providers reject images over their own size limits, or downscale them themselves
+after the full-size upload.
+"""
+
 MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
@@ -180,12 +187,13 @@ class BenchmarkInstructions(AbstractCapability[AgentDepsT]):
         return BENCHMARK_INSTRUCTIONS
 
 
-def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
+def _file_system(*, unrestricted: bool, max_image_side: int | None) -> FileSystem[AgentDepsT]:
     file_system = FileSystem[AgentDepsT](
         content_hashes=False,
         max_read_chars=MAX_READ_CHARS,
         tools=FILE_TOOL_NAMES,
         max_retries=MAX_FILE_TOOL_RETRIES,
+        max_image_side=max_image_side,
     )
     if unrestricted:
         # `/` is the filesystem root, or on Windows the working directory's drive.
@@ -283,6 +291,9 @@ class Coder(CombinedCapability[AgentDepsT]):
             the OpenAI family (the `openai` provider, plus OpenAI models served
             through a gateway such as OpenRouter or Azure). Pass `()` to disable
             adjustments. An explicit table is applied at every autonomy level.
+        max_image_side: Longest side, in pixels, of an image `read_file` returns; a larger
+            one is downscaled to it first. Needs Pillow, which the `coder` extra installs.
+            `None` sends images at full size and drops the Pillow requirement.
     """
 
     def __init__(
@@ -299,6 +310,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         caching: bool = True,
         strict: bool | None = False,
         model_guidance: Sequence[ModelGuidance] | None = None,
+        max_image_side: int | None = MAX_IMAGE_SIDE,
     ) -> None:
         if autonomy not in get_args(Autonomy):
             raise ValueError(f'`autonomy` must be one of {", ".join(map(repr, get_args(Autonomy)))}, not {autonomy!r}.')
@@ -345,7 +357,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
             _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project), per_model=per_model),
-            _file_system(unrestricted=unrestricted_filesystem),
+            _file_system(unrestricted=unrestricted_filesystem, max_image_side=max_image_side),
             Shell[AgentDepsT](
                 denied_commands=[],
                 default_timeout=MAX_FOREGROUND_WAIT,

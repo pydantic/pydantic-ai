@@ -41,7 +41,7 @@ from tests.pax.test_live_runtimes import Fleet, Recorder, blocked, until
 
 
 class Desk(Fleet):
-    """A terminal CLAI: the session it started with, shown in a terminal, beside sessions the browser opens."""
+    """A terminal Pax: the session it started with, shown in a terminal, beside sessions the browser opens."""
 
     def __init__(self, root: Path, *, agent: Agent[None, str] | None = None) -> None:
         super().__init__(root)
@@ -195,13 +195,13 @@ async def test_restarts_are_refused_while_other_sessions_run_turns(
             release['b'].set()
             await until(desk.live, lambda: not b.running)
             assert await home.commands.execute_async('/update now') == 'Updated.'
-            assert await home.commands.execute_async('/reload') == 'Reloading CLAI2...'
+            assert await home.commands.execute_async('/reload') == 'Reloading Pax...'
     assert home.reload_requested
     await home.close('exit')
 
 
 async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hidden session cannot open a terminal menu or restart CLAI; the shown session can restart."""
+    """A hidden session cannot open a terminal menu or restart Pax; the shown session can restart."""
     desk = Desk(tmp_path)
     home, terminal = desk.home, desk.terminal
     monkeypatch.setattr(dialogs, 'RUNNERS', Script(lists=[MenuResult(cancelled=True)], choices=[], texts=[]).runners)
@@ -214,7 +214,7 @@ async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path, mon
         with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
             await other.commands.execute_async('/reload')
         assert await home.show_live(b.conversation.conversation_id) == ''
-        # Hidden now, the session CLAI started with cannot borrow the terminal's menu or restart.
+        # Hidden now, the session Pax started with cannot borrow the terminal's menu or restart.
         for command in ('/reload', '/update', '/update now'):
             with pytest.raises(ValueError, match='Enter them in the session the terminal shows'):
                 await home.commands.execute_async(command)
@@ -231,7 +231,7 @@ async def test_a_session_shown_in_the_terminal_restarts_clai(tmp_path: Path, mon
 
 
 async def test_a_session_shown_from_another_folder_does_not_restart_clai(tmp_path: Path) -> None:
-    """The restart resumes the session shown where CLAI started, which works only in the session's own folder."""
+    """The restart resumes the session shown where Pax started, which works only in the session's own folder."""
     desk = Desk(tmp_path)
     home = desk.home
 
@@ -602,7 +602,7 @@ async def test_chat_opens_sessions_for_the_browser_beside_the_terminal(tmp_path:
         assert b.workspace == elsewhere.resolve() and here.workspace == home.workspace
         home.send_input(f'/resume {b.conversation.conversation_id}')
         await until(live, lambda: live.focused == b.id)
-        # The session CLAI started with ends first, from the browser; the terminal goes on showing the other.
+        # The session Pax started with ends first, from the browser; the terminal goes on showing the other.
         home.send_input('/exit')
         await until(live, lambda: home not in live.listing())
         b.send_input('/exit')
@@ -646,7 +646,7 @@ async def test_a_failed_reload_from_a_shown_session_keeps_its_conversation(
         conversations.append(b.conversation.conversation_id)
         home.send_input(f'/resume {conversations[0]}')
         await until(live, lambda: live.focused == b.id)
-        # CLAI starts again in the session it started with, whose plugins load once its conversation is chosen.
+        # Pax starts again in the session it started with, whose plugins load once its conversation is chosen.
         Opener.started = anyio.Event()
         b.send_input('/reload')
         await Opener.started.wait()

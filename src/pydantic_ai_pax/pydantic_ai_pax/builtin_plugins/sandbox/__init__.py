@@ -1,4 +1,4 @@
-"""`/sandbox PROVIDER`: run a new conversation in a cloud sandbox holding a copy of this checkout.
+"""`/sandbox PROVIDER`: run a new conversation in a sandbox, local or in the cloud, holding a copy of this checkout.
 
 The sandbox gets the branch, its unpushed commits, and the uncommitted files (`seed`). Its `git` and `gh`
 act as the user's `gh` login. Where the provider's proxy can add the token to requests for GitHub, the token
@@ -33,7 +33,7 @@ from pydantic_ai.workspaces import (
     WrapperWorkspace,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.providers import PROVIDERS, GitHubCredential, SandboxProvider
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login
+from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login, ref_provider
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend, Snapshot, seed, snapshot
 from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.config.api_keys import load_keys
@@ -57,7 +57,12 @@ def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
 
 
 def _owned(ref: WorkspaceRef | None) -> WorkspaceRef | None:
-    return ref if ref is not None and ref.provider in PROVIDERS else None
+    return ref if ref is not None and _owner(ref) is not None else None
+
+
+def _owner(ref: WorkspaceRef) -> SandboxProvider | None:
+    """The provider whose sandbox `ref` names; none for a `local` ref, this machine's own folder."""
+    return next((provider for name, provider in PROVIDERS.items() if ref_provider(name) == ref.provider), None)
 
 
 @dataclass(kw_only=True)
@@ -105,7 +110,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
     def _instructions(self, ctx: RunContext[None]) -> str:
         if (ref := _owned(ctx.workspace.ref)) is None:
             return ''
-        provider = PROVIDERS[ref.provider]
+        provider = self.plugin.sandbox(ref).provider
         return (
             f'Your shell and file tools run in a {provider.title} sandbox. {provider.working_dir} '
             "is a copy of the user's checkout, made when this conversation started; the user sees changes there "
@@ -142,7 +147,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         if re.fullmatch(KEY_NAME, name) is None:
             return f'{name!r} is not an environment variable name: use capitals, digits, and underscores.'
         if name in _SET_BY_CLAI:
-            return f'CLAI sets {name} in the sandbox itself, so it cannot be replaced.'
+            return f'Pax sets {name} in the sandbox itself, so it cannot be replaced.'
         ref = _owned(ctx.workspace.ref)
         assert ref is not None  # `_in_sandbox` offers the tool only there.
         async with self.plugin.host.full_screen():
@@ -160,7 +165,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
             return f'The user did not give {name}.'
         self.plugin.sandbox(ref).env[name] = saved.get_secret_value()
         return (
-            f'{name} is set for every command started from now on, until CLAI restarts; ask again if a command '
+            f'{name} is set for every command started from now on, until Pax restarts; ask again if a command '
             'then finds it missing. Restart a server started before it.'
         )
 
@@ -174,22 +179,33 @@ class _ConversationSandbox(ConversationWorkspace[None]):
     def shell_line_workspace(self, messages: Sequence[ModelMessage]) -> ShellLineWorkspace | None:
         if (ref := history_sandbox(messages)) is None:
             return None
-        return ShellLineWorkspace(workspace=self._workspace(ref), name=f'the {PROVIDERS[ref.provider].title} sandbox')
+        return ShellLineWorkspace(
+            workspace=self._workspace(ref), name=f'the {self.plugin.sandbox(ref).provider.title} sandbox'
+        )
 
     def _workspace(self, ref: WorkspaceRef) -> WorkspaceBackend:
         """The sandbox `ref` names, with the variables `request_env` gave it; agent runs and `!` lines both use it."""
         sandbox = self.plugin.sandbox(ref)
         # The provider's backend stays unwrapped on `_Sandbox`, as `provider.close` keys its clients by it.
-        return _EnvWorkspace(Workspace(sandbox.open()), env=sandbox.env)
+        return _EnvWorkspace(Workspace(sandbox.open()), env=sandbox.env, ref=sandbox.ref)
 
 
 class _EnvWorkspace(WrapperWorkspace):
-    """Adds the variables `request_env` gave the sandbox to every command, read as each one starts."""
+    """Adds the variables `request_env` gave the sandbox to every command, read as each one starts.
 
-    def __init__(self, wrapped: Workspace, *, env: Mapping[str, str]) -> None:
+    It reports the sandbox's ref as `/sandbox` recorded it, which responses carry, so `/sandbox local`'s VMs stay
+    apart from the harness's own `smol` and `boxlite` ones.
+    """
+
+    def __init__(self, wrapped: Workspace, *, env: Mapping[str, str], ref: WorkspaceRef) -> None:
         super().__init__(wrapped)
         self._env = env
         """The sandbox's own `env`, not a copy, so a grant mid-run reaches the run's later commands."""
+        self._ref = ref
+
+    @property
+    def ref(self) -> WorkspaceRef:
+        return self._ref
 
     async def run(
         self,
@@ -205,7 +221,7 @@ class _EnvWorkspace(WrapperWorkspace):
 
 
 class SandboxPlugin(Plugin):
-    """`/sandbox PROVIDER` moves a new conversation into a cloud sandbox; `/sandbox` says where it runs."""
+    """`/sandbox PROVIDER` moves a new conversation into a sandbox; `/sandbox` says where it runs."""
 
     def __init__(self, host: PluginHost[None], settings: NoSettings) -> None:
         super().__init__(host, settings)
@@ -219,7 +235,10 @@ class SandboxPlugin(Plugin):
         return (
             Command(
                 name='sandbox',
-                description=f'Run a new conversation in a cloud sandbox ({", ".join(PROVIDERS)}), or show where it runs',
+                description=(
+                    f'Run a new conversation in a sandbox ({", ".join(PROVIDERS)}; local ones run a VM on this '
+                    'machine), or show where it runs'
+                ),
                 handler=self.command,
                 complete=self.complete,
             ),
@@ -235,7 +254,9 @@ class SandboxPlugin(Plugin):
     def sandbox(self, ref: WorkspaceRef) -> _Sandbox:
         """The sandbox `ref` names, which a `/sandbox` provider owns."""
         if (sandbox := self._sandboxes.get(ref)) is None:
-            sandbox = self._sandboxes[ref] = _Sandbox(provider=PROVIDERS[ref.provider], ref=ref)
+            provider = _owner(ref)
+            assert provider is not None
+            sandbox = self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref)
         return sandbox
 
     def current(self) -> _Sandbox | None:
@@ -244,7 +265,11 @@ class SandboxPlugin(Plugin):
         return None if ref is None else self.sandbox(ref)
 
     def complete(self, args: list[str]) -> Iterable[str]:
-        return (*PROVIDERS, 'delete') if len(args) <= 1 else ()
+        words = [name.split() for name in PROVIDERS]
+        if len(args) <= 1:
+            return (*dict.fromkeys(first for first, *_ in words), 'delete')
+        # The second word of a provider such as `local smol`.
+        return [second for first, *rest in words for second in rest if first == args[0]] if len(args) == 2 else ()
 
     async def command(self, args: list[str]) -> str:
         match args:
@@ -252,7 +277,9 @@ class SandboxPlugin(Plugin):
                 return self._where()
             case ['delete']:
                 return await self._delete()
-            case [name] if name in PROVIDERS:
+            case ['local']:
+                return _local_choice()
+            case [*words] if (name := ' '.join(words)) in PROVIDERS:
                 return await self._start(PROVIDERS[name])
             case _:
                 raise ValueError(f'Usage: /sandbox [{" | ".join(PROVIDERS)} | delete]')
@@ -261,7 +288,7 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         if sandbox is None:
             offer = ' or '.join(f'/sandbox {name}' for name in PROVIDERS)
-            return f'This conversation runs on this machine. {offer} moves a new conversation into a cloud sandbox.'
+            return f'This conversation runs on this machine. {offer} moves a new conversation into a sandbox.'
         if sandbox.deleted:
             return f'This conversation ran in {sandbox.provider.title} sandbox {sandbox.ref.id}, now deleted. Run /new.'
         return (
@@ -289,8 +316,8 @@ class SandboxPlugin(Plugin):
         checkout = await to_thread.run_sync(snapshot, self.host.workspace)
         ref, backend = await _create(provider, github)
         try:
-            # Saved before seeding, which can take minutes, so a CLAI that dies meanwhile leaves a conversation
-            # naming the sandbox, which `/sandbox delete` can delete. The request is CLAI's, not a prompt the user
+            # Saved before seeding, which can take minutes, so a Pax that dies meanwhile leaves a conversation
+            # naming the sandbox, which `/sandbox delete` can delete. The request is Pax's, not a prompt the user
             # typed, so `/rewind` cannot cut the history back to before it. The response only names the sandbox:
             # it is empty, so providers send nothing for it, and the run's instructions say where the tools run.
             request = imported_context(
@@ -333,7 +360,7 @@ class SandboxPlugin(Plugin):
 
 
 _SET_BY_CLAI = frozenset({'GH_TOKEN', *SANDBOX_ENV})
-"""What `request_env` refuses: `GH_TOKEN` is CLAI's GitHub login (a proxy's stand-in, or unset so the saved token is used)."""
+"""What `request_env` refuses: `GH_TOKEN` is Pax's GitHub login (a proxy's stand-in, or unset so the saved token is used)."""
 
 
 async def _in_sandbox(ctx: RunContext[None], tool: ToolDefinition) -> ToolDefinition | None:
@@ -377,6 +404,15 @@ def _github() -> GitHubCredential | None:
     # Not caught: `gh_user` asks GitHub, and a GitHub too slow to answer is no reason to say the user has no login.
     login = gh_user('github.com') if token is not None else None
     return None if token is None or login is None else GitHubCredential(login=login, token=token)
+
+
+def _local_choice() -> str:
+    """What `/sandbox local` says: which engine to run the VM with, and what each still needs here."""
+    local = [provider for name, provider in PROVIDERS.items() if name.startswith('local ')]
+    offer = ' or '.join(f'/sandbox {provider.name} ({provider.title})' for provider in local)
+    lines = [f'/sandbox local runs a new conversation in a VM on this machine. Pick its engine: {offer}.']
+    lines += [f'{provider.title}: {missing}' for provider in local if (missing := provider.missing()) is not None]
+    return '\n'.join(lines)
 
 
 def _started(

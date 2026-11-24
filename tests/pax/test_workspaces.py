@@ -91,7 +91,7 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     repo = tmp_path / 'my repo'
     repo.mkdir()
     git(repo, 'init', '-b', 'main')
-    git(repo, 'config', 'user.name', 'CLAI Test')
+    git(repo, 'config', 'user.name', 'Pax Test')
     git(repo, 'config', 'user.email', 'clai@example.com')
     (repo / 'app.py').write_text('print("hi")\n')
     git(repo, 'add', '.')
@@ -102,7 +102,7 @@ def repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def directory(tmp_path: Path) -> Path:
-    """Where the registry and clones go, as CLAI's state directory holds them."""
+    """Where the registry and clones go, as Pax's state directory holds them."""
     return tmp_path / 'state'
 
 
@@ -139,7 +139,7 @@ async def test_a_workspace_from_creation_to_destruction(directory: Path, reposit
     [workspace] = await workspaces_in(directory).listing()
     assert created == (
         f'Created workspace {workspace.id} at {workspace.path} on branch clai-{workspace.id}. '
-        "Start a session there with the web UI's New session, or run CLAI in it."
+        "Start a session there with the web UI's New session, or run Pax in it."
     )
     assert workspace.id.startswith('my-repo-') and workspace.conversation is None
     assert workspace.path == (repository / '.worktrees' / workspace.id).resolve()
@@ -165,7 +165,7 @@ async def test_a_workspace_from_creation_to_destruction(directory: Path, reposit
 
 
 async def test_what_an_older_clai_saved_still_reads(directory: Path, repository: Path) -> None:
-    """A record written when each workspace ran a CLAI of its own, and a kind with its retired `model`, still load."""
+    """A record written when each workspace ran a Pax of its own, and a kind with its retired `model`, still load."""
     workspaces = workspaces_in(directory)
     workspace = await workspaces.create(kind='local-worktree', repo=str(repository))
     record = workspaces.registry.folder(workspace.id) / 'workspace.json'
@@ -180,7 +180,7 @@ async def test_what_an_older_clai_saved_still_reads(directory: Path, repository:
     assert await workspaces.get(workspace.id) == workspace
     (record.parent / 'token').write_text('old')
     await workspaces.destroy(workspace.id)
-    assert not record.parent.exists(), 'what the older CLAI kept there goes too'
+    assert not record.parent.exists(), 'what the older Pax kept there goes too'
 
     kind = WorktreeKind.model_validate({'repo': 'x', 'model': 'openai:gpt-5'})
     assert kind.model_dump() == WorktreeKind(repo='x').model_dump() | {'model': 'openai:gpt-5'}
@@ -189,7 +189,7 @@ async def test_what_an_older_clai_saved_still_reads(directory: Path, repository:
 
 
 async def test_a_workspace_from_a_clone(directory: Path, repository: Path, tmp_path: Path) -> None:
-    """A URL is cloned once into CLAI's state directory, fetched again for the next workspace, and checked out there."""
+    """A URL is cloned once into Pax's state directory, fetched again for the next workspace, and checked out there."""
     url = repository.as_uri()
     workspaces = workspaces_in(
         directory, clones=WorktreeKind(repo=url, ref='feature', root=str(tmp_path / 'checkouts'))

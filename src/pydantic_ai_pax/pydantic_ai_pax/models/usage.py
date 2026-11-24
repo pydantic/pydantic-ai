@@ -1,6 +1,6 @@
 """Current subscription usage per account, for `/accounts`.
 
-CLAI fetches usage for the sign-ins it owns: ChatGPT/Codex through the core provider's own client,
+Pax fetches usage for the sign-ins it owns: ChatGPT/Codex through the core provider's own client,
 so stale tokens refresh and persist exactly as they do for model requests, and GitHub Copilot with
 the saved GitHub login. A plugin account reports its own through `PluginLogin.usage`.
 """
@@ -82,7 +82,7 @@ async def codex_usage(provider: 'OpenAICodexProvider') -> AccountUsage:
     try:
         usage = _CodexUsage.model_validate(body)
     except ValidationError:
-        raise UserError('Codex returned usage CLAI cannot read.') from None
+        raise UserError('Codex returned usage Pax cannot read.') from None
     limit = usage.rate_limit or _CodexLimit()
     windows = tuple(
         UsageWindow(
@@ -135,7 +135,7 @@ async def copilot_usage(account: str, *, transport: 'httpx2.AsyncBaseTransport |
     try:
         user = _CopilotUser.model_validate_json(response.content)
     except ValidationError:
-        raise UserError('GitHub returned Copilot usage CLAI cannot read.') from None
+        raise UserError('GitHub returned Copilot usage Pax cannot read.') from None
     resets_at = user.quota_reset_date_utc or (
         None if user.quota_reset_date is None else datetime.combine(user.quota_reset_date, time(), UTC)
     )

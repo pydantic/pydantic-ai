@@ -1,4 +1,4 @@
-/* CLAI web UI: a calm, dark-first workspace in the spirit of the Codex desktop app. */
+/* Pax web UI: a calm, dark-first workspace in the spirit of the Codex desktop app. */
 
 /* Colours from pydantic.dev: Paraffin and plum grounds, Paper text, Lithium pink accents, Aqua for additions. */
 
@@ -507,7 +507,7 @@ pre {
   animation: pulse 1.6s ease-out infinite;
 }
 
-/* Another CLAI runs it: a hollow ring, never this CLAI's spinner. */
+/* Another Pax runs it: a hollow ring, never this Pax's spinner. */
 .state.busy {
   width: 8px;
   height: 8px;
@@ -3583,7 +3583,7 @@ textarea.setting-input {
   }
 }
 
-/* Where a new session runs, under `clai2 --web`. */
+/* Where a new session runs, under `pax --web`. */
 .new-session-dialog .dialog-description {
   margin: 0;
 }
