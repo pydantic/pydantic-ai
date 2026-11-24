@@ -275,7 +275,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Repo Context](repo-context.md) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
 | [Report Stale Files](report-stale-files.md) | Harness | Tell the model when a file it read or wrote has since changed or been deleted in the workspace |
 | [Pydantic AI Docs](pydantic-ai-docs.md) | Harness | On-demand Pydantic AI documentation lookup |
-| [Current Time](current-time.md) | Harness | Today's date, or the current hour, in a time zone you pick, without breaking the prompt cache |
+| [Announce Current Time](announce-current-time.md) | Harness | Today's date, or the current hour, in a time zone you pick, without breaking the prompt cache |
 
 ### Control & safety
 

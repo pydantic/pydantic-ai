@@ -158,7 +158,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Skills](https://pydantic.dev/docs/ai/harness/skills/) | Harness | Load [Agent Skill](on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
 | [Pydantic AI Docs](https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/) | Harness | On-demand Pydantic AI documentation lookup |
-| [Current Time](https://pydantic.dev/docs/ai/harness/current-time/) | Harness | Today's date, or the current hour, in a time zone you pick, without breaking the prompt cache |
+| [Announce Current Time](https://pydantic.dev/docs/ai/harness/announce-current-time/) | Harness | Today's date, or the current hour, in a time zone you pick, without breaking the prompt cache |
 
 ### Control & safety {#control-safety}
 

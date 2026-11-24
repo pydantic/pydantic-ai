@@ -265,7 +265,7 @@ print(result.output)
 
 1. The date changes between runs of a conversation. With `on_change='append'`, a new date is added to the history instead of rewriting the instructions, so the provider can keep reusing the conversation it cached; see [Instructions that change during a conversation](#instructions-that-change-during-a-conversation). The capability needs an `id` for this. Text that changes on every request, such as the current time down to the second, belongs in the user prompt or a tool instead.
 
-`date.today()` reads the host's clock in its local time zone. Pydantic AI Harness's [Current Time](../harness/current-time.md) capability is a ready-made version that takes the date from the request's timestamp instead, in a time zone you pick, so it also works in [durable execution](../durable_execution/overview.md) workflow code.
+`date.today()` reads the host's clock in its local time zone. Pydantic AI Harness's [Announce Current Time](../harness/announce-current-time.md) capability is a ready-made version that takes the date from the request's timestamp instead, in a time zone you pick, so it also works in [durable execution](../durable_execution/overview.md) workflow code.
 
 Instructions can also use [template strings](../agent-spec.md#template-strings) ([`TemplateStr('Hello {{name}}')`][pydantic_ai.template.TemplateStr]) for Handlebars-style templates rendered against the agent's [dependencies](../dependencies.md). In Python code, a callable with [`RunContext`][pydantic_ai.tools.RunContext] is generally preferred for IDE autocomplete.
 

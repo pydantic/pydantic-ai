@@ -619,9 +619,11 @@ navigation:
           - page: "Pydantic AI Docs"
             path: "harness/pydantic-ai-docs.md"
             slug: "harness/pydantic-ai-docs"
-          - page: "Current Time"
-            path: "harness/current-time.md"
-            slug: "harness/current-time"
+          - page: "Announce Current Time"
+            path: "harness/announce-current-time.md"
+            slug: "harness/announce-current-time"
+            aliases:
+              - "harness/current-time"
       - section: "Control & Safety"
         slug: ""
         contents:
