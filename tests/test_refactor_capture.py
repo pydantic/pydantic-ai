@@ -704,10 +704,16 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
     # The inner sessions share this worker's `random` with every thread an earlier test left running, and such a
     # thread can draw from it between the capture's seed and an inner test's draw: Prefect's events client keeps a
     # `websockets` connection open whose pings draw `random.getrandbits(32)`. So the capture's seed also seeds `rng`,
-    # which no other thread draws from, and `random.randrange`, the draw the inner tests assert on, reads `rng`.
+    # and `random.randrange`, the draw the inner tests assert on, reads `rng`: a thread that draws through
+    # `random.getrandbits`, as a `websockets` ping does, can't shift it.
     rng = random.Random()
     seed = random.seed
-    monkeypatch.setattr(random, 'seed', lambda a: (seed(a), rng.seed(a)))  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
+
+    def seed_both(a: str) -> None:
+        seed(a)
+        rng.seed(a)
+
+    monkeypatch.setattr(random, 'seed', seed_both)
     monkeypatch.setattr(random, 'randrange', rng.randrange)
 
     def run(
