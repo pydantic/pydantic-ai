@@ -2470,6 +2470,33 @@ async def test_anthropic_keeps_top_p_set_together_with_temperature_where_accepte
     assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == {'temperature': 0.5, 'top_p': 0.9}
 
 
+async def test_anthropic_drops_conflicting_sampling_settings_from_extra_body(allow_model_requests: None):
+    """Conflicting `thinking` and `top_p` set via `extra_body` are still dropped."""
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+
+    await Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client))).run(
+        'What is 2+2?',
+        model_settings=ModelSettings(
+            temperature=0.5,
+            extra_body={'thinking': {'type': 'enabled', 'budget_tokens': 2048}},
+        ),
+    )
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == {
+        'thinking': {'type': 'enabled', 'budget_tokens': 2048}
+    }
+
+    mock_client_haiku = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    await Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client_haiku))).run(
+        'What is 2+2?',
+        model_settings=ModelSettings(temperature=0.5, extra_body={'top_p': 0.9}),
+    )
+    assert get_mock_chat_completion_kwargs(mock_client_haiku)[0]['extra_body'] == {'temperature': 0.5}
+
+
 async def test_anthropic_betas_setting(allow_model_requests: None):
     """Verify anthropic_betas setting adds betas to the API request."""
     c = completion_message(

@@ -10,6 +10,7 @@ from ...profiles.anthropic import AnthropicModelProfile
 from ...settings import ModelSettings, ThinkingLevel
 from .. import ModelRequestParameters
 from .._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
+from ._request_params import extra_body_thinking
 
 if TYPE_CHECKING:
     from . import AnthropicModelSettings
@@ -50,6 +51,9 @@ def request_thinking_type(
     into it, but `AnthropicModel.prepare_request` also asks before that happens.
     """
     anthropic_settings = cast('AnthropicModelSettings', model_settings or {})
+    if (caller_thinking := extra_body_thinking(anthropic_settings)) is not None:
+        thinking_type = caller_thinking.get('type')
+        return thinking_type if thinking_type in ('enabled', 'adaptive') else None
     unified_thinking = model_request_parameters.thinking
     if unified_thinking is None:
         unified_thinking = anthropic_settings.get('thinking')

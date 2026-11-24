@@ -5,8 +5,9 @@ It's a module of its own because `models/bedrock.py` can't import from `models/a
 
 from __future__ import annotations as _annotations
 
-from typing import Literal
+from typing import Any, Literal
 
+from .._utils import is_str_mapping
 from ..profiles import ModelProfile
 from ..settings import ModelSettings
 
@@ -23,12 +24,21 @@ def drop_conflicting_sampling_settings(
     dropped silently.
     """
     conflicting: set[Literal['temperature', 'top_p', 'top_k']] = set()
-    temperature = model_settings.get('temperature')
-    top_p = model_settings.get('top_p')
+    extra_body = model_settings.get('extra_body')
+    extra_body_mapping = extra_body if is_str_mapping(extra_body) else None
+
+    def _effective_setting(name: Literal['temperature', 'top_p', 'top_k']) -> Any:
+        if extra_body_mapping is not None and name in extra_body_mapping:
+            return extra_body_mapping[name]
+        return model_settings.get(name)
+
+    temperature = _effective_setting('temperature')
+    top_p = _effective_setting('top_p')
+    top_k = _effective_setting('top_k')
     if thinking and profile.get('anthropic_restricts_sampling_with_thinking', False):
         if temperature is not None and temperature != 1:
             conflicting.add('temperature')
-        if model_settings.get('top_k') is not None:
+        if top_k is not None:
             conflicting.add('top_k')
         if top_p is not None and top_p < 0.95:
             conflicting.add('top_p')
@@ -41,5 +51,11 @@ def drop_conflicting_sampling_settings(
         conflicting.add('top_p')
     filtered: ModelSettings = {**model_settings}
     for setting in conflicting:
-        filtered.pop(setting)
+        filtered.pop(setting, None)
+    if extra_body_mapping is not None and any(setting in extra_body_mapping for setting in conflicting):
+        new_extra_body = {key: value for key, value in extra_body_mapping.items() if key not in conflicting}
+        if new_extra_body:
+            filtered['extra_body'] = new_extra_body
+        else:
+            filtered.pop('extra_body', None)
     return filtered
