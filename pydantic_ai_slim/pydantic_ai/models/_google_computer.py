@@ -345,8 +345,9 @@ def map_computer_result(
     """The function response for a replayed call, with the `safety_acknowledgement` Gemini asked for, if it asked.
 
     Gemini refuses a response to a flagged call that has none, so every response to a flagged call carries one. It is
-    `True` only when the runner set `confirmed` on the result, because a person approved the call and it ran. Any
-    other result, such as a denial or an approved call that then failed, sends `False` beside the error.
+    `True` when the runner set `confirmed` on the result, because a person approved the call and it ran, even if one of
+    its actions failed. A denial, or an approved call that raised before returning a result, sends `False` beside the
+    error.
     """
     if _confirmation_reason(call['args']) is None:
         return dict(response)
