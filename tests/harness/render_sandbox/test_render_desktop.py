@@ -89,9 +89,12 @@ async def test_a_desktop_sandbox_reattaches_with_its_display(
         client=client, ref=ref, working_dir=working_dir, desktop=(1440, 900), allow_internet_access=False
     )
     await full_display(desktop).display_size()
+    # The capability hands its desktop size to the backend it attaches.
+    await full_display(
+        RenderSandbox(client=client, working_dir=working_dir, desktop=(1440, 900)).backend(ref)
+    ).display_size()
 
-    (start,) = display.starts
-    assert start.endswith(' sh 1440x900')
+    assert [start.endswith(' sh 1440x900') for start in display.starts] == [True, True]
     assert RenderSandbox(client=client, working_dir=working_dir).backend(ref).display is None
 
 
