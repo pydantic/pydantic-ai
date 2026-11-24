@@ -577,7 +577,10 @@ class WorkspaceBackendSuite:
     async def test_reading_a_device_raises_os_error(
         self, backend: WorkspaceBackend, has_real_posix_shell: bool
     ) -> None:
-        """Only a regular file has an end to read to: `/dev/zero` never ends."""
+        """Only a regular file has an end to read to; a device such as `/dev/zero` has none.
+
+        `/dev/null` ends at once, so a backend that reads devices fails this rule instead of hanging on it.
+        """
         if not has_real_posix_shell or _windows(backend):
             pytest.skip('in-memory fakes and Windows have no device files')
         with anyio.fail_after(30):

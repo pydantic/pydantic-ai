@@ -48,7 +48,7 @@ class TestWindowsWorkspaceBackend(WorkspaceBackendSuite):
 
     @pytest.fixture
     def destroy_environment(self) -> Unsupported:
-        return Unsupported('Windows refuses to delete a directory a running command works in')
+        return Unsupported('no fixture destroys a Windows environment yet')
 
     @pytest.fixture
     def attach_backend(self) -> Callable[[WorkspaceRef], WorkspaceBackend]:
