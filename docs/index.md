@@ -81,10 +81,11 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ]
     ```
 
-    Run the file and you're chatting with the agent in your terminal. To try it before writing any code, run the exported [`coder_agent`](https://pydantic.dev/docs/ai/harness/coder/#api-reference) with [`clai`](cli.md#custom-agents) (the Pydantic AI CLI), via [`uvx`](https://docs.astral.sh/uv/guides/tools/):
+    Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, run [Pax](harness/clai2.md), the coding-agent TUI built on the Harness. It runs `Coder` by default, and your own agent with `--agent`:
 
     ```bash
-    uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
+    uv tool install pydantic-ai-pax
+    pax
     ```
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
@@ -460,11 +461,14 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 
 ## Next steps
 
-**Run something right now.** One command puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
+**Run something right now.** [Pax](harness/clai2.md), the coding-agent TUI built on the Harness, puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:xlarge }}
+uv tool install pydantic-ai-pax
+pax
 ```
+
+Point it at an agent of your own with `pax --agent mymodule:agent`.
 
 Or [install Pydantic AI](install.md), pick a [model](models/overview.md) (the [Pydantic AI Gateway](gateway.md) is one key for all of them), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
 
