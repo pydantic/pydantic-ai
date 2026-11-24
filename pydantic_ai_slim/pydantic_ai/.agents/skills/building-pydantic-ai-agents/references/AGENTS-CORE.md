@@ -162,6 +162,13 @@ async def check_orders_exist(ctx: RunContext[RefundDeps], output: list[Refund]) 
 - The validator may return a modified output; what it returns is `result.output`.
 - When the valid ids are known as the run starts and the model must pick one, `Choices` (above) puts them in the
   schema itself; a validator also covers ids nested in larger outputs and checks that need I/O.
+- To ground facts extracted from text you hold, give each fact a verbatim `quote` field and check in the validator
+  that every quote, with whitespace collapsed, is a substring of the source. See
+  [Checking quoted evidence against the source](https://pydantic.dev/docs/ai/core-concepts/output/#grounding-validators).
+- Don't gate side effects on a confidence or risk score the model reports: it isn't calibrated. Gate on outputs and
+  arguments your code can verify and on policy (`requires_approval=True`, `ApprovalRequired`), and measure any score
+  you keep with evals. See
+  [Don't gate actions on model-reported confidence](https://pydantic.dev/docs/ai/core-concepts/output/#model-reported-confidence).
 
 ## Dependency Injection
 
