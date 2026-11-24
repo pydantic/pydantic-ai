@@ -40,19 +40,23 @@ clicks and types until it has the answer, and prints it. The container keeps run
 
 ## Models
 
-The model must accept images. Every model gets `computer` as a regular function tool.
+The model must accept images. On the models listed under [OpenAI](https://pydantic.dev/docs/ai/models/openai/#computer-use), it gets its provider's own computer use
+tool. Every other model, and any model with `ComputerUse(native=False)`, gets `computer` as a regular function
+tool.
 
 ## Sandboxes
 
 | Sandbox | Turn on its screen |
 |---|---|
 | Docker | [`DockerContainer(desktop=True)`](../docker_container/#give-the-agent-a-desktop) |
+| Daytona | [`DaytonaSandbox(desktop=True)`](../daytona_sandbox/#give-the-agent-a-desktop) |
 
 For any other workspace, see [Your own display](#your-own-display).
 
 ### What the display needs
 
-Every sandbox above runs a desktop that needs these programs:
+[Daytona](../daytona_sandbox/#give-the-agent-a-desktop) starts its own desktop. Every other sandbox above runs one
+that needs these programs:
 
 - Xvfb, unless an X server is already running
 - `xdotool`
