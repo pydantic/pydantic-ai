@@ -379,8 +379,8 @@ Apply the prose-only documentation and mechanical text/data exceptions above fir
 Otherwise, run this gate before the first push and later pushes while the review budget remains.
 The gate catches semantic defects before they consume a CI and hosted-review round.
 
-Dispatch `pre-push-review` at most three times per PR during one task. Count every dispatch,
-including repeated reviews after findings. Reserve the next count before dispatch and include
+Dispatch `pre-push-review` at most three times per PR during one task, plus the one remediation
+review below. Count every dispatch, including repeated reviews after findings. Reserve the next count before dispatch and include
 `call N of 3` in the reviewer prompt. The final metadata review does not count against this budget,
 and neither does an additional local review the author asks for after the loop completes.
 
@@ -392,7 +392,8 @@ those gets no review, and neither does a delta the exempt-delta table below exem
 review to the remediation delta: the diff from the last reviewed SHA to the remediation commit,
 plus the affected callers and invariants that [Review scope](#review-scope) names for follow-ups.
 Include `remediation review after call 3 of 3` in the reviewer prompt, and title its record
-`pre-push remediation review at <candidate-head-sha>`.
+`pre-push remediation review at <candidate-head-sha>`. That record in `pr-decisions.md` spends the
+remediation review.
 
 Record each dispatch in `pr-decisions.md` — not in the session, which does not survive a handoff:
 
@@ -449,7 +450,7 @@ they may. Nothing else.
 
 Immediately before pushing, verify the worktree is clean and its tree equals the recorded reviewed tree.
 A different commit with the same tree keeps the verdict; record the new commit alongside the reviewed anchor.
-When the budget leaves the last remediation unreviewed, verify HEAD equals the locally checked remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
+When no review covers the last remediation, verify HEAD equals the locally checked remediation commit instead. Any other mismatch restarts the gate while the budget remains, unless
 the delta is exempt below.
 
 ### When a later push does not need another review
