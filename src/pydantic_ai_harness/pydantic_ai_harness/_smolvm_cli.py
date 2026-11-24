@@ -281,7 +281,7 @@ class SmolvmCliBackend(WorkspaceBackend, SupportsCommands):
             if state is None:
                 raise WorkspaceUnavailableError(_gone_message(name))
             if state in _STARTABLE:
-                # Stopped by something else, such as another CLAI closing it, maybe during the command, so it is not
+                # Stopped by something else, such as another Pax closing it, maybe during the command, so it is not
                 # run again here; the next command starts the VM.
                 self._ready = False
                 raise WorkspaceError(f'The smol VM {name!r} was {state} before the command ended; run it again.')

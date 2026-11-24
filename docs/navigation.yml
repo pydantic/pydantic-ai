@@ -520,9 +520,15 @@ navigation:
           - page: "Browser Use"
             path: "harness/browser-use.md"
             slug: "harness/browser-use"
+          - page: "CDP Browser"
+            path: "harness/cdp-browser.md"
+            slug: "harness/cdp-browser"
           - page: "Playwright Browser"
             path: "harness/playwright.md"
             slug: "harness/playwright"
+          - page: "Computer Use"
+            path: "harness/computer-use.md"
+            slug: "harness/computer-use"
       - section: "Reasoning, Planning & Delegation"
         slug: ""
         contents:
@@ -1273,6 +1279,11 @@ navigation:
             slug: "api/pydantic-ai/common_tools"
             aliases:
               - "api/common_tools"
+          - page: "computer_use"
+            path: "api/computer_use.md"
+            slug: "api/pydantic-ai/computer_use"
+            aliases:
+              - "api/computer_use"
           - page: "concurrency"
             path: "api/concurrency.md"
             slug: "api/pydantic-ai/concurrency"

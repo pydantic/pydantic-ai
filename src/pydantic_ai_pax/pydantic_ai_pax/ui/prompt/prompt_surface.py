@@ -201,10 +201,27 @@ class PromptSurface(io.StringIO):
         if self._partial:
             self.write('\n')
 
-    def markdown(self, *, render: Render, width: int) -> MarkdownBlock:
-        """Start a Markdown part that renders again for a new width or theme."""
+    def markdown(
+        self, *, render: Render, width: int, streaming: bool = False, expanded: Render | None = None
+    ) -> MarkdownBlock:
+        """Start a Markdown part that renders again for a new width or theme; see `MarkdownBlock` for `streaming` and `expanded`."""
         with self._lock:
-            return self.transcript.markdown(render=render, width=width, changed=self.changed)
+            return self.transcript.markdown(
+                render=render, width=width, changed=self.changed, streaming=streaming, expanded=expanded
+            )
+
+    def toggle_details(self) -> bool:
+        """Expand or collapse the output of every finished command in the transcript, for Ctrl+O; returns whether they are expanded.
+
+        The terminal's scrollback cannot change, so results already printed there move the panel to
+        the alternate screen, which paints them from the transcript.
+        """
+        with self._lock:
+            expanded = self.transcript.toggle_details()
+            self.full_screen = self.full_screen or self.transcript.printed_details()
+            self.selection.clear()
+            self._dirty = True
+        return expanded
 
     def clear(self, *, keep_current: bool = False) -> None:
         """Forget the transcript and repaint every cell next frame; see `TranscriptBuffer.clear`."""

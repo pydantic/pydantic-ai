@@ -1,4 +1,4 @@
-"""CLAI's background session naming for the resume browser, independent of foreground agent execution."""
+"""Pax's background session naming for the resume browser, independent of foreground agent execution."""
 
 from __future__ import annotations
 

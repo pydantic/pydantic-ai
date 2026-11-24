@@ -100,7 +100,7 @@ class LivePrompt:
         self.steer = steer
         self.run_now = run_now
         self.clock = clock
-        self.chords = dict(chords or {})
+        self.chords = {'ctrl-o': self.toggle_details, **(chords or {})}
         self.pinned = pinned
         self.spinner = spinner
         self.panel = panel
@@ -286,6 +286,10 @@ class LivePrompt:
         if key not in ('tab', 'backtab', 'escape') and not cycles:
             self.refresh_completions()
 
+    def toggle_details(self) -> str:
+        """Expand or collapse the output of every finished command in the transcript, for Ctrl+O."""
+        return 'Showing command output.' if self.output.toggle_details() else 'Hiding command output.'
+
     def escape(self) -> None:
         """Cancel or dismiss first; only consecutive idle presses request a rewind."""
         previous, self._last_escape = self._last_escape, None
@@ -317,7 +321,8 @@ class LivePrompt:
 
         A history walk owns the arrows, so recalling a `/command` shows its suggestions
         without trapping the walk on them. Tab picks a suggestion and hands the arrows to
-        the popup; editing the recalled text ends the walk, as does typing a fresh draft.
+        the popup. Editing recalled text keeps the walk only when it protects a nonempty
+        original draft; editing the restored draft ends the walk.
         """
         return bool(self._completions) and (self.buffer.history_index is None or self._selection >= 0)
 
@@ -770,7 +775,7 @@ def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]
     Only a prompt's text is recorded, as `prompt`, since agent spans already carry it. A `!` line never reaches
     the agent and can hold a secret such as `!export KEY=...`, so it records only its kind and length. A command
     records only its registered name, never its arguments: any plugin can add a command, and arguments such as
-    `/plugins add` settings JSON or an MCP server's headers can hold a secret CLAI cannot recognize.
+    `/plugins add` settings JSON or an MCP server's headers can hold a secret Pax cannot recognize.
     """
     kind = input_kind(text)
     if kind == 'command':

@@ -427,11 +427,12 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
 
     screen = Screen(width=40)
     screen.surface.paint(ROWS)
-    block = screen.surface.markdown(render=render, width=40)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
     block.extend('**bold**')
     block.write('streamed bold\n')
     screen.surface.refresh()
     assert screen.lines()[0] == 'streamed bold'
+    block.end()
     assert calls == []
     screen.terminal.resize(width=60, height=24)
     screen.surface.paint(ROWS)
@@ -444,6 +445,33 @@ def test_markdown_renders_again_for_a_new_width_or_theme() -> None:
     block.freeze()
     screen.surface.paint(ROWS)
     assert screen.lines()[0] == 'streamed bold', 'an aborted part keeps what it showed'
+
+
+def test_a_part_streaming_across_a_resize_renders_again_only_when_it_ends() -> None:
+    """Rendering the whole part again on every frame made each frame cost the whole part."""
+    calls: list[int] = []
+
+    def render(*, source: str, width: int) -> str:
+        calls.append(width)
+        return f'rendered at {width}: {source}\n'
+
+    screen = Screen(width=40)
+    screen.surface.paint(ROWS)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
+    block.extend('one')
+    block.write('one ')
+    screen.terminal.resize(width=10, height=24)
+    for word in ('two', 'three', 'four'):
+        block.extend(f' {word}')
+        block.write(f'{word} ')
+        screen.surface.paint(ROWS)
+    assert screen.lines()[:2] == ['one two th', 'ree four'], 'the streamed rows wrap to the new width'
+    assert calls == []
+    block.end()
+    screen.surface.paint(ROWS)
+    assert screen.lines()[:3] == ['rendered a', 't 10: one', 'two three']
+    screen.surface.paint(ROWS)
+    assert calls == [10]
 
 
 def test_a_theme_change_repaints_earlier_tool_output_in_the_new_palette() -> None:
@@ -738,11 +766,32 @@ def test_a_url_wrapped_inside_markdown_opens_whole() -> None:
 
     screen = Screen(width=20, height=12)
     screen.surface.paint(ROWS)
-    screen.surface.markdown(render=render, width=40).extend(url)
+    block = screen.surface.markdown(render=render, width=40)
+    block.extend(url)
     screen.surface.paint(ROWS)
     assert screen.lines()[:4] == [url[:20], url[20:40], url[40:], 'after']
     assert click(screen, 3, 2) == [url]
     assert click(screen, 2, 4) == []
+
+
+def test_a_click_before_the_next_paint_reads_rows_that_have_since_shrunk() -> None:
+    """A part that ends between a paint and a click may have fewer rows than the frame shows."""
+
+    def render(*, source: str, width: int) -> str:
+        return 'https://x.dev\n'
+
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    block = screen.surface.markdown(render=render, width=40, streaming=True)
+    block.extend('one')
+    block.write('a\nb\nc\nhttps://x.dev\n')
+    screen.terminal.resize(width=30, height=12)
+    screen.surface.paint(ROWS)
+    assert screen.surface.transcript_key('mouse', press(3, 4)) is None
+    # It ends inside the frame interval, so it paints after the release.
+    block.end()
+    assert screen.surface.transcript_key('mouse', release(3, 4)) is None
+    assert screen.opened == ['https://x.dev'], 'the click opens the URL the frame still shows'
 
 
 def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -755,7 +804,7 @@ def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyP
 
 class _Inline:
     def __init__(self, *, target: Callable[[str], object], args: tuple[str], daemon: bool) -> None:
-        assert daemon, 'a browser that never returns must not keep CLAI alive'
+        assert daemon, 'a browser that never returns must not keep Pax alive'
         self.target, self.args = target, args
 
     def start(self) -> None:

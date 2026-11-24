@@ -12,7 +12,7 @@ named key from `/keys`, chosen through the shared key picker; only the key's nam
 on every run, so replacing it in `/keys` takes effect on the next run, and a deleted key fails the run instead
 of connecting without it.
 
-With browser sign-in, CLAI signs in the way `/mcp` OAuth servers do, keeping the tokens in the keyring under
+With browser sign-in, Pax signs in the way `/mcp` OAuth servers do, keeping the tokens in the keyring under
 `mcp-plugin_pylon`. The sign-in runs only from the settings menu or `/pylon login`, never while loading or in a
 prompt; see `pydantic_ai_pax.plugins.sign_in`. Until then, runs get no Pylon tools.
 """

@@ -291,19 +291,37 @@ class MarkdownBlock(io.StringIO):
     """One assistant text or thinking part, kept as Markdown so a new width or theme renders it again.
 
     The stream writes its incrementally rendered ANSI here, which is shown while the width and theme
-    still match. Otherwise the whole source renders again, once per width, theme, and length.
+    still match, and until the part ends. After that the whole source renders again, once per width and
+    theme. Rendering a part that is still streaming again per frame made each frame cost the whole part.
+    A block with an `expanded` renderer, such as a tool's result row, renders with it instead while
+    `details` is set, as Ctrl+O sets it.
     """
 
     def __init__(
-        self, *, render: Render, width: int, changed: Callable[[], None], max_chars: int, max_lines: int
+        self,
+        *,
+        render: Render,
+        width: int,
+        changed: Callable[[], None],
+        max_chars: int,
+        max_lines: int,
+        streaming: bool = False,
+        expanded: Render | None = None,
     ) -> None:
-        """Start empty; `changed` asks the panel for a frame."""
+        """Start empty; `changed` asks the panel for a frame, and `streaming` is for a part still arriving."""
         super().__init__()
         self.source: str | None = ''
         self._render = render
+        self.expanded = expanded
+        self.details = False
         self._key = (width, theme.name())
         self._stream = _Lines(max_chars=max_chars, max_lines=max_lines)
         self._changed = changed
+        self.streaming = streaming
+        """Until `end`, the stream's own rows show at every width, wrapped again if it changed."""
+        self._resized_while_streaming = False
+        """Shown at another width or theme while streaming. Code fences take the console's width when they
+        close, so the stream's rows may mix widths: the ended part renders again even at `_key`."""
         self._rows: tuple[object, tuple[str, ...]] = ((), ())
         self._continued: tuple[bool, ...] = ()
         """Per cached row, whether it wraps on from the row above."""
@@ -312,6 +330,11 @@ class MarkdownBlock(io.StringIO):
     def rebind(cls, block: 'MarkdownBlock') -> 'MarkdownBlock':
         block.__class__ = cls
         block._stream = _Lines.rebind(block._stream)
+        # A reload happens between turns, so a block from before it has ended.
+        vars(block).setdefault('streaming', False)
+        vars(block).setdefault('_resized_while_streaming', False)
+        vars(block).setdefault('expanded', None)
+        vars(block).setdefault('details', False)
         # Blocks from before a reload have no wrap flags, so render their rows again.
         block._rows, block._continued = ((), ()), ()
         return block
@@ -341,6 +364,11 @@ class MarkdownBlock(io.StringIO):
     def flush(self) -> None:
         """Painting is the panel's job."""
 
+    def end(self) -> None:
+        """The part is complete, so a new width or theme renders its whole source once."""
+        self.streaming = False
+        self._changed()
+
     def freeze(self) -> None:
         """Keep only what was shown, as an aborted stream never rendered the rest of its source."""
         self.source = None
@@ -353,16 +381,23 @@ class MarkdownBlock(io.StringIO):
 
     def _lines(self, *, width: int) -> list[_Line]:
         key = (width, theme.name())
-        if self.source is None or key == self._key:
+        render = self.expanded if self.details and self.expanded is not None else self._render
+        if self.streaming:
+            self._resized_while_streaming |= key != self._key
+            return self._stream.all()
+        # A block that can expand renders from its source each time, as its source arrives after its row.
+        unchanged = key == self._key and not self._resized_while_streaming and self.expanded is None
+        if self.source is None or unchanged:
             return self._stream.all()
         rendered = _Lines(max_chars=self._stream.max_chars, max_lines=self._stream.max_lines)
-        rendered.write(self._render(source=self.source, width=width))
+        rendered.write(render(source=self.source, width=width))
         return rendered.all()
 
     def rows(self, *, width: int) -> tuple[str, ...]:
-        """Rows at `width`; the cache follows theme and source, not just width."""
+        """Rows at `width`; the cache follows theme, source, and `details`, not just width."""
         source = None if self.source is None else len(self.source)
-        key = (width, theme.name(), source, self._stream.revision)
+        expanded = self.details and self.expanded is not None
+        key = (width, theme.name(), source, self._stream.revision, self.streaming, expanded)
         if self._rows[0] != key:
             lines = self._lines(width=width)
             self._rows = (key, tuple(row for line in lines for row in line.rows(width=width)))
@@ -399,6 +434,8 @@ class TranscriptBuffer:
         """The id of `_items[0]`; ids grow by one per item and are never reused."""
         self._printed = 0
         """Items before this id are already in the terminal's own scrollback."""
+        self.details = False
+        """Whether blocks with an expanded rendering show it; see `toggle_details`."""
         self._chars = 0
         self._pending = ''
         self._pending_theme = theme.painted_in()
@@ -428,8 +465,9 @@ class TranscriptBuffer:
         transcript.__class__ = cls
         transcript._decoder.__class__ = TranscriptDecoder
         vars(transcript).setdefault('_pending_theme', theme.name())
+        vars(transcript).setdefault('details', False)
         for item in transcript._items:
-            # StringIO is a stable dependency type across CLAI reloads.
+            # StringIO is a stable dependency type across Pax reloads.
             if isinstance(item, io.StringIO):
                 MarkdownBlock.rebind(item)
             else:
@@ -494,8 +532,16 @@ class TranscriptBuffer:
         prefix, self._pending = self._pending[:cutoff], self._pending[cutoff:]
         self._decoder.decode_line(prefix)
 
-    def markdown(self, *, render: Render, width: int, changed: Callable[[], None]) -> MarkdownBlock:
-        """Start a Markdown part on its own row, after any unfinished line."""
+    def markdown(
+        self,
+        *,
+        render: Render,
+        width: int,
+        changed: Callable[[], None],
+        streaming: bool = False,
+        expanded: Render | None = None,
+    ) -> MarkdownBlock:
+        """Start a Markdown part on its own row, after any unfinished line; see `MarkdownBlock` for `expanded`."""
         if self._pending:
             self.write('\n')
         item = self.end
@@ -510,10 +556,35 @@ class TranscriptBuffer:
             changed()
 
         block = MarkdownBlock(
-            render=render, width=width, changed=updated, max_chars=self.max_chars, max_lines=self.max_lines
+            render=render,
+            width=width,
+            changed=updated,
+            max_chars=self.max_chars,
+            max_lines=self.max_lines,
+            streaming=streaming,
+            expanded=expanded,
         )
+        block.details = self.details
         self._append(block)
         return block
+
+    def toggle_details(self) -> bool:
+        """Switch every retained block, and those started later, between its expanded and usual rendering.
+
+        Returns whether blocks now show their expanded rendering.
+        """
+        self.details = not self.details
+        for item in self._items:
+            if isinstance(item, MarkdownBlock):
+                item.details = self.details
+        return self.details
+
+    def printed_details(self) -> bool:
+        """Whether a block with output to expand is already in the terminal's own scrollback."""
+        printed = list(self._items)[: max(0, self._printed - self._first)]
+        return any(
+            isinstance(item, MarkdownBlock) and item.expanded is not None and bool(item.source) for item in printed
+        )
 
     def clear(self, *, keep_current: bool = False) -> None:
         """Forget all retained output, as a fresh terminal has none; ids keep growing.

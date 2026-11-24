@@ -118,9 +118,12 @@ class TranscriptView(Widget):
         if not self._shown:
             return (False,)
         after = self._after(self._shown[-1])
+        # A part can change its rows between a paint and a click (one that ends renders again),
+        # so a shown row may no longer exist; it joins nothing until the next paint.
         return tuple(
-            self.transcript.continued(item, width=self._width)[row]
+            row < len(flags) and flags[row]
             for item, row in (*self._shown, *((after,) if after is not None else ()))
+            for flags in (self.transcript.continued(item, width=self._width),)
         ) + ((False,) if after is None else ())
 
     def draw(self, region: Region, focused: bool) -> None:

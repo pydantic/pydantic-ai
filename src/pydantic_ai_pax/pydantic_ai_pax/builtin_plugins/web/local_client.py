@@ -1,4 +1,4 @@
-"""A `SessionClient` for a live session of this CLAI: what a page watching it does, without leaving the process.
+"""A `SessionClient` for a live session of this Pax: what a page watching it does, without leaving the process.
 
 The orchestrator follows the sessions it runs in workspaces with it, through `WebService` as a browser would,
 so it counts as one of the session's watchers and the session does not close for being idle meanwhile.
@@ -32,7 +32,7 @@ _MESSAGE: TypeAdapter[ServerMessage] = TypeAdapter(ServerMessage)
 
 
 def live_session(service: 'WebService', live_id: str) -> LiveSession | None:
-    """The live session `live_id` names in `service`'s CLAI; `None` once it closed."""
+    """The live session `live_id` names in `service`'s Pax; `None` once it closed."""
     try:
         return service.live.get(live_id)
     except LookupError:
@@ -40,7 +40,7 @@ def live_session(service: 'WebService', live_id: str) -> LiveSession | None:
 
 
 class LocalClient:
-    """The live session `live_id` of `service`'s CLAI, driven as its page drives it.
+    """The live session `live_id` of `service`'s Pax, driven as its page drives it.
 
     It is named by its live ID, which stays the same when the session switches conversation with `/new`
     or `/resume`; `LookupError` once it closed.

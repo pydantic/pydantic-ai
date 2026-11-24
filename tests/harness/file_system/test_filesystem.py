@@ -9,15 +9,18 @@ import posixpath
 import re
 import socket
 import stat
+import sys
 from collections.abc import Sequence
 from dataclasses import replace
 from functools import partial
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import anyio
 import anyio.lowlevel
 import pytest
+from PIL import Image
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, on_event
@@ -302,7 +305,7 @@ def toolset(fs_root: Path) -> FileSystemToolset[None]:
     )
 
 
-def _unhashed_toolset() -> FileSystemToolset[None]:
+def _unhashed_toolset(*, max_image_side: int | None = 1024) -> FileSystemToolset[None]:
     return FileSystemToolset(
         allowed_patterns=[],
         denied_patterns=[],
@@ -311,7 +314,22 @@ def _unhashed_toolset() -> FileSystemToolset[None]:
         max_search_results=1000,
         max_find_results=1000,
         content_hashes=False,
+        max_image_side=max_image_side,
     )
+
+
+def _encoded_image(
+    size: tuple[int, int], image_format: str = 'PNG', *, noise: bool = False, mode: str = 'RGB'
+) -> bytes:
+    image = Image.frombytes(mode, size, os.urandom(size[0] * size[1] * 3)) if noise else Image.new(mode, size)
+    output = BytesIO()
+    image.save(output, format=image_format)
+    return output.getvalue()
+
+
+def _shown_size(content: BinaryContent) -> tuple[int, int]:
+    with Image.open(BytesIO(content.data)) as image:
+        return image.size
 
 
 @pytest.fixture
@@ -810,6 +828,165 @@ class TestReadFile:
         toolset = _unhashed_toolset()
         result = await toolset.read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == '[big.png | image/png | 5000008 bytes]\nToo large to view: the limit is 5000000 bytes.\n'
+
+    @pytest.mark.parametrize(
+        ('image_format', 'media_type', 'size', 'shown'),
+        [
+            ('PNG', 'image/png', (3000, 2000), (1024, 683)),
+            ('JPEG', 'image/jpeg', (500, 2000), (256, 1024)),
+            ('GIF', 'image/gif', (1200, 800), (1024, 683)),
+            ('WEBP', 'image/webp', (1100, 1100), (1024, 1024)),
+        ],
+    )
+    async def test_read_large_image_is_downscaled_in_its_own_format(
+        self,
+        tmp_path: Path,
+        image_format: str,
+        media_type: str,
+        size: tuple[int, int],
+        shown: tuple[int, int],
+    ) -> None:
+        raw = _encoded_image(size, image_format)
+        (tmp_path / 'photo').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('photo', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert header == (
+            f'[photo | {media_type} | {len(raw)} bytes]\n'
+            f'Shown downscaled from {size[0]}x{size[1]} to {shown[0]}x{shown[1]} pixels.\n'
+        )
+        assert isinstance(content, BinaryContent)
+        assert content.media_type == media_type
+        with Image.open(BytesIO(content.data)) as image:
+            assert (image.format, image.size) == (image_format, shown)
+
+    async def test_read_image_is_downscaled_as_it_is_displayed(self, tmp_path: Path) -> None:
+        output = BytesIO()
+        exif = Image.Exif()
+        exif[0x0112] = 6  # Orientation: rotate 90 degrees to display.
+        Image.new('RGB', (3000, 2000)).save(output, format='JPEG', exif=exif)
+        (tmp_path / 'photo.jpg').write_bytes(output.getvalue())
+        result = await _unhashed_toolset().read_file('photo.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert isinstance(header, str)
+        assert header.endswith('Shown downscaled from 2000x3000 to 683x1024 pixels.\n')
+        assert isinstance(content, BinaryContent)
+        assert _shown_size(content) == (683, 1024)
+
+    async def test_read_image_that_fits_is_returned_unchanged(self, tmp_path: Path) -> None:
+        raw = _encoded_image((1024, 600))
+        (tmp_path / 'small.png').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('small.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == [f'[small.png | image/png | {len(raw)} bytes]\n', BinaryContent(raw, media_type='image/png')]
+
+    async def test_read_image_over_the_byte_limit_is_downscaled_under_it(self, tmp_path: Path) -> None:
+        raw = _encoded_image((1500, 1200), noise=True)
+        assert len(raw) > 5_000_000
+        (tmp_path / 'noise.png').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('noise.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        assert isinstance(result[1], BinaryContent)
+        assert len(result[1].data) <= 5_000_000
+        assert _shown_size(result[1]) == (1024, 819)
+
+    async def test_read_image_downscaled_but_still_over_the_byte_limit_is_described(self, tmp_path: Path) -> None:
+        raw = _encoded_image((2000, 1600), noise=True)
+        (tmp_path / 'noise.png').write_bytes(raw)
+        toolset = _unhashed_toolset(max_image_side=1900)
+        result = await toolset.read_file('noise.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[noise.png | image/png | {len(raw)} bytes]\n'
+            'Shown downscaled from 2000x1600 to 1900x1520 pixels.\n'
+            'Too large to view: the limit is 5000000 bytes.\n'
+        )
+
+    async def test_read_tall_jpeg_is_decoded_at_a_reduced_scale(self, tmp_path: Path) -> None:
+        # A full-page screenshot: its short side is under the target, but the scale follows the long side.
+        raw = _encoded_image((1000, 26000), 'JPEG', mode='L')
+        (tmp_path / 'page.jpg').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('page.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert header == (
+            f'[page.jpg | image/jpeg | {len(raw)} bytes]\nShown downscaled from 1000x26000 to 39x1024 pixels.\n'
+        )
+        assert isinstance(content, BinaryContent)
+        assert _shown_size(content) == (39, 1024)
+
+    async def test_read_image_too_large_to_decode_is_described(self, tmp_path: Path) -> None:
+        # 30 megapixels in a small file: decoding it to downscale would take far more memory than the file.
+        raw = _encoded_image((6000, 5000), mode='1')
+        (tmp_path / 'huge.png').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('huge.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[huge.png | image/png | {len(raw)} bytes]\n'
+            'Too large to view: 6000x5000 pixels is over the 25,000,000-pixel limit for downscaling.\n'
+        )
+
+    async def test_read_progressive_jpeg_too_large_to_decode_is_described(self, tmp_path: Path) -> None:
+        # A progressive JPEG holds full-size coefficients even when decoded at a reduced scale.
+        output = BytesIO()
+        Image.new('L', (6000, 5000)).save(output, format='JPEG', progressive=True)
+        (tmp_path / 'photo.jpg').write_bytes(output.getvalue())
+        result = await _unhashed_toolset().read_file('photo.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert result.endswith(
+            'Too large to view: 6000x5000 pixels is over the 25,000,000-pixel limit for downscaling.\n'
+        )
+
+    async def test_read_image_pillow_warns_about_is_described_where_warnings_are_errors(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Between `MAX_IMAGE_PIXELS` and twice it, Pillow only warns; this suite turns warnings into errors.
+        raw = _encoded_image((3000, 2000))
+        (tmp_path / 'big.png').write_bytes(raw)
+        monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', 4_000_000)
+        result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[big.png | image/png | {len(raw)} bytes]\n'
+            'Too large to view: Pillow refused to decode it as a possible decompression bomb.\n'
+        )
+
+    async def test_read_image_pillow_refuses_as_a_bomb_is_described(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        raw = _encoded_image((3000, 2000))
+        (tmp_path / 'big.png').write_bytes(raw)
+        monkeypatch.setattr(Image, 'MAX_IMAGE_PIXELS', 1000)
+        result = await _unhashed_toolset().read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == (
+            f'[big.png | image/png | {len(raw)} bytes]\n'
+            'Too large to view: Pillow refused to decode it as a possible decompression bomb.\n'
+        )
+
+    async def test_read_large_jpeg_is_decoded_at_a_reduced_scale(self, tmp_path: Path) -> None:
+        # Over the decode limit at full size, but a JPEG decodes at 1/4 scale here, under it.
+        raw = _encoded_image((6000, 5000), 'JPEG', mode='L')
+        (tmp_path / 'photo.jpg').write_bytes(raw)
+        result = await _unhashed_toolset().read_file('photo.jpg', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, list)
+        header, content = result
+        assert header == (
+            f'[photo.jpg | image/jpeg | {len(raw)} bytes]\nShown downscaled from 6000x5000 to 1024x853 pixels.\n'
+        )
+        assert isinstance(content, BinaryContent)
+        assert _shown_size(content) == (1024, 853)
+
+    def test_max_image_side_without_pillow_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setitem(sys.modules, 'PIL', None)
+        with pytest.raises(ImportError, match=r'needs Pillow: install `pydantic-ai-harness\[coder\]`'):
+            _unhashed_toolset()
+        with pytest.raises(ImportError, match='needs Pillow'):
+            FileSystem(max_image_side=1024)
+        assert _unhashed_toolset(max_image_side=None) is not None
+
+    async def test_read_image_without_max_image_side_is_returned_unchanged(self, tmp_path: Path) -> None:
+        raw = _encoded_image((3000, 2000))
+        (tmp_path / 'big.png').write_bytes(raw)
+        toolset = _unhashed_toolset(max_image_side=None)
+        result = await toolset.read_file('big.png', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == [f'[big.png | image/png | {len(raw)} bytes]\n', BinaryContent(raw, media_type='image/png')]
 
     async def test_limit_is_capped_by_max_read_lines(self, tmp_path: Path) -> None:
         (tmp_path / 'big.txt').write_text(''.join(f'line {number}\n' for number in range(50)))
@@ -2641,6 +2818,12 @@ class TestFileSystemCapability:
         with pytest.raises(ValueError, match='max_find_results must be a positive integer'):
             FileSystem(max_find_results=-1)
 
+    def test_non_positive_max_image_side_rejected(self) -> None:
+        assert FileSystem().max_image_side is None
+        assert FileSystem(max_image_side=1024).max_image_side == 1024
+        with pytest.raises(ValueError, match='max_image_side must be a positive integer'):
+            FileSystem(max_image_side=0)
+
     def test_boolean_limits_rejected(self) -> None:
         # `bool` is an `int` subclass, so `True` would otherwise pass as a limit of 1.
         with pytest.raises(ValueError, match='max_read_lines must be a positive integer, got True'):
@@ -3071,4 +3254,30 @@ class TestReadFileInARun:
         assert tool_return.content == [
             f'[chart.png | image/png | {len(png)} bytes | hash:{content_hash}]\n',
             BinaryContent(data=png, media_type='image/png'),
+        ]
+
+    async def test_a_large_image_reaches_the_model_downscaled_to_max_image_side(self, tmp_path: Path) -> None:
+        png = _encoded_image((1000, 500))
+        (tmp_path / 'chart.png').write_bytes(png)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'chart.png'})])
+            return ModelResponse(parts=[TextPart('seen')])
+
+        capabilities = [LocalWorkspace(tmp_path), FileSystem[object](max_image_side=256)]
+        result = await Agent(FunctionModel(model), capabilities=capabilities).run('look at the chart')
+        request = result.all_messages()[2]
+        assert isinstance(request, ModelRequest)
+        tool_return = request.parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        [image] = tool_return.files
+        assert isinstance(image, BinaryContent)
+        assert _shown_size(image) == (256, 128)
+        # The hash is of the file in the workspace, not of the downscaled copy.
+        content_hash = hashlib.sha256(png).hexdigest()[:12]
+        assert tool_return.content == [
+            f'[chart.png | image/png | {len(png)} bytes | hash:{content_hash}]\n'
+            'Shown downscaled from 1000x500 to 256x128 pixels.\n',
+            image,
         ]

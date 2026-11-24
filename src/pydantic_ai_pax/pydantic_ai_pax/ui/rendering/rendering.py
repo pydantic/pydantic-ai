@@ -58,7 +58,6 @@ from pydantic_ai_pax.ui.rendering.tool_output import (
     ColorSystemName,
     ToolOutput,
     color_system,
-    print_tool_header,
     terminal_text,
     tool_arguments_text,
 )
@@ -105,25 +104,25 @@ def _print_prompt_rows(console: Console, text: str) -> None:
 
 
 def markdown_style() -> RenderStyle:
-    """Keep the existing Markdown colours unless a Termflow palette is selected."""
+    """Keep the existing Markdown colours, readable on a light terminal, unless a Termflow palette is selected."""
     palette = theme.current()
     if palette is not None:
         return palette.to_render_style()
     return RenderStyle(
-        bright=theme.LITHIUM,
-        head=theme.PURPLE,
-        symbol=theme.CALCIUM,
-        grey=theme.GREY,
+        bright=theme.color(theme.LITHIUM),
+        head=theme.color(theme.PURPLE),
+        symbol=theme.color(theme.CALCIUM),
+        grey=theme.color(theme.GREY),
         dark=theme.DARK_PURPLE,
         mid=theme.ELEMENT_PURPLE,
-        light=theme.GREY,
-        link=theme.AQUA,
-        error=theme.CALCIUM,
+        light=theme.color(theme.GREY),
+        link=theme.color(theme.AQUA),
+        error=theme.color(theme.CALCIUM),
     )
 
 
 MAX_LINK = 2048
-"""The longest URL CLAI makes a terminal hyperlink, since the escape repeats it: per streamed chunk, or per folded row."""
+"""The longest URL Pax makes a terminal hyperlink, since the escape repeats it: per streamed chunk, or per folded row."""
 _URL_RE = re.compile(r'<(https?://[^\s<>]+)>|(?<![\w/])https?://[^\s<>`]+')
 _URL_START, _URL_END = '\ufdd0', '\ufdd1'
 """Marks around a URL while Termflow formats the line.
@@ -134,11 +133,15 @@ HTML entity decoding Termflow applies turns `&#xFDD0;` into nothing.
 _MARKED_URL_RE = re.compile(f'{_URL_START}([^{_URL_END}]*){_URL_END}')
 
 
+_CODE_SPAN_SGR_RE = re.compile(r'\x1b\[2m([^\x1b]*)\x1b\[22m')
+"""Termflow's inline code: dim on, the code, dim off (which is also bold off, so only this pair is matched)."""
+
+
 class MarkdownRenderer(Renderer):
     """Termflow's renderer, also highlighting bare `https://` and `<https://...>` URLs as links."""
 
     _enclosing = ''
-    """Codes that restore the style a link interrupts, for headings Termflow styles around the inline text."""
+    """Codes that restore the style a link or code span interrupts, for headings Termflow styles around the text."""
 
     def render(self, event: ParseEvent) -> None:
         """Render one event, remembering a heading's style for links inside it."""
@@ -173,7 +176,13 @@ class MarkdownRenderer(Renderer):
             rest = '' if match[1] else match[0][len(url) :]
             return f'{_URL_START}{url}{_URL_END}{rest}'
 
-        return _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
+        formatted = _MARKED_URL_RE.sub(self._link, super()._format_inline(_URL_RE.sub(mark, text)))
+        if theme.current() is None and theme.light_background() is not None:
+            # Termflow dims inline code, which leaves black text near 3:1 on white; paint it muted instead,
+            # then restore a heading's colour, as after a link.
+            muted = theme.sgr(theme.MUTED)
+            formatted = _CODE_SPAN_SGR_RE.sub(lambda code: f'{muted}{code[1]}\x1b[39m{self._enclosing}', formatted)
+        return formatted
 
     def _link(self, match: re.Match[str]) -> str:
         url = match[1]
@@ -439,8 +448,10 @@ class StreamRenderer:
         self._tool_output = ToolOutput(
             console, shell_lines=shell_lines, show_output=show_tool_output, tool_calls=tool_calls
         )
-        self._grep_output = GrepOutput(console, lines=grep_lines, show_output=show_tool_output)
+        self._grep_output = GrepOutput(self._tool_output, lines=grep_lines, show_output=show_tool_output)
         self._group = ToolCallGroup(console, colors=color_system(console)) if tool_calls == 'grouped' else None
+        self._delegations: set[str] = set()
+        """Delegation calls in flight, whose outcome the task row already shows."""
         self.smooth_seconds = smooth_seconds
         self._thinking = False
         self._heading_printed = False
@@ -536,24 +547,35 @@ class StreamRenderer:
         self._render_tool_event(event)
 
     def _render_tool_event(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> None:
-        if isinstance(event, DelegationToolCallEvent):
-            return
         if isinstance(event, FunctionToolResultEvent):
-            self._tool_output.discard_call(event.part.tool_call_id)
+            self._render_result(event)
+        elif isinstance(event, DelegationToolCallEvent):
+            self._delegations.add(event.part.tool_call_id)
+        else:
+            self._render_call(event)
+
+    def _render_result(self, event: FunctionToolResultEvent) -> None:
+        """A grouped style counts calls only; otherwise a failure gets its row."""
+        delegated = event.part.tool_call_id in self._delegations
+        self._delegations.discard(event.part.tool_call_id)
+        if self._group is None and not delegated and not self._grep_output.render(event):
+            self._tool_output.render_result(event)
+        self._tool_output.discard_call(event.part.tool_call_id)
+
+    def _render_call(self, event: FunctionToolCallEvent) -> None:
         if self._group is not None:
-            if not isinstance(event, FunctionToolCallEvent):
-                return
             if not self._tool_output.prints_diff(event):
+                self._tool_output.separate()
                 self._group.add(event.part.tool_name)
                 return
             # A count would repeat the header its diff prints under.
             self._group.close()
         if self._grep_output.render(event):
             return
-        if isinstance(event, FunctionToolCallEvent) and not self._tool_output.render_call(event):
+        if not self._tool_output.render_call(event):
             name = ''.join(char if char.isprintable() else ' ' for char in event.part.tool_name)
             arguments = tool_arguments_text(event.part.args_as_dict(), max_chars=self.tool_arg_chars)
-            print_tool_header(self.console, name=name, argument=arguments)
+            self._tool_output.header(event.part.tool_call_id, name=name, argument=arguments)
 
     async def _render_with_plugins(self, event: AgentStreamEvent) -> bool:
         for renderer in self._renderers:
@@ -580,6 +602,8 @@ class StreamRenderer:
             self._block.extend(buffer)
 
     def _start_part(self, continuation: tuple[Parser, str] | None = None) -> None:
+        # Before the part's transcript item opens, so the blank line lands above it.
+        self._tool_output.separate()
         surface = self._output = self.console.file
         self._block = (
             surface.markdown(
@@ -590,6 +614,7 @@ class StreamRenderer:
                     continuation=continuation,
                 ),
                 width=self.console.width,
+                streaming=True,
             )
             if isinstance(surface, PromptSurface)
             else None
@@ -656,6 +681,8 @@ class StreamRenderer:
         self._close_group()
 
     def _close_group(self) -> None:
+        """End what tool output left open: the group's line, or the blank line a header owes."""
+        self._tool_output.separate()
         if self._group is not None:
             self._group.close()
 
@@ -666,10 +693,15 @@ class StreamRenderer:
         if self._markdown is not None:
             self._markdown.finish()
         writer, self._writer = self._writer, None
-        visible = self._heading_printed
+        visible, block = self._heading_printed, self._block
         self._reset()
-        if writer is not None:
-            await writer.close()
+        try:
+            if writer is not None:
+                await writer.close()
+        finally:
+            # A cancelled close leaves the streamed rows; nothing else can reach the block to end it.
+            if block is not None:
+                block.end()
         if visible:
             self.console.print()
         self.console.file.flush()

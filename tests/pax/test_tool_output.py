@@ -1,6 +1,10 @@
 """Native capability events drive terminal-safe specialized output."""
 
 import io
+import os
+from collections.abc import AsyncIterable
+from pathlib import Path
+from typing import Literal
 
 import pytest
 from rich.color import Color
@@ -9,13 +13,25 @@ from rich.style import Style
 from rich.text import Text
 from termflow.themes import PALETTES
 
-from pydantic_ai import FunctionToolCallEvent
-from pydantic_ai.messages import PartStartEvent, TextPart, ToolCallPart
+from pydantic_ai import Agent, AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, RunContext
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    PartStartEvent,
+    RetryInfo,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo
 from pydantic_ai_harness.file_system import FileEditedEvent
-from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
+from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent, Shell
 from pydantic_ai_pax import StreamRenderer
+from pydantic_ai_pax.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
+from tests.pax.test_speculative_mode import streamed
 
 
 async def test_shell_header_includes_argument_once() -> None:
@@ -37,6 +53,7 @@ async def test_shell_header_includes_argument_once() -> None:
             pid=1,
         )
     )
+    await renderer.finish()
     assert output.getvalue() == '● shell ls /tmp\n\n'
 
 
@@ -46,6 +63,7 @@ async def test_shell_header_without_a_command_shows_only_the_tool_name() -> None
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': ''}, tool_call_id='empty-shell'))
     )
+    await renderer.finish()
     assert output.getvalue() == '● shell\n\n'
 
 
@@ -70,25 +88,20 @@ async def test_shell_sgr_colors_across_chunks_and_lines() -> None:
 @pytest.mark.parametrize(
     ('name', 'args', 'expected'),
     [
-        ('list_files', {}, "● list_files '.' recursive=true limit=200"),
-        (
-            'list_files',
-            {'path': '/tmp', 'glob': '*.cpp', 'limit': 10},
-            "● list_files '/tmp' recursive=true limit=10 glob='*.cpp'",
-        ),
-        ('read_file', {'path': '/tmp/example.cpp'}, "● read_file '/tmp/example.cpp' offset=0 limit=2000 lines"),
-        ('read_file', {'path': 'main.py', 'offset': 20, 'limit': 15}, "● read_file 'main.py' offset=20 limit=15 lines"),
-        (
-            'read_file',
-            {'path': 'main.py', 'limit': 5000},
-            "● read_file 'main.py' offset=0 limit=2000 lines (requested 5000)",
-        ),
+        ('list_files', {}, '● list_files .'),
+        ('list_files', {'path': '/tmp', 'glob': '*.cpp', 'limit': 10}, '● list_files /tmp *.cpp first 10'),
+        ('list_files', {'recursive': False}, '● list_files . not recursive'),
+        ('read_file', {'path': '/tmp/example.cpp'}, '● read_file /tmp/example.cpp'),
+        ('read_file', {'path': 'main.py', 'offset': 20, 'limit': 15}, '● read_file main.py lines 21-35'),
+        ('read_file', {'path': 'main.py', 'offset': 20}, '● read_file main.py from line 21'),
+        ('read_file', {'path': 'main.py', 'limit': 5000}, '● read_file main.py lines 1-2000'),
     ],
 )
 async def test_inspection_headers(name: str, args: dict[str, object], expected: str) -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output, width=160), stop_loading=lambda: None, show_tool_output=True)
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart(name, args, tool_call_id='inspect')))
+    await renderer.finish()
     assert output.getvalue() == expected + '\n\n'
 
 
@@ -110,7 +123,7 @@ async def test_shell_event_display() -> None:
     assert '● shell printf hello' in output.getvalue()
     assert 'hello' in output.getvalue()
     assert '\x1b]52;' not in output.getvalue()
-    assert 'truncated' in output.getvalue()
+    assert output.getvalue().endswith('  ⎿ exit 0 · log /tmp/output.log\n\n')
 
 
 @pytest.mark.parametrize('limit', [0, 1, 2])
@@ -131,7 +144,7 @@ async def test_shell_line_limit_across_chunks(limit: int) -> None:
         )
     )
     text = output.getvalue()
-    assert f'Truncated {4 - limit} lines' in text
+    assert f'  ⎿ exit 0 · 4 lines, {limit} shown · log /tmp/out\n' in text
     assert ('first' in text) == (limit >= 1)
     assert ('second' in text) == (limit >= 2)
     assert 'third' not in text and 'fourth' not in text
@@ -163,8 +176,8 @@ async def test_shell_progress_replaces_carriage_return_frames() -> None:
     text = output.getvalue()
     assert 'header\n100%\ndone\n' in text
     assert '10%' not in text and '50%' not in text and '\\x0d' not in text
-    assert text.startswith('● shell python3 - <<PY\n        print(123)\n        PY\n\n')
-    assert 'Truncated' not in text
+    assert text.startswith('● shell python3 - <<PY\n        print(123)\n        PY\nheader\n')
+    assert text.endswith('done\n  ⎿ exit 0 · 3 lines\n\n')
 
 
 async def test_long_shell_command_wraps_under_a_hanging_indent() -> None:
@@ -174,6 +187,7 @@ async def test_long_shell_command_wraps_under_a_hanging_indent() -> None:
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='long'))
     )
+    await renderer.finish()
     assert output.getvalue() == (
         '● shell cd /repo/src; cat pkg/module.py;\n        grep -n "needle" -r pkg | head\n        -40\n\n'
     )
@@ -185,6 +199,7 @@ async def test_shell_command_wraps_rather_than_clips_on_a_narrow_console() -> No
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'echo abcdefghijkl'}, tool_call_id='narrow'))
     )
+    await renderer.finish()
     assert output.getvalue() == '● shell echo\n        abcdefgh\n        ijkl\n\n'
 
 
@@ -195,6 +210,7 @@ async def test_shell_command_rows_beyond_the_limit_are_counted() -> None:
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='script'))
     )
+    await renderer.finish()
     lines = output.getvalue().splitlines()
     assert lines[0] == '● shell echo 0'
     assert lines[9] == '        echo 9'
@@ -238,6 +254,7 @@ async def _print_shell_call(console: Console, command: str) -> None:
     await renderer.on_stream_event(
         FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id='call'))
     )
+    await renderer.finish()
 
 
 # Rich 15.0.0's `from_ansi` keeps the trailing newline that earlier versions drop
@@ -430,3 +447,195 @@ async def test_live_prompt_repaints_the_shell_header_for_a_new_theme_and_width()
             '        cwd())',
         ]
         assert [Text.from_ansi(row).plain for row in rows()][4:6] == ['', 'after']
+
+
+def _finished(tool_call_id: str, *, exit_code: int | None, line_count: int) -> CommandFinishedEvent:
+    return CommandFinishedEvent(
+        tool_call_id=tool_call_id,
+        pid=1,
+        output_path='/tmp/out',
+        status_path='/tmp/status',
+        exit_code=exit_code,
+        truncated=False,
+        line_count=line_count,
+    )
+
+
+@pytest.mark.parametrize(
+    ('outcome', 'cause', 'reason'),
+    [
+        ('failed', None, 'Not allowed here.'),
+        ('denied', None, 'Not allowed here.'),
+        ('interrupted', None, 'Not allowed here.'),
+        ('retried', 'model_retry', 'Not allowed here.'),
+        ('retried', 'validation_error', 'invalid arguments'),
+    ],
+)
+async def test_a_failed_or_refused_call_is_marked_under_its_header(
+    outcome: Literal['failed', 'denied', 'retried', 'interrupted'],
+    cause: Literal['model_retry', 'validation_error'] | None,
+    reason: str,
+) -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart('deploy', {}, tool_call_id='d')))
+    part = ToolReturnPart(
+        'deploy',
+        'Not allowed here.\nMore detail.',
+        tool_call_id='d',
+        outcome=outcome,
+        retry=RetryInfo(cause=cause) if cause else None,
+    )
+    await renderer.on_stream_event(FunctionToolResultEvent(part=part))
+    await renderer.finish()
+    text = Text.from_ansi(output.getvalue())
+    assert text.plain.rstrip('\n') == f'● deploy\n  ⎿ {reason}'
+    assert _color(console, text, reason) == console.get_style(theme.ERROR).color
+
+
+async def test_a_failed_delegation_is_left_to_its_task_row() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
+    call = ToolCallPart('delegate_task', {}, tool_call_id='t')
+    await renderer.on_stream_event(DelegationToolCallEvent(call))
+    part = ToolReturnPart('delegate_task', "Sub-agent 'x' failed", tool_call_id='t', outcome='retried')
+    await renderer.on_stream_event(FunctionToolResultEvent(part=part))
+    assert output.getvalue() == ''
+
+
+@pytest.mark.parametrize(('exit_code', 'color'), [(0, theme.MUTED), (1, theme.ERROR)])
+async def test_a_shell_result_row_is_red_only_when_the_command_fails(exit_code: int, color: str) -> None:
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'make'}, tool_call_id='m'))
+    )
+    await renderer.on_stream_event(_finished('m', exit_code=exit_code, line_count=2))
+    assert _color(console, Text.from_ansi(output.getvalue()), f'exit {exit_code}') == console.get_style(color).color
+
+
+async def test_a_failure_of_a_call_whose_header_a_plugin_drew_is_still_marked() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
+    part = ToolReturnPart('deploy', '', tool_call_id='d', outcome='failed')
+    await renderer.on_stream_event(FunctionToolResultEvent(part=part))
+    assert output.getvalue() == '  ⎿ failed · deploy\n\n'
+
+
+async def test_a_narrow_detached_row_clips_its_command_not_its_exit_code() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=28), stop_loading=lambda: None)
+    for call_id in ('a', 'b'):
+        await renderer.on_stream_event(
+            FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'echo example'}, tool_call_id=call_id))
+        )
+    await renderer.on_stream_event(_finished('a', exit_code=123, line_count=1))
+    assert output.getvalue().endswith('  ⎿ exit 123 · 1 line · ech…\n\n')
+
+
+async def test_a_row_under_another_calls_header_names_its_command() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=80), stop_loading=lambda: None)
+    for call_id, command in (('a', 'git status'), ('b', 'git log -1')):
+        await renderer.on_stream_event(
+            FunctionToolCallEvent(part=ToolCallPart('shell', {'command': command}, tool_call_id=call_id))
+        )
+    await renderer.on_stream_event(_finished('a', exit_code=0, line_count=2))
+    await renderer.on_stream_event(_finished('b', exit_code=0, line_count=1))
+    await renderer.finish()
+    assert output.getvalue() == (
+        '● shell git status\n\n● shell git log -1\n\n  ⎿ exit 0 · 2 lines · git status\n\n'
+        '  ⎿ exit 0 · 1 line · git log -1\n\n'
+    )
+
+
+async def test_a_preview_line_cut_at_the_terminal_edge_keeps_the_log_path() -> None:
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=40), stop_loading=lambda: None, show_tool_output=True)
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'cat wide'}, tool_call_id='w'))
+    )
+    await renderer.on_stream_event(CommandOutputEvent(tool_call_id='w', text='x' * 60 + '\n'))
+    log = '/private/tmp/pax-logs/session-1234/commands/w.log'
+    await renderer.on_stream_event(
+        CommandFinishedEvent(
+            tool_call_id='w', pid=1, output_path=log, status_path='/s', exit_code=0, truncated=False, line_count=1
+        )
+    )
+    # The path wraps rather than clips, so it can still be copied whole.
+    assert output.getvalue().replace('\n', '').endswith(f'  ⎿ exit 0 · 1 line · log {log}')
+
+
+async def test_a_live_failed_row_takes_the_new_themes_error_colour() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    console = Console(file=surface, force_terminal=True, color_system='truecolor', width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None)
+    selected = ['default']
+    with theme.use(lambda: selected[0]):
+        await renderer.on_stream_event(
+            FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'make'}, tool_call_id='m'))
+        )
+        await renderer.on_stream_event(_finished('m', exit_code=2, line_count=4))
+        selected[0] = 'tokyo_night'
+        row = next(
+            Text.from_ansi(row)
+            for row in surface.transcript.frame(width=80, height=24).rows
+            if 'exit 2' in Text.from_ansi(row).plain
+        )
+        assert _color(console, row, 'exit 2') == console.get_style(theme.color(theme.ERROR)).color
+
+
+async def test_a_live_background_command_row_offers_nothing_to_expand() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    renderer = StreamRenderer(
+        Console(file=surface, force_terminal=True, color_system='truecolor', width=80), stop_loading=lambda: None
+    )
+    call = ToolCallPart('shell', {'command': 'npm run dev', 'mode': 'background'}, tool_call_id='b')
+    await renderer.on_stream_event(FunctionToolCallEvent(part=call))
+    await renderer.on_stream_event(_finished('b', exit_code=None, line_count=3))
+    rows = [Text.from_ansi(row).plain.rstrip() for row in surface.transcript.frame(width=80, height=24).rows]
+    assert '  ⎿ running in background · 3 lines · log /tmp/out' in rows
+
+
+async def test_a_live_command_whose_result_never_arrives_expands_to_its_row_alone() -> None:
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    renderer = StreamRenderer(
+        Console(file=surface, force_terminal=True, color_system='truecolor', width=80), stop_loading=lambda: None
+    )
+    await renderer.on_stream_event(
+        FunctionToolCallEvent(part=ToolCallPart('shell', {'command': 'make'}, tool_call_id='m'))
+    )
+    await renderer.on_stream_event(_finished('m', exit_code=0, line_count=4))
+    surface.toggle_details()
+    rows = [Text.from_ansi(row).plain.rstrip() for row in surface.transcript.frame(width=80, height=24).rows]
+    assert rows == ['● shell make', '  ⎿ exit 0 · 4 lines', '', '']
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX shell command')
+async def test_a_live_command_expands_to_what_the_shell_tool_returned_without_its_handles(tmp_path: Path) -> None:
+    """Runs the real `shell` tool, so a change to the handles that follow its output fails here."""
+    calls = iter([ToolCallPart('shell', {'command': 'printf "one\\ntwo\\nthree\\n"'}, tool_call_id='s')])
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+    surface = PromptSurface(output=io.StringIO(), size=lambda: (80, 24))
+    renderer = StreamRenderer(
+        Console(file=surface, force_terminal=True, color_system='truecolor', width=80), stop_loading=lambda: None
+    )
+
+    async def render(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            await renderer.on_stream_event(event)
+
+    shell = Shell[object](tools=['shell'], denied_commands=[])
+    await Agent(streamed(respond), capabilities=[LocalWorkspace(tmp_path), shell]).run(
+        'go', event_stream_handler=render
+    )
+    await renderer.finish()
+    surface.toggle_details()
+    rows = [Text.from_ansi(row).plain.rstrip() for row in surface.transcript.frame(width=80, height=24).rows]
+    start = next(index for index, row in enumerate(rows) if row.startswith('  ⎿ exit 0'))
+    assert rows[start + 1 : start + 5] == ['    one', '    two', '    three', '']

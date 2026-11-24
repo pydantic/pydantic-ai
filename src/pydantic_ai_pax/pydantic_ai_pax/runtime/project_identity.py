@@ -148,7 +148,7 @@ def _place(
 def _holder(folder: PurePath, roots: Mapping[PurePath, ProjectIdentity]) -> ProjectIdentity | None:
     """The known repository whose worktrees `folder` holds, by where tools put them.
 
-    CLAI's `--worktree` uses `ROOT/.worktrees/NAME`; herdr and similar tools `.../worktrees/REPO/NAME`,
+    Pax's `--worktree` uses `ROOT/.worktrees/NAME`; herdr and similar tools `.../worktrees/REPO/NAME`,
     or a folder named after the repository beside its other worktrees.
     """
     if folder.name == '.worktrees' and folder.parent in roots:
