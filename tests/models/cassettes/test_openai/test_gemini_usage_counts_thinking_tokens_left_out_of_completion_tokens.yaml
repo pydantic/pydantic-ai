@@ -1,0 +1,66 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "123"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.5-flash
+        stream: false
+        messages:
+        - role: user
+          content: Write three short sentences about tea.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3789
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        choices:
+        - finish_reason: stop
+          index: 0
+          message:
+            content: >-
+              Tea is a comforting beverage enjoyed by millions around the world. Made from
+              steeped leaves, it comes in endless delicious varieties like green, black, and
+              herbal. A single warm cup offers a perfect moment of peaceful relaxation.
+            extra_content:
+              google:
+                thought_signature: >-
+                  EswOCskOAWkUfRMhEbic37X4/4HdZ8/u205dBHUCjCTTNZ8VZF9IuL4SDbRIJkEijtvCJS2BstCRuewYSsIlVXso2jAXPHU6ITmCkfX37KePk/W19lVDinabW+EYOBIdgb2xtIXo+s2VQ9tytZNKfqJ1JWNfCe1TGsPoUKjslmFP3tXwyE7ny0ss35d7mV8xeX0kzF4YQdm3S/6rmswJxuIFbHR/KUdvtn1uuTgs3Lc19F7AteLkWKKtiyo1FfPtlmlgq4AlocvI4maW4qKdh7DFfLhvISCYeVr1Nu/Kio8c5KHpiHP44W4vSRSMYfKix9sCwsADL2oE6iLJ9KuGamLXofQmpk0TkrNIcX1IEhi/asSS2Xsd11KqZQx6WKGvv02voNqyg7ReaEgTnSIikEaLjrLY1bFLkhgG2vEy3YvU6TNVuW17ei+OAvXIBziiuGRFDWnTx2Eze9JkQvoG8YDm9zPqgj5+5RFekfMI5xkUKtAhtBVGwWDebyrYLRNWRVK3iTbAYJlLdEZqa+zgwsfW9elaw2YFMN9Ekv0GSgh/EZzYqOBI+WA+idgvfEh6sbAY7vEYlqd8KMHljv7uCLkQF3sO5R4lpJgLJBNvxp80IGjcRWzIm42vzfVBGHWaUzW8P6IwQFyF+IrEJQuULC7V71ruCiAB90dWYuiWkgDv17LuOk0kCQB8TJsOilGC0sh4wRzd0sOD7UmvBiq6BysLXeEgWHXI8YX4NWbKOXRNTdGXHsrlGD04FAJ8qlDry4J0GmRZWotOOHoX+vdKFOdnHqR4fwY8ViA0X75W4/1xOffXyW+80PgisAzM13twBsyzZrphsAAnFhwqtu3K25w1Tt+a01vuEUhLMlVa7xMhSEbCDZL/1cUa7qFJlz94oh7v/odERpYq5uN8fSp3Tl6zaOViFEgQlVyYB8MF38ZWGCQ5uroK+vm0dbZqtEaGdnKqGPkqCLJjd036vBGoJWng6+QMJxZ0eKythszChDxyvFIjm7iSvgF2PDpm8aW2rF/ohdncNMQsNyIlPLuNGOIIN9C7D4XnV2cLvT2PyG5+RfOPOqRFDhFML4pJ33PmVfRtZU98mNKA/GylNXRj2JjechELiRKAKRWUIlN7xY7C3u4RSuB8GgSPBa8GHgFC59ypQj9jebmqKqaOMRrhKG4yWpBseBTeMfY2garalMkRMGmHhsvpocbbkcjfwrtrOEPv31i/fq6hu+SWJV1ZOJudC3hcnmiM2kJz24mal3QBz5Z68MdHGG7LU2TLcoVZRaGCT8S+qlADFczpxAp2GR6AqXvEXMnvd3W2Eb6WrwF1/cqjtl7ycWhUSnocFGpX+HTOq3+Hg0thfjykqz+r4+9phwSsw4flh54A639/THZoMuun0aRPYTqYXlwFcauCleO3OW+EbbcXpgdnkIDwJG8jLQCBl6MJsj+DqOqTFVDA3oSLyfZDui3T+PC/PXwGkSvm6hfwZnhLQ8SjAhAd8RCdF09gAkh+YQKSehjB+sKQ83UeHQPzF/d8gPHFLJxKZYqAkCzdGf8YY6dqzyAr+jIc7pBOndiargz7Juxz6oX0AXQR4UfywYjnHNQ5CoKBNcmXC7WGNi5FfoYzHbA4j5fftAZFzDkj2sBc2tjTHcx/kte/IU+1UDGu1G0bVOtvZMj7r+THXG/GrUGq1CPcl5YJhk2RgUvEC0sM2fhJv6njBz28HFOWgJ4EfbxxLsH+V8C33bMnzyTa0OovEMY1Zsd69U61YS7ltkqM8HSMUXsN+qmqzeWXJ0K4XoiA1elyhw0Z4Zi+4i3osJXUurP0tu0lncr8kbV4xAytk8OVqBhYHoB5PC23TsLSfT12ZyQdRL6HnksZ+FuME2KTzrorxjKS4d2+b1R3ovrULP+1w7bKsa58lJwMdGV20PS7KtYJ9GHdGA7cpq4w4rM1VXkjhci7jMZlTHv45dSOz786/MZlPFDsQjEEfE0s3x90VoTs1L1EATwasp+AiAcVA5Yms4ndTtakuS/rUDPWTyEE6fW2byAOKyV4fJ95w3bdIWozCz4fHA9nOxXz6BuDVC5MLzWks6y0pM104dtTmjdCvtM+zlPiE5h9rwT4Mxe3lPv41iwQyBVjCySvBGVD68DugXS+au4iV6vxBAreH+bvGdoNa68qwheCb4rK5GlQo1/vG0SuEqW/jRZ4lCiVoIhkW5QEVUh8Hv8ekOmmu96NgYwuksjPet1nKNXItfyY3gz+rFjdBjHzBK+agCftWozCRsF533lL+f6ITdgfYB0g2vMiHxd9N9HvbocyVYFootKMxmgjPylU/ZB+H8dwcm5zxsL6F2Kw27s947Hw8RcI7aTc4rAoghPtoKwTydcddNTYjJlpFoop7fIXwn7v+oIevtcDiscxrnaYW2M1N+wkjhEXWUbfp9/93fmze5njrqjjkie1lVUjr7Sl7AD2Nn2GNH0JA/asKEevcYuksn99yZcSLBRZkHJ2WHjRfilNkXU=
+            role: assistant
+        created: 1795545329
+        id: 7dgFa4jrPLjOvdIPwIrq0A4
+        model: gemini-3.5-flash
+        object: chat.completion
+        usage:
+          completion_tokens: 43
+          prompt_tokens: 8
+          total_tokens: 501
+  recorded_at: 2026-11-24T18:35:29.682742+00:00

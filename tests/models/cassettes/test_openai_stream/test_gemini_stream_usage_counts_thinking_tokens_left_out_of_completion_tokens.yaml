@@ -1,0 +1,57 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "162"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.5-flash
+        stream: true
+        messages:
+        - role: user
+          content: Write three short sentences about tea.
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=3306
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        data: {"choices":[{"delta":{"content":"Tea","role":"assistant"},"index":0}],"created":1795545333,"id":"8dgFa8DEMZDqkdUPy-PX8Q4","model":"gemini-3.5-flash","object":"chat.completion.chunk","usage":{"completion_tokens":1,"prompt_tokens":8,"total_tokens":424}}
+
+        data: {"choices":[{"delta":{"content":" is a soothing beverage brewed from dried leaves. It comes in many popular varieties, from green to black. A warm cup provides a perfect moment","role":"assistant"},"index":0}],"created":1795545333,"id":"8dgFa8DEMZDqkdUPy-PX8Q4","model":"gemini-3.5-flash","object":"chat.completion.chunk","usage":{"completion_tokens":29,"prompt_tokens":8,"total_tokens":452}}
+
+        data: {"choices":[{"delta":{"content":" of relaxation.","role":"assistant"},"index":0}],"created":1795545333,"id":"8dgFa8DEMZDqkdUPy-PX8Q4","model":"gemini-3.5-flash","object":"chat.completion.chunk","usage":{"completion_tokens":32,"prompt_tokens":8,"total_tokens":455}}
+
+        data: {"choices":[{"delta":{"extra_content":{"google":{"thought_signature":"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"}},"role":"assistant"},"finish_reason":"stop","index":0}],"created":1795545333,"id":"8dgFa8DEMZDqkdUPy-PX8Q4","model":"gemini-3.5-flash","object":"chat.completion.chunk","usage":{"completion_tokens":32,"prompt_tokens":8,"total_tokens":455}}
+
+        data: [DONE]
+
+  recorded_at: 2026-11-24T18:35:33.150792+00:00
