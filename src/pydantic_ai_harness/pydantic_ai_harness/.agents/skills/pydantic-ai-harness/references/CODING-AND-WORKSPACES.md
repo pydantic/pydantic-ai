@@ -130,8 +130,7 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
   `UserWarning`: use the `ModelFallback` capability). To make another
   model hold back, pass `profile={'delegates_unprompted': True}` to its model or say so in `instructions=`.
 - **GPT-only `'max'` guidance:** at `autonomy='max'`, three more blocks follow the same per-model pattern:
-  `misread` (the classify-first misread check for `reinterprets_malformed_inputs`, the default `'max'` check
-  otherwise), `handoff` (structured notes, for `omits_handoff_evidence`) and `runtime_constraints` (check what a
+  `misread` (a classify-first refinement of the inline misread check, for `reinterprets_malformed_inputs`), `handoff` (structured notes, for `omits_handoff_evidence`) and `runtime_constraints` (check what a
   stated runtime allows before writing code, for `ignores_stated_runtime_constraints`). `openai_model_profile` sets
   all three for GPT models, not gpt-oss. Evidence is one SWE81 run each (53.2 vs 51.0, within noise).
 - **Lazy sandbox creation:** `RepoContext` reads the workspace at run start, which creates a sandbox

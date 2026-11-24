@@ -79,15 +79,14 @@ _MISREAD_MAX = (
     'before settling for a partial answer. A result that leaves a stated criterion unmet means your '
     'interpretation is likely wrong, not that the answer is "none".'
 )
-"""Replaces `_MISREAD` at `'max'` only: nobody can confirm a reading, so a partial answer goes unchallenged. Sent as the
-`misread` block, which a model with `reinterprets_malformed_inputs` gets as `_MISREAD_CLASSIFY` instead."""
+"""Replaces `_MISREAD` at `'max'` only: nobody can confirm a reading, so a partial answer goes unchallenged."""
 
 _MISREAD_CLASSIFY = (
     'If inputs look inconsistent, first check whether the task or its rules classify them '
     '(for example as malformed, conflicting, or rejected) and apply that rule. '
     'Only when no rule covers them, assume you misread: re-read, and try other interpretations before settling.'
 )
-"""`_MISREAD_MAX` for models whose profile sets `reinterprets_malformed_inputs`, at `'max'` only."""
+"""Refines `_MISREAD_MAX` for models whose profile sets `reinterprets_malformed_inputs`, at `'max'` only: they get both."""
 
 _STRUCTURED_HANDOFF = (
     'When asked for notes or a handoff, use headed sections: each decision and why, '
@@ -111,12 +110,12 @@ _FINISHING = (
 )
 
 
-def _checks(*, measure: bool, cleanup: bool, misread: bool) -> str:
+def _checks(*, measure: bool, cleanup: bool, misread_max: bool) -> str:
     return ' '.join(
         [
             *([_TARGETS] if measure else []),
             _CONFIRM,
-            *([_MISREAD] if misread else []),
+            _MISREAD_MAX if misread_max else _MISREAD,
             _EXACT,
             _HEREDOC,
             *([_CLEANUP] if cleanup else []),
@@ -137,17 +136,17 @@ def _profile_says(model: AbstractModel, flag: Callable[[ModelProfile], bool]) ->
 
 
 def _model_specific(
-    name: str, flag: Callable[[ModelProfile], bool], *, flagged: str, default: str = ''
+    name: str, flag: Callable[[ModelProfile], bool], *, flagged: str
 ) -> Callable[[RunContext[AgentDepsT]], InstructionPart]:
     """A named block whose text depends on the profile of the model handling the request.
 
     The block, `capability:coder_instructions:<name>`, is contributed from the first request and appends its changes.
     So a conversation that moves to a model with a different profile keeps the instructions it started with and is
-    sent the block's new text, or told it was withdrawn, as a change.
+    sent the block as a change, or told it was withdrawn.
     """
 
     def instruction(ctx: RunContext[AgentDepsT]) -> InstructionPart:
-        return InstructionPart(flagged if _profile_says(ctx.model, flag) else default, name=name, on_change='append')
+        return InstructionPart(flagged if _profile_says(ctx.model, flag) else '', name=name, on_change='append')
 
     return instruction
 
@@ -158,8 +157,8 @@ def model_specific_instructions(
     """The blocks of `Coder`'s guidance that only some models get, each empty for the others.
 
     - `delegation`, with `SubAgents` only: the rule against unrequested delegation, for `delegates_unprompted`.
-    - `misread`: at `'max'`, `_MISREAD_MAX`, or `_MISREAD_CLASSIFY` for `reinterprets_malformed_inputs`. Below
-      `'max'`, the block is empty and the shared text carries `_MISREAD`.
+    - `misread`: at `'max'`, `_MISREAD_CLASSIFY`, for `reinterprets_malformed_inputs`. It refines the `_MISREAD_MAX`
+      check the shared text carries for every model.
     - `handoff`: at `'max'`, `_STRUCTURED_HANDOFF`, for `omits_handoff_evidence`.
     - `runtime_constraints`: at `'max'`, `_RUNTIME_CONSTRAINTS`, for `ignores_stated_runtime_constraints`.
     """
@@ -180,7 +179,6 @@ def model_specific_instructions(
             'misread',
             lambda p: p.get('reinterprets_malformed_inputs', False),
             flagged=_MISREAD_CLASSIFY if is_max else '',
-            default=_MISREAD_MAX if is_max else '',
         ),
         _model_specific(
             'handoff',
@@ -208,11 +206,10 @@ def coder_instructions(
     own when the work is good enough. Non-empty `extra` is appended after a blank line.
     `repo_files` names instruction files already loaded (`None` when none are); `nested_instructions`
     says a subdirectory's files are inlined the first time the model reads, lists, writes or edits there.
-    At `'max'`, the misread check is left to the `misread` block of `model_specific_instructions`.
     """
     is_max = autonomy == 'max'
-    parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=is_max, misread=not is_max)
-    delegate_checks = _checks(measure=True, cleanup=is_max, misread=not is_max)
+    parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=is_max, misread_max=is_max)
+    delegate_checks = _checks(measure=True, cleanup=is_max, misread_max=is_max)
     context = [
         *([_REPO_FILES.format(names=', '.join(repo_files))] if repo_files is not None else []),
         *([_NESTED_REPO_FILES] if nested_instructions else []),

@@ -374,13 +374,14 @@ class TestCoder:
 
     @pytest.mark.parametrize('autonomy', ['low', 'medium', 'high', 'max'])
     def test_max_expands_the_misread_check_for_parent_and_delegate(self, autonomy: Autonomy) -> None:
-        """A delegate follows its parent's autonomy for the misread check, as it does for cleanup.
-
-        At `'max'` the check is its own `misread` block, whose text depends on the model.
-        """
+        """A delegate follows its parent's autonomy for the misread check, as it does for cleanup."""
         for text in coder_instructions(autonomy=autonomy):
-            assert _MISREAD_MAX_TEXT not in text
-            assert (_MISREAD_TEXT in text) is (autonomy != 'max')
+            if autonomy == 'max':
+                assert _MISREAD_MAX_TEXT in text
+                assert _MISREAD_TEXT not in text
+            else:
+                assert _MISREAD_TEXT in text
+                assert _MISREAD_MAX_TEXT not in text
 
     async def test_a_delegate_is_told_to_finish_on_its_own(self, tmp_path: Path) -> None:
         """A `'low'` delegate without `ask_parent` would propose a plan to nobody, so it is told to finish instead."""
@@ -567,9 +568,7 @@ class TestCoder:
         blocks = {part.name: part.content for part in parts if part.name is not None}
         is_max = autonomy == 'max'
         expected = {
-            'misread': (_MISREAD_CLASSIFY_TEXT if flag == 'reinterprets_malformed_inputs' else _MISREAD_MAX_TEXT)
-            if is_max
-            else None,
+            'misread': _MISREAD_CLASSIFY_TEXT if is_max and flag == 'reinterprets_malformed_inputs' else None,
             'handoff': _HANDOFF_TEXT if is_max and flag == 'omits_handoff_evidence' else None,
             'runtime_constraints': _RUNTIME_CONSTRAINTS_TEXT
             if is_max and flag == 'ignores_stated_runtime_constraints'
@@ -580,8 +579,39 @@ class TestCoder:
         for name, text in expected.items():
             if text is not None:
                 assert f'id="capability:coder_instructions:{name}">\n{text}\n</pyai:context>' in blocks[name]
-        text = '\n'.join(part.content for part in parts)
-        assert (_MISREAD_TEXT in text) is not is_max
+        guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
+        assert (_MISREAD_MAX_TEXT in guidance) is is_max
+        assert (_MISREAD_TEXT in guidance) is not is_max
+
+    async def test_max_instructions_are_unchanged_for_a_model_without_the_flags(self, tmp_path: Path) -> None:
+        """A model without the flags gets exactly the `'max'` instructions it got before they existed: the blocks are
+        empty, so not sent, and the default misread check stays inline in the shared guidance."""
+        model = TestModel(call_tools=[])
+        coder = Coder(autonomy='max', repo_context=False)
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        assert [part.content for part in parts] == snapshot(
+            [
+                """\
+You are a software engineering agent. Match the surrounding code's style, structure, and imports.
+
+Work fully autonomously; nobody will answer questions. Choose sensible defaults and finish.
+
+Read files with `read_file`, not batched `cat`. Save effort on repeated work, not on understanding the task. Don't re-read files that haven't changed.
+
+Measure results against any numeric target the task states. Before finishing, go through each requirement and edge case the task states and confirm each one explicitly. If inputs seem inconsistent or a criterion impossible (no feasible plan, matching item, or reachable target), assume you misread. Re-read the task and inputs, and try interpretations meeting every stated criterion before settling for a partial answer. A result that leaves a stated criterion unmet means your interpretation is likely wrong, not that the answer is "none". Write checks from the task's stated behavior, not your code. Check behavior with heredocs for one-offs, not new files. Leave only the requested change; delete your scratch files.
+
+Finish long-running work before replying; poll until done or blocked. Servers the task needs may keep running; stop the rest.\
+""",
+                """\
+You can delegate self-contained tasks to these sub-agents using the `delegate_task` tool. Each runs in its own fresh context and does not see this conversation, so pass everything it needs.
+
+Available sub-agents:
+- self: A fresh run of this same agent, with all of your tools, instructions, and capabilities. Use it to hand off a self-contained part of the work.\
+""",
+            ]
+        )
 
     @pytest.mark.parametrize(('model_name', 'flagged'), [('gpt-6.2-sol', True), ('gpt-oss-120b', False)])
     async def test_max_guidance_goes_to_gpt_but_not_gpt_oss(
@@ -594,7 +624,7 @@ class TestCoder:
         assert model.last_model_request_parameters is not None
         text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
         assert (_MISREAD_CLASSIFY_TEXT in text) is flagged
-        assert (_MISREAD_MAX_TEXT in text) is not flagged
+        assert _MISREAD_MAX_TEXT in text
         assert (_HANDOFF_TEXT in text) is flagged
         assert (_RUNTIME_CONSTRAINTS_TEXT in text) is flagged
 
@@ -615,7 +645,7 @@ class TestCoder:
         delegate = seen['Run it']
         assert _FINISH in delegate
         assert _MISREAD_CLASSIFY_TEXT in delegate
-        assert _MISREAD_MAX_TEXT not in delegate
+        assert _MISREAD_MAX_TEXT in delegate
         assert _HANDOFF_TEXT in delegate
         assert _RUNTIME_CONSTRAINTS_TEXT in delegate
 
@@ -623,7 +653,7 @@ class TestCoder:
         self, tmp_path: Path
     ) -> None:
         """A `'max'` conversation that opened on GPT and falls back to Claude keeps the instructions it opened with;
-        Claude is sent the default misread check and told the other GPT-only sentences were withdrawn."""
+        Claude is told the GPT-only sentences were withdrawn."""
         sent: list[_Sent] = []
         workspace = LocalWorkspaceBackend(tmp_path)
         first = await Agent(
@@ -643,7 +673,7 @@ class TestCoder:
         assert _MISREAD_CLASSIFY_TEXT in opened_with
         assert _HANDOFF_TEXT in opened_with
         assert _RUNTIME_CONSTRAINTS_TEXT in opened_with
-        assert _MISREAD_MAX_TEXT not in opened_with
+        assert _MISREAD_MAX_TEXT in opened_with
         assert [(s.model, s.instructions == opened_with) for s in sent] == [
             ('gpt', True),
             ('gpt', True),
@@ -661,7 +691,7 @@ This context has been withdrawn.
 """,
                     """\
 <pyai:context id="capability:coder_instructions:misread">
-If inputs seem inconsistent or a criterion impossible (no feasible plan, matching item, or reachable target), assume you misread. Re-read the task and inputs, and try interpretations meeting every stated criterion before settling for a partial answer. A result that leaves a stated criterion unmet means your interpretation is likely wrong, not that the answer is "none".
+This context has been withdrawn.
 </pyai:context>\
 """,
                     """\

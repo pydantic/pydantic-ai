@@ -268,8 +268,8 @@ on benchmarks is opt-in; see [Benchmarking](#benchmarking).
 At `'max'`, OpenAI's GPT models (not gpt-oss) get three sentences of their own, each sent to models whose profile sets
 a flag for the behavior it corrects:
 
-- `reinterprets_malformed_inputs`: the misread check first looks for a rule in the task that classifies inconsistent
-  inputs, for example as malformed or rejected, and applies it before assuming it misread.
+- `reinterprets_malformed_inputs`: a refinement of the misread check: first look for a rule in the task that
+  classifies inconsistent inputs, for example as malformed or rejected, and apply it before assuming a misreading.
 - `omits_handoff_evidence`: notes and handoffs use headed sections with each decision, the verification commands and
   their results, the remaining risk, and what was left out.
 - `ignores_stated_runtime_constraints`: when a task constrains where or how its code will run, such as a restricted
@@ -280,7 +280,7 @@ with the three sentences against 51.0 without them, within that benchmark's sing
 Like the rule against unrequested delegation (see [Sub-agents](#sub-agents)), each is its own instruction block that
 follows the model handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without the flag,
-the model is sent the default misread check and told the other sentences were withdrawn. See
+the model is told the sentences were withdrawn. Models without the flags get the same prompt as before. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
