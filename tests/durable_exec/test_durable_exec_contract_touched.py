@@ -230,6 +230,7 @@ def _fake_gh(merge_base: str = MERGE_BASE, extra_files: int = 0) -> _FakeGh:
             ),
             f'repos/{REPO}/contents/{MODELS}?ref={MERGE_BASE}': MODELS_SOURCE,
             f'repos/{REPO}/contents/{MODELS}?ref={HEAD_SHA}': head,
+            f'repos/{REPO}/pulls/42': f'{HEAD_SHA}\n',
         }
     )
 
@@ -398,6 +399,9 @@ MARKER = f'<!-- durable-exec-signoff fingerprint={FINGERPRINT} head={HEAD_SHA} -
         pytest.param(f'Done.\r\n  {MARKER}  \r\n', (FINGERPRINT, HEAD_SHA), id='crlf-and-spaces'),
         pytest.param(f'{MARKER.replace("f" * 64, "e" * 64)}\n{MARKER}', (FINGERPRINT, HEAD_SHA), id='last-wins'),
         pytest.param(f'> {MARKER}', None, id='quoted'),
+        pytest.param(f'> x\u2028{MARKER}', None, id='quoted-after-line-separator'),
+        pytest.param(f'LGTM\x85{MARKER}', None, id='after-next-line'),
+        pytest.param(f'LGTM\r{MARKER}', None, id='after-carriage-return'),
         pytest.param(f'LGTM {MARKER}', None, id='inline'),
         pytest.param(MARKER.replace('f' * 64, 'F' * 64), None, id='uppercase-fingerprint'),
         pytest.param(MARKER.replace('f' * 64, 'f' * 63), None, id='short-fingerprint'),
@@ -514,4 +518,30 @@ def test_signed_off_fails_when_a_touched_core_file_cannot_be_fingerprinted(
     assert generator.main(['--signed-off', REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=gh) == 1
 
     assert capsys.readouterr().err == f"cannot fingerprint: GitHub left out the patch of '{MODELS}'\n"
-    assert not any('/comments' in call[0] for call in gh.calls)
+    assert not any('/comments' in argument for call in gh.calls for argument in call)
+
+
+@pytest.mark.parametrize('command', ['--fingerprint', '--signoff-marker', '--signed-off'])
+@pytest.mark.parametrize(
+    'live_heads',
+    [
+        pytest.param([MERGE_BASE, HEAD_SHA], id='before-listing'),
+        pytest.param([HEAD_SHA, MERGE_BASE], id='after-listing'),
+    ],
+)
+def test_a_fingerprint_is_only_for_the_named_head(
+    manifest_root: Path, capsys: pytest.CaptureFixture[str], command: str, live_heads: list[str]
+):
+    """The files listing is the live head's, so a live head other than `HEAD_SHA` around the listing fails."""
+    gh = _fake_gh()
+    heads = iter(live_heads)
+
+    def live(*arguments: str) -> str:
+        return f'{next(heads)}\n' if arguments[0] == f'repos/{REPO}/pulls/42' else gh(*arguments)
+
+    assert generator.main([command, REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=live) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert captured.err == f'cannot fingerprint: the pull request head is {live_heads}, not {HEAD_SHA}\n'
+    assert not any('/comments' in argument for call in gh.calls for argument in call)

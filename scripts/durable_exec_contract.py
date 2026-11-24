@@ -1161,7 +1161,8 @@ class Signoff(NamedTuple):
 def parse_signoff(body: str, login: str) -> Signoff | None:
     """The last line of a comment `body` that is exactly a sign-off marker, or `None` if no line is."""
     found: Signoff | None = None
-    for line in body.splitlines():
+    # Only `\n` ends a line: `splitlines` also splits on `\u2028` and the like, which leave a quoted marker unquoted.
+    for line in body.split('\n'):
         if marker := _SIGNOFF_MARKER.fullmatch(line.strip()):
             found = Signoff(marker[1], marker[2], login)
     return found
@@ -1203,9 +1204,13 @@ def render_manifest(manifest: Manifest) -> str:
 
 
 def _classify(
-    parser: argparse.ArgumentParser, arguments: Sequence[str], root: Path, gh: Callable[..., str]
+    parser: argparse.ArgumentParser, arguments: Sequence[str], root: Path, gh: Callable[..., str], *, pin_head: bool
 ) -> tuple[list[ChangedFile], Manifest] | None:
-    """The files pull request `arguments` lists and the gating entries they touch, or `None` if it cannot tell."""
+    """The files pull request `arguments` lists and the gating entries they touch, or `None` if it cannot tell.
+
+    The files listing is always the pull request's live head. With `pin_head`, it also returns `None` unless the live
+    head is `HEAD_SHA` both before and after the listing, so a fingerprint is never computed for an unnamed head.
+    """
     repository, pull_request, base, head = arguments
     manifest: Manifest = json.loads((root / MANIFEST_PATH).read_text(encoding='utf-8'))
     shapes = [(repository, _REPOSITORY), (pull_request, _PULL_REQUEST), (base, _COMMIT), (head, _COMMIT)]
@@ -1213,7 +1218,14 @@ def _classify(
     if invalid := [value for value, pattern in shapes if not pattern.fullmatch(value)]:
         parser.error(f'refusing to request anything for {", ".join(map(repr, invalid))}')
     merge_base = gh(f'repos/{repository}/compare/{base}...{head}', '--jq', '.merge_base_commit.sha').strip()
+    live_head = (f'repos/{repository}/pulls/{pull_request}', '--jq', '.head.sha')
+    heads = [gh(*live_head).strip()] if pin_head else []
     pages = json.loads(gh('--paginate', '--slurp', f'repos/{repository}/pulls/{pull_request}/files?per_page=100'))
+    if pin_head:
+        heads.append(gh(*live_head).strip())
+    if any(live != head for live in heads):
+        print(f'cannot fingerprint: the pull request head is {heads}, not {head}', file=sys.stderr)
+        return None
     files = [
         ChangedFile(item['filename'], item['status'], item.get('previous_filename'), item.get('patch'))
         for page in pages
@@ -1237,7 +1249,7 @@ def _pull_request_command(
     parser: argparse.ArgumentParser, command: str, arguments: Sequence[str], root: Path, gh: Callable[..., str]
 ) -> int:
     """Run `--touched`, `--fingerprint`, `--signoff-marker` or `--signed-off` for pull request `arguments`."""
-    if (classified := _classify(parser, arguments, root, gh)) is None:
+    if (classified := _classify(parser, arguments, root, gh, pin_head=command != 'touched')) is None:
         return 1
     files, touched = classified
     if command == 'touched':
