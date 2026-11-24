@@ -923,6 +923,9 @@ SUITE_ENGINES: tuple[Engine, ...] = ('dbos', 'temporal')
 """The engines a suite runs every case with `calls` under: a cell `ENGINE_SUPPORT` doesn't list is `supported`
 there, and `untested` under the others."""
 
+ID_LESS_TOOLSETS = ('BrowserUse', 'PydanticAIDocs')
+"""The cases whose toolset has no id, which Temporal and Prefect refuse."""
+
 ENGINE_SUPPORT: Mapping[str, Mapping[Engine, Support]] = {
     **{
         name: {
@@ -933,7 +936,7 @@ ENGINE_SUPPORT: Mapping[str, Mapping[Engine, Support]] = {
                 issue=9233,
             )
         }
-        for name in ('BrowserUse', 'PydanticAIDocs')
+        for name in ID_LESS_TOOLSETS
     },
     'CompactOnRequest': {
         'temporal': Support(
