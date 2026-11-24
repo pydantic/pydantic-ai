@@ -64,7 +64,7 @@ try:
     from opensandbox.exceptions import SandboxApiException, SandboxConnectionException, SandboxException
     from opensandbox.manager import SandboxManager
     from opensandbox.models.execd import ExecutionHandlers, OutputMessage, RunCommandOpts
-    from opensandbox.models.sandboxes import CredentialProxyConfig, NetworkPolicy, SandboxFilter
+    from opensandbox.models.sandboxes import CredentialProxyConfig, NetworkPolicy, SandboxFilter, Volume
 except ImportError as _import_error:
     raise ImportError('Install `pydantic-ai-harness[opensandbox]` to use OpenSandbox.') from _import_error
 
@@ -222,6 +222,8 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         credential_proxy: The SDK's `CredentialProxyConfig` for a new sandbox, passed to `Sandbox.create`
             unchanged. `CredentialProxyConfig(enabled=True)` has the server add the tokens in the sandbox's
             `credential_vault` to matching requests as they leave the sandbox. Ignored on attach.
+        volumes: SDK `Volume` objects for a new sandbox, passed to `Sandbox.create` unchanged. `mount_path`
+            values must not overlap the sandbox root or each other. Ignored on attach.
         secure_access: Ask the server to turn on Secure Access for a new sandbox, so its ingress gateway and
             proxy require the sandbox's token. Requires Kubernetes with an ingress gateway; Docker rejects `True`.
             Ignored on attach.
@@ -243,6 +245,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         network_policy: NetworkPolicy | None = None,
         credential_proxy: CredentialProxyConfig | None = None,
         secure_access: bool = False,
+        volumes: list[Volume] | None = None,
         sandbox_timeout: int | None = None,
     ) -> None:
         if (image is None) == (ref is None):
@@ -265,9 +268,10 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
         if network_policy is None and not allow_internet_access:
             network_policy = NetworkPolicy(defaultAction='deny')
         self._network_policy = network_policy
-        self._credential_proxy = credential_proxy
-        self._secure_access = secure_access
         self._sandbox_timeout = sandbox_timeout
+        self._credential_proxy = credential_proxy
+        self._volumes = list(volumes) if volumes is not None else None
+        self._secure_access = secure_access
         self._sandbox: Sandbox | None = None
         self._resolved_working_dir: str | None = None
         self._lock = anyio.Lock()
@@ -366,6 +370,7 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands):
                         resource=self._resource,
                         network_policy=self._network_policy,
                         credential_proxy=self._credential_proxy,
+                        volumes=self._volumes,
                         secure_access=self._secure_access,
                         metadata={_CREATE_TAG: tag},
                         connection_config=_connection_config(self._connection),

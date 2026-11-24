@@ -279,6 +279,22 @@ Before you rely on it:
 - To swap the token, call `credential_vault.patch(credentials={'replace': [...]})` on `await backend.get_sandbox()`.
 - `allow_internet_access=False` already sets a policy that blocks everything, so pass it or `network_policy`, not both. For both, `OpenSandbox` raises `UserError` and `OpenSandboxBackend` raises `ValueError`.
 
+## Mount volumes into the sandbox
+
+Pass `volumes` to `OpenSandboxBackend` to mount host directories, PVCs or OSSFS buckets into a new sandbox. It takes the SDK's own `Volume` objects and passes them on to `Sandbox.create` unchanged, so the mounts exist before the agent's first command. `mount_path` values are absolute sandbox paths, independent of `working_dir`, and must not overlap each other or the sandbox root.
+
+```python {test="skip"}
+from opensandbox.models.sandboxes import Host, Volume
+
+backend = OpenSandboxBackend(
+    image='python:3.13-slim',
+    working_dir='/cache',
+        volumes=[Volume(name='cache', host=Host(path='/srv/cache'), mountPath='/cache', readOnly=True)],
+)
+```
+
+`volumes` only shape a new sandbox: a backend that attaches to a ref leaves the ref's mounts as they are.
+
 ## Endpoint authentication
 
 `secure_access=True` asks the server to turn on [Secure Access](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/secure-access.md) for a new sandbox. The gateway and the server proxy then reject requests to the sandbox's endpoints that lack its token. The SDK fetches the token with the server API key and sends it with every command and file request.
@@ -298,7 +314,7 @@ The sandbox is as isolated as the server's runtime makes it. A Docker container 
 
 ## Configuration
 
-[Agent specs](../agent.md#agent-specs) can set every option except `connection` and `network_policy`. A spec reaches the server through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`.
+[Agent specs](../agent.md#agent-specs) can set every option except `connection`, `network_policy` and `volumes`. A spec reaches the server through `OPEN_SANDBOX_DOMAIN` and `OPEN_SANDBOX_API_KEY`.
 
 | Option | What it does |
 | --- | --- |
@@ -314,7 +330,7 @@ The sandbox is as isolated as the server's runtime makes it. A Docker container 
 | `authority` | Who wrote the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`image`, `resource`, `allow_internet_access`, `network_policy` and `secure_access` only shape a new sandbox. `working_dir`, `env`, `sandbox_timeout`, `authority` and `path_authority` also apply when you reattach.
+`image`, `resource`, `allow_internet_access`, `network_policy`, `secure_access` and `volumes` only shape a new sandbox. `working_dir`, `env`, `sandbox_timeout`, `authority` and `path_authority` also apply when you reattach.
 
 ## Limits
 
