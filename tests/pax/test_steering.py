@@ -481,9 +481,12 @@ async def test_enter_on_edited_queue_with_nonempty_original_draft(key: str, expe
         live.feed(key)
         live.feed('enter')
         assert live.queued_messages == ((expected,) if expected else ())
-        for undo in ('ctrl-z', 'ctrl-y'):
-            live.feed(undo)
-            assert live.buffer.text == ''
+        assert live.buffer.text == 'draft'
+        # Enter brings back the draft Up set aside; undo and redo step over that, never back to the saved edit.
+        live.feed('ctrl-z')
+        assert live.buffer.text == ''
+        live.feed('ctrl-y')
+        assert live.buffer.text == 'draft'
 
 
 async def test_history_search_from_a_recalled_queued_prompt() -> None:
@@ -572,19 +575,27 @@ async def test_a_queued_prompt_being_edited_becomes_the_draft_once_idle() -> Non
         assert await live.read() == 'only again'
 
 
-@pytest.mark.parametrize(('edit', 'expected'), [(' again', 'only again\ndraft'), ('', 'only')])
-async def test_an_edit_left_once_idle_keeps_the_draft_up_set_aside(edit: str, expected: str) -> None:
+@pytest.mark.parametrize(
+    ('edit', 'keys', 'expected'),
+    [(' again', (), 'only again'), ('', (), 'only'), (' again', ('ctrl-z', 'ctrl-y'), 'only again\ndraft')],
+)
+async def test_an_edit_left_once_idle_keeps_the_draft_up_set_aside(
+    edit: str, keys: tuple[str, ...], expected: str
+) -> None:
     async with editor() as (live, _, _):
         queue(live, 'only')
         live.buffer.replace('draft')
         live.feed('up')
         live.buffer.insert(edit)
+        # Undo and redo end the recall walk.
+        for key in keys:
+            live.feed(key)
         live.wake()
         with pytest.raises(PromptWakeup):
             await live.read()
         assert (live.buffer.text, live.queued_messages) == (expected, ())
         # Still walking, the draft is where Down finds it, not added to the input as well.
-        if not edit:
+        if not keys:
             live.feed('down')
             assert live.buffer.text == 'draft'
 
@@ -944,11 +955,13 @@ async def test_removing_the_prompt_being_edited_keeps_the_edit_as_the_draft() ->
             live.buffer.insert('2')
             # As the web UI removes the queued prompt the terminal is editing.
             live.discard(live.queued_prompts()[1])
-            # The draft set aside by Up follows the edit, as when the edit becomes the draft once idle.
-            assert (live.buffer.text, live.queued_messages) == ('b2\ndraft', ('a',))
+            # The edit stays in the input, as when it becomes the draft once idle, and Down still finds the draft.
+            assert (live.buffer.text, live.queued_messages) == ('b2', ('a',))
+            live.feed('down')
+            assert live.buffer.text == 'draft'
             # No edit remains, so Enter queues the draft as a new prompt.
             live.feed('enter')
-            assert live.queued_messages == ('a', 'b2\ndraft')
+            assert live.queued_messages == ('a', 'draft')
             live.feed('ctrl-c')
 
 
@@ -1031,6 +1044,9 @@ async def test_a_command_never_joins_the_edit_and_the_draft_up_set_aside(draft: 
         live.feed('up')
         live.feed('ctrl-u')
         live.buffer.insert(edit)
+        # Undo and redo end the recall walk, which would otherwise keep the draft for Down.
+        live.feed('ctrl-z')
+        live.feed('ctrl-y')
         live.wake()
         with pytest.raises(PromptWakeup):
             await live.read()
@@ -1045,6 +1061,9 @@ async def test_a_cleared_edit_left_once_idle_brings_back_a_command_draft() -> No
         live.buffer.replace('!ls')
         live.feed('up')
         live.feed('ctrl-u')
+        # Undo and redo end the recall walk, which would otherwise keep the draft for Down.
+        live.feed('ctrl-z')
+        live.feed('ctrl-y')
         live.wake()
         with pytest.raises(PromptWakeup):
             await live.read()

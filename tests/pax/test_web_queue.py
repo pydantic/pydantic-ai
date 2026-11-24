@@ -285,10 +285,12 @@ async def test_the_browser_removing_the_prompt_the_terminal_edits_keeps_the_edit
         live.buffer.replace('draft')
         live.feed('up')
         live.buffer.insert('2')
-        # The browser still lists the prompt being edited, and can remove it; the draft from before Up stays.
+        # The browser still lists the prompt being edited, and can remove it; the edit and the draft from before Up stay.
         [editing] = shell.live_session.queue
         shell.live_session.remove_queued(editing.id)
-        assert (live.buffer.text, shell.live_session.queue) == ('queued2\ndraft', [])
+        assert (live.buffer.text, shell.live_session.queue) == ('queued2', [])
+        live.feed('down')
+        assert live.buffer.text == 'draft'
         shell.bind(None)
 
 
