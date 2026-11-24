@@ -111,6 +111,7 @@ from pydantic_ai.realtime._utils import (
     session_instructions,
 )
 from pydantic_ai.realtime.codec import (
+    AppendVoiceInstructions,
     AudioDelta,
     CancelResponse,
     ClearAudio,
@@ -173,10 +174,10 @@ def test_resolve_advertised_tools_rejects_a_tool_choice_it_cannot_honor() -> Non
         resolve_advertised_tools(None, 'required')
 
 
-def _wav_content(pcm: bytes, sample_rate: int = 24000) -> BinaryContent:
+def _wav_content(pcm: bytes, sample_rate: int = 24000, channels: int = 1) -> BinaryContent:
     buffer = io.BytesIO()
     with wave.open(buffer, 'wb') as wav:
-        wav.setnchannels(1)
+        wav.setnchannels(channels)
         wav.setsampwidth(2)
         wav.setframerate(sample_rate)
         wav.writeframes(pcm)
@@ -5375,6 +5376,28 @@ async def test_send_respond_rejects_audio_and_unsupported_image_response() -> No
     assert conn.sent == []
 
 
+async def test_append_voice_instructions_needs_a_voice_model_with_instructions_of_its_own() -> None:
+    """Voice instructions go only to a model whose voice model takes instructions apart from the agent's; elsewhere the
+    agent's instructions are the voice model's, and the method raises before sending anything.
+
+    A unit test for the flag-off side, which no provider takes to the wire. History never records the instructions.
+    """
+    conn = FakeRealtimeConnection([])
+    unsupported = RealtimeSession(conn, _noop_runner, profile=_profile())
+    with pytest.raises(
+        UserError,
+        match=r'does not support voice instructions of its own, so `session\.append_voice_instructions\(\)` is unavailable',
+    ):
+        await unsupported.append_voice_instructions('Speak slowly.')
+    assert conn.sent == []
+
+    profile: RealtimeModelProfile = {**_profile(), 'supports_appending_voice_instructions': True}
+    supported = RealtimeSession(conn, _noop_runner, profile=profile)
+    await supported.append_voice_instructions('Speak slowly.')
+    assert conn.sent == [AppendVoiceInstructions('Speak slowly.')]
+    assert supported.all_messages() == []
+
+
 async def test_send_respond_sequence_can_lead_with_audio() -> None:
     """Non-last items are sent as context, so audio ahead of the text turn is fine with an explicit `respond`."""
     conn = FakeRealtimeConnection([])
@@ -5994,6 +6017,24 @@ async def test_send_rejects_unsupported_binary_content() -> None:
     # A non-WAV audio container can't be unwrapped, so it's rejected rather than streamed as noise.
     with pytest.raises(UserError, match=r"Unsupported binary media type 'audio/mpeg'.*WAV audio, or raw PCM"):
         await session.send(BinaryContent(data=b'\x00mp3', media_type='audio/mpeg'))
+
+    # WAV is unwrapped to raw PCM, so it has to be valid mono 16-bit PCM at the session's input rate.
+    messages: list[str] = []
+    for audio in (
+        _wav_content(b'\x01\x02', 16000),
+        _wav_content(b'\x01\x02\x03\x04', channels=2),
+        BinaryContent(data=b'not a wav', media_type='audio/wav'),
+    ):
+        with pytest.raises(UserError) as exc_info:
+            await session.send(audio)
+        messages.append(str(exc_info.value))
+    assert messages == snapshot(
+        [
+            'Cannot send WAV audio through `session.send()`: it was recorded at 16000 Hz, but the session expects 24000 Hz. Resample it first.',
+            "Cannot send WAV audio through `session.send()`: expected mono 16-bit PCM WAV, got 2 channel(s), 16-bit samples, compression 'NONE'.",
+            'Cannot send WAV audio through `session.send()`: it is not valid WAV audio.',
+        ]
+    )
 
     assert conn.sent == []
 

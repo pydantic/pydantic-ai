@@ -61,6 +61,7 @@ from pydantic_graph._utils import (
 from pydantic_graph.exceptions import UnsupportedEventLoopError
 from pydantic_graph.util import get_callable_name
 
+from ._json_schema_keywords import iter_subschemas
 from .exceptions import UserError
 
 AbstractSpan = AbstractSpan
@@ -1110,17 +1111,20 @@ def get_first_param_type(callable_obj: Callable[..., Any]) -> Any | None:
     return type_hints.get(first_param_name)
 
 
-def get_function_type_hints(func: Any) -> dict[str, Any]:
+def get_function_type_hints(func: Any, *, include_keys: set[str] | None = None) -> dict[str, Any]:
     """Resolve type hints for a function, including forward references.
 
     Wraps `pydantic._internal._typing_extra.get_function_type_hints` so callers
-    don't need to import Pydantic internals directly.
+    don't need to import Pydantic internals directly. With `include_keys`, only
+    those annotations are resolved.
     """
-    return _typing_extra.get_function_type_hints(func)
+    return _typing_extra.get_function_type_hints(func, include_keys=include_keys)
 
 
-def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:
+def _update_mapped_json_schema_refs(s: dict[str, Any] | bool, name_mapping: dict[str, str]) -> None:
     """Update $refs in a schema to use the new names from name_mapping."""
+    if isinstance(s, bool):
+        return
     if '$ref' in s:
         ref = s['$ref']
         if ref.startswith('#/$defs/'):  # pragma: no branch
@@ -1128,29 +1132,8 @@ def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, s
             new_name = name_mapping.get(original_name, original_name)
             s['$ref'] = f'#/$defs/{new_name}'
 
-    for subschema in _mapped_json_subschemas(s):
+    for subschema in iter_subschemas(s):
         _update_mapped_json_schema_refs(subschema, name_mapping)
-
-
-def _mapped_json_subschemas(s: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    """The subschemas directly under `s` whose `$ref`s `_update_mapped_json_schema_refs` updates."""
-    # Handle keywords whose values map names to schemas.
-    for keyword in ['properties', 'patternProperties', 'dependentSchemas']:
-        if keyword in s:
-            props: dict[str, dict[str, Any]] = s[keyword]
-            yield from (prop for prop in props.values() if isinstance(prop, dict))
-
-    # Handle single-subschema keywords, including conditionals and array containment.
-    for keyword in ['items', 'additionalProperties', 'propertyNames', 'not', 'contains', 'if', 'then', 'else']:
-        subschema = s.get(keyword)
-        if isinstance(subschema, dict):
-            yield subschema
-
-    # Handle schema arrays, including the legacy tuple form of items.
-    for keyword in ['prefixItems', 'anyOf', 'oneOf', 'allOf', 'items']:
-        keyword_items: dict[str, Any] | list[dict[str, Any] | bool] | None = s.get(keyword)
-        if isinstance(keyword_items, list):
-            yield from (item for item in keyword_items if isinstance(item, dict))
 
 
 def _unique_def_name(name: str, schema: dict[str, Any], all_defs: dict[str, dict[str, Any]]) -> str:
@@ -1335,7 +1318,8 @@ def host_derived_id(url: str) -> str | None:
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
-    Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
+    Returns True for `text/*`, JSON, XML, YAML and TOML, and the `+json` and `+xml` structured syntax suffixes.
+    `+yaml` types aren't included: see `has_yaml_structured_suffix`.
     """
     # Media types may carry parameters (RFC 2045); classify on the bare type.
     media_type = media_type.split(';', 1)[0].strip()
@@ -1349,6 +1333,15 @@ def is_text_like_media_type(media_type: str) -> bool:
         # TOML is UTF-8 text (RFC 9519); `BinaryContent.from_path` infers it for `.toml` files.
         or media_type == 'application/toml'
     )
+
+
+def has_yaml_structured_suffix(media_type: str) -> bool:
+    """Check if a media type has the `+yaml` structured syntax suffix (RFC 9512), ignoring its parameters.
+
+    `is_text_like_media_type` doesn't include these types, so only the adapters that call this inline them as text:
+    https://github.com/pydantic/pydantic-ai/issues/13925.
+    """
+    return media_type.split(';', 1)[0].strip().endswith('+yaml')
 
 
 def format_inlined_text_file(text: str, *, media_type: str, identifier: str) -> str:

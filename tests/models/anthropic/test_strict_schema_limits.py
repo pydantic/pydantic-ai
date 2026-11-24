@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from pydantic import BaseModel, create_model
 
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent, DeprecatedModelWarning, Tool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, ModelSchemaTooComplexError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
@@ -264,6 +264,8 @@ async def test_default_output_over_limits_doesnt_warn_about_strict_mode(allow_mo
 
     with warnings.catch_warnings():
         warnings.simplefilter('error')
+        # `claude-sonnet-4-5` is deprecated, which `replay_deprecated_models` ignores until `simplefilter` overrides it.
+        warnings.filterwarnings('ignore', category=DeprecatedModelWarning)
         result = await Agent(model, output_type=inventory).run('Count.', model_settings={'thinking': True})
 
     assert result.output.model_dump(exclude_none=True) == {'counts': {'a': 1}}

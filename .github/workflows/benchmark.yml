@@ -74,8 +74,9 @@ jobs:
               tests/benchmarks/README.md|tests/benchmarks/AGENTS.md) return 1 ;;
               # Workloads and root collection/autouse fixtures execute even without timing.
               tests/benchmarks/*|tests/__init__.py|tests/conftest.py|tests/cost_guards.py|tests/gc_isolation.py) return 0 ;;
-              # Root fixtures reset event-loop/instrumentation/cache state, track HTTP/test costs and check cache prefixes.
-              tests/_inline_snapshot.py|tests/cassette_hooks.py|tests/cassette_utils.py|tests/function_model_prefix.py) return 0 ;;
+              # Root fixtures reset event-loop/instrumentation/cache state, share test timeouts and ports, track HTTP/test costs and check cache prefixes and span schemas.
+              tests/_inline_snapshot.py|tests/_ports.py|tests/_timeouts.py|tests/cassette_hooks.py|tests/cassette_utils.py|tests/function_model_prefix.py) return 0 ;;
+              tests/manifests.py|tests/span_schema.py) return 0 ;;
               # Other suites, cassettes and binary assets are not collected or requested by the workloads.
               tests/*) return 1 ;;
               pydantic_ai_slim/pydantic_ai/*)
@@ -116,7 +117,7 @@ jobs:
               docs/*|agent_docs/*|examples/*) return 1 ;;
               .agents/*.md|.agents/*.tsv|.claude/*.md) return 1 ;;
               # Harness/CLI packages and UI assets are unused; Python installation metadata above still runs.
-              src/pydantic_ai_harness/*|src/pydantic_clai2/*|clai/*) return 1 ;;
+              src/pydantic_ai_harness/*|src/pydantic_ai_pax/*|src/pydantic_clai2/*|clai/*) return 1 ;;
               pydantic_ai_slim/*.md|pydantic_graph/*.md|pydantic_evals/*.md) return 1 ;;
               # The job invokes uv/pytest directly, without make.
               Makefile) return 1 ;;

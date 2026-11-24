@@ -764,7 +764,7 @@ review's job is the escape hatches and the patterns the guards cannot see.
 ```python
 @pytest.mark.subprocess(reason='runs the CLI')
 def test_cli_prints_version(tmp_path: Path):
-    result = subprocess.run([sys.executable, '-m', 'pydantic_clai2', '--version'], ...)
+    result = subprocess.run([sys.executable, '-m', 'pydantic_ai_pax', '--version'], ...)
 ```
 *Why:* The claim (the version string) does not depend on the process
 boundary, so the marker only waves through a second-per-test interpreter

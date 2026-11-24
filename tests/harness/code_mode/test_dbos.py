@@ -45,6 +45,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness import CodeMode
+from tests.harness.code_mode.stored_sessions import stored_session_pool
 
 pytestmark = pytest.mark.xdist_group(name='harness-dbos')
 
@@ -125,6 +126,22 @@ code_mode_agent = Agent(
 )
 
 
+remote_code_mode_agent = Agent(
+    FunctionModel(_code_mode_model),
+    name='remote_code_mode_dbos_agent',
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[
+        CodeMode(id='code', monty_sandbox=stored_session_pool),
+        DBOSDurability(),
+    ],
+)
+
+
+@DBOS.workflow()
+def run_remote_code_mode_agent(prompt: str) -> str:
+    return str(remote_code_mode_agent.run_sync(prompt).output)
+
+
 @DBOS.workflow()
 def run_code_mode_agent(prompt: str) -> dict[str, Any]:
     result = code_mode_agent.run_sync(prompt)
@@ -146,6 +163,8 @@ def run_limited_code_mode_agent(prompt: str, tool_calls_limit: int) -> None:
         _limit_errors.append(str(error))
         if len(_limit_errors) == 1:
             raise _LimitAbortCrash from error
+        # Recovery runs on a DBOS executor thread, where `run_sync` sets a new event loop that nothing else closes.
+        asyncio.get_event_loop().close()
         raise
 
 
@@ -191,6 +210,12 @@ def run_gather_agent(prompt: str) -> str:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+def test_remote_code_mode_with_an_id_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
+    """Turn activities are Temporal's: under DBOS a `CodeMode` with an `id` and a remote sandbox runs as before."""
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert run_remote_code_mode_agent('Calculate 3 + 4') == 'done: 7'
 
 
 def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:

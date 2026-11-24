@@ -2430,7 +2430,7 @@ class _StreamOffer:
 class _StreamHandoff:
     """How the attempt loop in the `wrap_model_request` task and the consuming task open a stream together."""
 
-    offers: asyncio.Queue[_StreamOffer] = dataclasses.field(default_factory=asyncio.Queue[_StreamOffer])
+    offers: asyncio.Queue[_StreamOffer] = dataclasses.field(default_factory=asyncio.Queue[_StreamOffer])  # noqa: TID251  (not converted to anyio yet)
     open_error: Exception | None = None
     """The error the request step ended with when its last attempt failed to open a stream.
 
@@ -3297,8 +3297,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             return await self._prepare_resume_request(ctx, streaming=streaming)
 
         self.request.timestamp = now_utc()
-        if not self.is_resuming_without_prompt:
-            fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+        # A request resumed from `message_history` keeps a `run_id` it already has; one without gets this run's,
+        # before `before_model_request` sees it.
+        fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         ctx.state.message_history.append(self.request)
         self._capability_load_records = _deliver_capability_loads(ctx, self.request)
 

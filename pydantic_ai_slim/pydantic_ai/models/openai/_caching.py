@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, Required, TypeAlias, cast
 
 from openai.types import chat, responses
 from openai.types.chat import ChatCompletionContentPartParam
@@ -15,15 +15,17 @@ from ...messages import InstructionPart, ModelMessage, ModelRequest, SystemPromp
 from ...profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ...settings import CacheSetting, ModelSettings, merge_model_settings
 from .. import ModelRequestParameters
-from .._prompt_cache import split_cache_setting
+from .._prompt_cache import instruction_cache_boundaries, split_cache_setting
 from ._settings import OpenAIChatModelSettings, OpenAIPromptCacheOptions
 
 _OpenAIPromptCacheTTL: TypeAlias = Literal['30m', '12h']
 """The prompt cache TTLs OpenAI accepts on GPT-5.6 and later."""
 
 
-class _OpenAIPromptCacheBreakpoint(TypedDict):
-    mode: Literal['explicit']
+class _OpenAIPromptCacheBreakpoint(TypedDict, total=False):
+    # The SDK's `PromptCacheBreakpoint` shape, so a value of this type can be assigned into its content params.
+    mode: Required[Literal['explicit']]
+    ttl: _OpenAIPromptCacheTTL
 
 
 _LEADING_CACHE_POINT_ERROR = (
@@ -66,6 +68,15 @@ def cacheable_instruction_count(instruction_parts: Sequence[InstructionPart]) ->
     even when its append blocks differ.
     """
     return next((i for i, part in enumerate(instruction_parts) if part.dynamic), len(instruction_parts))
+
+
+def split_stable_instructions(
+    instruction_parts: Sequence[InstructionPart],
+) -> tuple[list[InstructionPart], list[InstructionPart]]:
+    """The instruction parts that keep the prompt prefix stable, in order, and the ones after them that rewrite it."""
+    ordered = InstructionPart.sorted(instruction_parts)
+    _, stable_count = instruction_cache_boundaries(ordered)
+    return ordered[:stable_count], ordered[stable_count:]
 
 
 def leading_system_message_count(

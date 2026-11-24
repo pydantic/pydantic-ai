@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import subprocess
@@ -66,7 +67,9 @@ from pydantic_ai.capabilities import (
     Hooks,
     ModelFallback,
     SetToolMetadata,
+    ToolSearch,
     WrapperCapability,
+    durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
@@ -118,6 +121,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from ..conftest import IsDatetime, IsNow, IsStr
 from ..realtime_connections import InferredConnection
 from ..schema_too_complex_utils import CompilingModel
+from .override_rebind_cases import REBIND_CASES, RebindCase
 from .span_utils import drop_fastmcp_client_spans
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
@@ -5707,6 +5711,158 @@ async def test_dbos_durability_allows_per_run_capabilities_outside_workflow(dbos
     agent = Agent(_durability_fn_model, name='durability_per_run_cap_outside', capabilities=[DBOSDurability()])
     result = await agent.run('Hello', capabilities=[Toolset(FunctionToolset(id='per_run_fn'))])
     assert result.output == snapshot('Echo: Hello')
+
+
+async def test_dbos_durability_override_capabilities_keeps_the_registered_steps(
+    dbos: DBOS, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Stacking onto `root_capability.capabilities` keeps the bound `DBOSDurability` instead of re-binding it.
+
+    Re-binding would register the agent's steps with DBOS a second time, under the same names.
+    """
+    agent = Agent(_durability_fn_model, name='durability_override_stack', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    dbos_logger = logging.getLogger('dbos')
+    dbos_logger.addHandler(caplog.handler)
+    try:
+        with agent.override(
+            capabilities=[*agent.root_capability.capabilities, Instrumentation(InstrumentationSettings())]
+        ):
+            wfid = str(uuid.uuid4())
+            with SetWorkflowID(wfid):
+                output = await run_agent()
+    finally:
+        dbos_logger.removeHandler(caplog.handler)
+
+    assert output == snapshot('Echo: Hello')
+    assert [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)] == snapshot(
+        ['durability_override_stack__model.request']
+    )
+    assert not [record for record in caplog.records if 'Duplicate registration' in record.getMessage()]
+
+
+class _OverrideAddedOperation(AbstractCapability[object]):
+    id = 'override_added_operation'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def before_run(self, ctx: RunContext[object]) -> None:
+        await self._count(ctx)
+
+    @durable_operation('count')
+    async def _count(self, ctx: RunContext[object]) -> None:
+        self.calls += 1
+
+
+async def test_dbos_durability_override_capabilities_follow_the_per_run_rules(dbos: DBOS) -> None:
+    """A capability an override adds has no registered steps, so inside a workflow it is refused like a per-run one."""
+    agent = Agent(_durability_fn_model, name='durability_override_added', capabilities=[DBOSDurability()])
+    added = _OverrideAddedOperation()
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        await agent.run('Hello')
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, added]):
+        result = await agent.run('Hello')
+        assert result.output == snapshot('Echo: Hello')
+        assert added.calls == 1
+
+        with workflow_raises(
+            UserError,
+            snapshot(
+                'Capabilities added per-run inside a DBOS workflow are not supported: _OverrideAddedOperation. DBOS '
+                'registers durable steps when a capability is bound to the agent, before the workflow starts. A '
+                'capability added per-run therefore has no registered durable steps for the toolsets it contributes '
+                'or its own `@durable_operation` methods. Attach all capabilities at agent construction time so '
+                '`DBOSDurability.for_agent()` can register their durable steps.'
+            ),
+        ):
+            await run_agent()
+    assert added.calls == 1
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
+async def test_dbos_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(
+    dbos: DBOS, caplog: pytest.LogCaptureFixture, case: RebindCase
+) -> None:
+    """The bound `DBOSDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and register the agent's steps with DBOS a second time, under the same names.
+    """
+    durability = DBOSDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
+    )
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
+    capabilities = case.capabilities(agent, bound)
+
+    dbos_logger = logging.getLogger('dbos')
+    dbos_logger.addHandler(caplog.handler)
+    try:
+        with pytest.raises(UserError, match='must keep, unchanged, the item'):
+            with agent.override(capabilities=capabilities):
+                pass
+    finally:
+        dbos_logger.removeHandler(caplog.handler)
+
+    assert not [record for record in caplog.records if 'Duplicate registration' in record.getMessage()]
+
+
+async def test_dbos_durability_override_capabilities_entered_inside_a_workflow(dbos: DBOS) -> None:
+    """An override entered inside a workflow follows the per-run rules there, as one carried in from outside does.
+
+    A list of just the bound `DBOSDurability` and `Instrumentation` runs: the auto-injected capabilities the override
+    builds afresh for a list without them are infrastructure, not additions. A `ToolSearch` the list supplies itself
+    is an addition, refused like `run(capabilities=[ToolSearch(...)])`.
+    """
+    agent = Agent(_durability_fn_model, name='durability_override_inside', capabilities=[DBOSDurability()])
+    bound = DBOSDurability.from_agent(agent)
+    assert bound is not None
+
+    @DBOS.workflow()
+    async def run_with_instrumentation() -> str:
+        with agent.override(capabilities=[bound, Instrumentation(InstrumentationSettings())]):
+            return (await agent.run('Hello')).output
+
+    @DBOS.workflow()
+    async def run_with_operation() -> None:
+        with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideAddedOperation()]):
+            await agent.run('Hello')
+
+    @DBOS.workflow()
+    async def run_with_tool_search() -> None:
+        with agent.override(capabilities=[bound, ToolSearch(strategy='keywords')]):
+            await agent.run('Hello')
+
+    assert await run_with_instrumentation() == snapshot('Echo: Hello')
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: _OverrideAddedOperation. DBOS '
+            'registers durable steps when a capability is bound to the agent, before the workflow starts. A '
+            'capability added per-run therefore has no registered durable steps for the toolsets it contributes '
+            'or its own `@durable_operation` methods. Attach all capabilities at agent construction time so '
+            '`DBOSDurability.for_agent()` can register their durable steps.'
+        ),
+    ):
+        await run_with_operation()
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Capabilities added per-run inside a DBOS workflow are not supported: ToolSearch. DBOS registers durable steps when a capability is bound to the agent, before the workflow starts. A capability added per-run therefore has no registered durable steps for the toolsets it contributes or its own `@durable_operation` methods. Attach all capabilities at agent construction time so `DBOSDurability.for_agent()` can register their durable steps.'
+        ),
+    ):
+        await run_with_tool_search()
 
 
 @pytest.mark.parametrize('kind', ['mcp', 'dynamic'])

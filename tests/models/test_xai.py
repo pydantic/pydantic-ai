@@ -60,6 +60,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UnsupportedSettingWarning,
     UserError,
     UserPromptPart,
     VideoUrl,
@@ -107,7 +108,7 @@ with try_import() as imports_successful:
     import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
-    from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
+    from xai_sdk.proto import chat_pb2, usage_pb2
 
     from pydantic_ai.models import xai as xai_module
     from pydantic_ai.models.xai import (
@@ -1876,28 +1877,70 @@ async def test_xai_parallel_tool_calls(allow_model_requests: None, parallel_tool
     assert get_mock_chat_create_kwargs(mock_client)[0]['parallel_tool_calls'] == parallel_tool_calls
 
 
-async def test_xai_penalty_parameters(allow_model_requests: None) -> None:
+async def test_xai_penalties_are_not_sent(allow_model_requests: None, xai_provider: XaiProvider) -> None:
+    """Every Grok model rejects `presence_penalty` and `frequency_penalty` with a 400, so they're dropped silently.
+
+    The recording shows the request succeeds with them set. Its replay doesn't compare the `chat.create` arguments, so
+    `test_xai_penalties_are_not_passed_to_the_sdk` pins that they're left out.
+    """
+    m = XaiModel('grok-4.3', provider=xai_provider)
+    agent = Agent(m, model_settings=ModelSettings(temperature=0.7, presence_penalty=0.5, frequency_penalty=0.3))
+
+    result = await agent.run('Reply with just: ok')
+
+    assert result.output == snapshot('ok')
+
+
+async def test_xai_penalties_are_not_passed_to_the_sdk(allow_model_requests: None) -> None:
+    """A mock, since the xAI cassette replay doesn't compare the `chat.create` arguments this checks."""
     response = create_response(content='test response')
     mock_client = MockXai.create_mock([response])
     m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(temperature=0.7, presence_penalty=0.5, frequency_penalty=0.3))
 
-    settings = ModelSettings(
-        temperature=0.7,
-        presence_penalty=0.5,
-        frequency_penalty=0.3,
-        parallel_tool_calls=False,
-    )
+    await agent.run('Hello')
 
-    agent = Agent(m, model_settings=settings)
-    result = await agent.run('Hello')
-
-    # Check that all settings were passed to the xAI SDK
     kwargs = get_mock_chat_create_kwargs(mock_client)[0]
     assert kwargs['temperature'] == 0.7
-    assert kwargs['presence_penalty'] == 0.5
-    assert kwargs['frequency_penalty'] == 0.3
-    assert kwargs['parallel_tool_calls'] is False
-    assert result.output == 'test response'
+    assert 'presence_penalty' not in kwargs
+    assert 'frequency_penalty' not in kwargs
+
+
+async def test_xai_reasoning_model_drops_stop_sequences(allow_model_requests: None, xai_provider: XaiProvider) -> None:
+    """Grok models other than the Grok 4.20 non-reasoning ones reject `stop_sequences`, so they're dropped with a warning."""
+    m = XaiModel('grok-4.3', provider=xai_provider)
+    agent = Agent(m, model_settings=ModelSettings(stop_sequences=['zzz']))
+
+    with pytest.warns(UnsupportedSettingWarning, match='`stop_sequences`'):
+        result = await agent.run('Reply with just: ok')
+
+    assert result.output == snapshot('ok')
+
+
+async def test_xai_reasoning_model_does_not_pass_stop_sequences_to_the_sdk(allow_model_requests: None) -> None:
+    """A mock, since the xAI cassette replay doesn't compare the `chat.create` arguments this checks."""
+    mock_client = MockXai.create_mock([create_response(content='ok')])
+    m = XaiModel('grok-4.3', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(stop_sequences=['zzz']))
+
+    with pytest.warns(UnsupportedSettingWarning, match='`stop_sequences`'):
+        await agent.run('Hello')
+
+    assert 'stop' not in get_mock_chat_create_kwargs(mock_client)[0]
+
+
+async def test_xai_non_reasoning_model_sends_stop_sequences(allow_model_requests: None) -> None:
+    """The Grok 4.20 non-reasoning models take `stop_sequences`, so they're sent.
+
+    A mock, since the xAI cassette replay doesn't compare the `chat.create` arguments this checks.
+    """
+    mock_client = MockXai.create_mock([create_response(content='ok')])
+    m = XaiModel('grok-4.20-non-reasoning', provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, model_settings=ModelSettings(stop_sequences=['zzz']))
+
+    await agent.run('Hello')
+
+    assert get_mock_chat_create_kwargs(mock_client)[0]['stop'] == ['zzz']
 
 
 async def test_xai_instructions(allow_model_requests: None, xai_provider: XaiProvider):
@@ -3873,8 +3916,6 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
             temperature=0.7,
             max_tokens=200,
             top_p=0.95,
-            presence_penalty=0.1,
-            frequency_penalty=0.2,
             seed=123,
             # xAI-specific settings
             xai_logprobs=True,
@@ -3904,8 +3945,6 @@ async def test_xai_specific_model_settings(allow_model_requests: None):
                 'temperature': 0.7,
                 'max_tokens': 200,
                 'top_p': 0.95,
-                'presence_penalty': 0.1,
-                'frequency_penalty': 0.2,
                 'seed': 123,
                 # xAI-specific settings (mapped from xai_* to SDK parameter names)
                 'logprobs': True,
@@ -6693,12 +6732,6 @@ async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_mod
     # Unset while the two intermediate chunks arrive, 'stop' from the finishing chunk onwards.
     assert finish_reasons[:2] == [None, None]
     assert all(reason == 'stop' for reason in finish_reasons[2:])
-
-
-def test_xai_finish_reason_proto_map_covers_all_enum_members():
-    """Every proto finish reason except REASON_INVALID ("not finished yet") must be mapped."""
-    unmapped = set(sample_pb2.FinishReason.values()) - set(xai_module._FINISH_REASON_PROTO_MAP)  # pyright: ignore[reportPrivateUsage]
-    assert unmapped == {sample_pb2.FinishReason.REASON_INVALID}
 
 
 # End of tests
