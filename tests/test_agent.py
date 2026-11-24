@@ -5448,6 +5448,39 @@ def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_
     assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
 
 
+class _LengthFunctionModel(FunctionModel):
+    """A `FunctionModel` whose streamed responses end at the token limit, which a stream function can't say."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator[StreamedResponse]:
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as response:
+            response.finish_reason = 'length'
+            yield response
+
+
+@pytest.mark.parametrize('last', [True, False], ids=['last', 'not_last'])
+async def test_streamed_output_tool_call_with_empty_args_is_cut_off_only_when_last(last: bool):
+    """In `run_stream()`, as in `run()`, only the tool call the response ended on can have been cut off by the token limit."""
+
+    async def stream(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='')}
+        if not last:
+            yield {1: DeltaToolCall(name='other_tool', json_args='{"a": ')}
+
+    agent = Agent(_LengthFunctionModel(stream_function=stream), output_type=ToolOutput(_City))
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        async with agent.run_stream('Hello') as result:
+            await result.get_output()
+    assert isinstance(exc_info.value, IncompleteToolCall) == last
+
+
 def test_truncated_output_tool_call_does_not_override_valid_output_in_same_response():
     """With `'exhaustive'`, a valid output tool call still wins over a later one the token limit cut off."""
     calls = 0

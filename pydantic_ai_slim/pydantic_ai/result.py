@@ -320,7 +320,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
                 return await self._validate_tool_output(
-                    tool_call, cut_off=message.finish_reason == 'length', allow_partial=allow_partial
+                    tool_call,
+                    # As in `CallToolsNode`, only the tool call the response ended on can have been cut off.
+                    cut_off=message.finish_reason == 'length' and message.parts[-1] is tool_call,
+                    allow_partial=allow_partial,
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
