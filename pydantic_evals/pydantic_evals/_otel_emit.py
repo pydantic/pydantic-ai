@@ -50,9 +50,6 @@ _ATTR_TARGET = 'gen_ai.evaluation.target'
 _ATTR_EVALUATOR_SOURCE = 'gen_ai.evaluation.evaluator.source'
 _ATTR_EVALUATOR_VERSION = 'gen_ai.evaluation.evaluator.version'
 
-# Baggage keys in this namespace, and `error.type`, are dropped so baggage never sets the event's own attributes.
-_RESERVED_BAGGAGE_PREFIX = 'gen_ai.evaluation.'
-
 _EVENT_NAME = 'gen_ai.evaluation.result'
 _OTEL_SCOPE = 'pydantic-evals'
 
@@ -111,13 +108,16 @@ def emit_otel_events(
 
 
 def _baggage_attrs() -> Mapping[str, Any] | None:
-    """Snapshot the current OTel baggage as a flat attribute mapping minus the reserved keys, or `None` if empty."""
+    """Snapshot the current OTel baggage as a flat attribute mapping minus the reserved keys.
+
+    Returns `None` if the baggage is empty.
+    """
     bag = baggage.get_all()
     if not bag:
         return None
-    return {
-        str(k): v for k, v in bag.items() if not str(k).startswith(_RESERVED_BAGGAGE_PREFIX) and k != _ATTR_ERROR_TYPE
-    }
+    # Every attribute an event writes is `error.type` or falls under this prefix.
+    reserved_prefix = 'gen_ai.evaluation.'
+    return {str(k): v for k, v in bag.items() if not str(k).startswith(reserved_prefix) and str(k) != _ATTR_ERROR_TYPE}
 
 
 def build_parent_context(span_reference: SpanReference | None) -> Context | None:

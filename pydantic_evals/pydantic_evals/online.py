@@ -446,7 +446,7 @@ class OnlineEvalConfig:
     carries the keys present in the current OTel baggage as attributes — useful
     for propagating tenant/user/request identifiers from the calling context.
     Baggage keys in the reserved `gen_ai.evaluation.*` namespace and `error.type`
-    are dropped, so baggage cannot set the semantic-convention attributes.
+    are dropped, so baggage cannot set the event's own attributes.
 
     Set to `False` to skip the baggage snapshot per event.
     """
