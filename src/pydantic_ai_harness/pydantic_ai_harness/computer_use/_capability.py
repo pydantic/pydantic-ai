@@ -404,6 +404,15 @@ def _find_computer_call(ctx: RunContext[Any]) -> tuple[int, ModelResponse, ToolC
     return None  # pragma: no cover
 
 
+def _other_call_ids(response: ModelResponse, tool_call_id: str | None) -> set[str]:
+    """The ids of the response's other tool calls, which a failure of this call halts."""
+    return {
+        call.tool_call_id
+        for call in response.parts
+        if isinstance(call, ToolCallPart) and call.tool_call_id != tool_call_id
+    }
+
+
 def _required_display(ctx: RunContext[Any]) -> Display:
     """The workspace backend's display, or a `UserError` when it has none."""
     backend = ctx.workspace.backend
@@ -547,15 +556,7 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             run_buttons.halted_call_ids.discard(ctx.tool_call_id)
             raise ToolFailed(_EARLIER_CALL_FAILED)
         # Cleared below if the call succeeds.
-        run_buttons.halted_call_ids = (
-            {
-                call.tool_call_id
-                for call in found_call[1].parts
-                if isinstance(call, ToolCallPart) and call.tool_call_id != ctx.tool_call_id
-            }
-            if found_call
-            else set()
-        )
+        run_buttons.halted_call_ids = _other_call_ids(found_call[1], ctx.tool_call_id) if found_call else set()
         call_inputs = _CallInputs(
             # The model gave its positions on the latest screenshot before its call.
             screenshot_size=latest_screenshot_size(ctx.messages[:response_index]) if found_call else None,
