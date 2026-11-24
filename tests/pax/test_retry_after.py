@@ -325,7 +325,7 @@ async def test_server_retry_veto_is_unchanged(prefix: str, sdk_sleeps: list[floa
         with override_allow_model_requests(True), pytest.raises(ModelRateLimitError) as caught:
             await Agent(model).run('go', model_settings={'max_tokens': 20})
     assert sdk_sleeps == []
-    assert 'CLAI skipped' not in error_message(caught.value)
+    assert 'Pax skipped' not in error_message(caught.value)
 
 
 async def test_other_models_keep_their_retry_policy(sdk_sleeps: list[float]) -> None:
@@ -486,7 +486,7 @@ async def test_long_retry_is_visible_and_history_retained(
         output = ' '.join(output.split())
         assert 'Claude Code rate limit (HTTP 429)' in output
         assert 'Retry after about 2h 55m' in output
-        assert 'CLAI skipped a wait over 60s' in output
+        assert 'Pax skipped a wait over 60s' in output
         assert '/model' in output
         summaries = await SqliteConversationStore(database=tmp_path / 'sessions.db').listing()
         assert len(summaries) == 1 and summaries[0].outcome == 'failed'
@@ -517,7 +517,7 @@ async def test_unrepresentable_retry_date_preserves_sdk_failure(
             await Agent(model).run('go', model_settings={'max_tokens': 20})
         # The SDK itself cannot convert these dates: preserve its raw error rather than
         # raising from the HTTP hook and causing SDK connection-error retries instead.
-        assert 'CLAI skipped' not in error_message(caught.value)
+        assert 'Pax skipped' not in error_message(caught.value)
     assert calls == 1
     assert sdk_sleeps == []
 

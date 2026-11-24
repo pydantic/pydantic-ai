@@ -47,7 +47,7 @@ class SpritesProvider:
 
     def missing(self) -> str | None:
         if find_spec('sprites') is None:
-            return "Sprites support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[sprites]'."
+            return "Sprites support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[sprites]'."
         if saved_key(KEY_NAME) is None:
             return f'Add your Sprites token in /keys as {KEY_NAME}. Make one at https://sprites.dev/account.'
         return None

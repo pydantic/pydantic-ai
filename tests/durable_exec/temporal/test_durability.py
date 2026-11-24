@@ -8845,16 +8845,24 @@ class ContentRunOnContentFreeWorkerWorkflow:
 
 
 @pytest.mark.parametrize(
-    ('workflow_type', 'agent', 'expected_spans'),
+    ('workflow_type', 'agent', 'expected_spans', 'recorded'),
     [
         pytest.param(
-            ContentFreeWorkspaceProbeWorkflow, _workspace_probe_agent, {'workspace run'}, id='run_off_worker_on'
+            WorkspaceProbeWorkflow,
+            _workspace_probe_agent,
+            {'workspace run'},
+            ['process.command_args', 'process.command_args'],
+            id='run_on_worker_on',
+        ),
+        pytest.param(
+            ContentFreeWorkspaceProbeWorkflow, _workspace_probe_agent, {'workspace run'}, [], id='run_off_worker_on'
         ),
         # `ctx` carries the run's flag, but a span a capability opens from it follows the worker's setting too.
         pytest.param(
             ContentRunOnContentFreeWorkerWorkflow,
             _content_free_worker_agent,
             {'workspace run', 'capability probe'},
+            [],
             id='run_on_worker_off',
         ),
     ],
@@ -8865,8 +8873,9 @@ async def test_temporal_workspace_activity_records_content_only_if_the_run_and_t
     workflow_type: Any,
     agent: Agent[WorkspaceProbeDeps, str],
     expected_spans: set[str],
+    recorded: list[str],
 ):
-    """An activity's spans carry no content unless both the run and the worker's agent record content."""
+    """An activity's spans carry content only if both the run and the worker's agent record content."""
     _workspace_probe_backends.clear()
 
     async with Worker(
@@ -8879,7 +8888,7 @@ async def test_temporal_workspace_activity_records_content_only_if_the_run_and_t
     spans = capfire.exporter.exported_spans_as_dict()
     assert {span['name'] for span in spans} >= expected_spans
     content_keys = ('file.path', 'process.command_args', 'probe.content', 'probe.later_content')
-    assert [key for span in spans for key in span['attributes'] if key in content_keys] == []
+    assert [key for span in spans for key in span['attributes'] if key in content_keys] == recorded
 
 
 @workflow.defn
@@ -8937,6 +8946,61 @@ async def test_durability_decide_span_in_activity(
     # Without content an answer keeps its numbers, which a yes/no's answer is all of.
     assert attributes['pydantic_ai.decision.answers'] == '{"ship":{"type":"noul","noul":0.9}}'
     assert ('instructions' in attributes['pydantic_ai.decision.questions']) is include_content
+
+
+_content_flags_seen: list[bool] = []
+
+
+def _content_flag_agent(worker_content: bool) -> Agent[None, str]:
+    agent = Agent(
+        TestModel(call_tools=['read_flag']),
+        name=f'durability_content_flag_{worker_content}',
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    agent.instrument = InstrumentationSettings(include_content=worker_content)
+
+    @agent.tool
+    async def read_flag(ctx: RunContext[None]) -> str:
+        _content_flags_seen.append(ctx.trace_include_content)
+        return 'read'
+
+    return agent
+
+
+content_flag_agents = {worker_content: _content_flag_agent(worker_content) for worker_content in (False, True)}
+
+
+@workflow.defn
+class ContentFlagWorkflow:
+    @workflow.run
+    async def run(self, worker_content: bool) -> str:
+        # This run asks for content; the worker's agent may not allow it.
+        result = await content_flag_agents[worker_content].run(
+            'go', capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=True))]
+        )
+        return result.output
+
+
+@pytest.mark.parametrize('worker_content', [False, True])
+async def test_a_tool_activity_records_content_only_if_the_worker_allows_it(client: Client, worker_content: bool):
+    """The run's content flag crosses into the activity, but its spans go to the worker's tracer.
+
+    So the activity records content only if the worker's instrumentation allows it too, as model requests do.
+    """
+    _content_flags_seen.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ContentFlagWorkflow],
+        plugins=[AgentPlugin(agent) for agent in content_flag_agents.values()],
+    ):
+        await client.execute_workflow(
+            ContentFlagWorkflow.run,
+            args=[worker_content],
+            id=f'{ContentFlagWorkflow.__name__}_{worker_content}_{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+    assert _content_flags_seen == [worker_content]
 
 
 # --- Mid-run tool population changes (https://github.com/pydantic/pydantic-ai/issues/7251) ---

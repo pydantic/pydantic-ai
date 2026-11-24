@@ -1,6 +1,6 @@
 """A keyring backend for the README screenshots: a JSON file in the throwaway HOME.
 
-`capture.sh` selects it with `PYTHON_KEYRING_BACKEND`, so CLAI saves its fake sign-ins the way it
+`capture.sh` selects it with `PYTHON_KEYRING_BACKEND`, so Pax saves its fake sign-ins the way it
 does with an OS keyring, never touches the real one, and never shows a plaintext-fallback path.
 """
 

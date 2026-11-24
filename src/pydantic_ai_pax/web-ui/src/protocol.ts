@@ -121,11 +121,11 @@ export interface StatusInfo {
   output_tokens: number | null
   /** What the running turn's model requests have reported so far. */
   run: Usage | null
-  /** The `run.code_mode` setting; `null` without CLAI's settings. */
+  /** The `run.code_mode` setting; `null` without Pax's settings. */
   code_mode: boolean | null
   /** The `run.speculative_code_mode` setting, which turns code mode on for its runs too. */
   speculation: boolean | null
-  /** The `run.permissions` mode; `null` without CLAI's settings. */
+  /** The `run.permissions` mode; `null` without Pax's settings. */
   permissions: PermissionMode | null
 }
 
@@ -188,13 +188,13 @@ export interface Palette {
   ansi: string[]
 }
 
-/** `/update` installing a newer CLAI, until the install ends or CLAI is back. */
+/** `/update` installing a newer Pax, until the install ends or Pax is back. */
 export interface UpdateInfo {
   /** The version, or the short commit of a `main` build. */
   target: string
   /** The last line uv printed. */
   line: string
-  /** Installed: CLAI is restarting as the new build. */
+  /** Installed: Pax is restarting as the new build. */
   restarting: boolean
 }
 
@@ -272,7 +272,7 @@ export type OrchestratorEvent = ChatMessage | OrchestratorState
 /** `queued`: input waits while the session's turn runs; `asking`: a question of its turn waits for the user. */
 export type LiveState = 'running' | 'queued' | 'asking' | 'idle'
 
-/** A session open in this CLAI, named by its conversation ID. */
+/** A session open in this Pax, named by its conversation ID. */
 export interface LiveEntry {
   id: string
   state: LiveState
@@ -343,14 +343,14 @@ export type ServerMessage =
       questions: Questions[]
       dialogs: Dialog[]
       theme: ThemeInfo
-      /** Each session runs in its own directory (`clai2 --web`), so a new one asks where. */
+      /** Each session runs in its own directory (`pax --web`), so a new one asks where. */
       follows_workspace: boolean
       tasks: TaskEntry[]
       /** Each running task's transcript so far, by task ID. */
       task_items: Record<string, Item[]>
       /** The input waiting for the session's running turn or command, oldest first. */
       queue: QueuedItem[]
-      /** The running CLAI's version, or a `main` build's short commit. */
+      /** The running Pax's version, or a `main` build's short commit. */
       version: string
       update: UpdateInfo | null
       /** The conversation the session held before, when it switched to this one; its watchers watch this one now. */
@@ -377,7 +377,7 @@ export interface SessionEntry {
   updated_at: string
   /** When it was first saved, which the sidebar orders by, so activity and renames never move a row. */
   created_at: string
-  /** `running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process runs. */
+  /** `running`: a turn of a session live in this Pax; `busy`: a turn another Pax process runs. */
   state: SessionState
   /** The process running a `busy` session's turn. */
   owner_pid: number | null
@@ -388,7 +388,7 @@ export interface SessionEntry {
   archived: boolean
   /** Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first. */
   openable: boolean
-  /** The agent it was imported from, `Claude Code` or `Codex`; `null` for CLAI's own sessions. */
+  /** The agent it was imported from, `Claude Code` or `Codex`; `null` for Pax's own sessions. */
   source: string | null
 }
 
@@ -416,9 +416,9 @@ export interface Transcript {
   workspace: string
   items: Item[]
   openable: boolean
-  /** CLAI would move to its directory, but that directory is gone. */
+  /** Pax would move to its directory, but that directory is gone. */
   missing: boolean
-  /** The process ID of another CLAI running it; opening it then continues in a fork of it. */
+  /** The process ID of another Pax running it; opening it then continues in a fork of it. */
   owner_pid: number | null
 }
 
@@ -460,7 +460,7 @@ export interface PluginRow {
   has_menu: boolean
   /** That menu is declared, so this page shows it; otherwise it opens in the terminal. */
   settings_menu: boolean
-  /** Whether this CLAI has a terminal for an undeclared menu to open in; `clai2 --web` has none. */
+  /** Whether this Pax has a terminal for an undeclared menu to open in; `pax --web` has none. */
   terminal: boolean
   form: PluginForm | null
   /** The plugin serving this page, which the page must not turn off, reload, or reconfigure. */
