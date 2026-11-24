@@ -41,6 +41,7 @@ from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Wo
 from pydantic_ai_harness import ArtifactScanner
 from pydantic_ai_harness.artifact_scanning import ArtifactFinding, ArtifactScanResult
 from pydantic_ai_harness.skills import Skills, SkippedSkill
+from tests.harness._authority import untrusted
 from tests.harness.conftest import IsStr
 from tests.harness.file_system.test_windows_paths import DriveBackend
 from tests.workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend, RunOnlyWorkspaceBackend
@@ -367,10 +368,6 @@ async def _descriptions(skills: Skills[Any], workspace: Path) -> str:
     return entries.rsplit('\n</pyai:context>\n', 1)[0]
 
 
-def _untrusted(path: Path) -> AuthorityWorkspace:
-    return AuthorityWorkspace(Workspace(LocalWorkspaceBackend(path)), authority='none')
-
-
 def _calling(*calls: ToolCallPart) -> tuple[FunctionModel, list[ModelRequest], list[str]]:
     """A model that makes `calls` one per step and then answers, recording every request and the first step's tools."""
     requests: list[ModelRequest] = []
@@ -409,7 +406,7 @@ class TestUntrustedWorkspaces:
             ToolCallPart('load_skill', {'name': 'alpha'}),
         )
 
-        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=untrusted(tmp_path))
 
         assert tools == ['list_skills', 'load_skill']
         assert requests[0].instructions == snapshot(
@@ -435,8 +432,8 @@ class TestUntrustedWorkspaces:
     ) -> None:
         _write_skill(tmp_path / 'run' / 'skills', 'project', description='Project help.')
         _write_skill(tmp_path / 'app' / 'skills', 'packaged', description='Packaged help.')
-        run = LocalWorkspaceBackend(tmp_path / 'run') if run_trusted else _untrusted(tmp_path / 'run')
-        app = LocalWorkspaceBackend(tmp_path / 'app') if app_trusted else _untrusted(tmp_path / 'app')
+        run = LocalWorkspaceBackend(tmp_path / 'run') if run_trusted else untrusted(tmp_path / 'run')
+        app = LocalWorkspaceBackend(tmp_path / 'app') if app_trusted else untrusted(tmp_path / 'app')
         model, requests, tools = _calling(ToolCallPart('list_skills', {}))
 
         await Agent(model, capabilities=[Skills('skills'), Skills('skills', workspace=app)]).run('go', workspace=run)
@@ -452,7 +449,7 @@ class TestUntrustedWorkspaces:
         model, requests, tools = _calling(ToolCallPart('list_skills', {}))
 
         await Agent(model, capabilities=[Skills('agent')]).run(
-            'go', capabilities=[Skills('run')], workspace=_untrusted(tmp_path)
+            'go', capabilities=[Skills('run')], workspace=untrusted(tmp_path)
         )
 
         assert tools == ['list_skills', 'load_skill']
@@ -466,7 +463,7 @@ class TestUntrustedWorkspaces:
         trusted_only = await _run(Skills('library'), tmp_path / 'app')
         model, requests, tools = _calling()
         await Agent(model, capabilities=[Skills('library'), Skills('library', workspace=app)]).run(
-            'go', workspace=_untrusted(tmp_path / 'run')
+            'go', workspace=untrusted(tmp_path / 'run')
         )
 
         assert trusted_only.instructions == _catalog('- skills: Skill help.')
@@ -487,7 +484,7 @@ class TestUntrustedWorkspaces:
                 _write_skill(tmp_path / 'skills', 'beta', description='Beta help.')
             return ModelResponse(parts=[calls.pop(0)] if calls else [TextPart('done')])
 
-        await Agent(FunctionModel(respond), capabilities=[Skills('skills')]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(FunctionModel(respond), capabilities=[Skills('skills')]).run('go', workspace=untrusted(tmp_path))
 
         assert _tool_results(requests) == [
             {'skills': {'alpha': 'Alpha help.'}},
@@ -514,7 +511,7 @@ class TestUntrustedWorkspaces:
 
         with pytest.warns(UserWarning) as caught:
             await Agent(FunctionModel(respond), capabilities=[Skills('skills', scanner=ArtifactScanner())]).run(
-                'go', workspace=_untrusted(tmp_path)
+                'go', workspace=untrusted(tmp_path)
             )
 
         library = tmp_path.resolve() / 'skills'
@@ -539,7 +536,7 @@ class TestUntrustedWorkspaces:
         skills = _combined(Skills('first', exclude=['review']), Skills('second', duplicate_names='keep_first'))
         model, requests, _ = _calling(ToolCallPart('list_skills', {}), ToolCallPart('load_skill', {'name': 'review'}))
 
-        await Agent(model, capabilities=[skills]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[skills]).run('go', workspace=untrusted(tmp_path))
 
         assert _tool_results(requests) == [
             {'skills': {'review': 'Second review.'}},
@@ -555,7 +552,7 @@ class TestUntrustedWorkspaces:
         skills = _combined(Skills('first', include=['lint']), Skills('second', duplicate_names='keep_first'))
         model, requests, _ = _calling(ToolCallPart('list_skills', {}), ToolCallPart('load_skill', {'name': 'review'}))
 
-        await Agent(model, capabilities=[skills]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[skills]).run('go', workspace=untrusted(tmp_path))
 
         assert _tool_results(requests) == [
             {'skills': {'lint': 'Lint help.', 'review': 'Second review.'}},
@@ -570,7 +567,7 @@ class TestUntrustedWorkspaces:
         )
         model, requests, _ = _calling(ToolCallPart('list_skills', {}))
 
-        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=untrusted(tmp_path))
 
         assert _tool_results(requests) == [{'skills': {'review': 'Review code. Use when asked to review.'}}]
 
@@ -600,7 +597,7 @@ class TestUntrustedWorkspaces:
     async def test_a_run_without_an_id_still_offers_its_lowered_skills(self, tmp_path: Path) -> None:
         # A `for_run` called outside an agent run has no run ID to remember the run's skills by.
         _write_skill(tmp_path / 'skills', 'alpha', description='Alpha help.')
-        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), workspace=_untrusted(tmp_path))
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), workspace=untrusted(tmp_path))
 
         run = await Skills[None]('skills').for_run(ctx)
 
@@ -650,7 +647,7 @@ class TestUntrustedWorkspaces:
             ToolCallPart('read_skill_file', {'skill': 'guide', 'path': 'references/guide.md'}),
         )
 
-        await Agent(model, capabilities=[Skills('skills', read_files=True)]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[Skills('skills', read_files=True)]).run('go', workspace=untrusted(tmp_path))
 
         assert tools == ['read_skill_file', 'list_skills', 'load_skill']
         assert _tool_results(requests) == [{'skills': {'guide': 'Guide help.'}}, 'Use tabs.']
@@ -691,7 +688,7 @@ class TestUntrustedWorkspaces:
             return ModelResponse(parts=[TextPart('done')])
 
         await Agent(FunctionModel(respond), capabilities=[Skills('skills', read_files=True)]).run(
-            'go', workspace=_untrusted(tmp_path)
+            'go', workspace=untrusted(tmp_path)
         )
 
         tool_output = [str(content) for content in _tool_results(requests)]
