@@ -334,37 +334,23 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 #
 # If the Vercel AI SDK introduces new data-carrying UIMessagePart variants,
 # the corresponding chunk type should be added here.
-MetadataChunk: TypeAlias = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
+DataCarryingChunk: TypeAlias = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
 DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
-_METADATA_CHUNK_TA: TypeAdapter[MetadataChunk] = TypeAdapter(MetadataChunk)
+_data_carrying_chunk_ta: TypeAdapter[DataCarryingChunk] = TypeAdapter(DataCarryingChunk)
 
 
-def _as_metadata_chunk(value: object, *, allow_dict: bool) -> MetadataChunk | None:
-    """Restore a supported chunk, rehydrating dictionaries only when they came from metadata.
-
-    `ToolReturnPart.metadata` is typed `Any`, so persisting message history or a durable
-    tool result turns a chunk into a plain dict. A serialized chunk always carries its
-    `type`, which keeps an unrelated metadata dict like `{'url': ..., 'media_type': ...}`
-    from matching a chunk whose `type` has a default. Tool content is model-facing output
-    that may legitimately contain a chunk-shaped mapping, so it is never rehydrated.
-    """
-    if isinstance(value, DATA_CHUNK_TYPES):
-        return value
-    if allow_dict and is_str_dict(value) and 'type' in value:
-        try:
-            return _METADATA_CHUNK_TA.validate_python(value)
-        except ValidationError:
-            pass
-    return None
-
-
-def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[MetadataChunk]:
+def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[DataCarryingChunk]:
     """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
-    Used by both the streaming and dump paths. Serialized metadata dictionaries
-    are rehydrated after persistence. Only `DATA_CHUNK_TYPES` are yielded;
-    protocol-control chunks are filtered out. MCP Apps data that `MCPToolset`
-    attached becomes a single `data-mcp-apps` chunk.
+    Used by both the streaming and dump paths. Only `DATA_CHUNK_TYPES` are
+    yielded; protocol-control chunks are filtered out. MCP Apps data that
+    `MCPToolset` attached becomes a single `data-mcp-apps` chunk.
+
+    A JSON round trip (persisted message history, a durable tool result) turns a
+    metadata chunk into a dict, so a metadata dict with a `type` key is validated
+    back into a chunk. The `type` key keeps an unrelated dict like
+    `{'url': ..., 'media_type': ...}` from matching `FileChunk`, whose `type` has a
+    default. Tool content is model-facing output, so it is never rebuilt.
     """
     if (app := get_mcp_app_tool_result(tool_result.metadata)) is not None:
         yield DataChunk(type=MCP_APPS_DATA_TYPE, id=tool_result.tool_call_id, data=mcp_app_ui_payload(app))
@@ -372,15 +358,24 @@ def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[MetadataChunk]
 
     possible = tool_result.metadata or tool_result.content
     from_metadata = bool(tool_result.metadata)
-    if chunk := _as_metadata_chunk(possible, allow_dict=from_metadata):
+
+    def as_chunk(value: object) -> DataCarryingChunk | None:
+        if isinstance(value, DATA_CHUNK_TYPES):
+            return value
+        if from_metadata and is_str_dict(value) and 'type' in value:
+            try:
+                return _data_carrying_chunk_ta.validate_python(value)
+            except ValidationError:
+                pass
+        return None
+
+    if chunk := as_chunk(possible):
         yield chunk
     elif isinstance(possible, (str, bytes)):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
     elif isinstance(possible, Iterable):  # pragma: no branch
-        for item in cast(Iterable[object], possible):
-            if chunk := _as_metadata_chunk(item, allow_dict=from_metadata):
-                yield chunk
+        yield from filter(None, map(as_chunk, possible))  # pyright: ignore[reportUnknownArgumentType]
 
 
 _TOOL_PART_TYPES = (

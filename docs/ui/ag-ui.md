@@ -434,7 +434,8 @@ Returning an AG-UI [`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#b
 Pydantic AI tools can also attach [AG-UI events](https://docs.ag-ui.com/concepts/events) to a **tool result**, by returning a
 [`ToolReturn`](../tools-advanced.md#advanced-tool-returns) object with a
 [`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) (or a list of events) as `metadata`.
-Unlike emitted events, these are part of the message and survive a message-history round-trip, which is what you want for state updates the frontend must be able to rebuild; the trade-off is that they are sent when the tool returns rather than while it runs.
+Unlike emitted events, these are stored with the tool result in the message history; the trade-off is that they are sent when the tool returns rather than while it runs.
+Only the event stream sends them: [`AGUIAdapter.dump_messages`][pydantic_ai.ui.ag_ui.AGUIAdapter.dump_messages] doesn't write them, and an event that has been through JSON, such as when a [durable execution](../durable_execution/overview.md) engine journals the tool result, comes back as a plain `dict` and isn't sent.
 
 ```python {title="ag_ui_tool_events.py"}
 from dataclasses import replace

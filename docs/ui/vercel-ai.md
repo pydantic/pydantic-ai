@@ -186,6 +186,7 @@ The supported chunk types are [`DataChunk`][pydantic_ai.ui.vercel_ai.response_ty
 [`SourceDocumentChunk`][pydantic_ai.ui.vercel_ai.response_types.SourceDocumentChunk],
 and [`FileChunk`][pydantic_ai.ui.vercel_ai.response_types.FileChunk].
 Unlike emitted events, these are part of the message and survive a message-history round-trip, which is what you want for data the frontend must be able to rebuild, such as the source URLs behind an answer; the trade-off is that they are sent when the tool returns rather than while it runs.
+That includes a JSON round trip, such as [storing the history](../message-history.md#storing-and-loading-messages-to-json) or a [durable execution](../durable_execution/overview.md) engine journaling the tool result, which turns a chunk into a `dict`: the adapter validates a metadata `dict` with a `type` key back into its chunk. So a `dict` in `metadata` that matches one of these chunks' fields exactly is sent as that chunk, even if your application wrote it as a plain `dict`.
 
 ```python {title="vercel_ai_tool_chunks.py"}
 from pydantic_ai import Agent, ToolReturn
