@@ -81,7 +81,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ]
     ```
 
-    Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, [pax](harness/clai2.md) is the harness TUI, running `Coder` by default and your own agent with `--agent`:
+    Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, [Pax](harness/clai2.md) is the harness TUI, running `Coder` by default and your own agent with `--agent`:
 
     ```bash
     uv tool install pydantic-ai-pax
@@ -461,7 +461,7 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 
 ## Next steps
 
-**Run something right now.** [pax](harness/clai2.md), the harness TUI, puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
+**Run something right now.** [Pax](harness/clai2.md), the harness TUI, puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
 
 ```bash
 uv tool install pydantic-ai-pax

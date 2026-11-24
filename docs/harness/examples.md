@@ -13,9 +13,7 @@ directory contains complete agents to read, run, and copy into your own code.
 | `coding_agent.py` | A coding agent for the current repo: [`Coder`](coder.md) in a local workspace |
 | `research_agent.py` | A web-research agent that cites every claim, built from the blocks that make up [`Researcher`](researcher.md) |
 
-If you just want the assembled version, every packaged harness ([`Coder`](coder.md),
-[`Researcher`](researcher.md), ...) is one import, or zero, via the
-[CLI](https://pydantic.dev/docs/ai/cli/#custom-agents):
+If you just want the assembled version, every packaged harness ([`Coder`](coder.md), [`Researcher`](researcher.md), ...) is one import away, and [`Coder`](coder.md) needs none at all: [Pax](clai2.md) runs it with no setup.
 
 ```bash
 uvx pydantic-ai-pax
