@@ -51,6 +51,10 @@ agent = Agent(model)
 
     The same guide also recommends re-evaluating `max_tokens` and any token-count assumptions when migrating from Opus 4.6, since Opus 4.7 introduced updated tokenization (carried into 4.8). If you rely on `count_tokens()` or `count_tokens_before_request`, verify your thresholds against the new model.
 
+## Sampling settings
+
+The Claude models that aren't covered by the migration note above take `temperature`, `top_p` and `top_k`, with two limits Pydantic AI applies silently instead of sending a request Anthropic rejects: while the model thinks, `temperature` other than `1`, `top_p` below `0.95` and `top_k` are dropped, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`.
+
 ## `provider` argument
 
 You can provide a custom `Provider` via the `provider` argument:
@@ -91,6 +95,10 @@ A legacy `httpx.AsyncClient` is not accepted: `anthropic` 1.0 is built on `httpx
 client construction.
 
 The `AsyncAnthropic` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, so a request can reach the network up to three times before your code sees an error. Pass `max_retries=0` when you construct the client yourself (for example as `anthropic_client=`) to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client, including for an `AsyncAnthropicBedrock` or `AsyncAnthropicVertex` client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
+
+## Image input {#image-input}
+
+Claude reads JPEG, PNG, GIF and WebP images, and an `image/jpg` file is sent as `image/jpeg`, the spelling the API accepts. An image of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance). `AnthropicModel` also takes PDF and plain-text documents, and no audio or video.
 
 ## Model settings
 
@@ -574,6 +582,55 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
+## Message threads (Beta)
+
+In a long conversation, every request normally sends the whole history again. With Anthropic's [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads), Anthropic keeps the conversation and each request sends only what's new, which keeps time to first token low as the conversation grows. Set [`AnthropicModelSettings.anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id] to `'auto'` to use them:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    instructions='Instructions...',
+    model_settings=AnthropicModelSettings(anthropic_previous_message_id='auto'),
+)
+
+result1 = agent.run_sync('Your question')  # creates a thread
+result2 = agent.run_sync('Follow-up question', message_history=result1.all_messages())  # sends only the new prompt
+```
+
+The thread is found from the message history, so nothing else needs to be kept. A request continues the thread of the most recent response: it sends only the messages after that response, and leaves out the instructions and tools, which the thread keeps.
+
+A request sends the full history in a new thread instead when:
+
+- Its instructions, tools, thinking, betas or other request-level settings differ from the thread's, which can't change. That includes the first request whose new messages need a beta the thread was created without, like the Files API beta for an [`UploadedFile`][pydantic_ai.messages.UploadedFile].
+- The most recent response, or the history before it, changed since it was sent (a history processor trimmed or redacted it, say), so the change isn't lost.
+- The most recent response is a refusal, which Anthropic might already hold, or wasn't received in full.
+- Another model wrote the most recent response, through a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or Anthropic's [server-side fallback](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#server-side-fallback): the thread doesn't store it.
+- It resumes a turn paused with `pause_turn`, which sends the paused turn back.
+- Its new messages open with a [`CachePoint`][pydantic_ai.messages.CachePoint]: it marks the end of the previous response, which a continue request can't send again.
+- Anthropic can no longer continue the thread, say because it expired 5 minutes after its last use: the continue request fails and is sent again in a new thread.
+
+A request is sent without a thread when:
+
+- It uses something threads don't support, such as context management (see below).
+- Anthropic can't continue the thread of the most recent response, which itself replayed the conversation in a new thread: Anthropic may be unable to store the conversation, say a very large one.
+- Its `extra_body` sets `messages`, which replaces the history the thread is built from.
+- It's a [`compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] request, which samples no reply.
+
+Threads are available on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed) and Microsoft Foundry. On Bedrock and Vertex AI, `anthropic_previous_message_id` is ignored with a `UserWarning`. [`anthropic_supports_message_threads`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_message_threads] in the model's `profile` controls this.
+
+Each response sent in a thread records `'thread_fingerprint'` in its [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] and a digest of its ID, that fingerprint, its parts and the history it was created from as [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], which is how the next request knows it can continue. Keep both when you store the message history; a response without them starts a new thread. If the history comes from a client, pass a `history_digest_key` (see below) or leave threads off, as described under [Loading untrusted history](../message-history.md#loading-untrusted-history). A response that replayed the conversation in a new thread also records `'thread_replayed': True`. When Anthropic rejects a thread because the request uses something threads don't support, or can't continue the thread of a replayed response, Pydantic AI warns and sends the request again without one, and the response records `'thread_unsupported': True` beside its `'thread_fingerprint'`. The next request with the same fixed fields is then sent without a thread straight away, and changing one of them tries a thread again.
+
+!!! warning "Redacting stored history"
+    The digest and the fingerprint are plain SHA-256 hashes by default, so anyone holding the stored history can use them to test guesses at content redacted from that history after it was sent, such as a PIN or an account number. If you redact history after the fact, pass a secret as the `history_digest_key` argument to [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] to make both HMACs. Every model continuing the same conversations needs the same key; a response recorded with a different key, or none, starts a new thread.
+
+    Anthropic still holds the unredacted thread until it expires. The redacted history is what gets sent from then on, in a new thread.
+
+!!! warning "Data retention"
+    Threads aren't eligible for Zero Data Retention: Anthropic holds the conversation, system prompt and tools in memory for up to an hour after the thread's last use.
+
 ## Carried-over thinking
 
 A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.
@@ -916,6 +973,33 @@ agent = Agent(
 ```
 
 The response's usage, and so its cost, stays the sum of the passes either way.
+
+## Computer use
+
+To let Claude use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+the Claude API and on Amazon Bedrock (the `AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle` clients), it sends
+each Claude model the computer use tool it was trained on, as a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]:
+
+| Models | Tool |
+|---|---|
+| Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` |
+| Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` |
+| Claude Haiku 4.5 | `computer_20250124` |
+
+Claude models not in the table, every model on Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any
+model with `ComputerUse(native=False)` get a regular function tool named `computer` instead.
+
+Keep the screen within the model's [image size limit](https://platform.claude.com/docs/en/build-with-claude/vision#evaluate-image-size).
+`computer_toolset_20260801` refuses a screenshot over 2576 pixels on its longer side or over 4784 image tokens (one
+token per 28x28 pixels), and the request fails with a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The older tools, and the function tool, shrink a larger
+screenshot without saying so, so Claude's clicks miss.
+
+To send Anthropic's tool to a model or client that isn't listed, add `ComputerTool` to the profile's
+[`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces the model's own
+list, and choose the tool with
+[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version]
+(default `computer_20250124`).
 
 ## Web Tool Callers
 

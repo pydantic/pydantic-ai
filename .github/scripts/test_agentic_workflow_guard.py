@@ -29,6 +29,7 @@ from agentic_workflow_guard import (
     changed_files,
     check_ai_credits_accounting,
     check_assigned_alert_metadata_gate,
+    check_at_claude_maintainer_threads,
     check_awf_binary_version,
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
@@ -757,21 +758,21 @@ def test_compiler_versions_accepts_a_uniform_set(tmp_path: Path):
 
 
 def test_compiled_runner_contract_rejects_the_legacy_runner(tmp_path: Path):
-    """A legacy runner must not silently bypass CLAI 2 and canonical capture."""
+    """A legacy runner must not silently bypass Pax and canonical capture."""
     lock = _write(
         tmp_path / 'w.lock.yml',
         'jobs: {agent: {steps: [{id: agentic_execution, run: pydantic-ai-runner-launch}]}}',
     )
     violations = check_compiled_runner_contract(lock)
     assert [violation.check for violation in violations] == ['compiled-runner-contract']
-    assert 'public CLAI 2 harness' in violations[0].message
+    assert 'public Pax harness' in violations[0].message
 
 
 _PUBLIC_ENGINE_LOCK = """
 jobs:
   agent:
     env:
-      GH_AW_ENGINE_VERSION: '0.64.0'
+      GH_AW_ENGINE_VERSION: '0.70.0'
     steps:
       - id: agentic_execution
         run: >-
@@ -782,7 +783,8 @@ jobs:
           PAI_AGENT: pydantic_ai_gh_aw_shim.agent:agent
           PAI_RESULT_METADATA: pydantic_ai_gh_aw_shim.agent:result_metadata
           PAI_OTEL_EXPORT_PATH: /tmp/gh-aw/pydantic-ai-private-otel.jsonl
-          PAI_MODEL: anthropic/${{ vars.GH_AW_MODEL }}
+          PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL: glm-5.3-flash
+          PAI_MODEL: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
           ANTHROPIC_API_KEY: ${{ steps.agent_start_health.outputs.account == 'backup' && secrets.ZAI_BACKUP_API_KEY || secrets.ZAI_API_KEY }}
           XDG_CONFIG_HOME: /tmp/gh-aw/clai2-config
           PYTHONPATH: /tmp/gh-aw/workflow-python
@@ -798,11 +800,19 @@ def test_compiled_runner_contract_accepts_the_public_engine(tmp_path: Path):
     assert check_compiled_runner_contract(lock) == []
 
 
-@pytest.mark.parametrize('version', ['0.59.0', '0.64.0', '0.65.1', 'invalid'])
-def test_compiled_runner_contract_allows_compatible_runtime_upgrades(tmp_path: Path, version: str):
-    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.64.0', version))
+def test_compiled_runner_contract_rejects_the_variable_of_older_locks(tmp_path: Path):
+    """`GH_AW_MODEL` stays on the model older locks are priced for, so a new lock must read `GH_AW_ZAI_MODEL`."""
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('vars.GH_AW_ZAI_MODEL', 'vars.GH_AW_MODEL'))
     violations = check_compiled_runner_contract(lock)
-    assert bool(violations) == (version in {'0.59.0', 'invalid'})
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'the Z.ai model from `vars.GH_AW_ZAI_MODEL`, selected through Anthropic' in violations[0].message
+
+
+@pytest.mark.parametrize('version', ['0.64.0', '0.70.0', '0.71.1', 'invalid'])
+def test_compiled_runner_contract_allows_compatible_runtime_upgrades(tmp_path: Path, version: str):
+    lock = _write(tmp_path / 'w.lock.yml', _PUBLIC_ENGINE_LOCK.replace('0.70.0', version))
+    violations = check_compiled_runner_contract(lock)
+    assert bool(violations) == (version in {'0.64.0', 'invalid'})
 
 
 @pytest.mark.parametrize(
@@ -847,6 +857,22 @@ def test_compiled_runner_contract_requires_policy_observability(tmp_path: Path, 
     lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
     violations = check_compiled_runner_contract(lock)
     assert [violation.check for violation in violations] == ['compiled-runner-contract']
+
+
+@pytest.mark.parametrize('fallback', [None, 'glm-5.3'])
+def test_compiled_runner_contract_requires_the_priced_overload_fallback(tmp_path: Path, fallback: str | None):
+    """An overloaded request may go only to the fallback `ai-credits-accounting` prices."""
+    workflow = yaml.safe_load(_PUBLIC_ENGINE_LOCK)
+    env = workflow['jobs']['agent']['steps'][0]['env']
+    if fallback is None:
+        del env['PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL']
+    else:
+        env['PYDANTIC_AI_OVERLOAD_FALLBACK_MODEL'] = fallback
+    lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
+    violations = check_compiled_runner_contract(lock)
+
+    assert [violation.check for violation in violations] == ['compiled-runner-contract']
+    assert 'the priced overload fallback model' in violations[0].message
 
 
 @pytest.mark.parametrize('pythonpath', [None, '/tmp/other-policy'])
@@ -1076,30 +1102,33 @@ jobs:
 # --- AI-credits accounting (the overlay that 403'd every agent job) -----------
 
 
+@pytest.mark.parametrize('flash_priced', [False, True])
 @pytest.mark.parametrize('per_million', [False, True])
 @pytest.mark.parametrize('stale_fallback', [False, True])
-def test_ai_credits_accounting_checks_glm_overlay_units(tmp_path: Path, per_million: bool, stale_fallback: bool):
-    """The same published rates use different units in the two pricing settings."""
+def test_ai_credits_accounting_checks_glm_overlay_units(
+    tmp_path: Path, per_million: bool, stale_fallback: bool, flash_priced: bool
+):
+    """The same published rates use different units in the two pricing settings.
+
+    GLM-5.3-Flash, the overload fallback, needs its own entry: the default prices it at GLM-5.3's rates.
+    """
     unit = 1 if per_million else 1_000_000
+    models: dict[str, object] = {
+        'glm-5.4': {'cost': {'input': 1.4 / unit, 'cache_read': 0.26 / unit, 'output': 4.4 / unit}}
+    }
+    if flash_priced:
+        models['glm-5.3-flash'] = {'cost': {'input': 0.15 / unit, 'cache_read': 0.03 / unit, 'output': 0.5 / unit}}
     config: dict[str, object] = {
         'apiProxy': {
-            'defaultAiCreditsPricing': {'input': 0.6, 'cachedInput': 0.03, 'output': 2.4}
+            'defaultAiCreditsPricing': {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50}
             if stale_fallback
-            else {'input': 0.15, 'cachedInput': 0.03, 'output': 0.50},
-            'providers': {
-                'anthropic': {
-                    'models': {
-                        'glm-5.3-flash': {
-                            'cost': {'input': 0.15 / unit, 'cache_read': 0.03 / unit, 'output': 0.50 / unit}
-                        }
-                    }
-                }
-            },
+            else {'input': 1.4, 'cachedInput': 0.26, 'output': 4.4},
+            'providers': {'anthropic': {'models': models}},
         }
     }
     workflow: dict[str, object] = {'jobs': {'agent': {'steps': [{'run': f"printf '%s' '{json.dumps(config)}'"}]}}}
     lock = _write(tmp_path / 'w.lock.yml', yaml.safe_dump(workflow))
-    assert bool(check_ai_credits_accounting(lock)) is (per_million or stale_fallback)
+    assert bool(check_ai_credits_accounting(lock)) is (per_million or stale_fallback or not flash_priced)
 
 
 def test_ai_credits_accounting_rejects_a_priced_model_in_the_awf_config(tmp_path: Path):
@@ -2869,3 +2898,88 @@ jobs:
     violations = check_assigned_alert_metadata_gate(workflows)
 
     assert [violation.check for violation in violations] == ['assigned-alert-metadata-gate']
+
+
+def test_at_claude_maintainer_threads_requires_author_gate_and_comment_filter(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml',
+        """name: '@claude'
+on: issue_comment
+jobs:
+  get-pr-info:
+    outputs:
+      is_fork: ${{ steps.pr-info.outputs.is_fork }}
+  at-claude:
+    needs: get-pr-info
+    if: needs.get-pr-info.outputs.is_fork != 'true'
+    steps:
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+""",
+    )
+
+    violations = check_at_claude_maintainer_threads(workflows)
+
+    assert [violation.message for violation in violations] == [
+        '`at-claude` must require `write` or `admin` permission from the thread author.',
+        '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+        'an empty value includes every commenter.',
+    ]
+
+
+_AT_CLAUDE_GATE = """needs.get-pr-info.outputs.is_fork != 'true' &&
+      contains(fromJSON('["write","admin"]'), needs.get-pr-info.outputs.thread_author_permission) &&
+      needs.get-pr-info.outputs.included_comment_authors != ''"""
+
+
+@pytest.mark.parametrize(
+    ('gate', 'expected'),
+    [
+        pytest.param(_AT_CLAUDE_GATE, [], id='compliant'),
+        pytest.param(
+            _AT_CLAUDE_GATE.replace("'true' &&", "'true' ||"),
+            [
+                '`at-claude` must require `write` or `admin` permission from the thread author.',
+                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+                'an empty value includes every commenter.',
+            ],
+            id='author-gate-ored-with-fork-check',
+        ),
+        pytest.param(
+            _AT_CLAUDE_GATE.replace(" &&\n      needs.get-pr-info.outputs.included_comment_authors != ''", ''),
+            [
+                '`at-claude` must pass `include_comments_by_actor` from `get-pr-info` and skip when it is empty; '
+                'an empty value includes every commenter.'
+            ],
+            id='empty-author-list-not-skipped',
+        ),
+    ],
+)
+def test_at_claude_maintainer_threads_checks_each_gate_conjunct(tmp_path: Path, gate: str, expected: list[str]):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml',
+        f"""name: '@claude'
+on: issue_comment
+jobs:
+  get-pr-info:
+    outputs:
+      is_fork: ${{{{ steps.pr-info.outputs.is_fork }}}}
+      thread_author_permission: ${{{{ steps.thread.outputs.author_permission }}}}
+      included_comment_authors: ${{{{ steps.thread.outputs.included_comment_authors }}}}
+  at-claude:
+    needs: get-pr-info
+    if: |
+      {gate}
+    steps:
+      - uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1.0.271
+        with:
+          include_comments_by_actor: ${{{{ needs.get-pr-info.outputs.included_comment_authors }}}}
+""",
+    )
+
+    violations = check_at_claude_maintainer_threads(workflows)
+
+    assert [violation.message for violation in violations] == expected

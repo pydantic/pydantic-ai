@@ -23,6 +23,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    incomplete_tool_call_message,
     is_incomplete_json,
     run_image_process_hooks,
     run_output_with_hooks,
@@ -75,6 +76,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
+    _output_validated: bool = field(default=False, init=False)
+    """Whether `_cached_output` holds the validated final output, which can itself be `None`."""
 
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
@@ -99,8 +102,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
-        if self._cached_output is not None:
-            yield deepcopy(self._cached_output)
+        if self._output_validated:
+            yield deepcopy(cast(OutputDataT, self._cached_output))
             return
 
         last_response: _messages.ModelResponse | None = None
@@ -124,6 +127,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             #    and may behave differently based on that flag
             # 2. Users can rely on the last yielded item being the fully validated output
             self._cached_output = await self.validate_response_output(response)
+            self._output_validated = True
             yield deepcopy(self._cached_output)
 
     async def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
@@ -260,8 +264,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
-        if self._cached_output is not None:
-            return deepcopy(self._cached_output)
+        if self._output_validated:
+            return deepcopy(cast(OutputDataT, self._cached_output))
 
         # Iterate through any stream events
         async for _ in self:
@@ -269,6 +273,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         # Final validation with `allow_partial=False` (default)
         self._cached_output = await self.validate_response_output(self.response)
+        self._output_validated = True
         return deepcopy(self._cached_output)
 
     def _settled_output(self) -> tuple[OutputDataT, str | None]:
@@ -313,11 +318,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
-                return await self._tool_manager.handle_output_tool_call(
-                    tool_call,
-                    schema=self._output_schema,
-                    allow_partial=allow_partial,
-                    wrap_validation_errors=False,
+                return await self._validate_tool_output(
+                    tool_call, cut_off=message.finish_reason == 'length', allow_partial=allow_partial
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -358,6 +360,23 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
+            raise
+
+    async def _validate_tool_output(
+        self, tool_call: _messages.ToolCallPart, *, cut_off: bool, allow_partial: bool
+    ) -> OutputDataT:
+        """Validate an output tool call, whose arguments the token limit may have `cut_off`."""
+        try:
+            return await self._tool_manager.handle_output_tool_call(
+                tool_call,
+                schema=self._output_schema,
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
+            )
+        except ValidationError as e:
+            # Say that the token limit cut the arguments off, as `CallToolsNode` does, rather than only that they're invalid.
+            if cut_off and not allow_partial and is_incomplete_json(e):
+                raise exceptions.IncompleteToolCall(incomplete_tool_call_message(self._max_tokens_getter())) from e
             raise
 
     async def _validate_text_output(

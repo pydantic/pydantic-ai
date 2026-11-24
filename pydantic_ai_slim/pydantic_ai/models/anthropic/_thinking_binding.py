@@ -167,7 +167,7 @@ def thinking_with_stale_block_history(
     return OMIT, betas | {ANTHROPIC_THINKING_BINDING_BETA}, thinking_override, thinking_override
 
 
-def warn_stale_thinking_block_recovery(model_name: str) -> None:
+def warn_stale_thinking_block_recovery(model_name: str, *, stacklevel: int = 2) -> None:
     warnings.warn(
         f'{model_name!r} rejected a replayed thinking block: Anthropic binds each thinking block '
         'to the conversation prefix that produced it, and that prefix changed between requests. '
@@ -185,5 +185,5 @@ def warn_stale_thinking_block_recovery(model_name: str) -> None:
         'https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding and '
         'https://platform.claude.com/docs/en/build-with-claude/preserved-thinking',
         AnthropicStaleThinkingBlockWarning,
-        stacklevel=2,
+        stacklevel=stacklevel,
     )

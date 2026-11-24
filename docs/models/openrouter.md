@@ -122,6 +122,10 @@ A [mid-conversation system prompt](../message-history.md#mid-conversation-system
 
 Other routes get a `<system>`-tagged user message instead. This keeps prompt caching effective: on Gemini and older Claude models, a native mid-conversation `system` message doesn't stay where it was sent, which would invalidate the cached prefix after it.
 
+## Video input
+
+OpenRouter answers 404 ("No endpoints found that support input video") when video is sent to a model that doesn't read it, such as Claude, GPT or DeepSeek. Only Gemini and Amazon Nova routes are marked as reading video, except Gemini image models and Nova Micro. For other models, video a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. With [`FileUnderstanding`](../capabilities/file-understanding.md) on the agent, such video, including video in the prompt, is described by its understanding model instead. To send it to another model that reads video, pass `profile=ModelProfile(supports_video_input=True)` to [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] (see [`ModelProfile`][pydantic_ai.profiles.ModelProfile]).
+
 ## Prompt Caching
 
 OpenRouter supports [prompt caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching) for downstream providers that implement it.
@@ -350,3 +354,12 @@ agent = Agent(
 Forwarding the transcript gives the advisor more context, but also sends more input tokens. See the
 [OpenRouter advisor documentation](https://openrouter.ai/docs/guides/features/server-tools/advisor)
 for details.
+
+## Errors
+
+OpenRouter reports some errors from the upstream provider as a generic `Provider returned error` rejection, with
+the provider's own error in the error's `metadata.raw`. When that error says the input exceeds the model's context
+window, Pydantic AI raises a
+[`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] instead, as it does
+for any other overflow. See [Handling Model API Errors](overview.md#handling-model-api-errors) for the other error
+categories.
