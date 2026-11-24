@@ -42,11 +42,9 @@ from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
-from pydantic_ai_harness.computer_use import ComputerUse
 
 from ...computer_fakes import FAKE_DISPLAY_SIZE, FakeComputer
 from ...conftest import try_import
-from ...harness.display_fakes import ScreenBackend, ScreenProvider
 from ...workspace_fakes import InMemoryProvider
 
 with try_import() as imports_successful:
@@ -54,8 +52,11 @@ with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
+    from pydantic_ai_harness.computer_use import ComputerUse
 
-pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai not installed')
+    from ...harness.display_fakes import ScreenBackend, ScreenProvider
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='google-genai or pydantic-ai-harness not installed')
 
 COMPUTER = ToolDefinition(name='computer', parameters_json_schema={'type': 'object'}, tool_kind=COMPUTER_KIND.id)
 COMPUTER_TOOL = ComputerTool(display_size=FAKE_DISPLAY_SIZE)
