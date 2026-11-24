@@ -135,7 +135,8 @@ def _configured_model_overloaded(error: Exception) -> bool:
 
     Z.ai's Anthropic endpoint answers an overloaded model with HTTP 529, `overloaded_error` and code `1305`,
     which pydantic-ai raises as `ModelOverloadedError` once the SDK's own retries are spent. Z.ai's code table
-    lists `1305` under HTTP 429, which `cli.rate_limit_retry_transport` retries first, as any transient 429.
+    lists `1305` under HTTP 429, which `cli.rate_limit_retry_transport` retries first for up to
+    `cli.RATE_LIMIT_RETRY_SECS`, as any transient 429.
     Authentication errors, rate and plan limits, and an overloaded fallback keep failing the run with their own error.
     """
     if _model is None or not isinstance(error, ModelAPIError) or error.model_name != _model.model_name:
