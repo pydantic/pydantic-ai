@@ -6,7 +6,7 @@
 
 A capability is conformant when its entry in `CASES` (`tests/capability_cases.py` for core, `tests/harness/capability_cases.py` for Pydantic AI Harness) passes every contract of each area below, or carries an exemption with a reason a reviewer can check. `test_every_capability_has_a_case` fails until a new capability has an entry, so every area reaches it without anyone listing it. A box is ticked by a passing contract or a reasoned `Exempt`, never by prose: a PR description or a comment saying a capability "handles" an area doesn't count.
 
-Each area says what it requires, how the suite checks it, and which session owns the section. Contracts are `Contract(applies, exempt)` entries in `CONTRACTS`, run by `tests/harness/test_capability_contracts.py`; an exempt case must still break its contract, so fixing the capability fails the suite until the exemption is removed. Link an exemption that records a bug to the issue that tracks it.
+Each area says what it requires and how the suite checks it. Contracts are `Contract(applies, exempt)` entries in `CONTRACTS`, run by `tests/harness/test_capability_contracts.py`; an exempt case must still break its contract, so fixing the capability fails the suite until the exemption is removed. Link an exemption that records a bug to the issue that tracks it.
 
 The contracts are numbered C0, C1, … in the order they land. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
 
@@ -23,8 +23,6 @@ The contracts are numbered C0, C1, … in the order they land. C1–C5 are plann
 - `test_pending_calls_backfill` pins how many cases are still pending. A PR that writes a case's `calls` removes its exemption and lowers the count; a new capability doesn't add a pending one.
 - For a capability whose hooks run around other tools' calls, `with_echo` builds it beside an `echo` tool, and `ECHO` calls it.
 
-**Owner**: cache-forward.
-
 ## Prompt cache
 
 **Requirements**
@@ -36,8 +34,6 @@ The contracts are numbered C0, C1, … in the order they land. C1–C5 are plann
 
 - `tests/test_history_append_only.py` and `tests/harness/test_history_append_only.py` run every buildable case through a scripted conversation on each provider adapter. A capability that keeps state the conversation should change gets a `SCENARIOS` entry; a prefix move that is a bug goes in `KNOWN`, linked to its issue, and one that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move. A case whose `calls` rewrite history by design sets `moves_cache_prefix`.
 - `tests/test_capability_combine.py` and its Harness twin check each case's `combine` policy; `COMBINE_FIXED_POINT` checks that a configuration stated twice is stated once.
-
-**Owner**: cache-forward.
 
 ## Voice and authority
 
@@ -59,16 +55,10 @@ The rules behind these are in [Message History & Prompt Caching](message-history
 - C4, transformation registry (planned): every function that returns `list[ModelMessage]` is registered, and sources survive each one.
 - C5, attribution on spans (planned): OpenTelemetry message parts keep each capability part's source.
 
-**Owner**: cache-forward.
-
 ## Durable execution
 
-To be written by the owner. Planned scope: DBOS first, each case's `calls` re-executed from the last recorded step; then Temporal (the toolset id present, a `Replayer` run equal), then Prefect; the journaled steps recorded next to each case (`Calls.durable_steps` per engine).
-
-**Owner**: the durable-review session.
+To be written. Planned scope: DBOS first, each case's `calls` re-executed from the last recorded step; then Temporal (the toolset id present, a `Replayer` run equal), then Prefect; the journaled steps recorded next to each case (`Calls.durable_steps` per engine).
 
 ## Workspaces and sandboxes
 
-To be written by the owner.
-
-**Owner**: the workspace and sandbox owners.
+To be written. Planned scope: the workspace authority table is generated from `CASES` (every case that reads workspace files) rather than listed by hand, and every `WorkspaceBackend` class runs `WorkspaceBackendSuite`.
