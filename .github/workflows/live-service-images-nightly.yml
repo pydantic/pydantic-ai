@@ -11,8 +11,9 @@ name: Live service images nightly
 # sandboxd. `harness-localstack-integration` is disabled in `ci.yml`.
 #
 # The report job files one issue per failing suite, labeled `pydanty:triage-issue`, comments on it
-# for each later failure, and comments once when the suite passes again. A manual run reports
-# nothing; its result is on its own page.
+# for each later failure, and comments once when the suite passes again. Unlike the canary's issues
+# it sets no priority: with the image pinned the failure blocks nothing, so triage judges its
+# urgency. A manual run reports nothing; its result is on its own page.
 
 on:
   schedule:

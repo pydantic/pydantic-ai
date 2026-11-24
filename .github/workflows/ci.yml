@@ -2040,6 +2040,8 @@ jobs:
     env:
       LOCALSTACK_REQUIRE_AUTH_TOKEN: "1"
       LOCALSTACK_AWS_CLI: aws
+      # Not pinned yet: no run of this disabled job has pulled it. Pin it by version and digest from
+      # the first passing run once the job is enabled.
       LOCALSTACK_IMAGE: localstack/localstack
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
