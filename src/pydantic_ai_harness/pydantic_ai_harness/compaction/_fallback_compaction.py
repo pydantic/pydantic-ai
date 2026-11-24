@@ -75,7 +75,7 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     """Window assumed when the request model cannot be resolved, alongside `max_fraction`."""
 
     tokenizer: Callable[[str], int] | None = field(default=None, kw_only=True)
-    """Optional token counter; defaults to the characters-per-token heuristic."""
+    """Optional token counter; defaults to the built-in text estimate."""
 
     background_start: float | None = field(default=None, kw_only=True)
     """Experimental: start the first strategy in the background above this fraction of the trigger.

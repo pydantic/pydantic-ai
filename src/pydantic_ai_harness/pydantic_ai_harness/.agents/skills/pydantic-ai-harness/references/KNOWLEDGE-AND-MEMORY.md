@@ -4,7 +4,8 @@ Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persist
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
 history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
 Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
-demand). `Skills` and the optional Pixeltable integration require extras.
+demand), and `CurrentTime` (today's date or hour in the instructions). `Skills` and the optional Pixeltable
+integration require extras.
 
 | Need | Use |
 |---|---|
@@ -12,6 +13,7 @@ demand). `Skills` and the optional Pixeltable integration require extras.
 | Exact details from earlier turns or past runs of a conversation | `ConversationSearch` + `StepPersistence` |
 | Specialized instructions the model pulls in only when relevant | `Skills` |
 | Agent that writes Pydantic AI code and needs current docs | `PydanticAIDocs` |
+| Answers that depend on today's date | `CurrentTime` |
 
 ## Memory
 
@@ -29,8 +31,9 @@ a later one for the same memory supersedes them, and a
 change made during a run (including `write_memory`) reaches the model with the next user prompt,
 not after tool results (the exception: re-enqueuing the run's own snapshot when compaction drops
 it mid tool loop). It is only added before the model's first response in a run, so a deferred `Memory`
-loaded mid-run waits for the next prompt. Snapshots carry `TextContent.metadata`
-`{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}`; list compaction before `Memory`.
+loaded mid-run waits for the next prompt. Snapshots are `MemorySnapshotPart`s (a `DataCapabilityPart` from
+`pydantic_ai_harness.memory`, `<memory>` frame, `scope_hash` and `memory_id` fields); find them by type. List
+compaction before `Memory`.
 
 ```python
 from pydantic_ai import Agent
@@ -163,6 +166,9 @@ with the model's writes.
   `max_search_result_chars=4_000`, `max_search_files=1_000`. Queries are capped at 1,000 characters
   and 32 unique terms. No semantic ranking is built in; implement `SearchableMemoryStore.search`
   for an indexed backend.
+- A nested scope (namespace `acme/main` under `acme`) is skipped by search and the injected file
+  list. A custom store implements `ChildListingMemoryStore.list_child_paths` so its files do not
+  use up those listing limits.
 - Other options: `agent_name='main'` (storage segment, never shown to the model), `heading=''`
   (labels the guidance and injected block), `guidance=None` (replace the default usage text).
 
@@ -302,11 +308,10 @@ Gotchas:
 - Skills shipped with the app: keep `Skills` and pass
   `workspace=LocalWorkspaceBackend(Path(__file__).parent)` (a path on disk, not an
   `importlib.resources` `Traversable`); relative library paths resolve against it, and the run needs
-  no workspace of its own (or its workspace can be a sandbox). Only `SKILL.md` bodies load: the
-  loaded instructions leave out the skill directory and `Skills` adds no file tools, so bundled
-  `references/` or `scripts/` are usable only from a library in the run's workspace with
-  `FileSystem`/`Shell` there. Otherwise `Skills` reads from the run's workspace, and a run without
-  one fails at start.
+  no workspace of its own (or its workspace can be a sandbox). The loaded instructions leave out
+  the skill directory; pass `read_files=True` for the model to read `references/` from there, and
+  put the library in the run's workspace with `Shell` there to run `scripts/`. Otherwise `Skills`
+  reads from the run's workspace, and a run without one fails at start.
 - No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
   a home path (workspace paths never expand `~`). Only immediate child directories with a
   `SKILL.md` count. A skill found twice (symlink or byte-identical `SKILL.md`; bundled files are
@@ -318,8 +323,10 @@ Gotchas:
 - With no skills found, `Skills` adds no instructions and no `load_capability` tool.
 - `description` is required. The loaded instructions name the skill's directory in the run's
   workspace (not for a `workspace=` library), so a model with file or shell tools can follow
-  `references/` or run `scripts/`; `Skills` itself never reads or
-  runs them, and `${CLAUDE_SKILL_DIR}` is not substituted. Fields like `allowed-tools`, `model`,
+  `references/` or run `scripts/`, and `${CLAUDE_SKILL_DIR}`/`${SKILL_DIR}` become that directory.
+  `Skills` never runs bundled files. `Skills(..., read_files=True)` adds a `read_skill_file(skill,
+  path)` tool for a loaded skill's text files, confined to its directory and working for a
+  `workspace=` library too, so no `FileSystem` is needed. Fields like `allowed-tools`, `model`,
   `hooks` are accepted but not implemented (one aggregated `UserWarning`); `when_to_use` is
   honored.
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are
@@ -349,10 +356,12 @@ from pydantic_ai_harness import PydanticAIDocs
 agent = Agent('test', capabilities=[PydanticAIDocs()])
 ```
 
-Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run).
+Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run),
+keyword-only `remote_ref: str | None = None` (git ref to fetch from; `None` is the installed
+`pydantic_ai` release's tag, `main` for a dev build).
 Resolution per call: `{local_docs_path}/{topic}.md` in the run workspace (falling back to the
 `PYDANTIC_AI_HARNESS_DOCS_PATH` env var), then
-`https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/{topic}.md`, else an error.
+`https://raw.githubusercontent.com/pydantic/pydantic-ai/{remote_ref}/docs/{topic}.md`, else an error.
 
 Gotchas: the local path is read through the run workspace only, with no `workspace=` override (in
 a sandbox the checkout must be in the sandbox); with a local path set and no workspace, the run fails at start. With no
@@ -360,11 +369,29 @@ local path, the first read of each topic in a run fetches it from GitHub (every 
 `cache=False`). `~` is not expanded. It never runs git, so keep a local checkout current yourself. Use `pydantic_ai_harness.pydantic_ai_docs`; the old `docs`
 module and `PyaiDocs` names are deprecated (keep `PyaiDocs` only to load old specs).
 
+## CurrentTime
+
+Adds one instruction stating the weekday and date (`precision='date'`, the default) or the hour
+(`precision='hour'`) in `timezone` (an IANA name or a `tzinfo`, default UTC; a name needs the system
+time zone database or the `tzdata` package, which Windows lacks by default). The time comes from the
+timestamp of the request being sent, so it reads no clock and is safe in durable workflow code. A new
+value is appended to the history (`on_change='append'`, keyed by `id='current_time'`), so the prompt
+cache holds; there is no finer precision than the hour.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import CurrentTime
+
+agent = Agent('test', capabilities=[CurrentTime(timezone='Europe/Amsterdam')])
+```
+
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/memory/
 - https://pydantic.dev/docs/ai/harness/conversation-search/
 - https://pydantic.dev/docs/ai/harness/skills/
 - https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/
+- https://pydantic.dev/docs/ai/harness/current-time/
 - https://pydantic.dev/docs/ai/harness/step-persistence/
 - https://pydantic.dev/docs/ai/capabilities/on-demand/

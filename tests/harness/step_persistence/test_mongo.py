@@ -43,6 +43,7 @@ from pydantic_ai_harness.step_persistence import (
     StepPersistence,
     ToolEffectRecord,
 )
+from tests.harness._mongo_handshake import HARNESS_DRIVER, handshake_server
 from tests.harness.step_persistence._histories import growing_histories, history_with_unordered_keys
 
 
@@ -112,6 +113,18 @@ class TestMongoStepStoreConstruction:
         # an observation rather than a spy that never wired up.
         await client.close()
         assert closed == [client]
+
+    async def test_db_url_client_names_harness_in_handshake(self) -> None:
+        """The handshake is MongoDB wire protocol, which cassettes cannot record, so a local server captures it."""
+        async with handshake_server() as (url, drivers):
+            store = await anyio.to_thread.run_sync(lambda: MongoStepStore(db_url=url, database='t', media_store=None))
+            try:
+                assert await store.get_run(run_id='handshake') is None
+            finally:
+                await store.aclose()
+
+        assert drivers
+        assert all(driver == HARNESS_DRIVER for driver in drivers)
 
 
 class TestMongoStepStoreProtocol:

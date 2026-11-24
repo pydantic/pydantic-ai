@@ -5,11 +5,9 @@ from __future__ import annotations
 import asyncio
 import functools
 import re
-from collections.abc import Awaitable, Callable, Container
 from typing import Any
 
 import pytest
-from anyio.from_thread import BlockingPortal
 from inline_snapshot import snapshot
 from pydantic import BaseModel, ConfigDict, Field, GetCoreSchemaHandler
 from pydantic_core import core_schema
@@ -43,14 +41,18 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._monty_exec import MontyExecutor
 from pydantic_ai_harness.code_mode import CodeMode
+from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE, DenyUnanswered
 from pydantic_ai_harness.dynamic_workflow import (
+    AgentRevealPart,
     DynamicWorkflow,
     DynamicWorkflowToolset,
     WorkflowAgent,
+    WorkflowCall,
     WorkflowResourceLimits,
 )
 
-from .._deferred_tools import deferring_agent, pending_agent
+from .._deferred_tools import asking_agent, deferring_agent, pending_agent
+from ._concurrent_sub_agents import DeferredStarts
 
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
@@ -121,13 +123,13 @@ def _user_prompt_text(messages: list[ModelMessage]) -> str:
 
 
 def _enqueued_text(ctx: RunContext[object]) -> str:
-    """Join the system-prompt text of every message enqueued on `ctx` (reveal announcements)."""
+    """Join the text of every reveal announcement enqueued on `ctx`."""
     return '\n'.join(
         part.content
         for pending in ctx.pending_messages or []
         for message in pending.messages
         for part in message.parts
-        if isinstance(part, SystemPromptPart)
+        if isinstance(part, AgentRevealPart)
     )
 
 
@@ -1515,60 +1517,60 @@ async def test_cancellation_closes_unscheduled_coroutines() -> None:
                 await task
 
 
-async def test_create_executor_override_defers_sibling_starts() -> None:
+async def test_call_scheduler_registers_calls_before_starting_them() -> None:
     events: list[str] = []
+    contexts: list[RunContext[object]] = []
 
-    class DeferredStartToolset(DynamicWorkflowToolset[object]):
-        def create_executor(
-            self,
-            ctx: RunContext[object],
-            *,
-            dispatch: Callable[[str, dict[str, object]], Awaitable[object]],
-            valid_names: Container[str],
-            flush: Callable[[], Awaitable[None]] | None,
-            global_sequential: bool,
-            portal: BlockingPortal | None,
-            max_sleep_seconds: float | None,
-        ) -> MontyExecutor:
-            known = [name for name in ('alpha', 'beta', 'gamma') if name in valid_names]
-            events.append(f'executor {known} {flush} {global_sequential} {portal} {max_sleep_seconds}')
-            gates: list[asyncio.Future[None]] = []
+    def scheduler(ctx: RunContext[object]) -> DeferredStarts:
+        contexts.append(ctx)
+        return DeferredStarts(events)
 
-            async def deferred(name: str, call_kwargs: dict[str, object]) -> object:
-                events.append(f'register {name}')
-                gate = asyncio.get_running_loop().create_future()
-                gates.append(gate)
-                await gate
-                events.append(f'start {name}')
-                return await dispatch(name, call_kwargs)
-
-            async def release() -> None:
-                await asyncio.sleep(0)
-                for gate in gates:
-                    gate.set_result(None)
-                gates.clear()
-
-            return super().create_executor(
-                ctx,
-                dispatch=deferred,
-                valid_names=valid_names,
-                flush=release,
-                global_sequential=global_sequential,
-                portal=portal,
-                max_sleep_seconds=max_sleep_seconds,
-            )
-
-    ts = DeferredStartToolset(agents=[_wf_agent('A', 'alpha'), _wf_agent('B', 'beta')])
-    out = await _run_script(ts, "import asyncio\nawait asyncio.gather(alpha(task='a'), beta(task='b'))")
-    assert out == snapshot(['A', 'B'])
+    workflow = DynamicWorkflow[object](
+        agents=[_sub_agent('A', 'alpha'), _sub_agent('B', 'beta')], call_scheduler=scheduler
+    )
+    ctx = _ctx()
+    code = (
+        "import asyncio\nfirst = await asyncio.gather(alpha(task='a'), beta(task='b'))\n[*first, await alpha(task='c')]"
+    )
+    out = await _run_script(workflow.get_toolset(), code, ctx)
+    assert out == snapshot(['A', 'B', 'A'])
     assert events == snapshot(
         [
-            "executor ['alpha', 'beta'] None False None None",
             'register alpha',
             'register beta',
+            'flush',
             'start alpha',
             'start beta',
+            'register alpha',
+            'flush',
+            'start alpha',
         ]
+    )
+    assert contexts == [ctx]
+
+
+class _FailingScheduler:
+    async def run(self, call: WorkflowCall) -> object:
+        raise ValueError('host detail')
+
+    async def flush(self) -> None:
+        pass
+
+
+async def test_call_scheduler_errors_reach_the_script_without_host_details() -> None:
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ValueError('kaboom')
+
+    code = "try:\n    await {name}(task='x')\nexcept RuntimeError as e:\n    result = str(e)\nresult"
+    failing = DynamicWorkflow[object](agents=[_sub_agent()], call_scheduler=lambda ctx: _FailingScheduler())
+    assert await _run_script(failing.get_toolset(), code.format(name='sub')) == snapshot(
+        'call scheduler raised ValueError'
+    )
+    passing = DynamicWorkflow[object](
+        agents=[Agent(FunctionModel(boom), name='bad')], call_scheduler=lambda ctx: DeferredStarts([])
+    )
+    assert await _run_script(passing.get_toolset(), code.format(name='bad')) == snapshot(
+        "sub-agent 'bad' raised ValueError"
     )
 
 
@@ -1668,9 +1670,10 @@ async def test_reveal_announcement_is_recognized_by_its_metadata() -> None:
     [announcement] = ctx.pending_messages[0].messages
     assert isinstance(announcement, ModelRequest)
     [part] = announcement.parts
-    assert isinstance(part, SystemPromptPart)
-    # A copy of the text without the marker (an app-written prompt, a lossy history processor)
-    # does not count as the announcement, while a serialization round trip keeps the marker.
+    assert isinstance(part, AgentRevealPart)
+    assert (part.tool_name, part.agent_name) == ('run_workflow', 'extra')
+    # A copy of the text as a plain prompt (an app-written prompt, a lossy history processor)
+    # does not count as the announcement, while a serialization round trip keeps the part's type.
     unmarked = ModelRequest(parts=[SystemPromptPart(part.content)])
     restored = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python([announcement]))
     ctx.pending_messages.clear()
@@ -1683,6 +1686,26 @@ async def test_reveal_announcement_is_recognized_by_its_metadata() -> None:
     ctx.pending_messages.clear()
     ctx.run_step += 1
     ctx.messages[:] = restored
+    await ts.get_tools(ctx)
+    assert ctx.pending_messages == []
+
+
+async def test_a_reveal_announcement_an_earlier_version_enqueued_is_still_recognized() -> None:
+    """An earlier version enqueued the announcement as a `SystemPromptPart` marked by its metadata."""
+    workflow = DynamicWorkflow[object](agents=[_sub_agent('b', 'base')])
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+    workflow.reveal(_sub_agent('e', 'extra'))
+    legacy = SystemPromptPart(
+        'A new sub-agent is now available to call from inside the `run_workflow` script.',
+        metadata={'dynamic_workflow_tool': 'run_workflow', 'dynamic_workflow_revealed_agent': 'extra'},
+    )
+    await ts.get_tools(ctx)
+    assert ctx.pending_messages is not None
+    ctx.pending_messages.clear()
+    ctx.run_step += 1
+    # Without an announcement in history the sub-agent would be announced again (see the dropped case).
+    ctx.messages.append(ModelRequest(parts=[legacy]))
     await ts.get_tools(ctx)
     assert ctx.pending_messages == []
 
@@ -1734,7 +1757,7 @@ async def test_compaction_allows_reveal_announcement_again() -> None:
     [announcement] = ctx.pending_messages[0].messages
     assert isinstance(announcement, ModelRequest)
     [announcement_part] = announcement.parts
-    assert isinstance(announcement_part, SystemPromptPart)
+    assert isinstance(announcement_part, AgentRevealPart)
     # User-authored text matching the announcement format must not suppress the trusted announcement.
     spoof = ModelRequest(parts=[UserPromptPart(announcement_part.content)])
     ctx.messages.extend([announcement, ModelResponse(parts=[CompactionPart()]), spoof])
@@ -1887,6 +1910,7 @@ async def test_reveal_held_back_while_deferred_wrapper_capability_is_unloaded() 
     wrapper = PrefixTools[object](wrapped=workflow, prefix='team', id='wf', defer_loading=True)
     # In a run, core resolves tools through the wrapper's prefixed toolset, which delegates to
     # this one; the registry holds only the wrapper, never the inner workflow.
+    # `test_reveal_on_deferred_wrapper_capability_end_to_end_via_agent_run` drives that for real.
     ts = workflow.get_toolset()
 
     unloaded = _deferred_ctx(wrapper, loaded=False)
@@ -1929,6 +1953,49 @@ async def test_reveal_on_deferred_capability_end_to_end_via_agent_run() -> None:
     # Step after the reveal (capability still unloaded): no announcement leaked.
     # Step after load_capability: the announcement arrived.
     assert announcement_seen == [False, True]
+
+
+async def test_reveal_on_deferred_wrapper_capability_end_to_end_via_agent_run() -> None:
+    # The registry shape `test_reveal_held_back_while_deferred_wrapper_capability_is_unloaded`
+    # builds by hand, produced by a real run: core registers the deferred `PrefixTools` wrapper
+    # in place of the workflow, so the reveal waits for the wrapper's `load_capability`.
+    workflow = DynamicWorkflow[object](agents=[_sub_agent('base-done', 'base')])
+    extra = _sub_agent('extra-done', 'extra')
+    wrapper = PrefixTools[object](wrapped=workflow, prefix='team', id='wf', defer_loading=True)
+    announcement_seen: list[bool] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = sum(isinstance(m, ModelResponse) for m in messages)
+        if step == 0:
+            return ModelResponse(parts=[ToolCallPart(tool_name='reveal_extra', args={})])
+        announcement_seen.append('async def extra' in _user_prompt_text(messages))
+        if step == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'wf'})])
+        if step == 2:
+            code = "await extra(task='go')"
+            return ModelResponse(parts=[ToolCallPart(tool_name='team_run_workflow', args={'code': code})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[object, str] = Agent(FunctionModel(model_fn), capabilities=[wrapper])
+
+    @agent.tool_plain
+    def reveal_extra() -> str:
+        workflow.reveal(extra)
+        return 'revealed'
+
+    result = await agent.run('start')
+    assert result.output == 'done'
+    # Held back while the wrapper was unloaded; announced once it loaded.
+    assert announcement_seen == [False, True, True]
+    # And the revealed sub-agent ran through the prefixed tool.
+    workflow_returns = [
+        part.content
+        for message in result.all_messages()
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'team_run_workflow'
+    ]
+    assert workflow_returns == ['extra-done']
 
 
 async def test_reveal_end_to_end_via_agent_run() -> None:
@@ -2004,3 +2071,23 @@ async def test_run_workflow_orchestrates_alongside_code_mode_end_to_end() -> Non
         if isinstance(p, ToolReturnPart) and p.tool_name == 'run_workflow'
     ]
     assert returns[-1].content == 'LGTM'
+
+
+async def test_parent_deny_unanswered_answers_a_workflow_childs_question() -> None:
+    """The parent run's `DenyUnanswered` is passed on, so a workflow child's unanswered question is answered in-run."""
+    observed: list[str] = []
+
+    def parent_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('workflow done')])
+        return ModelResponse(
+            parts=[ToolCallPart('run_workflow', {'code': 'r = await child(task="ask")'}, tool_call_id='w1')]
+        )
+
+    parent = Agent(
+        FunctionModel(parent_model),
+        capabilities=[DenyUnanswered(), DynamicWorkflow(agents=[asking_agent(observed)])],
+    )
+    result = await parent.run('run it')
+    assert result.output == 'workflow done'
+    assert observed == [DEFAULT_QUESTION_MESSAGE]

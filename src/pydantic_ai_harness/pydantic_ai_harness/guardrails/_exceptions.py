@@ -17,7 +17,10 @@ class InputBlocked(GuardrailError):
 
 
 class OutputBlocked(GuardrailError):
-    """Raised by [`OutputGuardrail`][pydantic_ai_harness.OutputGuardrail] when the final output fails validation."""
+    """Raised by [`OutputGuardrail`][pydantic_ai_harness.OutputGuardrail] when the final output fails validation.
+
+    Also raised by [`StreamGuardrail`][pydantic_ai_harness.StreamGuardrail] when it blocks a streamed part.
+    """
 
 
 class ToolBlocked(GuardrailError):

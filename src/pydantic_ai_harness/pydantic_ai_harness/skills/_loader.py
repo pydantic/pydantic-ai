@@ -103,6 +103,9 @@ Skipping suits a selection shared by several projects, such as a person's list o
 _ARGUMENTS_PLACEHOLDER = re.compile(r'\$ARGUMENTS(?![\[\w])')
 """`$ARGUMENTS` itself, not Claude Code's indexed `$ARGUMENTS[0]` or a longer name such as `$ARGUMENTS_LIST`."""
 
+_PLACEHOLDERS = re.compile(rf'{_ARGUMENTS_PLACEHOLDER.pattern}|\$\{{(?:CLAUDE_)?SKILL_DIR\}}')
+"""`$ARGUMENTS`, Claude Code's `${CLAUDE_SKILL_DIR}`, and the `${SKILL_DIR}` other clients use."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class SkillDefinition:
@@ -159,15 +162,19 @@ class SkillDefinition:
         `$ARGUMENTS[0]`, are left unchanged. Without `arguments`, the result is the instructions the
         model gets when it loads the skill.
 
-        The directory line is left out unless `in_run_workspace`.
+        When `in_run_workspace`, `${CLAUDE_SKILL_DIR}` and `${SKILL_DIR}` in the body become the skill's
+        directory. Otherwise they are left unchanged, and the directory line is left out.
         """
-        body = self.body
-        if arguments is not None:
-            if _ARGUMENTS_PLACEHOLDER.search(body):
-                # A function, so backslashes in the arguments are not read as group references.
-                body = _ARGUMENTS_PLACEHOLDER.sub(lambda _: arguments, body)
-            elif arguments:
-                body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
+        directory = self.directory if self.in_run_workspace else None
+
+        # One pass over the original body, so a value put in for one placeholder is not read as another.
+        def substitute(match: re.Match[str]) -> str:
+            value = arguments if match.group() == '$ARGUMENTS' else directory
+            return match.group() if value is None else value
+
+        body = _PLACEHOLDERS.sub(substitute, self.body)
+        if arguments and not _ARGUMENTS_PLACEHOLDER.search(self.body):
+            body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
         heading = f'# Skill: {self.name}'
         if self.in_run_workspace:
             heading += f'\n\nSkill directory: `{self.directory}`. Relative paths in this skill resolve against it.'

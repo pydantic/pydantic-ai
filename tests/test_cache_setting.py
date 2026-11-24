@@ -486,6 +486,8 @@ _OPENAI_12H_MODELS = (
     'gpt-6-luna',
     'gpt-6.1-sol',
     'gpt-6.1-terra',
+    'gpt-6.2-sol',
+    'gpt-6.2-astra',
 )
 """Every model OpenAI serves with explicit prompt cache breakpoints, all verified live to accept the 12-hour TTL on Responses."""
 

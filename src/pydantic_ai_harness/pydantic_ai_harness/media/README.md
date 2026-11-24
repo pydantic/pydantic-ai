@@ -69,7 +69,7 @@ pip:
 pip install asyncpg
 ```
 
-On its first operation the store issues `CREATE TABLE IF NOT EXISTS` in a transaction that first takes `pg_advisory_xact_lock` on a hash of the table name, so processes that start together do not collide. The connecting role therefore needs `CREATE` on the schema for that first call. There is no migration step: an existing `media` table with a different layout is left as it is and the first `put` or `get` fails on a missing column, so pass `table=` when the database already has a table of that name.
+On its first operation the store issues `CREATE TABLE IF NOT EXISTS` in a transaction that first takes `pg_advisory_xact_lock` on a hash of the table name, so processes that start together do not collide. It skips that statement when the table already exists, so only the call that creates it needs `CREATE` on the schema: after that, a role granted `SELECT` and `INSERT` on the table is enough. There is no migration step: an existing `media` table with a different layout is left as it is and the first `put` or `get` fails on a missing column, so pass `table=` when the database already has a table of that name.
 
 ```python
 import asyncpg

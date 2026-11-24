@@ -14,7 +14,7 @@ import time
 import urllib.request
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 from typing import Literal, TextIO
@@ -52,6 +52,8 @@ class Usage:
 
     steps: int = 0
     tokens: int = 0
+    tokens_by_kind: Counter[str] = field(default_factory=Counter[str])
+    """The tokens by kind, as `step_tokens` names them."""
     stopped: bool = False
     seconds: int = 0
 
@@ -181,7 +183,8 @@ def run_opencode(
                 if tokens is None:
                     continue
                 usage.steps += 1
-                usage.tokens += tokens
+                usage.tokens += tokens.total()
+                usage.tokens_by_kind += tokens
             process.wait()
         finally:
             timer.cancel()
@@ -317,15 +320,23 @@ def main() -> None:
             attempts=attempts,
             trace_id=trace_id,
             parent_id=span_id,
+            configured_chain=env.get('PR_REVIEW_MODEL_CHAIN', ''),
         )
         values = {
             'pr_review_checks.steps': usage.steps,
             'pr_review_checks.tokens': usage.tokens,
+            'pr_review_checks.input_tokens': usage.tokens_by_kind['input'],
+            'pr_review_checks.output_tokens': usage.tokens_by_kind['output'],
+            'pr_review_checks.cache_read_tokens': usage.tokens_by_kind['cache.read'],
             'pr_review_checks.seconds': usage.seconds,
         }
         changed = {change.path: change.positions for change in changes}
         result, private_report = check_result(check, files, stream, usage, changed=changed)
-        values |= {'pr_review_checks.outcome': result.outcome, 'pr_review_checks.findings': len(result.findings)}
+        values |= {
+            'pr_review_checks.outcome': result.outcome,
+            'pr_review_checks.findings': len(result.findings),
+            'pr_review_checks.dropped_findings': sum(result.dropped.values()),
+        }
     # A failed, rejected or interrupted review is exported too, under the exception's class name: its message can
     # repeat model or provider text.
     except BaseException as error:
@@ -333,11 +344,12 @@ def main() -> None:
         raise
     finally:
         if attempts:
-            # The plan of the last OpenCode run, which served the review or failed it.
+            # The provider, model and plan of the last OpenCode run, which served the review or failed it.
             last = attempts[-1]
             failure = {'error_type': last.error_type, 'error_status': last.status, 'error_code': last.code}
             values |= {
                 'pr_review_checks.provider': last.provider.name,
+                'pr_review_checks.model': last.provider.model,
                 'pr_review_checks.plan': last.provider.plan,
                 'pr_review_checks.attempts': len(attempts),
                 **{f'pr_review_checks.{key}': value for key, value in failure.items() if value is not None},
@@ -368,7 +380,7 @@ def main() -> None:
     (output / f'{check.name}.json').write_text(result.model_dump_json(), encoding='utf-8')
     print(
         f'{check.name}: {result.outcome}, {len(result.findings)} findings, '
-        f'{sum(result.dropped.values())} dropped outside the changed lines, {usage.steps} steps, '
+        f'{sum(result.dropped.values())} dropped outside its files or the changed lines, {usage.steps} steps, '
         f'{usage.tokens:,} tokens, {usage.seconds} s'
     )
 
