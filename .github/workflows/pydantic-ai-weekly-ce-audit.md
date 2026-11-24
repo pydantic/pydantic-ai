@@ -91,7 +91,7 @@ env:
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: '30'
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
 engine:
-  model: anthropic/${{ vars.GH_AW_MODEL }}
+  model: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
 max-daily-ai-credits: -1
 imports:
   - shared/network-vendor-domains.md
