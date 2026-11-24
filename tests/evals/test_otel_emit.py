@@ -380,7 +380,7 @@ def test_baggage_attached_to_event_attributes(capfire: CaptureLogfire):
 
 
 def test_baggage_does_not_overwrite_standard_attrs(capfire: CaptureLogfire):
-    """Standard `gen_ai.*`/`error.type` attrs win over conflicting baggage keys."""
+    """Baggage cannot change the `gen_ai.evaluation.*` attributes an event writes itself."""
     ctx = _baggage.set_baggage('gen_ai.evaluation.target', 'baggage_target')
     ctx = _baggage.set_baggage('gen_ai.evaluation.score.label', 'baggage_label', ctx)
     token = _otel_context.attach(ctx)
