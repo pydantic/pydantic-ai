@@ -95,6 +95,31 @@ agent = Agent(
 
 On a remote sandbox, `Coder` loads repo instructions at run start and may create the sandbox before the first model tool call. Use `Coder(repo_context=False)` for lazy creation.
 
+Reach for your own composition when a setting you need is not one `Coder` exposes. The most common one is an allowlist: `Coder` runs unrestricted shell commands on purpose, so a harness that may only run your test and lint commands is a harness you build yourself.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import FileSystem, RepoContext, Shell
+from pydantic_ai_harness.compaction import ClearToolResults
+from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
+
+agent = Agent(
+    '{{ openai:medium }}',
+    capabilities=[
+        LocalWorkspace('.'),
+        FileSystem(allowed_patterns=['src/**', 'tests/**', '*.md']),  # nothing outside these
+        Shell(allowed_commands=['pytest', 'ruff', 'git']),  # and nothing else
+        RepoContext(),  # your AGENTS.md and CLAUDE.md
+        ClearToolResults(keep_pairs=3),  # keeps long runs inside the window
+        ToolOutputLimits(),  # one large file cannot flood the context
+    ],
+    instructions='Change only what the task asks for, and run the tests before you finish.',
+)
+```
+
+That is the whole pattern: pick the capabilities you want, configure them, and leave out the ones you do not. Each one is documented on its own page, and swapping [`LocalWorkspace`](filesystem.md) for a [sandbox](#workspaces) moves the same harness onto a remote machine without touching the rest.
+
 ## Workspaces
 
 A [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is where the agent's files and commands live: your machine with `LocalWorkspace`, or an isolated sandbox. Harness capabilities never pick one for you. Attach one, or the run fails at its start and tells you what to attach.
