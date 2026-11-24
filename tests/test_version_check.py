@@ -225,6 +225,8 @@ def test_unwritable_cache_never_checks(monkeypatch: pytest.MonkeyPatch, tmp_path
     cache_root = tmp_path / 'not-a-directory'
     cache_root.write_text('occupied', encoding='utf-8')
     monkeypatch.setenv('XDG_CACHE_HOME', str(cache_root))
+    # Where the cache lives on Windows, so the cache is unwritable on every platform.
+    monkeypatch.setenv('LOCALAPPDATA', str(cache_root))
     requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
 
     # Every banner is the first one when the announcement can't be remembered.
@@ -250,6 +252,8 @@ def test_unrecordable_attempt_is_not_made(monkeypatch: pytest.MonkeyPatch, cache
 
 def test_unavailable_home_never_checks(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv('XDG_CACHE_HOME')
+    # Windows reads `LOCALAPPDATA` before falling back to the home directory.
+    monkeypatch.delenv('LOCALAPPDATA')
     monkeypatch.setattr(Path, 'home', lambda: (_ for _ in ()).throw(RuntimeError('no home')))
     requests = install_transport(monkeypatch, lambda request: httpx2.Response(200, json={'pypi': {}}))
 
