@@ -445,7 +445,8 @@ class LivePrompt:
 
         A history walk owns the arrows, so recalling a `/command` shows its suggestions
         without trapping the walk on them. Tab picks a suggestion and hands the arrows to
-        the popup; editing the recalled text ends the walk, as does typing a fresh draft.
+        the popup. Editing recalled text keeps the walk only when it protects a nonempty
+        original draft; editing the restored draft ends the walk.
         """
         return bool(self._completions) and (self.buffer.history_index is None or self._selection >= 0)
 

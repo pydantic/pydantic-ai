@@ -590,9 +590,9 @@ ends and nothing else is queued, the message stays in the input as an unsent
 draft. With nothing queued, Up/down only walk history.
 While you walk history, Up/down stay on history even when a recalled slash
 command shows completion suggestions. Press Tab to pick a suggestion; Up/down
-then move through the suggestions. Editing the recalled text ends the walk, so
-suggestions for a prefix you type take Up/down as before. Esc closes the
-suggestions, and Tab brings them back.
+then move through the suggestions. Editing recalled text keeps the walk when it
+protects a nonempty original draft; otherwise editing ends the walk (see
+[Input history](#input-history)). Esc closes the suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
 To steer the active run instead, press Alt+Enter (Option+Enter; Ctrl+Enter on
 Windows, see [Windows Terminal](#windows-terminal)). With a typed
@@ -1344,6 +1344,17 @@ instead.
 
 ### Input history
 
+Down past the newest recalled entry restores your unsent draft. If that draft
+was nonempty when you started, it returns even after you edit recalled text,
+including deleting all of that text. The edited text remains recoverable with
+[undo](#undo-and-redo). Starting with an empty draft makes the edited text your
+new draft instead. Editing the restored draft ends the walk; the next walk
+returns to that edited draft.
+
+Enter on an edited queued message still saves it in place. Returning to your
+original draft first leaves that queued message unchanged; Enter then submits
+your draft as a separate message.
+
 Submitted prompts and slash commands persist across restarts for Up/Down recall,
 including multiline input. They are stored as plaintext in `input-history` next
 to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
@@ -1369,6 +1380,10 @@ or Ctrl+C, and takes back a paste or a history recall. Typing undoes a word at a
 time, and a run of Backspace or Delete presses undoes in one step. Ctrl+Y or
 Ctrl+Shift+Z redoes. Pax keeps the last 100 steps; submitting a message starts
 the next draft with none.
+
+If Down restores a nonempty draft after you edit recalled text, undo brings back
+the edited text, and redo returns to the draft. Undo and redo end history
+navigation; the next Up/down walk starts from the text then shown.
 
 The editor reads keys in raw mode, so Ctrl+Z reaches Pax instead of suspending
 it to the shell. Pax has no suspend shortcut; quit with Ctrl+D or `/exit`.
