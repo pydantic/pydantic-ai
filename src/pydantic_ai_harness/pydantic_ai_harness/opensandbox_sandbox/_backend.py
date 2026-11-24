@@ -283,14 +283,9 @@ class OpenSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         self._display = x11_display(
             self._run_argv,
             checked_desktop_size(desktop),
-            self._describe,
+            lambda: f'OpenSandbox sandbox {self._ref.id if self._ref else "(not created)"}',
         )
         self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
-
-    def _describe(self) -> str:
-        # The display starts only through `_run_argv`, which has created or attached the sandbox, so `_ref` is set.
-        assert self._ref is not None
-        return f'OpenSandbox sandbox {self._ref.id}'
 
     @property
     def display(self) -> Display | None:

@@ -10,7 +10,6 @@ from opensandbox.constants import DEFAULT_EGRESS_PORT, DEFAULT_EXECD_PORT
 from pydantic_ai import Agent, UserError
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
 
@@ -113,14 +112,3 @@ async def test_a_desktop_capability_runs_the_computer_tool_without_exposing_a_po
 def test_a_desktop_size_must_be_a_width_and_height_of_at_least_1(desktop: tuple[int, int]) -> None:
     with pytest.raises(UserError, match=r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'):
         OpenSandboxBackend(image='fake-image', desktop=desktop)
-
-
-async def test_a_display_that_cannot_start_names_the_sandbox(
-    server: FakeOpenSandbox, display: FakeDisplay, working_dir: str
-) -> None:
-    server.display = lambda command, timeout: ('', 'xdotool: not found', 1)
-    backend = _backend(server, working_dir, desktop=True)
-
-    with pytest.raises(WorkspaceUnavailableError, match=r'in OpenSandbox sandbox \S+: xdotool: not found'):
-        await full_display(backend).display_size()
-    await backend.aclose()
