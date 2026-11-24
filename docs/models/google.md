@@ -617,6 +617,49 @@ On [Google Cloud](google-cloud.md), `gemini-4-argon` is served on the `global` l
 multi-regions, not in single regions such as the default `us-central1`: pass one of those as the provider's
 [`location`](google-cloud.md#customizing-location-or-project).
 
+## Computer use
+
+To let Gemini use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+the Gemini API, it sends Google's own
+[computer use tool](https://ai.google.dev/gemini-api/docs/computer-use) as a
+[`ComputerTool`][pydantic_ai.native_tools.ComputerTool] to the Gemini 4 models, Gemini 3.8 Flash, Gemini 3.5 Flash-Lite
+and Gemini 3 Flash Preview. Other models, every model on Vertex AI, and any model with `ComputerUse(native=False)` get a
+regular function tool named `computer` instead.
+
+Google's tool can't zoom or read the pointer position. It can't be sent beside a function tool named like one of its
+functions, such as `click` or `type`, so with such a tool the model gets the `computer` function tool instead.
+
+### Actions that need approval
+
+Gemini's safety checks can flag an action, such as deleting files or accepting terms, as one a person must confirm. The
+flagged call waits for [approval](../deferred-tools.md#human-in-the-loop-tool-approval), with Gemini's explanation in
+its metadata under `reason`. Resolve it with a
+[`HandleDeferredToolCalls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) handler, or add
+[`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] to the agent's `output_type` to end the run and resume
+it later. Without either, the run fails at the first flagged call.
+
+```python {test="skip" lint="skip" gateway_toggle="skip"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai_harness import ComputerUse
+
+
+async def ask_a_person(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+    approvals = {}
+    for call in requests.approvals:
+        reason = requests.metadata[call.tool_call_id]['reason']
+        approvals[call.tool_call_id] = input(f'{reason} Approve? [y/N] ') == 'y'
+    return requests.build_results(approvals=approvals)
+
+
+agent = Agent(
+    '{{ google:medium }}',
+    capabilities=[my_desktop_sandbox, ComputerUse(), HandleDeferredToolCalls(handler=ask_a_person)],
+)
+```
+
+Google sends no safety decisions on streamed requests, so streamed runs never pause for approval.
+
 ## Streaming cancellation
 
 !!! note "Transport cancellation"

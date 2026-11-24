@@ -549,6 +549,8 @@ jobs:
       - name: Check out the prompt resolver action and default prompt
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          # Without `ref:`, a pull request event checks out the PR's merge commit.
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: |
             .github/actions/fetch-dynamic-prompt
