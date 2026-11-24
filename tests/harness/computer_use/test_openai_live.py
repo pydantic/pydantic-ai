@@ -44,7 +44,7 @@ from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction
 from tests.models.conftest import json_objects
 
 from ...conftest import RequestCapture, try_import
-from ..display_fakes import FAKE_DISPLAY_SIZE, ScreenProvider, png
+from .display_fakes import FAKE_DISPLAY_SIZE, ScreenProvider, png
 from .shared_live import DONE, TASK, is_object_list, vcr_config as vcr_config
 
 with try_import() as openai_installed:
