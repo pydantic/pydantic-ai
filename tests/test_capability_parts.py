@@ -617,6 +617,22 @@ async def test_a_workspace_source_has_its_files_own_authority(tmp_path: Path) ->
     assert effective_authority(part) == 'none'
 
 
+async def test_a_workspace_source_label_changes_the_path_the_model_sees_not_the_authority(tmp_path: Path) -> None:
+    """`label=` shows the model a shorter path; the authority still comes from the full `path`."""
+    (tmp_path / 'private' / 'tenant').mkdir(parents=True)
+    (tmp_path / 'private' / 'tenant' / 'MEMORY.md').write_text('- a fact')
+    (tmp_path / 'MEMORY.md').write_text('- an operator fact')
+    workspace = AuthorityWorkspace(
+        Workspace(LocalWorkspaceBackend(tmp_path)), authority='operator', path_authority={'private': 'none'}
+    )
+    source = await WorkspaceSource.from_workspace(workspace, 'private/tenant/MEMORY.md', label='MEMORY.md')
+    assert (source.path, source.authority) == ('MEMORY.md', 'none')
+    # The label names an operator file, but isn't what the authority is asked about.
+    assert (await WorkspaceSource.from_workspace(workspace, 'MEMORY.md')).authority == 'operator'
+    unlabelled = await WorkspaceSource.from_workspace(workspace, 'private/tenant/MEMORY.md')
+    assert (unlabelled.path, unlabelled.authority) == ('private/tenant/MEMORY.md', 'none')
+
+
 # Serialization
 
 
