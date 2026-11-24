@@ -658,9 +658,7 @@ agent = Agent(
 )
 ```
 
-Google sends no safety decisions on streamed requests, so a streamed run never pauses for approval. `run_stream()`, the
-UI adapters and `run()` with an event stream handler all stream.
-To have flagged actions wait for a person, use `run()` without an event stream handler.
+Google sends no safety decisions on streamed requests, so streamed runs never pause for approval.
 
 ## Streaming cancellation
 
