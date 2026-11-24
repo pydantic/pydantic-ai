@@ -18,10 +18,12 @@ from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
     ModelHTTPError,
     ModelMessage,
+    ModelNotFoundError,
     ModelRequest,
     ModelRequestRejectedError,
     ModelResponse,
@@ -554,39 +556,96 @@ async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_a
     )
 
 
-@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
-async def test_openrouter_context_window_exceeded_via_metadata_raw(allow_model_requests: None) -> None:
-    raw_json_string = json.dumps(
-        {
-            'error': {
-                'message': "Input length (100000) exceeds the model's maximum context length (8192).",
-                'type': 'BadRequestError',
-                'param': None,
-                'code': 400,
-            }
-        }
-    )
-    outer_body = {'message': 'Provider returned error', 'code': 400, 'metadata': {'raw': raw_json_string}}
-    response_body = {'error': outer_body}
+_CONTEXT_WINDOW_MESSAGE = "Input length (100000) exceeds the model's maximum context length (8192)."
+_CONTEXT_WINDOW_RAW = json.dumps(
+    {'error': {'message': _CONTEXT_WINDOW_MESSAGE, 'type': 'BadRequestError', 'param': None, 'code': 400}}
+)
 
+
+async def _openrouter_status_error(status_code: int, error_body: dict[str, object], *, stream: bool) -> ModelAPIError:
     def handler(_: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(400, json=response_body)
+        return httpx2.Response(status_code, json={'error': error_body})
 
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
         provider = OpenRouterProvider(
             api_key='test', base_url='https://openrouter.example/api/v1', http_client=http_client
         )
-        model = OpenRouterModel('openai/gpt-oss-120b', provider=provider)
-        with pytest.raises(ModelContextWindowExceededError) as exc_info:
-            await Agent(model).run('test')
+        agent = Agent(OpenRouterModel('openai/gpt-oss-120b', provider=provider))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('test'):
+                    pass  # pragma: no cover
+            else:
+                await agent.run('test')
+    return exc_info.value
 
-    error = exc_info.value
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+@pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
+@pytest.mark.parametrize('raw', [_CONTEXT_WINDOW_RAW, _CONTEXT_WINDOW_MESSAGE], ids=['json', 'plain'])
+async def test_openrouter_context_window_exceeded_via_metadata_raw(
+    allow_model_requests: None, raw: str, stream: bool
+) -> None:
+    error = await _openrouter_status_error(
+        400, {'message': 'Provider returned error', 'code': 400, 'metadata': {'raw': raw}}, stream=stream
+    )
+
+    assert isinstance(error, ModelContextWindowExceededError)
     assert isinstance(error, ModelHTTPError)
     assert error.status_code == 400
     assert error.provider_error_code == '400'
     cause = error.__cause__
     assert isinstance(cause, APIError)
     assert error.body == cause.body
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+@pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
+@pytest.mark.parametrize(
+    ('status_code', 'error_body', 'expected_error'),
+    [
+        pytest.param(401, {'code': 401, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelAuthenticationError, id='401'),
+        pytest.param(403, {'code': 403, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelAuthenticationError, id='403'),
+        pytest.param(
+            403,
+            {'code': 403, 'metadata': {'raw': _CONTEXT_WINDOW_RAW, 'flagged_input': 'text', 'reasons': ['violence']}},
+            ModelRequestRejectedError,
+            id='403-flagged-input',
+        ),
+        pytest.param(404, {'code': 404, 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}, ModelNotFoundError, id='404'),
+        pytest.param(
+            400,
+            {'code': 'model_not_found', 'metadata': {'raw': _CONTEXT_WINDOW_RAW}},
+            ModelNotFoundError,
+            id='400-model-not-found-code',
+        ),
+        pytest.param(
+            400,
+            {'code': 400, 'metadata': {'raw': {'error': {'message': _CONTEXT_WINDOW_MESSAGE}}}},
+            ModelRequestRejectedError,
+            id='400-object-raw',
+        ),
+        pytest.param(
+            400,
+            {'code': 400, 'metadata': {'raw': json.dumps({'error': {'type': 'BadRequestError', 'code': 400}})}},
+            ModelRequestRejectedError,
+            id='400-generic-nested-type',
+        ),
+    ],
+)
+async def test_openrouter_metadata_raw_keeps_outer_error_category(
+    allow_model_requests: None,
+    status_code: int,
+    error_body: dict[str, object],
+    expected_error: type[ModelAPIError],
+    stream: bool,
+) -> None:
+    error = await _openrouter_status_error(
+        status_code, {'message': 'Provider returned error', **error_body}, stream=stream
+    )
+
+    assert isinstance(error, expected_error)
+    assert not isinstance(error, ModelContextWindowExceededError)
 
 
 @pytest.mark.vcr(ignore_hosts=['openrouter.example'])
@@ -3371,6 +3430,32 @@ async def test_openrouter_stream_context_window_metadata_raw_non_context_error(
     error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
     assert isinstance(error, ModelRequestRejectedError)
     assert not isinstance(error, ModelContextWindowExceededError)
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_openrouter_stream_consumer_error_keeps_its_category(allow_model_requests: None) -> None:
+    consumer_error = ModelHTTPError.for_category(
+        ModelRequestRejectedError,
+        status_code=400,
+        model_name='openai/gpt-4.1-mini',
+        body={'message': 'Provider returned error', 'metadata': {'raw': _CONTEXT_WINDOW_RAW}},
+    )
+
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200, headers={'content-type': 'text/event-stream'}, stream=httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK)
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = OpenRouterProvider(
+            api_key='test', base_url='https://openrouter.example/api/v1', http_client=http_client
+        )
+        agent = Agent(OpenRouterModel('openai/gpt-4.1-mini', provider=provider))
+        with pytest.raises(ModelRequestRejectedError) as exc_info:
+            async with agent.run_stream('hello'):
+                raise consumer_error
+
+    assert exc_info.value is consumer_error
 
 
 async def test_openrouter_streaming_malformed_chunk_stays_fatal(allow_model_requests: None) -> None:
