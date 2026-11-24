@@ -763,17 +763,37 @@ class MalformedEventWorkflow:
     """Publishes a known event kind with a payload that doesn't validate, then waits to be terminated."""
 
     @workflow.init
-    def __init__(self) -> None:
+    def __init__(self, event: dict[str, Any]) -> None:
         self.events = AgentEventStream()
-        self.events.stream.topic(TOPIC).publish({'event_kind': 'part_start', 'index': 'not-an-index'})
+        self.events.stream.topic(TOPIC).publish(event)
 
     @workflow.run
-    async def run(self) -> None:
+    async def run(self, event: dict[str, Any]) -> None:
         await workflow.wait_condition(lambda: False)
 
 
-async def test_a_malformed_known_event_kind_still_raises(client: Client) -> None:
-    """Only unknown kinds are skipped: a known kind that fails to validate is a real error."""
+@pytest.mark.parametrize(
+    'event,errors',
+    [
+        pytest.param(
+            {'event_kind': 'part_start', 'index': 'not-an-index'},
+            [('int_parsing', ('part_start', 'index')), ('missing', ('part_start', 'part'))],
+            id='bad-payload',
+        ),
+        pytest.param(
+            {'event_kind': 'part_start', 'index': 0, 'part': {'part_kind': 'future_part'}},
+            [('union_tag_invalid', ('part_start', 'part'))],
+            id='unknown-nested-tag',
+        ),
+    ],
+)
+async def test_a_malformed_known_event_kind_still_raises(
+    client: Client, event: dict[str, Any], errors: list[tuple[str, tuple[str, ...]]]
+) -> None:
+    """Only unknown top-level kinds are skipped: a known kind that fails to validate is a real error.
+
+    That includes an unknown tag nested inside a known event, such as a part kind.
+    """
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -782,6 +802,7 @@ async def test_a_malformed_known_event_kind_still_raises(client: Client) -> None
     ):
         handle = await client.start_workflow(
             MalformedEventWorkflow.run,
+            event,
             id=f'{MalformedEventWorkflow.__name__}-{uuid.uuid4()}',
             task_queue=TASK_QUEUE,
         )
@@ -792,9 +813,7 @@ async def test_a_malformed_known_event_kind_still_raises(client: Client) -> None
         finally:
             await handle.terminate()
 
-    assert [(error['type'], error['loc']) for error in exc_info.value.errors()] == snapshot(
-        [('int_parsing', ('part_start', 'index')), ('missing', ('part_start', 'part'))]
-    )
+    assert [(error['type'], error['loc']) for error in exc_info.value.errors()] == errors
 
 
 # --- Replay safety --------------------------------------------------------------------------------
