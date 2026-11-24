@@ -33,7 +33,7 @@ from tests.pax.test_web_sessions import Fleet
 Moment = Literal['kept late', 'opened mid-turn', 'written while open']
 MOMENTS: tuple[Moment, ...] = ('kept late', 'opened mid-turn', 'written while open')
 WRITE = 'write notes.py'
-"""A prompt whose turn writes `notes.py`, then answers; in a `written while open` case it holds first."""
+"""A prompt whose turn writes `notes.py`, then answers; outside an `opened mid-turn` case it holds until released first."""
 HOLD = 'hold'
 """A prompt whose turn runs until the test releases it, writing nothing."""
 WRITTEN = ['notes.py']
@@ -161,7 +161,7 @@ def panels_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
     root = tmp_path_factory.mktemp('browser-panels').resolve()
     turns = PluginSettings(id='turns', factory=f'{__name__}:Turns')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
-        scripts = {folder(*case): Script(case[1] == 'written while open', portal.call(anyio.Event)) for case in CASES}
+        scripts = {folder(*case): Script(case[1] != 'opened mid-turn', portal.call(anyio.Event)) for case in CASES}
         agents = {
             name: writer(anyio.Path(root / name), script, keep_late=name.endswith('kept-late'))
             for name, script in scripts.items()
@@ -208,6 +208,10 @@ async def run_moment(
     await expect(page.locator('.session[aria-busy="true"]')).to_have_count(0)
     activity = page.locator('.topbar-status .activity')
     moment = case[1]
+
+    def release() -> None:
+        panels_ui.fleet.portal.call(script.released.set)
+
     if moment == 'opened mid-turn':
         await send(page, WRITE)
         await expect(page.locator('.markdown').filter(has_text='Done')).to_have_count(1)
@@ -218,11 +222,12 @@ async def run_moment(
     else:
         await open_panel()
         await send(page, WRITE)
+        await expect(page.get_by_role('button', name=f'Wrote {WRITTEN[0]}')).to_be_visible()
         if moment == 'kept late':
+            # The page has rendered the turn running, so only the late keep can leave a panel stale.
+            release()
             await expect(activity).to_have_text('ready')
-        else:
-            await expect(page.get_by_role('button', name=f'Wrote {WRITTEN[0]}')).to_be_visible()
-    return lambda: panels_ui.fleet.portal.call(script.released.set)
+    return release
 
 
 @pytest.mark.parametrize(('panel', 'moment'), [case for case in CASES if case[0] in BUILT_IN])
@@ -236,19 +241,7 @@ async def test_a_built_in_panel_catches_up(page: Page, panels_ui: PanelsUI, pane
         release()
 
 
-SHORT_TURN = pytest.mark.xfail(
-    strict=True,
-    reason=(
-        'The page renders socket messages once a frame, so a turn that starts and ends within one never shows as '
-        'running, and plugin panels, which ask again only as `running` changes, keep the view from before it: '
-        'https://github.com/pydantic/pydantic-ai/issues/14408'
-    ),
-)
-
-
-@pytest.mark.parametrize(
-    'moment', [pytest.param(moment, marks=SHORT_TURN if moment == 'kept late' else ()) for moment in MOMENTS]
-)
+@pytest.mark.parametrize('moment', MOMENTS)
 async def test_every_plugin_panel_catches_up(page: Page, panels_ui: PanelsUI, moment: Moment) -> None:
     """Each panel `/api/panels` lists shows the view its plugin gives now."""
     [info] = listed(panels_ui)

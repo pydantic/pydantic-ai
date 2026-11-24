@@ -189,8 +189,9 @@ def live_transcript(messages: Sequence[ServerMessage]) -> list[Item | TurnSummar
     log = ItemLog()
     for message in messages:
         if isinstance(message, TurnStarted):
-            if message.item is not None:
-                log.apply(ItemAdded(item=message.item))
+            # Every scripted turn starts from a prompt; only a turn a finished task wakes has none.
+            assert message.item is not None
+            log.apply(ItemAdded(item=message.item))
         elif isinstance(message, TurnEnded):
             assert message.outcome == 'completed' and message.usage is not None
             entries += [
