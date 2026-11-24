@@ -804,7 +804,7 @@ def test_opening_a_url_does_not_wait_for_the_browser(monkeypatch: pytest.MonkeyP
 
 class _Inline:
     def __init__(self, *, target: Callable[[str], object], args: tuple[str], daemon: bool) -> None:
-        assert daemon, 'a browser that never returns must not keep CLAI alive'
+        assert daemon, 'a browser that never returns must not keep Pax alive'
         self.target, self.args = target, args
 
     def start(self) -> None:

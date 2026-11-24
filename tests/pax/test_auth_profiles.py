@@ -616,5 +616,5 @@ CREDENTIALS_JSON = json.dumps({'access_token': 'a', 'refresh_token': 'r', 'accou
 
 
 def test_plugins_cannot_take_the_chain_prefix() -> None:
-    with pytest.raises(ValueError, match='CLAI already runs'):
+    with pytest.raises(ValueError, match='Pax already runs'):
         ModelProvider(prefix='chain', resolve=echo)

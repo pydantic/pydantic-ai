@@ -42,7 +42,7 @@ from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
-# AoE only starts CLAI in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
+# AoE only starts Pax in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
 pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='AoE and its hook files are POSIX-only')
 
 INSTANCE = 'abcd1234ef567890'

@@ -1,4 +1,4 @@
-# CLAI web UI README content to fold into the README later
+# Pax web UI README content to fold into the README later
 
 <!-- From #10262 -->
 ## Web UI
@@ -11,11 +11,11 @@ it again. The terminal and the browser drive the same session: a prompt typed in
 show it. The page follows `/theme`, and the sidebar's footer picks a theme too. `/web stop`
 ends the web UI; `/web status` shows its address.
 
-To use only the browser, start CLAI with `--web` (also `uvx pydantic-ai-pax --web`). It prints
+To use only the browser, start Pax with `--web` (also `uvx pydantic-ai-pax --web`). It prints
 the address, opens it, and logs the session it started with to the terminal until Ctrl-C, which
 ends every session. There, each session you open is live in its own directory, with that
-directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if CLAI had started
-there; CLAI's own working directory never changes. **New session** asks where the session runs.
+directory's `AGENTS.md`, skills, `.clai/settings.json`, and MCP files, as if Pax had started
+there; Pax's own working directory never changes. **New session** asks where the session runs.
 It lists one row per project from the sidebar, the current one first, and a project's row starts
 in the checkout you are in, else the project's main one. A project's chevron, or →, shows its
 worktrees, including any other worktree Git lists for its repository; ← hides them.
@@ -27,7 +27,7 @@ The header shows where the session works.
 `/workspace DIRECTORY` or `/resume ID` typed in a session moves that session instead, never while a
 turn, a background `/fork`, or a delegated task runs in it. `pax --web --resume ID` starts in that
 session's directory. A session left idle for an hour, with nothing running or queued and no browser
-watching it (a page watches the last five sessions it showed), closes, except the one CLAI started
+watching it (a page watches the last five sessions it showed), closes, except the one Pax started
 with; it stays saved, and clicking it resumes it. The launch directory's `.env` stays loaded.
 
 The sidebar lists the sessions `/resume` shows. **Projects** groups them by project (the Git
@@ -43,7 +43,7 @@ open it. When two rows of one project or list share a title, each shows a short 
 switch to it, even while other sessions run turns: the row is selected at once, and each session you
 open stays live and keeps working while you look at another. Each row has one status mark. A
 spinner, with how long the turn has run, means a turn runs here (ringed when input waits behind it);
-a hollow ring means another CLAI runs it, named with its process ID in the tooltip; **Needs input**
+a hollow ring means another Pax runs it, named with its process ID in the tooltip; **Needs input**
 means it waits for your answer; a bold title with a dot means it changed since you last looked (open
 it, or use **Mark as read**); a red or amber dot means its last turn failed or was interrupted.
 **Attention** (Cmd/Ctrl+Alt+U) lists only the sessions running, waiting for you, or unread. Use a
@@ -52,7 +52,7 @@ and a project's menu to archive all its chats; these skip the open and running s
 during a search, which lists only some of them. Archiving hides a session from the sidebar and
 `/resume` without deleting anything; **Archived** lists archived sessions, each with **Unarchive**
 in its menu. The shown session and running ones cannot be archived, and resuming an archived one, or
-a new turn in it, unarchives it. A session open in CLAI cannot be deleted. A session whose directory
+a new turn in it, unarchives it. A session open in Pax cannot be deleted. A session whose directory
 is gone, such as a removed worktree, opens read-only; so does, with `/web` from a terminal, a
 session saved in another directory, since the terminal works where it started. Keyboard: Enter
 sends, Shift+Enter adds a line, Esc interrupts the shown session's turn and no other, Cmd/Ctrl+K
@@ -143,7 +143,7 @@ them. Each row's button asks what to do as the terminal's menus do: add, replace
 or delete a key; sign in again, rename, try earlier or later, or sign out of an account; add one.
 A key's value is typed in the page but never sent back to it. Signing in to ChatGPT/Codex or GitHub
 Copilot shows its link or code on a waiting screen you can cancel; the ChatGPT/Codex sign-in
-finishes when the browser comes back to the machine CLAI runs on. An API-key account picks or saves
+finishes when the browser comes back to the machine Pax runs on. An API-key account picks or saves
 a `/keys` entry. Connections (`openrouter`, `vllm`) and plugins' sign-ins ask in the terminal, so
 the page says to run `/login NAME` there.
 
@@ -175,12 +175,12 @@ you give none), `/push [confirm]`, and `/pr`, which shows the drafted pull reque
 composer) is the menu `/system_prompt` shows in the terminal: **Edit…** opens your instructions in
 a multi-line dialog (Cmd/Ctrl+Enter saves; an empty text removes them), **Reset** removes them,
 **Append…** adds a paragraph, and **View…** shows the full system prompt the model last received,
-read-only. **About** (`#settings/about`, or `/update` in the composer) shows the running CLAI's
+read-only. **About** (`#settings/about`, or `/update` in the composer) shows the running Pax's
 version, whether a newer one is out, and the `updates.channel` setting; its **Update…** button asks
 before it runs `/update now`.
 `/usage` and `/cost` show their figures as a card in the chat: the retained history's cost,
 tokens, and requests, and for `/usage` a row per turn. Cmd/Ctrl+Shift+P, or `/help` in the
-composer, opens the command palette: every command this CLAI offers, plugins' and skills'
+composer, opens the command palette: every command this Pax offers, plugins' and skills'
 included, with what it does and the arguments it takes. Type to filter; Enter runs one as typing it
 bare would, and a command that needs arguments (or Tab) goes into the composer to finish. `/tasks`
 in the composer moves to the sidebar's Workers tree, and `/resume` to its session search.
@@ -242,7 +242,7 @@ terminal.
 
 ```diff
 @@ -2559,2 +2560,4 @@
--2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
+-2. Sign in, or sign up, in the browser. Pax prints the link too, so it works over SSH.
 -3. Pick one of the projects you can write to (`/` to search, Enter to use it).
 +2. Sign in, or sign up, in the browser. A waiting screen shows the link too, so it
 +   works over SSH; Esc there cancels the sign-in and changes nothing.
@@ -292,7 +292,7 @@ terminal.
 Plugins can add a panel on the right, toggled by its button at the top right or Cmd/Ctrl+Shift+L,
 resizable by its left edge, and remembered by the browser. The `observability` plugin's shows
 Logfire's live view of the current conversation, opened at the latest turn. Logfire does not let
-other sites show its pages inside theirs today, so the panel opens it in a window beside CLAI's
+other sites show its pages inside theirs today, so the panel opens it in a window beside Pax's
 instead, and points that window at each new turn. Without a Logfire project the panel says how to
 set one up.
 
@@ -311,12 +311,12 @@ row, goes back.
 <!-- From #10372 -->
 `pax --web --port PORT` listens on PORT for that launch (`0` picks a free one). `--token-file PATH`
 takes the launch's token from a file only you can read, instead of making one, for a program that
-starts CLAI and keeps the token itself: CLAI then listens on 127.0.0.1 only, the printed address
+starts Pax and keeps the token itself: Pax then listens on 127.0.0.1 only, the printed address
 leaves the token out, and no browser opens.
 
 `/update` works from the page too (typed in the composer, it opens Settings › About, whose
 **Update…** asks first): the page shows uv's progress, over Settings while it is open, then
-"Restarting CLAI…" while the new build starts on the same address, reconnects by itself to the
+"Restarting Pax…" while the new build starts on the same address, reconnects by itself to the
 same session, and says which version it updated to; About says which versions it updated from
 and to. A failed install, or nothing to install, says so and nothing restarts. A terminal session
 with `/web` running comes back with it running.
@@ -330,12 +330,12 @@ sessions of their own. Turn it on with `/plugins enable workspaces`, then:
 /workspaces create local-worktree ~/code/pydantic-ai main
 ```
 
-`create KIND [REPO [REF]]` checks out REPO (a local path, or a URL that CLAI clones once and
+`create KIND [REPO [REF]]` checks out REPO (a local path, or a URL that Pax clones once and
 fetches afterwards) at REF on a new branch, the kind's `branch_prefix` (`clai-` by default) and
 the ID. The sidebar lists the checkout under its repository, grouped by that branch as any other
-worktree, so **New session** there starts a session in it, in this same CLAI. `destroy ID` closes
+worktree, so **New session** there starts a session in it, in this same Pax. `destroy ID` closes
 the sessions open in it and removes the checkout, unless the kind's `teardown` is `keep`, keeping
-the branch either way. `/workspaces` lists them all, from any CLAI: they are kept in CLAI's state
+the branch either way. `/workspaces` lists them all, from any Pax: they are kept in Pax's state
 directory. The kinds of workspace are the plugin's settings (`/plugins configure workspaces`, or
 the web UI's plugins panel); `local-worktree`, a Git worktree on this machine, is the one backend so
 far. See [the plugin guide](PLUGINS.md#workspaces-checkouts-for-sessions-of-their-own).
@@ -359,7 +359,7 @@ own agent gets none of this. See [the plugin guide](PLUGINS.md#orchestrator-an-a
 ## Several live sessions
 
 The web UI (`pax --web`, or `/web` from a terminal) keeps every session you open live in the one
-CLAI process: each runs its own turns in
+Pax process: each runs its own turns in
 its own folder, with its own plugins and input queue, while the others run theirs. Over its one
 WebSocket the page watches the last five sessions it showed, keeping each one's transcript current,
 so switching back to one shows it at once.
@@ -421,8 +421,8 @@ Routes for one live session, `{id}` its conversation ID; each answers 404 when i
 `POST /api/sessions/{id}/open` makes a saved session live (resumed in a session of its own, or the
 one already live) and answers `{"id": "<conversation id>"}`. `POST /api/sessions/new`, with the same
 optional body as before (`{"workspace": "/abs/path"}`), starts a new live session and answers
-the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where CLAI
-opens no other sessions (a host built outside CLAI's shell), both switch the one session instead,
+the same `{"id": "<conversation id>"}`. Opening a session whose folder is gone answers 400. Where Pax
+opens no other sessions (a host built outside Pax's shell), both switch the one session instead,
 with `/resume` or `/new`, and answer its ID. The saved-session routes (`GET /api/sessions`, rename, fork, archive, unarchive,
 delete) and `/api/tasks/{task_id}/…` are unchanged. `POST /api/sessions/archive` with
 `{"ids": [...]}` archives several sessions at once, and answers 400 naming any it refused once it
@@ -430,11 +430,11 @@ has archived the rest.
 
 A command menu (`/model`, `/effort`, `/set`, `/keys`, …) reads and changes the session it is built from:
 choosing a model in session B's `/model` menu switches B alone, and B's `/effort` shows B's model. Settings
-CLAI shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
+Pax shares, such as `display.*`, still reach every session, as typing `/set` does. Plugin menus
 (`/api/plugins/…`) and dialogs belong to the page.
 
 The unprefixed routes (`/api/state`, `/api/images/…`, `/api/changes`, `/api/input`, `/api/steer`, `/api/queue/…`, `/api/rewind/…`, `/api/interrupt`,
 `/api/complete`, `/api/files`, `/api/model`, `/api/switch`, `/api/dialogs/…`, `/api/commands/…`) and a `/ws` without `watch` keep working on the
 default session: the one this page last opened or started while it stays live, else the most recently opened.
 `/api/questions/…` answers any live session's question by its ID, as before. `web/client.py` and the
-orchestrators of other CLAI versions use them.
+orchestrators of other Pax versions use them.

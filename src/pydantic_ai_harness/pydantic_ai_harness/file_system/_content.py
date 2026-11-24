@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
+from io import BytesIO
 
 from pydantic_ai.exceptions import ModelRetry
 
@@ -73,6 +75,83 @@ File content bypasses the textual `max_read_chars` budget, and 5 MB is the
 strictest per-image limit among mainstream providers. A larger file gets the
 text description instead of content that would fail the next model request.
 """
+
+MAX_DECODE_PIXELS = 25_000_000
+"""Largest image, in pixels, `downscale_image` decodes; `read_file` describes a larger one instead of sending it.
+
+A small compressed file can declare enough pixels to take hundreds of MB and seconds
+of CPU to decode, below Pillow's own decompression-bomb limit. A JPEG is decoded at
+the smallest of 1/2, 1/4 or 1/8 scale that still covers the target size, so this
+bounds the decoded size, not the file's.
+"""
+
+PIL_FORMATS = {'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/gif': 'GIF', 'image/webp': 'WEBP'}
+"""The Pillow format of each media type `downscale_image` takes; any other is sent as it is."""
+
+
+@dataclass
+class DownscaledImage:
+    """An image re-encoded at a smaller size, with its displayed size before and after."""
+
+    data: bytes
+    original: tuple[int, int]
+    shown: tuple[int, int]
+
+
+@dataclass
+class TooLargeToDecode:
+    """An image over `MAX_DECODE_PIXELS` even at the scale it can be decoded at."""
+
+    size: tuple[int, int] | None
+    """Its size, or `None` when Pillow refused to open it as a decompression bomb."""
+
+
+def require_pillow() -> None:
+    """Fail when `max_image_side` is set but Pillow, which downscales the images, is not installed."""
+    if importlib.util.find_spec('PIL') is None:
+        raise ImportError(
+            'Downscaling images with `max_image_side` needs Pillow: install `pydantic-ai-harness[coder]` or `pillow`.'
+        )
+
+
+def downscale_image(data: bytes, media_type: str, max_side: int) -> DownscaledImage | TooLargeToDecode | None:
+    """`data` with its longest side brought down to `max_side` pixels, in its own format and aspect ratio.
+
+    `None` when the image already fits, or is not an image Pillow can decode, such
+    as a truncated file: then the file is sent as it is. EXIF orientation is applied
+    first, since the re-encoded copy carries no metadata.
+    """
+    from PIL import Image, ImageOps
+
+    image_format = PIL_FORMATS[media_type]
+    try:
+        with Image.open(BytesIO(data), formats=[image_format]) as image:
+            if max(image.size) <= max_side:
+                return None
+            original = image.size
+            # A progressive JPEG keeps full-size coefficients however small it decodes.
+            if not image.info.get('progressive'):
+                scale = max_side / max(original)
+                image.draft(None, (max(1, round(original[0] * scale)), max(1, round(original[1] * scale))))
+            if image.width * image.height > MAX_DECODE_PIXELS:
+                return TooLargeToDecode(original)
+            oriented = ImageOps.exif_transpose(image)
+            if oriented.size != image.size:
+                original = (original[1], original[0])
+            if oriented.mode in ('1', 'P', 'PA'):
+                oriented = oriented.convert('RGBA')
+            oriented.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+            output = BytesIO()
+            oriented.save(output, format=image_format, quality=90)
+    # Pillow refuses an image over twice `Image.MAX_IMAGE_PIXELS` and warns about one over it.
+    # The warning is expected for such an image, which the size check above refuses anyway;
+    # where warnings are errors it arrives here as the exception instead.
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+        return TooLargeToDecode(None)
+    except (OSError, SyntaxError, ValueError, EOFError):
+        return None
+    return DownscaledImage(data=output.getvalue(), original=original, shown=oriented.size)
+
 
 _HEX_PREVIEW_BYTES = 64
 """Leading bytes of a non-media binary file shown as hex."""

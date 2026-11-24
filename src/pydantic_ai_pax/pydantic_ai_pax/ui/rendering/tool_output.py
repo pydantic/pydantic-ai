@@ -1,9 +1,13 @@
-"""Render typed capability events without parsing model-facing tool results."""
+"""Render typed capability events.
+
+The one model-facing tool result read here is the `shell` output that Ctrl+O shows, split from its
+handles by the harness, which writes them.
+"""
 
 import io
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Literal
@@ -16,8 +20,10 @@ from rich.text import Text
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai_harness.file_system import FileChangeRequestedEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
+from pydantic_ai_harness.shell._persistent import command_output
 from pydantic_ai_pax.config import ToolCallDisplay
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
+from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.command_syntax import highlight_command
 
@@ -144,6 +150,54 @@ def shell_text(text: str, decoder: AnsiDecoder) -> Text:
     return decoder.decode_line(safe)
 
 
+EXPAND_HINT = 'ctrl+o to expand'
+"""Ends a live result row whose output Ctrl+O can show."""
+
+
+def _draw_row(console: Console, *, text: str, role: str, label: str, log: str | None, hint: bool) -> None:
+    """Print a result row at `console`'s width, naming the call `label` last when it is not under its header.
+
+    `role` is resolved when the row is drawn, so a row drawn again after a theme change takes its colours.
+    """
+    muted = theme.color(theme.MUTED)
+    row = Text('  ⎿ ', style=muted)
+    row.append(terminal_text(text, keep=''), style=theme.color(role))
+    if label:
+        row.append(f' · {terminal_text(label, keep="")}', style=muted)
+    if hint and row.cell_len + len(EXPAND_HINT) + 3 <= console.width:
+        row.append(f' · {EXPAND_HINT}', style=muted)
+    if log is None:
+        console.print(row, overflow='ellipsis', no_wrap=True)
+    else:
+        row.truncate(console.width, overflow='ellipsis')
+        # The path wraps rather than clips, so it stays usable.
+        console.print(row + Text(f' · log {terminal_text(log, keep="")}', style=muted))
+
+
+def _row_ansi(
+    *, source: str, width: int, draw: Callable[..., None], colors: ColorSystemName | None, expanded: bool
+) -> str:
+    """A live result row at `width`, with a hint when `source` has output, or `expanded` with that output under it.
+
+    `colors` must be the stream console's colour system; see `render_markdown`.
+    """
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system=colors, width=width)
+    draw(console, hint=not expanded and bool(source))
+    if expanded and source:
+        decoder = AnsiDecoder()
+        for line in source.removesuffix('\n').split('\n'):
+            # Printed whole: the transcript wraps it, so a wrapped URL still opens in full.
+            console.print(
+                Text('    ') + shell_text(line.removesuffix('\r'), decoder),
+                style=theme.color(theme.MUTED),
+                no_wrap=True,
+                overflow='ignore',
+                crop=False,
+            )
+    return output.getvalue()
+
+
 class DisplayArgs(BaseModel):
     """Optional display fields for file and shell tools."""
 
@@ -206,6 +260,8 @@ class ToolOutput:
         self._owed: str | None = None
         """The call whose header still owes its blank line."""
         self._blank_owed = False
+        self._outputs: dict[str | None, tuple[MarkdownBlock, int]] = {}
+        """Live rows of finished commands, and their PIDs, waiting for the output their tool result brings."""
 
     def separate(self) -> None:
         """Print the blank line a header still owes, before other output follows it."""
@@ -227,27 +283,39 @@ class ToolOutput:
         self._owed = tool_call_id
         self._blank_owed = True
 
-    def _row(self, tool_call_id: str | None, text: str, *, style: str, log: str | None = None, name: str = '') -> None:
+    def _row(
+        self,
+        tool_call_id: str | None,
+        text: str,
+        *,
+        role: str,
+        log: str | None = None,
+        name: str = '',
+        expandable: bool = False,
+    ) -> MarkdownBlock | None:
         """Print one result row under the call's header, naming the call last when another header is in between.
 
-        `name` stands in for a call whose header this renderer did not print.
+        `name` stands in for a call whose header this renderer did not print. An `expandable` row in the live
+        prompt is returned as a transcript block, for the output Ctrl+O shows under it.
         """
         under_header = self._blank_owed and tool_call_id is not None and self._owed == tool_call_id
         if not under_header:
             self.separate()
-        row = Text('  ⎿ ', style=theme.color(theme.MUTED))
-        row.append(terminal_text(text, keep=''), style=style)
-        label = self._labels.get(tool_call_id, name)
-        if not under_header and label:
-            row.append(f' · {terminal_text(label, keep="")}', style=theme.color(theme.MUTED))
-        if log is None:
-            self.console.print(row, overflow='ellipsis', no_wrap=True)
-        else:
-            row.truncate(self.console.width, overflow='ellipsis')
-            # The path wraps rather than clips, so it stays usable.
-            self.console.print(row + Text(f' · log {terminal_text(log, keep="")}', style=theme.color(theme.MUTED)))
+        label = '' if under_header else self._labels.get(tool_call_id, name)
+        draw = partial(_draw_row, text=text, role=role, label=label, log=log)
         self._blank_owed = False
         self._owed = None
+        surface = self.console.file
+        if not (expandable and self.console.is_terminal and isinstance(surface, PromptSurface)):
+            draw(self.console, hint=False)
+            return None
+        colors = color_system(self.console)
+        collapsed = partial(_row_ansi, draw=draw, colors=colors, expanded=False)
+        expanded = partial(_row_ansi, draw=draw, colors=colors, expanded=True)
+        block = surface.markdown(render=collapsed, width=self.console.width, expanded=expanded)
+        # Written without its source, so a row whose output is dropped over the transcript budget shows no hint.
+        block.write(collapsed(source='', width=self.console.width))
+        return block
 
     def prints_diff(self, event: AgentStreamEvent) -> bool:
         """Whether `event` is a file's diff, or a call to a tool that prints one, in every tool-call style."""
@@ -274,21 +342,22 @@ class ToolOutput:
         return True
 
     def _inspection_header(self, tool_call_id: str, name: str, args: DisplayArgs) -> bool:
+        """Name what is read or listed, with only the arguments the model set."""
         if name == 'read_file':
             if args.path is None:
                 return False
-            limit = min(args.limit, 2000) if args.limit is not None else 2000
-            details = f'offset={args.offset} limit={limit} lines'
-            if args.limit is not None and args.limit > 2000:
-                details += f' (requested {args.limit})'
-            path = args.path
+            details = ''
+            if args.limit is not None:
+                # The default read limit is 2000 lines, whatever the model asks for.
+                details = f' lines {args.offset + 1}-{args.offset + min(args.limit, 2000)}'
+            elif args.offset:
+                details = f' from line {args.offset + 1}'
+            argument = args.path + details
         else:
-            path = args.path or '.'
-            limit = args.limit if args.limit is not None else 200
-            details = f'recursive={str(args.recursive).lower()} limit={limit}'
-            if args.glob is not None:
-                details += f' glob={args.glob!r}'
-        self.header(tool_call_id, name=name, argument=f'{path!r} {details}')
+            first = None if args.limit is None else f'first {args.limit}'
+            parts = (args.path or '.', args.glob, None if args.recursive else 'not recursive', first)
+            argument = ' '.join(part for part in parts if part)
+        self.header(tool_call_id, name=name, argument=argument)
         return True
 
     def render_result(self, event: FunctionToolResultEvent) -> None:
@@ -304,8 +373,13 @@ class ToolOutput:
             request = self._changes.get(event.part.tool_call_id)
             refusal = (request.cancel_reason or '').strip().split('\n', 1)[0] if request else ''
             reason = f'refused: {refusal or "not approved"}' if request and request.cancelled else ''
+        pending = self._outputs.pop(event.part.tool_call_id, None)
+        if pending is not None and isinstance(event.part.content, str):
+            block, pid = pending
+            # The model's copy has secrets masked; its handles are left out, since the row already gives them.
+            block.extend(command_output(event.part.content, pid=pid))
         if reason:
-            self._row(event.part.tool_call_id, reason, style=theme.color(theme.ERROR), name=event.part.tool_name)
+            self._row(event.part.tool_call_id, reason, role=theme.ERROR, name=event.part.tool_name)
             self.console.print()
 
     def _shell_chunk(self, event: CommandOutputEvent) -> None:
@@ -357,10 +431,14 @@ class ToolOutput:
             if self.show_output and preview.shown < event.line_count:
                 lines += f', {preview.shown} shown'
             parts.append(lines)
-        style = theme.color(theme.ERROR if failed else theme.MUTED)
         clipped = self.show_output and (preview.cut or preview.shown < (event.line_count or 0))
         log = event.output_path if event.truncated or event.exit_code is None or clipped else None
-        self._row(event.tool_call_id, ' · '.join(parts), style=style, log=log)
+        # A background command has no output yet, and a full preview needs no second copy.
+        hidden = event.exit_code is not None and (not self.show_output or clipped or event.truncated)
+        role = theme.ERROR if failed else theme.MUTED
+        block = self._row(event.tool_call_id, ' · '.join(parts), role=role, log=log, expandable=hidden)
+        if block is not None:
+            self._outputs[event.tool_call_id] = (block, event.pid)
         self.console.print()
 
     def _diff(self, diff: str, *, truncated: bool) -> None:
@@ -386,6 +464,7 @@ class ToolOutput:
         self._headers.clear()
         self._shells.clear()
         self._labels.clear()
+        self._outputs.clear()
 
     def discard_call(self, tool_call_id: str) -> None:
         """Release proposed diffs and the header label after a tool result, including refusals and retries."""

@@ -77,7 +77,7 @@ def test_command_boundaries(tmp_path: Path) -> None:
     assert plugins_command(store, []) == 'No plugins.'
     store.save_plugin(PluginSettings(id='one', factory='module:Factory', enabled=False))
     assert plugins_command(store, ['list']) == 'one: module:Factory (disabled)'
-    with pytest.raises(ValueError, match='with /plugins inside a CLAI session'):
+    with pytest.raises(ValueError, match='with /plugins inside a Pax session'):
         plugins_command(store, ['bad'])
     with pytest.raises(ValueError):
         store.reset('missing')

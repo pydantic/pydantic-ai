@@ -35,7 +35,7 @@ def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> N
     assert all(visible_length(line) == width for line in rendered.splitlines())
     text = Text.from_ansi(rendered)
     for fragment in (
-        'CLAI 2.0',
+        'Pax',
         'Thinking',
         'read_file',
         'Summary',
@@ -47,7 +47,7 @@ def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> N
     ):
         assert fragment in text.plain
     palette = PALETTES.get(name)
-    header = text.get_style_at_offset(console, text.plain.index('CLAI 2.0'))
+    header = text.get_style_at_offset(console, text.plain.index('Pax'))
     assert header.color == Color.parse(theme.LITHIUM)
     assert header.bgcolor == (Color.parse(palette.bg) if palette is not None else None)
     with theme.use(lambda: name):

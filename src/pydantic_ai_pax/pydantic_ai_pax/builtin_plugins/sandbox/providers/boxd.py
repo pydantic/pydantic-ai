@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 KEY_NAME = 'BOXD_API_KEY'
 
 SECRET_PREFIX = 'CLAI_GITHUB_'
-"""How `delete` tells CLAI's GitHub secrets from the user's others."""
+"""How `delete` tells Pax's GitHub secrets from the user's others."""
 
 _SCOPE = 'private-unattached'
 
@@ -52,7 +52,7 @@ class BoxdProvider:
 
     def missing(self) -> str | None:
         if find_spec('boxd') is None:
-            return "boxd support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[boxd]'."
+            return "boxd support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[boxd]'."
         if saved_key(KEY_NAME) is None:
             return f'Add your boxd API key in /keys as {KEY_NAME}. Make one with boxd api-keys create.'
         return None
@@ -119,7 +119,7 @@ class BoxdProvider:
         client = self._client()
         try:
             await BoxdSandbox[None](client=client).destroy(ref)
-            # A secret outlives its machine and only the machine named it, so every GitHub secret of CLAI's that
+            # A secret outlives its machine and only the machine named it, so every GitHub secret of Pax's that
             # no machine names goes: this machine's, and any whose machine boxd deleted itself, such as on an idle
             # timer. Another `/sandbox boxd` caught between making its secret and its machine fails, as boxd
             # refuses a machine naming a missing secret.

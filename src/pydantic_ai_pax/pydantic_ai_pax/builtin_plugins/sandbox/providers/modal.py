@@ -4,7 +4,7 @@ Modal's network has no proxy that could sign requests, so `give_github_login` wr
 sandbox's home, and it goes when the sandbox does. A Modal sandbox lives at most 24 hours, and cannot be
 paused: then Modal ends it, and its files with it.
 
-CLAI uses Modal's own login (`modal token new`, `~/.modal.toml`, or `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`),
+Pax uses Modal's own login (`modal token new`, `~/.modal.toml`, or `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`),
 not `/keys`: a client from other credentials opens a connection when it is built, and `reopen` may not wait for
 one, while the harness backend resolves Modal's own client on first use.
 """
@@ -30,7 +30,7 @@ class ModalProvider:
 
     def missing(self) -> str | None:
         if find_spec('modal') is None:
-            return "Modal support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[modal]'."
+            return "Modal support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[modal]'."
         # Checked without importing Modal, which reads its config file as it loads; a file without a token
         # fails at create with Modal's own message.
         config = os.environ.get('MODAL_CONFIG_PATH') or '~/.modal.toml'

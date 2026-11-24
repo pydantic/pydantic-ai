@@ -647,7 +647,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # Rich writes each render to its console's file: the terminal, `os.devnull` for a background agent, or a test's file.
     ('io.TextIOWrapper.write', 'rich/console.py', '_write_buffer'),
     ('io.BufferedWriter.write', 'rich/console.py', '_write_buffer'),
-    # `logging` handlers write each record synchronously, to a stream or to CLAI's telemetry log file.
+    # `logging` handlers write each record synchronously, to a stream or to Pax's telemetry log file.
     ('io.TextIOWrapper.write', 'logging/__init__.py', 'emit'),
     ('io.BufferedWriter.write', 'logging/__init__.py', 'emit'),
     # prompt-toolkit's `FileHistory` reads the input history when a prompt opens, and appends each entry it accepts.
@@ -666,7 +666,7 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # Configuring logfire at session start waits for the instance it replaces to shut down.
     ('threading.Lock.acquire', 'pydantic_ai_pax/builtin_plugins/logfire.py', '__init__'),
     # A module's first import runs its top-level code, which can read files such as its package's metadata, and waits
-    # for the module's lock while another thread, such as CLAI's import warm-up, imports it. The frames belong to
+    # for the module's lock while another thread, such as Pax's import warm-up, imports it. The frames belong to
     # importlib rather than the importing module, so these exemptions apply to every suite, not only `tests/pax`.
     ('io.TextIOWrapper.read', '<frozen importlib._bootstrap>', '_find_and_load'),
     ('os.listdir', '<frozen importlib._bootstrap>', '_find_and_load'),
@@ -760,7 +760,7 @@ BLOCKBUSTER_LIBRARY_SETUP: tuple[tuple[str, str], ...] = (
     # use: `kubernetes_asyncio` reads the kubeconfig and writes its embedded certificates to temporary
     # files synchronously (its exec credential plugins run as asyncio subprocesses and stay covered).
     ('k8s_agent_sandbox/async_k8s_helper.py', '_ensure_initialized'),
-    # Render's SDK reads its own package metadata for the User-Agent of each client it builds. CLAI's
+    # Render's SDK reads its own package metadata for the User-Agent of each client it builds. Pax's
     # `/sandbox render` builds one in its synchronous `reopen`, which cannot offload it, so that the key
     # can come from `/keys`.
     ('render/version.py', 'get_version'),
@@ -778,7 +778,7 @@ def _function_names(path: str) -> tuple[str, ...]:
 
 
 def _blockbuster_packages() -> list[str]:
-    """The shipped packages the detector scans. The harness and CLAI aren't installed in every CI lane (`pydantic-evals`)."""
+    """The shipped packages the detector scans. The harness and Pax aren't installed in every CI lane (`pydantic-evals`)."""
     optional = [
         package
         for package in ('pydantic_ai_harness', 'pydantic_ai_pax')
@@ -1070,6 +1070,9 @@ DEPRECATED_MODELS_IN_RECORDINGS: tuple[str, ...] = (
     # Anthropic, retires 2026-11-30: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-sonnet-4-5',
     'claude-sonnet-4-5-20250929',
+    # Anthropic, retires 2027-01-22: https://github.com/pydantic/pydantic-ai/issues/14036
+    'claude-opus-4-5',
+    'claude-opus-4-5-20251101',
     # Anthropic, no retirement date: https://github.com/pydantic/pydantic-ai/issues/14036
     'claude-mythos-preview',
     # OpenAI, retires 2025-07-14: https://github.com/pydantic/pydantic-ai/issues/14037

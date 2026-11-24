@@ -1191,6 +1191,7 @@ requires-dist = [
     { name = "fastmcp", marker = "extra == 'stackone'", specifier = ">=3.4.5,<5" },
     { name = "genai-prices", specifier = ">=0.0.71" },
     { name = "httpx2", specifier = ">=2.7" },
+    { name = "idna", marker = "extra == 'cdp-browser'", specifier = ">=3.4" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "ipykernel", marker = "python_full_version >= '3.15' and extra == 'ipython'", specifier = ">=6.30.0" },
     { name = "ipykernel", marker = "extra == 'ipython'", specifier = ">=6.29.0" },
@@ -1202,6 +1203,7 @@ requires-dist = [
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "opensandbox", marker = "extra == 'opensandbox'", specifier = ">=1.1.1,<2" },
     { name = "pgtask", marker = "extra == 'pgtask'", specifier = ">=0.2.0,<1" },
+    { name = "pillow", marker = "extra == 'coder'", specifier = ">=12.3.0" },
     { name = "pixeltable", marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'pixeltable'", specifier = ">=0.7.21" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "../../pydantic_ai_slim" },
@@ -1238,9 +1240,10 @@ requires-dist = [
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", extras = ["onnx"], marker = "python_full_version >= '3.11' and python_full_version < '3.15' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
+    { name = "websockets", marker = "extra == 'cdp-browser'", specifier = ">=14.0" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cdp-browser", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
