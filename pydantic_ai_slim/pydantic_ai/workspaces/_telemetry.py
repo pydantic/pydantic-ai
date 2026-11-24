@@ -98,8 +98,6 @@ def command_span(step: Step) -> AbstractContextManager[Span]:
     return _span(
         'run',
         attributes={'logfire.msg': f'workspace run ({step})', 'pydantic_ai.workspace.command.step': step},
-        # Each step is part of a file operation, where a missing file can be the expected answer.
-        not_errors=(FileNotFoundError,),
     )
 
 

@@ -457,7 +457,8 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         context['tracer'] = settings.tracer if settings is not None else NoOpTracer()
         # The run's flag crossed the wire, but spans go to this worker's tracer, so they record content
         # only if this worker's instrumentation allows it too.
-        if 'trace_include_content' in context:  # pragma: no branch - the default serialize_run_context carries it
+        # The default serialize_run_context always carries the flag.
+        if 'trace_include_content' in context:  # pragma: no branch
             context['trace_include_content'] = (
                 context['trace_include_content'] is True and settings is not None and settings.include_content
             )
@@ -477,14 +478,15 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         """Recover instrumentation from worker configuration, never from the wire."""
         if isinstance(model, InstrumentedModel):
             return model.instrumentation_settings
-        if isinstance(self._agent, Agent):  # pragma: no branch - binding supplies a concrete Agent
-            if isinstance(self._agent.model, InstrumentedModel):
-                return self._agent.model.instrumentation_settings
-            # Core has no public getter for the effective agent/global settings.
-            # Keep that lookup in this compatibility seam instead of duplicating
-            # its precedence or losing Agent.instrument_all's custom provider.
-            return self._agent._resolve_instrumentation_settings()  # pyright: ignore[reportPrivateUsage]
-        return None
+        # Binding supplies a concrete Agent.
+        if not isinstance(self._agent, Agent):  # pragma: no cover
+            return None
+        if isinstance(self._agent.model, InstrumentedModel):
+            return self._agent.model.instrumentation_settings
+        # Core has no public getter for the effective agent/global settings.
+        # Keep that lookup in this compatibility seam instead of duplicating
+        # its precedence or losing Agent.instrument_all's custom provider.
+        return self._agent._resolve_instrumentation_settings()  # pyright: ignore[reportPrivateUsage]
 
     def _resolve_model(self, context: Mapping[str, Any]) -> Model | None:
         """Resolve the serialized model ID against this worker's registry.

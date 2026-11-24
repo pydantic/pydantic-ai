@@ -20,7 +20,15 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.render import RenderWorkflows
 from tests.harness.conftest import Instrumented
 
-from .conftest import P, R, RecordingTaskContext, json_round_trip
+from .conftest import (
+    P,
+    R,
+    RecordingTaskContext,
+    TaskBoundary,
+    json_round_trip,
+    rewrite_tool_context,
+    run_agent_in_task,
+)
 
 
 @pytest.mark.parametrize('instrumentation', ['disabled', 'agent', 'global', 'model'])
@@ -80,8 +88,6 @@ async def test_child_tool_tracer_uses_worker_instrumentation(instrumentation: st
 
 @pytest.mark.parametrize('instrumented', [False, True])
 async def test_wire_tracer_flag_uses_only_worker_configuration(instrumented: bool) -> None:
-    from .conftest import TaskBoundary, rewrite_tool_context, run_agent_in_task
-
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -161,8 +167,6 @@ async def test_child_workspace_calls_are_traced_on_the_worker(tmp_path: Path, in
 @pytest.mark.parametrize('worker_content', [False, True])
 async def test_workspace_content_needs_the_workers_content_setting_too(tmp_path: Path, worker_content: bool) -> None:
     """A serialized context asking for content can't turn it on for a worker configured without it."""
-    from .conftest import TaskBoundary, rewrite_tool_context, run_agent_in_task
-
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -189,8 +193,6 @@ async def test_workspace_content_needs_the_workers_content_setting_too(tmp_path:
 @pytest.mark.parametrize('worker_content', [False, True])
 async def test_a_task_records_content_only_if_the_worker_allows_it(worker_content: bool) -> None:
     """A run that allows content still records none in a task whose worker doesn't, since the task's spans go to it."""
-    from .conftest import TaskBoundary, rewrite_tool_context, run_agent_in_task
-
     provider = TracerProvider()
     settings = InstrumentationSettings(tracer_provider=provider, include_content=worker_content)
     model = TestModel()
