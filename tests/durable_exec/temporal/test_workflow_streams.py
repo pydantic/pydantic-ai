@@ -822,7 +822,8 @@ async def _redact(ctx: RunContext[object], event: EnqueuedMessagesEvent) -> Enqu
 
 _continue_as_new_durability = TemporalDurability(
     activity_config=BASE_ACTIVITY_CONFIG,
-    event_stream_topic=TOPIC,
+    # The checks stay off the topic: their listeners running exactly once is what the tests count.
+    event_stream_topic=WorkflowStreamTopic(TOPIC, events=lambda event: not isinstance(event, _RequestCheckEvent)),
     continue_as_new=_continue_as_new_with_stream,
 )
 _continue_as_new_agent = Agent(
@@ -962,7 +963,8 @@ async def test_continue_as_new_publishes_events_as_their_listeners_left_them(
     """Buffered events reach their listeners before they're published ahead of `continue_as_new`, each exactly once.
 
     So the topic carries what a listener that redacts the event left, whether or not the run then continues, and
-    an immediately dispatched event, whose listeners already ran when it was emitted, isn't dispatched again.
+    an immediately dispatched event, whose listeners already ran when it was emitted, isn't dispatched again. The
+    topic leaves those out, so the filter applies to what's published ahead too.
     """
     _request_checks.clear()
     _listened.clear()
@@ -981,22 +983,7 @@ async def test_continue_as_new_publishes_events_as_their_listeners_left_them(
     assert _enqueued_prompts(received) == [['[redacted]']]
     # One check per model request: the successor makes the third.
     assert len(_request_checks) == (3 if continues_as_new else 2)
-    assert _kinds(received) == [
-        '_RequestCheckEvent',
-        'PartStartEvent',
-        'PartEndEvent',
-        'FunctionToolCallEvent',
-        'FunctionToolResultEvent',
-        'EnqueuedMessagesEvent',
-        '_RequestCheckEvent',
-        *(['_RequestCheckEvent'] if continues_as_new else []),
-        'PartStartEvent',
-        'FinalResultEvent',
-        'PartDeltaEvent',
-        'PartDeltaEvent',
-        'PartEndEvent',
-        'AgentRunResultEvent',
-    ]
+    assert _kinds(received) == _CONTINUE_AS_NEW_ENQUEUE_KINDS
 
 
 async def test_continue_as_new_replays_a_history_recorded_without_publishing_buffered_events(
