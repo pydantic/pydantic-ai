@@ -275,6 +275,8 @@ Custom evaluators must:
 2. Inherit from `Evaluator`
 3. Be passed to both `to_file()` and `from_file()`
 
+A file saves only the evaluator's `__init__` arguments. A field declared with `field(init=False)` is left out, and `__post_init__` or the field's default rebuilds it on load. If a hand-written `__init__` takes the field by name, the file keeps it. If it takes `*args`, `**kwargs` or a parameter that names no field, the file keeps every field.
+
 [Function evaluators](../evaluators/custom.md#saving-function-evaluators) are saved under the function's name and passed in the same `custom_evaluator_types` list as classes. Only a plain function defined with `def` can be saved: a lambda, bound method, `functools.partial` or other callable has no name that identifies it, so `to_file()` raises an error for a dataset that uses one.
 
 ### Complete Example
@@ -402,7 +404,7 @@ evaluators:
 evaluators:
 - IsInstance: str
 - Contains: "required text"
-- MaxDuration: 2.0
+- MaxDuration: 2.0  # seconds, or an ISO-8601 duration string like PT5S
 ```
 
 The short form passes its value as the first positional argument, so a keyword-only parameter uses the dict form even when it is the only one:
@@ -429,7 +431,7 @@ evaluators:
     minimum: 4
 ```
 
-The short form reads a mapping with string keys as keyword arguments, so a single parameter whose value is such a mapping, like a `dict` or a Pydantic model, uses the dict form too.
+The short form reads a mapping with string keys as keyword arguments, so a value that is such a mapping, like a `dict` or a Pydantic model, goes in the dict form under its parameter's name, as in `Equals: {value: {a: 1}}`.
 
 ### 3. Multiple Parameters (Dict Form)
 

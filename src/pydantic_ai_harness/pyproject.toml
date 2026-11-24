@@ -53,7 +53,9 @@ code-mode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{
 codemode = ["pydantic-ai-slim[duckduckgo]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}", "pydantic-monty>=1.5.0,<2"]
 # Runs model-written code in a local Jupyter kernel; see the IPython Code Mode docs before enabling it.
 # `jupyter-client` 8.6.3 is the first to import without a `DeprecationWarning` on Python 3.13+.
-ipython = ["ipykernel>=6.29.0", "jupyter-client>=8.6.3"]
+# `ipykernel` 6.30.0 is the first to start on Python 3.15: older releases call `datetime.strptime('1', '%d')`
+# at import, which 3.15 rejects. `python_version`, unlike `python_full_version`, also matches 3.15 pre-releases.
+ipython = ["ipykernel>=6.29.0", "ipykernel>=6.30.0 ; python_version >= '3.15'", "jupyter-client>=8.6.3"]
 researcher = ["pydantic-ai-slim[duckduckgo,web-fetch]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 dbos = ["pydantic-ai-slim[dbos]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
@@ -62,10 +64,16 @@ logfire = ["logfire>=4.31.0", "pydantic-ai-slim[spec]=={{ major }}.{{ minor }}.{
 render = ["render>=1.6.0"]
 modal = ["modal>=1.5.2"]
 e2b = ["e2b>=2.48.0"]
+# 1.0.11, the newest release, is the one the backend is verified against: its `get_sandbox` fails at once for a
+# missing claim instead of waiting for it. 1.0.9 was the first with the streaming
+# `sandbox.commands.start()` (its `grpc` extra) the backend runs every command through. Capped below 2, the SDK's
+# next major.
+kubernetes = ["k8s-agent-sandbox[async,grpc]>=1.0.11,<2"]
 sprites = ["sprites-py>=0.7.0,<0.8"]
-# boxd's SDK is on 0.x, where a minor release can change the API, so cap per minor. 0.2.20 added
-# `machines.fs` and an `AuthenticationError` that means only refused or missing credentials.
-boxd = ["boxd>=0.2.20,<0.3"]
+# boxd's SDK is on 0.x, where a minor release can change the API, so cap per minor. 0.3.3 added
+# `replace_in` on `secrets.set`, which limits where boxd's proxy swaps a secret into a request
+# (https://github.com/pydantic/pydantic-ai/issues/14230).
+boxd = ["boxd>=0.3.3,<0.4"]
 # 1.1.1 is the oldest SDK the backend is verified against; 2.x may change the API.
 opensandbox = ["opensandbox>=1.1.1,<2"]
 # Daytona's current SDK line is 0.x; the older 1.0.1 and the 2.0 pre-release are other APIs.
@@ -96,7 +104,7 @@ playwright = ["idna>=3.4", "playwright>=1.61.0"]
 # FastMCP 3 resolves `beartype` 0.22 (via `py-key-value-aio`), which imports `typing.no_type_check_decorator` (removed in 3.15).
 # The beartype line is removable once beartype 0.23.0 final is released (tracked in #9455):
 # https://github.com/beartype/beartype/issues/618
-stackone = ["fastmcp>=3.4.5,<4", "beartype>=0.23.0rc2 ; python_version >= '3.15'", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+stackone = ["fastmcp>=3.4.5,<5", "beartype>=0.23.0rc2 ; python_version >= '3.15'", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 ordinal = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 grain = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 day-ai = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
@@ -112,7 +120,7 @@ prompt-injection-defender-ml = [
 ]
 github = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 slack = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-coder = ["json-repair>=0.58.0", "ripgrep==14.1.0 ; sys_platform != 'android'"]
+coder = ["json-repair>=0.58.0", "pillow>=12.3.0", "ripgrep==14.1.0 ; sys_platform != 'android'"]
 repair-tool-arguments = ["json-repair>=0.58.0"]
 logfire-mcp = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 linear = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]

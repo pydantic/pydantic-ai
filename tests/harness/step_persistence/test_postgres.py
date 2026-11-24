@@ -198,6 +198,25 @@ class TestPostgresStepStoreRuns:
         assert {r.run_id for r in await store.list_runs()} == {'first', 'second'}
         assert pool.statements.count('SELECT pg_advisory_xact_lock(hashtext($1))') == 1
 
+    async def test_a_store_on_existing_tables_issues_no_ddl(self, pool: SqlitePool) -> None:
+        """A role without `CREATE` on the schema can use tables that exist."""
+        await PostgresStepStore(pool, media_store=None).list_runs()
+        pool.statements.clear()
+
+        await PostgresStepStore(pool, media_store=None).register_run(RunRecord(run_id='r1'))
+
+        assert await PostgresStepStore(pool, media_store=None).get_run(run_id='r1') is not None
+        assert not any(statement.startswith(('CREATE', 'SELECT pg_advisory')) for statement in pool.statements)
+
+    async def test_a_missing_table_is_created_alongside_existing_ones(self, pool: SqlitePool) -> None:
+        await PostgresStepStore(pool, media_store=None).list_runs()
+        async with pool.acquire() as connection:
+            await connection.execute('DROP TABLE step_persistence_tool_effects')
+
+        await PostgresStepStore(pool, media_store=None).list_runs()
+
+        assert await pool.count_rows('step_persistence_tool_effects') == 0
+
 
 class TestPostgresStepStoreEvents:
     async def test_append_and_list_events(self, pool: SqlitePool) -> None:

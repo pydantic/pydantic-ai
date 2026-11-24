@@ -11,11 +11,22 @@ from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.google import google_cloud_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
+from pydantic_ai.profiles.openai import (
+    OpenAIJsonSchemaTransformer,
+    OpenAIModelProfile,
+    OpenAIReasoningEffort,
+    openai_model_profile,
+)
+from pydantic_ai.profiles.stepfun import stepfun_model_profile
+from pydantic_ai.profiles.tencent import tencent_model_profile
+from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
+from pydantic_ai.profiles.xiaomi import xiaomi_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 try:
@@ -30,6 +41,43 @@ else:
         AsyncHTTPClient as _OpenAIHTTPClient,
         _OpenAISDKProvider,  # pyright: ignore[reportPrivateUsage]
     )
+
+
+_NONE_TO_HIGH: frozenset[OpenAIReasoningEffort] = frozenset({'none', 'low', 'medium', 'high'})
+_LOW_TO_HIGH: frozenset[OpenAIReasoningEffort] = frozenset({'low', 'medium', 'high'})
+_NONE_OR_HIGH: frozenset[OpenAIReasoningEffort] = frozenset({'none', 'high'})
+_NONE_TO_HIGH_WITH_MINIMAL: frozenset[OpenAIReasoningEffort] = frozenset({'none', 'minimal', 'low', 'medium', 'high'})
+_EVERY_EFFORT: frozenset[OpenAIReasoningEffort] = frozenset(
+    {'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}
+)
+
+_OPEN_WEIGHT_THINKING_VENDORS = frozenset({'nvidia', 'stepfun', 'tencent', 'thinkingmachines', 'xiaomi'})
+
+_OPEN_WEIGHT_REASONING_EFFORTS: dict[str, frozenset[OpenAIReasoningEffort]] = {
+    'nvidia/nemotron-3-ultra-550b-a55b': _NONE_TO_HIGH,
+    'nvidia/nemotron-3.5-lightning': _NONE_TO_HIGH,
+    'nvidia/nemotron-3.5-lightning-free': _NONE_TO_HIGH,
+    'nvidia/nemotron-3.5-super-vl': _NONE_TO_HIGH,
+    'stepfun/step-3.7-flash': _LOW_TO_HIGH,
+    'stepfun/step-5-preview': _LOW_TO_HIGH,
+    'tencent/hy3': frozenset({'none', 'low', 'high'}),
+    'tencent/hy4': _NONE_OR_HIGH,
+    'tencent/hy4-flash': _NONE_OR_HIGH,
+    'tencent/hy4-preview': _NONE_OR_HIGH,
+    'thinkingmachines/inkling': _EVERY_EFFORT,
+    'thinkingmachines/inkling-small': _EVERY_EFFORT,
+    'xiaomi/mimo-v2.6-flash': _NONE_TO_HIGH_WITH_MINIMAL,
+    'xiaomi/mimo-v2.6-pro': _NONE_TO_HIGH_WITH_MINIMAL,
+    'xiaomi/mimo-v2.6-pro-ultraspeed': _NONE_TO_HIGH_WITH_MINIMAL,
+}
+"""The efforts Vercel's model catalog (`reasoning_options` at https://ai-gateway.vercel.sh/v1/models) lists for the
+open-weight thinking families' models.
+
+Vercel's docs don't say what it does with an effort a model doesn't list, and ask for "a value supported by the
+model's catalog entry" (https://vercel.com/docs/ai-gateway/models-and-providers/reasoning), so `thinking` resolves to
+the lowest listed effort at or above the requested level, else the highest. A family model missing here, such as
+Nemotron 3 Super, for which the catalog lists no reasoning controls, gets no `reasoning_effort` at all.
+"""
 
 
 class VercelProvider(_OpenAISDKProvider):
@@ -56,9 +104,15 @@ class VercelProvider(_OpenAISDKProvider):
             'deepseek': deepseek_model_profile,
             'groq': groq_model_profile,
             'mistral': mistral_model_profile,
+            'moonshotai': moonshotai_model_profile,
+            'nvidia': nvidia_model_profile,
             'openai': openai_model_profile,
-            'vertex': google_model_profile,
+            'stepfun': stepfun_model_profile,
+            'tencent': tencent_model_profile,
+            'thinkingmachines': thinkingmachines_model_profile,
+            'vertex': google_cloud_model_profile,
             'xai': grok_model_profile,
+            'xiaomi': xiaomi_model_profile,
             'zai': _glm_5_3_schema_profile,
         }
 
@@ -72,6 +126,9 @@ class VercelProvider(_OpenAISDKProvider):
         provider, model_name = model_name.split('/', 1)
         if provider in provider_to_profile:
             profile = provider_to_profile[provider](model_name)
+        if provider in _OPEN_WEIGHT_THINKING_VENDORS and profile is not None:
+            reasoning_efforts = _OPEN_WEIGHT_REASONING_EFFORTS.get(f'{provider}/{model_name}', frozenset())
+            profile = merge_profile(profile, OpenAIModelProfile(openai_reasoning_efforts=reasoning_efforts))
 
         # As VercelProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly

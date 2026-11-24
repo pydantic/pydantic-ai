@@ -58,6 +58,8 @@ class ReasoningCase:
 
     efforts: tuple[str, ...] | None = None
     """The `reasoning.effort` values the model accepts, where they're pinned."""
+    chat_function_tools_require_reasoning_off: bool = False
+    """Chat Completions rejects function tools while reasoning is on (verified live, 2026-11)."""
 
 
 # The `enabled_by_default` and `can_be_disabled` cells were verified against the live Responses API
@@ -199,8 +201,8 @@ REASONING_CASES = [
         supports_max_reasoning_effort=True,
         supports_context=True,
     ),
-    # gpt-6-astra and gpt-6.1-sol: reason by default with no `effort='none'`; carry over
-    # `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
+    # gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra: reason by default with no `effort='none'`;
+    # carry over `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
     ReasoningCase(
         model='gpt-6-astra',
         enabled_by_default=True,
@@ -209,6 +211,7 @@ REASONING_CASES = [
         supports_max_reasoning_effort=True,
         supports_context=True,
         efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-6.1-sol',
@@ -218,6 +221,27 @@ REASONING_CASES = [
         supports_max_reasoning_effort=True,
         supports_context=True,
         efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.2-sol',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.2-astra',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-6-sol',
@@ -227,6 +251,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-6-luna',
@@ -236,6 +261,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-6.1-terra',
@@ -245,6 +271,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     # no reasoning
     ReasoningCase(model='gpt-5-chat'),
@@ -280,6 +307,13 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('supports_thinking', False) is supports_reasoning
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
     assert profile.get('openai_reasoning_efforts') == (None if case.efforts is None else frozenset(case.efforts))
+
+    # OpenAI-only, verified live on the GPT-6 families; gateways reuse the shared profile unverified.
+    assert profile.get('openai_chat_function_tools_require_reasoning_off', False) is False
+    assert (
+        provider_profile.get('openai_chat_function_tools_require_reasoning_off', False)
+        is case.chat_function_tools_require_reasoning_off
+    )
 
 
 def test_openai_compatible_endpoints_fall_back_from_max_effort():

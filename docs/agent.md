@@ -1230,9 +1230,22 @@ A run that reaches its `request_limit` raises instead of returning output, even 
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, RunContext, SystemPromptPart, ToolDefinition, UsageLimits
+from pydantic_ai import (
+    Agent,
+    InstructionCapabilityPart,
+    OperatorSource,
+    OperatorText,
+    RunContext,
+    ToolDefinition,
+    UsageLimits,
+)
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import ModelRequestContext
+
+
+@dataclass(kw_only=True)
+class WrapUpPart(InstructionCapabilityPart, namespace='wrap_up'):
+    pass
 
 
 def requests_left(ctx: RunContext[Any]) -> int | None:
@@ -1252,9 +1265,12 @@ class WrapUpNearRequestLimit(AbstractCapability[Any]):
         left = requests_left(ctx)
         if left is not None and left <= self.warn_at:
             ctx.enqueue(  # (2)!
-                SystemPromptPart(
-                    f'{left} model request(s) left in this run: '
-                    'produce your final output now, using what you have.',
+                WrapUpPart(
+                    content=OperatorText(
+                        f'{left} model request(s) left in this run: '
+                        'produce your final output now, using what you have.'
+                    ),
+                    source=OperatorSource(),
                     scope='request',
                 )
             )
@@ -1284,10 +1300,12 @@ async def main():
 ```
 
 1. A request is counted when its response arrives, so `ctx.usage.requests` doesn't include the request being prepared, and `left` is `1` on the last request the limit allows. With no `usage_limits`, a run gets the default [`UsageLimits`][pydantic_ai.usage.UsageLimits], whose `request_limit` is 50.
-2. A [request-scoped prompt](message-history.md#request-scoped-system-prompts) is shown to the model with this request only, so each request sees the current count and the prompt cache survives the changing text.
+2. A [capability part](capabilities/custom.md#capability-parts) in the system voice, [request-scoped](message-history.md#request-scoped-system-prompts): it's shown to the model with this request only, so each request sees the current count and the prompt cache survives the changing text.
 3. [`prepare_tools`](capabilities/custom.md#tool-preparation) receives function tools only. Output tools stay available, so an agent with a structured `output_type` can still call its output tool, and one with text output answers in text.
 
 If the model's last output fails validation, no request is left for the retry and the run still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded].
+
+Pydantic AI Harness ships this as [Wrap Up At Limits](harness/wrap-up-at-limits.md), which also wraps up at the tool-call and token limits.
 
 ##### Limiting per-request input size
 
@@ -1310,7 +1328,7 @@ except UsageLimitExceeded as e:
     """
 ```
 
-By default the limit is checked against the provider-reported input tokens after the response, so the oversized request is still sent and billed (matching `input_tokens_limit`). Set `count_tokens_before_request=True` to run a token-counting pass and enforce the limit before the request is sent.
+By default the limit is checked against the provider-reported input tokens after the response, so the oversized request is still sent and billed (matching `input_tokens_limit`). Set `count_tokens_before_request=True` to run a token-counting pass and enforce the limit before the request is sent. Under [durable execution](durable_execution/overview.md), the count runs in a durable unit of its own ahead of the request, so a recovered run reuses the recorded count instead of counting again.
 
 ##### Capping run cost
 
@@ -2337,7 +2355,9 @@ assert any(
 
 ## Recovering a failed run's messages {#recovering-a-failed-run}
 
-A run that raises, whether with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], another [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], or an exception from one of your tools, returns no result, but the work it did before the error is still in its messages. The exceptions don't carry those messages, except [`RunCancelled`](#message-history-after-cancellation). To keep them, wrap the run in [`capture_run_messages`][pydantic_ai.capture_run_messages], which records them as the run goes, including the [interrupted](#model-errors) request or response of the step that failed.
+A run that raises, whether with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], another [`AgentRunError`][pydantic_ai.exceptions.AgentRunError], or an exception from one of your tools, returns no result, but the work it did before the error is still in its messages. To keep them, wrap the run in [`capture_run_messages`][pydantic_ai.capture_run_messages], which records them as the run goes, including the [interrupted](#model-errors) request or response of the step that failed.
+
+To store the failed turn in a [`ConversationStore`](persistence.md#using-a-conversation-store), use its conversation instead of its messages: an [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] carries it as [`conversation`][pydantic_ai.exceptions.AgentRunError.conversation], and [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation] captures it for any exception, including one from a tool. Unlike the captured messages, it carries the conversation's revision and knows which messages are new, so `await store.save(...)` appends just the failed turn.
 
 To continue from where the run stopped instead of starting over, pass the captured messages as `message_history` and no new prompt. The new run picks up from the last request, so tool calls that already ran, and any side effects they had, aren't repeated:
 
@@ -2374,7 +2394,7 @@ print(answer('What is the status of order 1234?'))
 
 _(This example is complete, it can be run "as is")_
 
-The resumed run is a new run: its usage, and the [usage limits](#usage-limits) checked against it, start from zero. When a token or cost limit is crossed, the response that crossed it is kept in the captured messages with `state='interrupted'`, so the resumed run doesn't request it again (see [usage limits](#usage-limits)), unless a hook rejected that response with [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] ([#11425](https://github.com/pydantic/pydantic-ai/issues/11425)). To resume later or in another process, [store the messages](message-history.md) and load them back first.
+The resumed run is a new run: given `message_history`, its usage, and the [usage limits](#usage-limits) checked against it, start from zero. Given `conversation=error.conversation` instead, it carries the conversation's usage forward, so its limits are checked against the total of both runs. When a token or cost limit is crossed, the response that crossed it is kept in the captured messages with `state='interrupted'`, so the resumed run doesn't request it again (see [usage limits](#usage-limits)), unless a hook rejected that response with [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] ([#11425](https://github.com/pydantic/pydantic-ai/issues/11425)). To resume later or in another process, [store the messages](message-history.md) and load them back first.
 
 ## Agent Specs
 

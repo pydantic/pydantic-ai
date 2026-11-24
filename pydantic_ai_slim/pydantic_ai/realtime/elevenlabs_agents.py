@@ -37,7 +37,7 @@ import json
 import re
 import time
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Generator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Generator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, assert_never, cast
@@ -57,7 +57,7 @@ except ImportError as _import_error:  # pragma: no cover
         '`pip install "pydantic-ai-slim[elevenlabs-agents-realtime]"`'
     ) from _import_error
 
-from .. import _utils
+from .. import _model_errors, _utils
 from .._http import legacy_httpx
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 from ..exceptions import ModelHTTPError, UserError
@@ -105,6 +105,7 @@ from ._lifecycle import (
 )
 from ._utils import (
     inject_trace_context,
+    read_rejected_upgrade,
     reject_forced_tool_choice,
     require_pcm_audio,
     resolve_advertised_tools,
@@ -799,15 +800,23 @@ def _map_rest_errors(model_name: str) -> Generator[None]:
         raise RealtimeError(model_name=model_name, message=f'Could not reach the ElevenLabs API: {e}') from e
 
 
+def _http_status_error(
+    model_name: str, status_code: int, body: str | None, headers: Mapping[str, str]
+) -> ModelHTTPError:
+    """The error for an ElevenLabs error response, in the category its HTTP status gives a regular request."""
+    return ModelHTTPError.for_category(
+        _model_errors.http_status_category(status_code, body),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+    )
+
+
 def _raise_for_status(response: httpx.Response | httpx2.Response, model_name: str) -> None:
     """Raise a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] on a non-2xx preflight response."""
     if not response.is_success:
-        raise ModelHTTPError(
-            status_code=response.status_code,
-            model_name=model_name,
-            body=response.text.strip() or None,
-            headers=response.headers,
-        )
+        raise _http_status_error(model_name, response.status_code, response.text.strip() or None, response.headers)
 
 
 class _ElevenLabsSchemaTransformer(JsonSchemaTransformer):
@@ -1069,17 +1078,10 @@ def _map_connect_errors(model_name: str) -> Generator[None]:
         raise RealtimeError(model_name=model_name, message=str(e)) from e
     except websockets.InvalidStatus as e:
         # The WebSocket upgrade was rejected (expired signed URL, unknown agent); it carries a real
-        # HTTP status, so it maps to `ModelHTTPError` exactly like a regular request.
-        response = e.response
-        body = response.body.decode(errors='replace') if response.body else response.reason_phrase
-        raise ModelHTTPError(
-            status_code=response.status_code,
-            model_name=model_name,
-            body=body,
-            # Keep the rejected upgrade's headers, exactly like the REST path: `retry_after` on a
-            # 429 reads them.
-            headers=dict(response.headers),
-        ) from e
+        # HTTP status, so it raises what a REST error response with that status raises. Its headers are
+        # kept, exactly like the REST path's: `retry_after` on a 429 reads them.
+        body, headers = read_rejected_upgrade(e)
+        raise _http_status_error(model_name, e.response.status_code, body, headers) from e
     except websockets.WebSocketException as e:
         raise RealtimeError(model_name=model_name, message=f'WebSocket error during realtime handshake: {e}') from e
     except OSError as e:
@@ -1092,7 +1094,7 @@ async def _expect_handshake(ws: ClientConnection, *, timeout: float) -> _Convers
     deadline = time.monotonic() + timeout
     while True:
         try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
+            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError:
             raise _HandshakeError("timed out waiting for a 'conversation_initiation_metadata' event") from None
         if not isinstance(raw, str):
@@ -1476,6 +1478,17 @@ class ElevenLabsAgentsRealtimeModel(RealtimeModel):
         return restricted
 
     # --- Configuration assembly -------------------------------------------------------------------
+
+    def _recorded_model_settings(self, model_settings: RealtimeModelSettings) -> RealtimeModelSettings:
+        """The settings that instrumentation records, without the custom-LLM request body or the `secret__` dynamic variables."""
+        recorded = ElevenLabsAgentsRealtimeModelSettings(**model_settings)
+        recorded.pop('elevenlabs_agents_custom_llm_extra_body', None)
+        if dynamic_variables := recorded.get('elevenlabs_agents_dynamic_variables'):
+            if kept := {name: value for name, value in dynamic_variables.items() if not name.startswith('secret__')}:
+                recorded['elevenlabs_agents_dynamic_variables'] = kept
+            else:
+                del recorded['elevenlabs_agents_dynamic_variables']
+        return recorded
 
     def _check_settings(self, settings: ElevenLabsAgentsRealtimeModelSettings) -> None:
         """Reject shared settings whose intent the agent WebSocket cannot honor."""
@@ -1981,18 +1994,22 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
             if read is not None:
                 await _utils.cancel_and_drain(read)
 
+    @staticmethod
+    def _parse_error(error: ValueError) -> RealtimeSessionErrorEvent:
+        """The recoverable error a malformed frame makes: the session stays usable, as on the OpenAI provider.
+
+        `ValueError` covers bad JSON, pydantic validation of a known frame's payload, and a bad base64 audio payload.
+        """
+        return RealtimeSessionErrorEvent(message=f'Failed to parse {_PROVIDER_LABEL} event: {error}', recoverable=True)
+
     async def _read_frame(self, raw: str | bytes) -> RealtimeFrame | None:
         """The frame one received message makes, or `None` when it makes none."""
         if not isinstance(raw, str):
             return None
         try:
-            # `ValueError` covers bad JSON, pydantic validation of a known frame's payload, and
-            # a bad base64 audio payload: a malformed frame shouldn't tear down the session
-            # (mirroring the OpenAI provider), so it surfaces as a recoverable error instead.
             events = await self._map_event(_loads_obj(raw))
         except ValueError as e:
-            error = RealtimeSessionErrorEvent(message=f'Failed to parse {_PROVIDER_LABEL} event: {e}', recoverable=True)
-            return self._lifecycle.frame_for([error])
+            return self._lifecycle.frame_for([self._parse_error(e)])
         return self._frame(events) if events or self._cuts else None
 
     def _frame(self, events: list[RealtimeCodecEvent]) -> RealtimeFrame:
@@ -2090,7 +2107,14 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         ended = self._end_calls() if self._calls_open and event_type != 'client_tool_call' else []
         if self._tail is not None and event_type in _TAIL_ENDING_FRAMES:
             ended += self._end_tail()
-        return [*ended, *await self._map_frame(event_type, data)]
+        try:
+            return [*ended, *await self._map_frame(event_type, data)]
+        except ValueError as e:
+            if not ended:
+                raise
+            # What a frame ends follows from its type alone, so a malformed one still ends it: the response is over
+            # by the time its payload fails, and the lifecycle must hear so.
+            return [*ended, self._parse_error(e)]
 
     def _end_calls(self) -> list[RealtimeCodecEvent]:
         """End the response whose tool calls are all in: the agent goes on once their results are."""
@@ -2188,8 +2212,8 @@ class ElevenLabsAgentsRealtimeConnection(RealtimeConnection):
         return self._map_turn_event(event_type, data)
 
     def _map_audio(self, data: dict[str, Any]) -> list[RealtimeCodecEvent]:
-        # Parse (and decode) before marking the response open, so a malformed frame that is
-        # reported as a recoverable error leaves the turn state untouched.
+        # Parse (and decode) before marking the response open, so a malformed payload, reported as a recoverable
+        # error, changes no turn state. (What the frame's type ends still ends: see `_map_event`.)
         payload = _AudioEvent.model_validate(data).audio_event
         # `validate=True` so corrupted base64 raises (a `ValueError` the receive loop reports as
         # a recoverable error) instead of silently decoding to garbage or empty bytes.

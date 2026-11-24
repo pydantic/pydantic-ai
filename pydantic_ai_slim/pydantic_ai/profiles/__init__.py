@@ -2,7 +2,8 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, timedelta
 from textwrap import dedent
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from ..messages import ModelMessage
 
 __all__ = [
+    'ModelDeprecation',
     'ModelProfile',
     'ModelProfileSpec',
     'ToolAdditionMode',
@@ -51,6 +53,24 @@ DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
 
 DEFAULT_THINKING_TAGS: tuple[str, str] = ('<think>', '</think>')
 """Default `(start_tag, end_tag)` pair for parsing thinking content out of text responses."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class ModelDeprecation:
+    """A provider's announced deprecation of a model on its API.
+
+    Set as a model's [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation], it makes each request to the
+    model emit a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning].
+    """
+
+    source_url: str
+    """The provider's announcement of the deprecation."""
+
+    retirement_date: date | None = None
+    """The date the provider stops serving the model, or `None` if it hasn't announced one."""
+
+    replacement: str | None = None
+    """The model the provider recommends instead, or `None` if it names none."""
 
 
 class ModelProfile(TypedDict, total=False):
@@ -106,9 +126,10 @@ class ModelProfile(TypedDict, total=False):
     supports_image_input: bool
     """Whether the model accepts images. Default: `True`.
 
-    The file-input flags (this one, `supports_document_input`, `supported_document_media_types`,
-    `supports_audio_file_input` and `supports_video_input`) say which files can be sent to the model.
-    A model adapter turns off what its message mapping cannot send, whatever the profile says.
+    The file-input flags (this one, `supports_document_input`, `supports_audio_file_input`,
+    `supports_video_input`, and the `supported_*_media_types` sets that narrow each kind to media types)
+    say which files can be sent to the model. A model adapter turns off what its message mapping cannot
+    send, whatever the profile says.
 
     A file a tool returns that the model cannot take is replaced, in the request only, by a note naming
     it: see [Where a returned file is sent](../tools-advanced.md#tool-return-file-provenance). A file in a
@@ -119,6 +140,16 @@ class ModelProfile(TypedDict, total=False):
     Shipped profiles turn these off where an adapter or a model family is known not to take the file; `True`
     means nothing says otherwise, not that the model was checked. A text-only model served through an adapter
     that sends images (a text-only Llama on vLLM, say) needs `profile=ModelProfile(supports_image_input=False)`.
+    """
+
+    supported_image_media_types: frozenset[str]
+    """The image media types the model accepts, when it accepts images at all. Default: unset, so images are
+    judged by `supports_image_input` alone.
+
+    When set, an image of any other media type, such as `image/heic`, counts as one the model can't read.
+    Profiles set it where a provider was seen to reject other types: Anthropic and OpenAI read JPEG, PNG, GIF
+    and WebP, for example, while Gemini also reads HEIC. See `supports_image_input` for how the file-input
+    flags are used.
     """
 
     supports_document_input: bool
@@ -145,10 +176,26 @@ class ModelProfile(TypedDict, total=False):
     `supports_image_input` for how the file-input flags are used.
     """
 
+    supported_audio_media_types: frozenset[str]
+    """The audio media types the model accepts, when it accepts audio files at all. Default: unset, so audio
+    is judged by `supports_audio_file_input` alone.
+
+    When set, audio of any other media type, such as `audio/flac` on OpenAI Chat Completions, counts as audio
+    the model can't read. See `supports_image_input` for how the file-input flags are used.
+    """
+
     supports_video_input: bool
     """Whether the model accepts video. Default: `True`.
 
     See `supports_image_input` for how the file-input flags are used.
+    """
+
+    supported_video_media_types: frozenset[str]
+    """The video media types the model accepts, when it accepts video at all. Default: unset, so video is
+    judged by `supports_video_input` alone.
+
+    When set, video of any other media type counts as video the model can't read. See `supports_image_input`
+    for how the file-input flags are used.
     """
 
     supports_inline_system_prompts: bool
@@ -348,7 +395,8 @@ class ModelProfile(TypedDict, total=False):
 
     DeepSeek's V4 models, for example, only accept forcing while thinking is off. When False and the request
     thinks, a forced tool choice is handled as if `supports_forced_tool_choice` were False. Whether the request
-    thinks accounts for `thinking_enabled_by_default`.
+    thinks accounts for `thinking_enabled_by_default`. On OpenRouter routes other than Anthropic's, which return a
+    400 for it, an explicit forcing raises a `ModelRequestRejectedError` instead of a `UserError`.
     """
 
     forced_tool_choice_disables_thinking: bool
@@ -422,6 +470,18 @@ class ModelProfile(TypedDict, total=False):
     Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
     """
 
+    deprecation: ModelDeprecation | None
+    """The provider's deprecation of this model on the API the model class sends requests to. Default: `None`.
+
+    When set, each request to the model emits a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning].
+    Set by [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider] and
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] from the providers' deprecation pages, except
+    where the model is served by another platform with a schedule of its own: the Amazon Bedrock and Google Cloud
+    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set it to
+    `None` to stop the warning for one model, or to a `ModelDeprecation` of your own for a model you serve elsewhere.
+    See [Deprecated models](../models/overview.md#deprecated-models).
+    """
+
     tool_call_id_length: int | None
     """The exact length of the ASCII-alphanumeric tool call IDs the model accepts. Default: `None` (any ID).
 
@@ -453,6 +513,18 @@ class ModelProfile(TypedDict, total=False):
     Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel], and set by the
     [Bedrock Mantle](../models/bedrock.md) provider for the GPT-5 models it serves on the Responses API.
+    """
+
+    rejects_unpaired_tool_calls: bool
+    """Whether the API rejects a tool call that has no result, or a tool result that names no call. Default: `False`.
+
+    When set, `Model.prepare_messages` pairs the history it translates from another provider's native tool search: a
+    translated `search_tools` result whose ID names no call takes the ID of the oldest call in its response still
+    waiting for one, and a translated call that has no result gets a synthesized interrupted result. It doesn't touch
+    other unanswered tool calls, which the repair every agent run makes already handles. Set by
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider], and by
+    [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] for the `AsyncAnthropic` client. See
+    [Configuring `ToolSearch`](../tools-advanced.md#configuring-toolsearch).
     """
 
     tool_deferral_mode: ToolDeferralMode | None
@@ -589,7 +661,8 @@ DEFAULT_PROFILE: ModelProfile = {
     'tool_deferral_mode': None,
     'tool_addition_mode': None,
 }
-"""Fully populated default `ModelProfile`. Used as the base layer when resolving a model's effective profile."""
+"""Default `ModelProfile`, with a value for every key except the image, audio and video media-type sets, which are
+unset unless a profile knows them. Used as the base layer when resolving a model's effective profile."""
 
 
 ModelProfileSpec: TypeAlias = ModelProfile | Callable[['ModelProfile'], 'ModelProfile']

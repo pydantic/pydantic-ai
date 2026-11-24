@@ -63,11 +63,15 @@ from .. import (
 )
 from .._agent_graph import (
     CallToolsNode,
+    CapturedConversation,
     EndStrategy,
     ModelRequestNode,
     UserPromptNode,
     build_run_context,
+    capture_conversation_of,
+    capture_run_conversation,
     capture_run_messages,
+    end_captured_run,
 )
 from .._cancel import (
     CancellationToken,
@@ -82,6 +86,7 @@ from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
+from .._run_conversation import failed_run_conversation
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -123,6 +128,7 @@ from ..tools import (
     AgentDepsT,
     AgentNativeTool,
     ArgsValidatorFunc,
+    DeferredToolRequests,
     DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
@@ -156,7 +162,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from ..workspaces import UnavailableWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
-from ..workspaces.unavailable import NO_WORKSPACE
+from ..workspaces.unavailable import HOST_WORKSPACE, NO_WORKSPACE
 from ..workspaces.workspace import workspace_layers
 from .abstract import (
     AbstractAgent,
@@ -193,6 +199,7 @@ if TYPE_CHECKING:
 __all__ = (
     'AbstractAgent',
     'Agent',
+    'AgentInstructions',
     'AgentModelSettings',
     'AgentRealtime',
     'AgentRetries',
@@ -210,6 +217,8 @@ __all__ = (
     'UserPromptNode',
     'WrapperAgent',
     'capture_run_messages',
+    'capture_run_conversation',
+    'CapturedConversation',
     'PydanticAIDeprecationWarning',
     'ToolsPrepareFunc',
     'ToolDenied',
@@ -353,6 +362,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:
         await asyncio.wait({_ready_waiter, _wrap.task}, return_when=asyncio.FIRST_COMPLETED)
+        # Inside the `try`: on Python 3.11, draining even a finished `_ready_waiter` yields to the event loop, so a
+        # cancellation can land here after `_do_run` has parked on `_run_done.wait()`, and needs the same cleanup.
+        await _utils.cancel_and_drain(_ready_waiter)
     except BaseException as exc:
         # Unblock `_do_run` before draining, mirroring the streaming handoff: if
         # `before_run`'s durable step absorbed the CancelledError (e.g. Temporal's
@@ -366,8 +378,6 @@ async def _run_lifecycle_hooks(  # noqa: C901
         _run_done.set()
         await _utils.cancel_and_drain(_ready_waiter, _wrap.task)
         raise
-    else:
-        await _utils.cancel_and_drain(_ready_waiter)
 
     # Propagate context vars set by wrap_run/before_run to the caller's task.
     context_tokens: list[tuple[ContextVar[Any], contextvars.Token[Any]]] = []
@@ -891,9 +901,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_workspace: ContextVar[_utils.Option[WorkspaceBackend | WorkspaceRef | Literal['new']]] = (
             ContextVar('_override_workspace', default=None)
         )
-        self._override_root_capability: ContextVar[_utils.Option[CombinedCapability[AgentDepsT]]] = ContextVar(
-            '_override_root_capability', default=None
-        )
+        # The override's root, and the ids of the infrastructure capabilities it injected itself (see
+        # `_override_added_capabilities`).
+        self._override_root_capability: ContextVar[
+            _utils.Option[tuple[CombinedCapability[AgentDepsT], frozenset[int]]]
+        ] = ContextVar('_override_root_capability', default=None)
         self._entered_count = 0
         self._exit_stack = None
         self._entered_model_ids: set[int] = set()
@@ -1629,6 +1641,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_revision=conversation_revision,
             conversation_unsaved=conversation_unsaved,
             conversation_unchecked=conversation_unchecked,
+            conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
             run_id=run_id,
             model=model,
             instructions=instructions,
@@ -1659,6 +1672,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         conversation_revision: str | None = None,
         conversation_unsaved: list[_messages.ModelMessage] | None = None,
         conversation_unchecked: bool = False,
+        conversation_deferred_tool_requests: DeferredToolRequests | None = None,
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1832,6 +1846,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_revision=conversation_revision,
             conversation_unsaved=conversation_unsaved,
             conversation_unchecked=conversation_unchecked,
+            conversation_deferred_tool_requests=conversation_deferred_tool_requests,
         )
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
@@ -2473,6 +2488,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
@@ -2494,6 +2510,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions: The instructions to use instead of the instructions registered with the agent.
                 Note: this also replaces capability-contributed instructions (e.g. from
                 [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]).
+            capabilities: The capabilities to use instead of the agent's configured capabilities. When set,
+                these replace (not merge with) the agent's existing capabilities. To add to the existing
+                set, include them explicitly:
+                `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.
+                On an agent with a durability capability, build the list this way: a list without the bound
+                durability capability raises a `UserError`, and inside a durable workflow or flow, the
+                capabilities the list adds follow the rules for capabilities passed to a run.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.
@@ -2523,18 +2546,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         resolved = self._resolve_spec(spec)
 
-        # A spec capability replaces the agent's root capability for the duration of the
+        # A capability override replaces the agent's root capability for the duration of the
         # override. Build it before resolving an overridden model so custom model IDs can
-        # be preserved for that capability's async, deps-aware resolver.
-        if resolved is not None and resolved.capability is not None:
+        # be preserved for that capability's async, deps-aware resolver. Explicit params take
+        # precedence over spec values.
+        override_capability: CombinedCapability[AgentDepsT] | None = None
+        injected: frozenset[int] = frozenset()
+        if _utils.is_set(capabilities):
+            override_capability, injected = self._bind_override_capabilities(capabilities)
+        elif resolved is not None and resolved.capability is not None:
             override_caps = list(resolved.capability.capabilities)
             _inject_auto_capabilities(override_caps)
             _reject_second_of_a_kind(override_caps)
-            override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps).for_agent(
-                self
-            )
-        else:
-            override_capability = None
+            override_capability = CombinedCapability(override_caps).for_agent(self)
 
         # Apply spec values as defaults where explicit params are not set
         if resolved is not None:
@@ -2625,7 +2649,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Auto-inject infrastructure capabilities since the override replaces
         # (not merges with) the agent's root capability.
         if override_capability is not None:
-            cap_token = self._override_root_capability.set(_utils.Some(override_capability))
+            cap_token = self._override_root_capability.set(_utils.Some((override_capability, injected)))
         else:
             cap_token = None
 
@@ -3116,6 +3140,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
@@ -3139,6 +3164,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -3162,6 +3188,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3226,6 +3253,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3254,6 +3284,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -3283,6 +3314,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
@@ -3306,6 +3338,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -3329,6 +3362,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -3394,6 +3428,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Overrides the agent-level `tool_timeout` if set. Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -3420,6 +3457,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -3501,7 +3539,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _effective_root_capability(self) -> CombinedCapability[AgentDepsT]:
         """Return the override capability when present, otherwise the configured root."""
         override = self._override_root_capability.get()
-        return override.value if override is not None else self._root_capability
+        return override.value[0] if override is not None else self._root_capability
 
     def _startup_banner_details(
         self,
@@ -3567,6 +3605,54 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             base = CombinedCapability([base, self._event_hooks])
         return base, override_cap is not None
 
+    def _bind_override_capabilities(
+        self, capabilities: Sequence[AgentCapability[AgentDepsT]]
+    ) -> tuple[CombinedCapability[AgentDepsT], frozenset[int]]:
+        """Build the root capability `override(capabilities=...)` installs, binding only what the agent hasn't bound.
+
+        Items taken from `root_capability.capabilities` are bound to this agent already, so they pass through;
+        every other item goes through `for_agent`, and so does anything it holds. The agent's own capabilities
+        validate the leaves that pass through, before anything is bound: a durability capability reached any
+        other way would be bound again and register its durable units a second time.
+
+        Also returns the ids of the infrastructure capabilities injected for what the list leaves out.
+        """
+        override_caps = wrap_capability_funcs(capabilities)
+        supplied = len(override_caps)
+        _inject_auto_capabilities(override_caps)
+        _reject_second_of_a_kind(override_caps)
+        configured = {id(capability) for capability in self._root_capability.capabilities}
+        # Private on `AbstractCapability` for the same reason as `_validate_runtime_capabilities`.
+        self._root_capability._validate_override_capabilities(  # pyright: ignore[reportPrivateUsage]
+            [
+                leaf
+                for capability in override_caps
+                if id(capability) in configured
+                for leaf in leaf_capabilities(capability)
+            ]
+        )
+        bound = [
+            capability if id(capability) in configured else capability._keep_authority(capability.for_agent(self))  # pyright: ignore[reportPrivateUsage]
+            for capability in override_caps
+        ]
+        # `_inject_auto_capabilities` appends, so the injected items are the tail.
+        injected = frozenset(id(leaf) for capability in bound[supplied:] for leaf in leaf_capabilities(capability))
+        return CombinedCapability(bound), injected
+
+    def _override_added_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
+        """The leaves an active capability override holds that the agent wasn't constructed with.
+
+        A durable engine registered nothing for them, so `_resolve_run_capabilities` validates them with the
+        run's own capabilities. The infrastructure the override injected for what its list left out isn't an
+        addition; a `ToolSearch` the list supplies itself is, as it would be passed to a run.
+        """
+        override = self._override_root_capability.get()
+        if override is None:
+            return []
+        root, injected = override.value
+        configured = {id(leaf) for leaf in leaf_capabilities(self._root_capability)}
+        return [leaf for leaf in leaf_capabilities(root) if id(leaf) not in configured and id(leaf) not in injected]
+
     def _bind_run_capabilities(
         self, extra_capabilities: list[AbstractCapability[AgentDepsT]]
     ) -> list[AbstractCapability[AgentDepsT]]:
@@ -3578,7 +3664,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         unbound, a silent divergence. KEEP the two call sites in sync.
         """
         _reject_second_of_a_kind([self._effective_root_capability(), *extra_capabilities])
-        return [capability.for_agent(self) for capability in extra_capabilities]
+        return [capability._keep_authority(capability.for_agent(self)) for capability in extra_capabilities]  # pyright: ignore[reportPrivateUsage]
 
     async def _resolve_model_selection(
         self,
@@ -3769,7 +3855,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # durable-exec integrations rely on this for deterministic replay). Composing from the resolved
         # pieces yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
-        resolved_layers = await _utils.gather(*(cap.for_run(ctx) for cap in run_layers))
+        resolved_layers = await _utils.gather(
+            *(cap._for_run_keeping_authority(ctx) for cap in run_layers)  # pyright: ignore[reportPrivateUsage]
+        )
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
@@ -3779,7 +3867,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         _reject_second_of_a_kind(resolved_layers)
         base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
             ctx,
-            [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
+            [
+                *self._override_added_capabilities(),
+                *(capability for extra in resolved_extras for capability in leaf_capabilities(extra)),
+            ],
         )
         # Two capabilities under one `id` name the same thing, so the tree is resolved down to one
         # each before anything reads it. Duplicates *within* a layer are one configuration stated
@@ -4978,10 +5069,15 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
         pending_message_queue = state.pending_messages
         assert isinstance(pending_message_queue, _enqueue.PendingMessageQueue)
 
+        _failed_conversation = functools.partial(failed_run_conversation, state, graph_deps)
+        capture_conversation_of(_failed_conversation)
+
         @asynccontextmanager
         async def _translate_cancellation() -> AsyncGenerator[None]:
             def _run_cancelled(message: str, *, timed_out: bool = False) -> exceptions.RunCancelled:
-                return _agent_graph.run_cancelled_snapshot(message, state, graph_deps, timed_out=timed_out)
+                cancelled = _agent_graph.run_cancelled_snapshot(message, state, graph_deps, timed_out=timed_out)
+                cancelled._pydantic_ai_conversation = _failed_conversation()  # pyright: ignore[reportPrivateUsage]
+                return cancelled
 
             try:
                 yield
@@ -5034,6 +5130,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
             stack.callback(graph_deps.release_tool_error_caches)
             # Enter first so cancellation is classified only after every other context has torn down.
             await stack.enter_async_context(_translate_cancellation())
+            stack.enter_context(_carrying_conversation(_failed_conversation))
             stack.callback(lambda: graph_deps.tool_manager._release_context())  # pyright: ignore[reportPrivateUsage]
             stack.callback(refresh_workspace_ref)
             # This run's usage is credited to no span until one of its own is opened (by
@@ -5182,6 +5279,24 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                         self.resolve_metadata(agent_run.ctx)
 
 
+@contextmanager
+def _carrying_conversation(build: Callable[[], Conversation]) -> Generator[None]:
+    """Give an `AgentRunError` the run raises the run's conversation, so a store can record the failed turn.
+
+    A nested run's error is stamped again with this run's conversation, so its caller gets the one it can store.
+    """
+    try:
+        yield
+    except exceptions.RunCancelled:
+        # The run's own cancellation handling replaces it with one it stamps, keeping this one, and its conversation, as the cause.
+        raise
+    except exceptions.AgentRunError as error:
+        error._pydantic_ai_conversation = build()  # pyright: ignore[reportPrivateUsage]
+        raise
+    finally:
+        end_captured_run(build)
+
+
 def _merge_metadata(base: dict[str, object] | None, additional: dict[str, object] | None) -> dict[str, object] | None:
     if base and additional:
         return {**base, **additional}
@@ -5316,7 +5431,7 @@ def _raise_for_unresolved_workspace(
     if workspace == 'new':
         raise exceptions.UserError(
             "`workspace='new'` needs a capability that can create a workspace, but none returned one. "
-            "Attach one, such as `capabilities=[LocalWorkspace('.')]`."
+            f"Attach one, such as `capabilities=[{HOST_WORKSPACE}('.')]`."
         )
     if isinstance(workspace, WorkspaceRef):
         named = f'`{workspace.provider}:{workspace.id}`'

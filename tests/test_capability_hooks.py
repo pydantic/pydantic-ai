@@ -77,6 +77,7 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -94,7 +95,6 @@ from .continuation_utils import ScriptedContinuationModel, StreamSegment, script
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-READINESS_WAIT_TIMEOUT = 10
 
 pytestmark = []
 
@@ -3014,6 +3014,7 @@ class TestAfterToolValidateOnDeferral:
                     ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')
                 ],
                 metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'args_validator'}},
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
             )
         )
         assert cap.seen == snapshot([{'x': 0}])
@@ -3075,9 +3076,9 @@ class TestAfterToolValidateOnDeferral:
     async def test_deferral_carries_the_hooks_args(self):
         """A deferred call carries `after_tool_validate`'s output — what a non-deferred call would use.
 
-        `ValidatedToolCall.validated_args` has no public observable on the deferral path (the request
-        holds the model's original `ToolCallPart`, and resuming re-validates from it), so the
-        contract is pinned directly on the tool manager.
+        Pinned on the tool manager for a deferral the `args_validator` raises. A run makes it observable as
+        `DeferredToolRequests.validated_args`, which `tests/test_deferred_validated_args.py` covers for calls
+        deferred by their tool's kind and by their toolset.
         """
         toolset = FunctionToolset[None]()
 
@@ -3361,6 +3362,7 @@ class TestToolHookDeferrals:
             DeferredToolRequests(
                 calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool')],
                 metadata={'pyd_ai_tool_call_id__my_tool': {'from': 'after_tool_validate'}},
+                validated_args={'pyd_ai_tool_call_id__my_tool': {'x': 0}},
             )
         )
 

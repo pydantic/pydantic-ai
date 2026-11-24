@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Generic, Literal, TypeVar
 
 import pytest
 from opentelemetry.trace import NoOpTracerProvider
@@ -23,6 +24,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponseStreamEvent,
     ModelRetry,
+    ModelSource,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -45,7 +47,31 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.messages import InstructionBaselinePart, InstructionPart
+from pydantic_ai.messages import (
+    CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
+    CapabilityPart,
+    CompactionPart,
+    InstructionBaselinePart,
+    InstructionCapabilityPart,
+    InstructionDeltaPart,
+    InstructionId,
+    InstructionPart,
+    LoadCapabilityCallPart,
+    LoadCapabilityReturnPart,
+    ModelRequestPart,
+    ModelResponsePart,
+    ModelSettingsDeltaPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
+    OperatorSource,
+    OperatorText,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+    SpeechPart,
+    ToolAvailabilityDeltaPart,
+    ToolSearchCallPart,
+    ToolSearchReturnPart,
+)
 from pydantic_ai.models import Model, ModelProfile, ModelRequestContext, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -58,6 +84,7 @@ from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 from .._inline_snapshot import snapshot, warns
 from ..conftest import IsDatetime, IsFloat, IsInt, IsStr, legacy_retry_prompt_part, try_import
+from ..manifests import assert_classified, union_members
 
 with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
@@ -957,19 +984,6 @@ Fix the errors and try again.\
     )
 
 
-def test_messages_to_otel_message_parts_compaction_part():
-    """CompactionPart is skipped in otel_message_parts (not a standard GenAI convention type)."""
-    from pydantic_ai.messages import CompactionPart
-
-    messages: list[ModelMessage] = [
-        ModelResponse(parts=[CompactionPart(content='Summary.', provider_name='anthropic'), TextPart('response')]),
-    ]
-    settings = InstrumentationSettings()
-    otel_messages = settings.messages_to_otel_messages(messages)
-    # CompactionPart is skipped; only TextPart appears
-    assert otel_messages == snapshot([{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'response'}]}])
-
-
 @pytest.mark.parametrize('include_content', [True, False])
 def test_messages_to_otel_message_parts_tool_availability_delta(include_content: bool):
     """A tool-availability change is legible in the trace, with the names in either mode.
@@ -1013,14 +1027,6 @@ def test_messages_to_otel_messages_leave_out_instruction_baselines():
 
     # Asked directly, as a caller rendering parts one by one would, it contributes nothing either.
     assert InstructionBaselinePart(instructions=[]).otel_message_parts(InstrumentationSettings()) == []
-
-    # Nor does one split the parts around it into two messages.
-    split = ModelRequest(
-        parts=[UserPromptPart(content='One.'), InstructionBaselinePart(instructions=[]), UserPromptPart(content='Two.')]
-    )
-    assert InstrumentationSettings(include_content=True).messages_to_otel_messages([split]) == snapshot(
-        [{'role': 'user', 'parts': [{'type': 'text', 'content': 'One.'}, {'type': 'text', 'content': 'Two.'}]}]
-    )
 
 
 def test_messages_to_otel_messages_request_roles_v6():
@@ -2906,6 +2912,29 @@ async def test_wrapped_model_receives_unprepared_request():
     assert seen[-1] == baseline, 'instrumentation changed the instructions the wrapped model received'
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_instrumented', name='reminder'):
+    pass
+
+
+def test_a_downgraded_instruction_part_takes_the_role_the_model_saw_it_in():
+    """A trace mustn't show text with no authority as if the application had said it."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                _ReminderPart(content='From the application.', source=OperatorSource()),
+                _ReminderPart(content='From a judge.', source=ModelSource('trajectory judge')),
+            ]
+        )
+    ]
+    assert InstrumentationSettings(include_content=True, version=6).messages_to_otel_messages(messages) == snapshot(
+        [
+            {'role': 'system', 'parts': [{'type': 'text', 'content': 'From the application.'}]},
+            {'role': 'user', 'parts': [{'type': 'text', 'content': 'From a judge.'}]},
+        ]
+    )
+
+
 def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | None = None) -> Agent[None, str]:
     """An agent that adds a request-scoped reminder to each of its three requests: two tool calls, then an answer."""
 
@@ -2921,7 +2950,11 @@ def _reminder_agent(profile: ModelProfile, settings: InstrumentationSettings | N
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            ctx.enqueue(SystemPromptPart(f'Reminder {ctx.run_step}.', scope='request'))
+            ctx.enqueue(
+                _ReminderPart(
+                    content=OperatorText(f'Reminder {ctx.run_step}.'), source=OperatorSource(), scope='request'
+                )
+            )
             return request_context
 
     agent = Agent(
@@ -3181,4 +3214,325 @@ async def test_answered_request_scoped_prompt_left_unmarked_when_an_override_res
                 {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'Sunny.'}]},
             ]
         ]
+    )
+
+
+# --- Part rendering coverage -------------------------------------------------------------------------------------------
+#
+# Every message part type is classified for how instrumentation renders it into OTel GenAI messages.
+#
+# `InstrumentationSettings.messages_to_otel_messages` turns history into `gen_ai.input.messages`,
+# `gen_ai.output.messages` and `pydantic_ai.all_messages`. A request's consecutive parts that share a role make up one
+# message, so a part type that renders no OTel part but still takes a role becomes an empty message and splits the
+# messages around it. Each member of `ModelRequestPart` and `ModelResponsePart` has an entry here, with a part built
+# the way real code builds one, saying what it renders as at each instrumentation version, or why it renders as
+# nothing.
+
+_PartT = TypeVar('_PartT', covariant=True)
+
+Role = Literal['system', 'user', 'assistant', 'tool']
+
+
+@dataclass(frozen=True)
+class Rendered(Generic[_PartT]):
+    """A part type traces show: at least one OTel part, in a message with the role each version gives it."""
+
+    build: Callable[[], _PartT]
+    v5: Role
+    v6: Role
+    reason: str
+
+
+@dataclass(frozen=True)
+class Silent(Generic[_PartT]):
+    """A part type traces leave out on purpose: a message renders exactly as it would without the part.
+
+    A response renders as one assistant message even with no parts, the envelope
+    `test_chat_span_closed_for_contentless_response` in `tests/realtime/test_instrumentation.py` pins, so a silent
+    response part leaves that envelope rather than no message.
+    """
+
+    build: Callable[[], _PartT]
+    reason: str
+
+
+@dataclass(kw_only=True)
+class RequestsLeftPart(InstructionCapabilityPart, namespace='test_instrumented'):
+    """An instruction a capability enqueues mid-run, in the application's voice."""
+
+
+_TOOL_RESPONSE_ROLE = (
+    'A `tool_call_response`, which version 6 moves to the `tool` role the semantic conventions pair it with.'
+)
+
+_REQUEST_PARTS: dict[type, Rendered[ModelRequestPart] | Silent[ModelRequestPart]] = {
+    SystemPromptPart: Rendered(
+        lambda: SystemPromptPart('You are a weather assistant.'),
+        v5='system',
+        v6='system',
+        reason="The application's prompt, in the system voice.",
+    ),
+    UserPromptPart: Rendered(
+        lambda: UserPromptPart('What is the weather in Paris?'),
+        v5='user',
+        v6='user',
+        reason="The user's turn.",
+    ),
+    SpeechPart: Rendered(
+        lambda: SpeechPart(speaker='user', transcript='What is the weather in Paris?'),
+        v5='user',
+        v6='user',
+        reason="A realtime user turn: its transcript renders as text and its retained audio as a blob, in the user's turn.",
+    ),
+    ToolSearchReturnPart: Rendered(
+        lambda: ToolSearchReturnPart(content={'discovered_tools': [{'name': 'get_forecast'}]}, tool_call_id='call_1'),
+        v5='user',
+        v6='tool',
+        reason=_TOOL_RESPONSE_ROLE,
+    ),
+    LoadCapabilityReturnPart: Rendered(
+        lambda: LoadCapabilityReturnPart(content={'message': "Capability 'refunds' loaded."}, tool_call_id='call_1'),
+        v5='user',
+        v6='tool',
+        reason=_TOOL_RESPONSE_ROLE,
+    ),
+    ToolReturnPart: Rendered(
+        lambda: ToolReturnPart(tool_name='get_weather', content='Sunny, 22 degrees.', tool_call_id='call_1'),
+        v5='user',
+        v6='tool',
+        reason=_TOOL_RESPONSE_ROLE,
+    ),
+    RetryPromptPart: Rendered(  # pyright: ignore[reportDeprecated]
+        lambda: legacy_retry_prompt_part(content='City not found.', tool_name='get_weather', tool_call_id='call_1'),
+        v5='user',
+        v6='tool',
+        reason=(
+            'The legacy retry, still in the stored history `pydantic_ai.all_messages` records. One naming a tool is a '
+            '`tool_call_response`, which version 6 moves to the `tool` role.'
+        ),
+    ),
+    RetryFeedbackPart: Rendered(
+        lambda: RetryFeedbackPart(content='Please return text or call a tool.', retry=RetryInfo('no_output')),
+        v5='user',
+        v6='system',
+        reason=(
+            "Built with the fixed `'no_output'` text the agent loop writes, which version 6 moves to the system voice "
+            'it reaches the model in. Feedback that can quote the model stays `user` at every version.'
+        ),
+    ),
+    ToolAvailabilityDeltaPart: Rendered(
+        lambda: ToolAvailabilityDeltaPart(tools_added=['get_forecast']),
+        v5='system',
+        v6='system',
+        reason='No role means "the set of tools changed", and `system` is the least misleading one.',
+    ),
+    CapabilityLoadDeltaPart: Rendered(
+        lambda: CapabilityLoadDeltaPart(loaded=['refunds']),
+        v5='system',
+        v6='system',
+        reason='No role means "the loaded capabilities changed", and `system` is the least misleading one.',
+    ),
+    ModelSettingsDeltaPart: Rendered(
+        lambda: ModelSettingsDeltaPart(settings={'thinking': 'high'}),
+        v5='system',
+        v6='system',
+        reason="A configuration change rather than anyone's words, so a `system` message.",
+    ),
+    InstructionDeltaPart: Rendered(
+        lambda: InstructionDeltaPart(
+            id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+            content='Issue refunds only for orders under $100.',
+        ),
+        v5='system',
+        v6='system',
+        reason="A change to the operator's instructions, in the system voice.",
+    ),
+    InstructionBaselinePart: Silent(
+        lambda: InstructionBaselinePart(instructions=[InstructionPart('You are a weather assistant.')]),
+        reason=(
+            'Records the instructions a request was sent with, which the request span reports as '
+            '`gen_ai.system_instructions`. Rendered as a message it was an empty `system` one: '
+            'https://github.com/pydantic/pydantic-ai/pull/10911.'
+        ),
+    ),
+    CompactionPart: Rendered(
+        lambda: CompactionPart(content='The user asked for the weather in Paris, which was sunny.'),
+        v5='user',
+        v6='user',
+        reason=(
+            "A summary the application or a capability wrote, such as Pydantic AI Harness's `SummarizingCompaction`, "
+            'which models receive in the user voice.'
+        ),
+    ),
+    CapabilityPart: Rendered(
+        lambda: RequestsLeftPart(content='Two model requests left.', source=OperatorSource()),
+        v5='system',
+        v6='system',
+        reason=(
+            "Its role follows its effective authority: an instruction part with `'operator'` authority is a `system` "
+            'message, a downgraded instruction or a data part a `user` one.'
+        ),
+    ),
+}
+"""How traces render each `ModelRequestPart` member, and a part to check it with."""
+
+_RESPONSE_PARTS: dict[type, Rendered[ModelResponsePart] | Silent[ModelResponsePart]] = {
+    TextPart: Rendered(
+        lambda: TextPart('It is sunny in Paris.'),
+        v5='assistant',
+        v6='assistant',
+        reason='A text part.',
+    ),
+    ToolSearchCallPart: Rendered(
+        lambda: ToolSearchCallPart(args={'queries': ['weather forecast']}, tool_call_id='call_1'),
+        v5='assistant',
+        v6='assistant',
+        reason='A `tool_call` part.',
+    ),
+    LoadCapabilityCallPart: Rendered(
+        lambda: LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='call_1'),
+        v5='assistant',
+        v6='assistant',
+        reason='A `tool_call` part.',
+    ),
+    ToolCallPart: Rendered(
+        lambda: ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id='call_1'),
+        v5='assistant',
+        v6='assistant',
+        reason='A `tool_call` part.',
+    ),
+    NativeToolSearchCallPart: Rendered(
+        lambda: NativeToolSearchCallPart(
+            args={'queries': ['weather forecast']}, tool_call_id='srvtoolu_1', provider_name='anthropic'
+        ),
+        v5='assistant',
+        v6='assistant',
+        reason='A `tool_call` part marked `builtin`.',
+    ),
+    NativeToolCallPart: Rendered(
+        lambda: NativeToolCallPart(
+            'web_search', {'query': 'weather in Paris'}, tool_call_id='ws_1', provider_name='openai'
+        ),
+        v5='assistant',
+        v6='assistant',
+        reason='A `tool_call` part marked `builtin`.',
+    ),
+    NativeToolSearchReturnPart: Rendered(
+        lambda: NativeToolSearchReturnPart(
+            content={'discovered_tools': [{'name': 'get_forecast'}]},
+            tool_call_id='srvtoolu_1',
+            provider_name='anthropic',
+        ),
+        v5='assistant',
+        v6='assistant',
+        reason='A `tool_call_response` part marked `builtin`, in the response that ran the tool.',
+    ),
+    NativeToolReturnPart: Rendered(
+        lambda: NativeToolReturnPart(
+            'web_search', {'status': 'completed'}, tool_call_id='ws_1', provider_name='openai'
+        ),
+        v5='assistant',
+        v6='assistant',
+        reason='A `tool_call_response` part marked `builtin`, in the response that ran the tool.',
+    ),
+    ThinkingPart: Rendered(
+        lambda: ThinkingPart('The user wants the current weather.'),
+        v5='assistant',
+        v6='assistant',
+        reason='A `thinking` part.',
+    ),
+    CompactionPart: Silent(
+        # Built with content, as Anthropic's are: a part without content would render nothing even if the response
+        # stopped skipping compaction parts.
+        lambda: CompactionPart(
+            content='The user asked for the weather in Paris, which was sunny.', provider_name='anthropic'
+        ),
+        reason="A provider's compaction item, replayed only to that provider: no OTel GenAI part type represents it.",
+    ),
+    FilePart: Rendered(
+        lambda: FilePart(content=BinaryContent(data=b'\x89PNG\r\n\x1a\n', media_type='image/png')),
+        v5='assistant',
+        v6='assistant',
+        reason='A generated file, as a `blob` part.',
+    ),
+    SpeechPart: Rendered(
+        lambda: SpeechPart(speaker='assistant', transcript='It is sunny in Paris.'),
+        v5='assistant',
+        v6='assistant',
+        reason='A realtime reply: its transcript renders as text and its retained audio as a blob.',
+    ),
+}
+"""How traces render each `ModelResponsePart` member, and a part to check it with."""
+
+
+def test_every_part_type_has_an_instrumentation_entry() -> None:
+    """A new member of either part union fails here until its entry says how traces render it.
+
+    Unit test because it walks the part unions, which no recorded run covers.
+    """
+    assert_classified(union_members(ModelRequestPart), _REQUEST_PARTS, complete_walk=True, table_name='_REQUEST_PARTS')
+    assert_classified(
+        union_members(ModelResponsePart), _RESPONSE_PARTS, complete_walk=True, table_name='_RESPONSE_PARTS'
+    )
+
+
+def _assert_renders_as_classified(
+    part_type: type,
+    entry: Rendered[_PartT] | Silent[_PartT],
+    members: set[type],
+    wrap: Callable[[list[_PartT]], ModelMessage],
+    neighbour: _PartT,
+    version: Literal[5, 6],
+) -> None:
+    part = entry.build()
+    # Several members subclass another, so a part checks its entry only if no member below `part_type` claims it.
+    assert {member for member in members if isinstance(part, member) and issubclass(member, part_type)} == {
+        part_type
+    }, f'The `{part_type.__name__}` entry builds a `{type(part).__name__}`.'
+    render = InstrumentationSettings(version=version).messages_to_otel_messages
+    if isinstance(entry, Silent):
+        assert render([wrap([neighbour, part, neighbour])]) == render([wrap([neighbour, neighbour])]), (
+            f'`{part_type.__name__}` is classified silent, but changes the messages around it.'
+        )
+        assert render([wrap([part])]) == render([wrap([])]), (
+            f'`{part_type.__name__}` is classified silent, but renders a message of its own.'
+        )
+    else:
+        role = entry.v5 if version == 5 else entry.v6
+        assert [(message['role'], bool(message['parts'])) for message in render([wrap([part])])] == [(role, True)], (
+            f'`{part_type.__name__}` should render one `{role}` message with at least one part.'
+        )
+
+
+@pytest.mark.parametrize('version', [5, 6])
+@pytest.mark.parametrize('part_type', list(_REQUEST_PARTS), ids=[t.__name__ for t in _REQUEST_PARTS])
+def test_request_part_renders_as_classified(part_type: type, version: Literal[5, 6]) -> None:
+    """A request part renders in its classified role, or leaves the user's turn around it whole.
+
+    Unit test because no recorded run produces every part type, and a cassette holds the request, not the trace.
+    """
+    _assert_renders_as_classified(
+        part_type,
+        _REQUEST_PARTS[part_type],
+        union_members(ModelRequestPart),
+        lambda parts: ModelRequest(parts=parts),
+        UserPromptPart('What is the weather in Paris?'),
+        version,
+    )
+
+
+@pytest.mark.parametrize('version', [5, 6])
+@pytest.mark.parametrize('part_type', list(_RESPONSE_PARTS), ids=[t.__name__ for t in _RESPONSE_PARTS])
+def test_response_part_renders_as_classified(part_type: type, version: Literal[5, 6]) -> None:
+    """A response part renders at least one OTel part, or leaves the response's other parts as they were.
+
+    Unit test because no recorded run produces every part type, and a cassette holds the response, not the trace.
+    """
+    _assert_renders_as_classified(
+        part_type,
+        _RESPONSE_PARTS[part_type],
+        union_members(ModelResponsePart),
+        lambda parts: ModelResponse(parts=parts),
+        TextPart('It is sunny in Paris.'),
+        version,
     )

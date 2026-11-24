@@ -23,10 +23,12 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CodeExecutionTool,
+    DeprecatedModelWarning,
     DocumentUrl,
     FilePart,
     FunctionToolset,
     ImageUrl,
+    ModelDeprecation,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -973,6 +975,55 @@ async def test_oversized_model_response_payload(client: Client):
                 task_queue=TASK_QUEUE,
                 execution_timeout=timedelta(seconds=30),
             )
+
+
+async def _answer_ok(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('ok')])
+
+
+deprecated_model_agent = Agent(
+    FunctionModel(
+        _answer_ok,
+        model_name='retiring-model',
+        profile={'deprecation': ModelDeprecation(source_url='https://example.com/retiring-model')},
+    ),
+    name='deprecated_model_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DeprecatedModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await deprecated_model_agent.run(prompt)
+        return result.output
+
+
+async def test_deprecated_model_warns_once_from_its_activity(client: Client):
+    """A deprecated model warns once per request, from the activity that sends it.
+
+    The workflow prepares the request too, to resolve the output mode and describe it on the span, and a warning
+    there would repeat on every replay.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DeprecatedModelWorkflow],
+        plugins=[AgentPlugin(deprecated_model_agent)],
+    ):
+        with pytest.warns(DeprecatedModelWarning) as record:
+            output = await client.execute_workflow(
+                DeprecatedModelWorkflow.run,
+                args=['hello'],
+                id=DeprecatedModelWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    assert output == 'ok'
+    assert [str(w.message) for w in record if w.category is DeprecatedModelWarning] == snapshot(
+        ["Model 'function:retiring-model' is deprecated by its provider. See https://example.com/retiring-model"]
+    )
 
 
 # ============================================================================
@@ -3879,6 +3930,11 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelHTTPError.for_category(ModelRequestRejectedError, status_code=400, model_name='gpt-test'),
             'ModelHTTPError',
             id='http-request-rejected',
+        ),
+        pytest.param(
+            ModelHTTPError.for_category(ModelTimeoutError, status_code=408, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-timeout',
         ),
         pytest.param(
             ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),

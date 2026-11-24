@@ -211,10 +211,13 @@ async def test_mcp_sampling_stays_silent_about_the_servers_stop_sequences(server
 
     model = StopIgnoringModel(_reply, model_name='ignoring', settings={'timeout': 5, 'stop_sequences': ['END']})
     handler = _build_sampling_handler(model)
-    params = mcp_types.CreateMessageRequestParams(
-        messages=[mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hi'))],
-        maxTokens=42,
-        stopSequences=['STOP'] if server_sends_stop_sequences else None,
+    # Built from the camelCase wire keys, which both MCP SDK generations validate.
+    params = mcp_types.CreateMessageRequestParams.model_validate(
+        {
+            'messages': [mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='hi'))],
+            'maxTokens': 42,
+            'stopSequences': ['STOP'] if server_sends_stop_sequences else None,
+        }
     )
 
     with pytest.warns(UnsupportedSettingWarning) as record:

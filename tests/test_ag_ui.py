@@ -9,17 +9,18 @@ import inspect
 import json
 import uuid
 import warnings
-from collections.abc import AsyncIterator, MutableMapping, Sequence
+from collections.abc import AsyncIterator, Callable, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 
 import pytest
 from dirty_equals import IsJson, IsPartialDict
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, Field, Json, TypeAdapter, ValidationError
 
 from pydantic_ai import (
+    AgentRunResultEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -73,16 +74,17 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
-from pydantic_ai._framework_frame import framework_frame_text, is_framework_frame
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import (
+    InstructionCapabilityPart,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
     sanitize_messages,
 )
@@ -2578,6 +2580,7 @@ def test_activity_message_other_types_ignored() -> None:
         pytest.param('[1, 2, 3]', id='non-dict-list'),
         pytest.param('42', id='non-dict-number'),
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
     ],
 )
 def test_reasoning_message_malformed_encrypted_value(encrypted_value: str) -> None:
@@ -6722,6 +6725,60 @@ def test_tool_return_json_scalar_string_stays_string(content: str) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param('[' * 100_000 + ']' * 100_000, id='list'),
+        pytest.param('{"a":' * 5_000 + '1' + '}' * 5_000, id='object'),
+    ],
+)
+async def test_tool_return_deeply_nested_json_string_stays_string(content: str) -> None:
+    """A tool return nested past the request body's depth limit reaches the model as the string, like plain text."""
+    received: list[ToolReturnPart] = []
+
+    async def stream_function(messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+        received.extend(iter_message_parts(messages, ModelRequest, ToolReturnPart))
+        yield 'done'
+
+    run_input = create_input(
+        AssistantMessage(
+            id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
+        ),
+        ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
+    )
+    events = await run_and_collect_events(Agent(FunctionModel(stream_function=stream_function)), run_input)
+
+    assert events[-1]['type'] == 'RUN_FINISHED'
+    assert received == [
+        ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())
+    ]
+
+
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param('caf\udce9', id='lone-surrogate'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
+    ],
+)
+def test_tool_return_unparseable_json_string_stays_string(content: str) -> None:
+    """A tool return `pydantic_core.from_json` rejects loads as the string, like any other plain-text return.
+
+    A str holding a lone surrogate reaches it when `build_run_input` re-reads the body with `json.loads`.
+    """
+    loaded = AGUIAdapter.load_messages(
+        [
+            AssistantMessage(
+                id='msg-1', tool_calls=[ToolCall(id='tc-1', function=FunctionCall(name='get_value', arguments='{}'))]
+            ),
+            ToolMessage(id='msg-2', tool_call_id='tc-1', content=content),
+        ]
+    )
+    assert list(iter_message_parts(loaded, ModelRequest, ToolReturnPart)) == [
+        ToolReturnPart(tool_name='get_value', tool_call_id='tc-1', content=content, timestamp=IsDatetime())
+    ]
+
+
 def test_dump_load_roundtrip_builtin_tool_return_multimodal(tiny_image: BinaryImage) -> None:
     """Multimodal `NativeToolReturnPart.content` rides inline in `ToolMessage.content` and round-trips with no flag."""
     original: list[ModelMessage] = [
@@ -7819,6 +7876,7 @@ The page the user is on.
             id='no-such-item',
         ),
         pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
     ],
 )
 @pytest.mark.parametrize('content', [pytest.param('Hi', id='str'), pytest.param('list', id='list')])
@@ -9698,6 +9756,11 @@ async def test_frontend_tool_calls_are_pending_on_success(
         pytest.param('next', {'type': 'cancelled'}, id='unreadable'),
         pytest.param('0.9-next', {'type': 'cancelled'}, id='suffixed'),
         pytest.param('1.1', {'type': 'cancelled'}, id='newer'),
+        pytest.param('0001.0', {'type': 'cancelled'}, id='leading-zeros'),
+        pytest.param('\u0661.\u0660', {'type': 'cancelled'}, id='non-ascii-digits'),
+        # Past the 4,300 digits `int()` converts.
+        pytest.param('0' * 4301 + '.9', None, id='long-older'),
+        pytest.param('1' + '0' * 4300 + '.0', {'type': 'cancelled'}, id='long-newer'),
     ],
 )
 async def test_client_protocol_version_decides_1_0_outcomes(
@@ -9705,7 +9768,7 @@ async def test_client_protocol_version_decides_1_0_outcomes(
 ) -> None:
     """A client declaring no version, or one before 1.0, gets the pre-1.0 shapes. One newer than the SDK speaks, or outside the
     `MAJOR.MINOR` grammar, is handled like a newer one, as the spec requires, and gets the 1.0 shapes without a warning:
-    the server operator can't change what the client declares."""
+    the server operator can't change what the client declares. The numbers compare by value, however many digits they have."""
     agent = _cancelling_agent()
 
     events = await _collect_adapter_events(
@@ -10109,6 +10172,217 @@ async def test_run_finished_interrupt_outcome_carries_metadata() -> None:
     run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
     interrupt = run_finished['outcome']['interrupts'][0]
     assert interrupt['metadata'] == snapshot({'risk': 'high', 'scope': 'filesystem'})
+
+
+class AddAccount(AbstractCapability[Any]):
+    """A validation hook that adds an argument the model didn't send."""
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'account': 'acct-server-side'}
+
+
+class AddPath(AbstractCapability[Any]):
+    """A validation hook that extends a list argument the model sent."""
+
+    async def after_tool_validate(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {**args, 'paths': [*args['paths'], '/srv/secret']}
+
+
+class Deletion(BaseModel):
+    path: str
+    force: bool
+    backup_dir: str = '/srv/backups'
+
+
+class Force(BaseModel):
+    force: bool
+    path: str
+
+
+class Command(BaseModel):
+    command: dict[str, str]
+
+
+class Named(BaseModel):
+    name: str = 'server-token'
+    path: str
+
+
+class Target(BaseModel):
+    path: str
+    retries: int
+    token: str = 'server-token'
+
+
+class AliasedTarget(BaseModel):
+    path: str = Field(validation_alias='filePath')
+
+
+# The tools' bodies never run: the test asserts the pending approval's interrupt.
+def delete_file(path: str, force: bool, backup_dir: str = '/srv/backups') -> None: ...  # pragma: no cover
+
+
+def delete_deletion(deletion: Deletion) -> None: ...  # pragma: no cover
+
+
+def delete_forced(force: Force) -> None: ...  # pragma: no cover
+
+
+def execute(command: Command) -> None: ...  # pragma: no cover
+
+
+def sync_named(name: Named) -> None: ...  # pragma: no cover
+
+
+def delete_target(target: AliasedTarget, force: bool) -> None: ...  # pragma: no cover
+
+
+def delete_aliased(file_path: Annotated[str, Field(alias='filePath')], force: bool) -> None: ...  # pragma: no cover
+
+
+def sync_mirrors(target: Target, mirrors: list[Target]) -> None: ...  # pragma: no cover
+
+
+def sync_paths(paths: list[str], target: Json[Target]) -> None: ...  # pragma: no cover
+
+
+@dataclass(frozen=True)
+class InterruptMessageCase:
+    id: str
+    tool: Callable[..., None]
+    json_args: str
+    message: str
+    capabilities: tuple[AbstractCapability[Any], ...] = ()
+
+
+INTERRUPT_MESSAGE_CASES = [
+    # A default and an argument a hook added stay on the server; the model's arguments show validated.
+    InterruptMessageCase(
+        id='default-and-hook-added-key-left-out',
+        tool=delete_file,
+        json_args='{"path": ".env", "force": "false"}',
+        message=snapshot('Approve delete_file({"path":".env","force":false})?'),
+        capabilities=(AddAccount(),),
+    ),
+    # A tool whose only parameter is a model takes its fields unwrapped; they're matched inside the validated model.
+    InterruptMessageCase(
+        id='single-model-parameter',
+        tool=delete_deletion,
+        json_args='{"path": ".env", "force": "false"}',
+        message=snapshot('Approve delete_deletion({"path":".env","force":false})?'),
+    ),
+    # A field named like the parameter, sent beside other fields, is still read as unwrapped.
+    InterruptMessageCase(
+        id='model-field-named-like-its-parameter',
+        tool=delete_forced,
+        json_args='{"force": "false", "path": ".env"}',
+        message=snapshot('Approve delete_forced({"force":false,"path":".env"})?'),
+    ),
+    # `{"<name>": {...}}` is a field or the wrapped model, which only the tool's schema tells apart: it's shown as
+    # sent. `execute` reads it as `Command.command`, `sync_named` as a wrapped `Named`, whose default stays out.
+    InterruptMessageCase(
+        id='only-key-is-an-object-field',
+        tool=execute,
+        json_args='{"command": {"action": "delete", "path": "/srv/data"}}',
+        message=snapshot('Approve execute({"command":{"action":"delete","path":"/srv/data"}})?'),
+    ),
+    InterruptMessageCase(
+        id='only-key-is-the-wrapped-model',
+        tool=sync_named,
+        json_args='{"name": {"path": "/srv/data"}}',
+        message=snapshot('Approve sync_named({"name":{"path":"/srv/data"}})?'),
+    ),
+    # A validated model is dumped under its field names, so a key sent under a validation alias keeps its value.
+    InterruptMessageCase(
+        id='nested-validation-alias',
+        tool=delete_target,
+        json_args='{"target": {"filePath": "/srv/data"}, "force": "true"}',
+        message=snapshot('Approve delete_target({"target":{"filePath":"/srv/data"},"force":true})?'),
+    ),
+    # Validated arguments are keyed by Python parameter name, so a parameter's alias keeps the model's value.
+    InterruptMessageCase(
+        id='parameter-alias',
+        tool=delete_aliased,
+        json_args='{"filePath": ".env", "force": "false"}',
+        message=snapshot('Approve delete_aliased({"filePath":".env","force":false})?'),
+    ),
+    # A default inside an object or a list item the model sent stays on the server too.
+    InterruptMessageCase(
+        id='nested-defaults-left-out',
+        tool=sync_mirrors,
+        json_args='{"target": {"path": ".env", "retries": "2"}, "mirrors": [{"path": "a", "retries": "1"}]}',
+        message=snapshot(
+            'Approve sync_mirrors({"target":{"path":".env","retries":2},"mirrors":[{"path":"a","retries":1}]})?'
+        ),
+    ),
+    # A list a hook extended, and a JSON string validated into a model with a default, keep the model's values.
+    InterruptMessageCase(
+        id='shape-changed-by-validation',
+        tool=sync_paths,
+        json_args='{"paths": ["a"], "target": "{\\"path\\": \\".env\\", \\"retries\\": 2}"}',
+        message=snapshot('Approve sync_paths({"paths":["a"],"target":"{\\"path\\": \\".env\\", \\"retries\\": 2}"})?'),
+        capabilities=(AddPath(),),
+    ),
+]
+
+
+@pytestmark_interrupts
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id) for c in INTERRUPT_MESSAGE_CASES])
+async def test_run_finished_interrupt_message_shows_validated_args(case: InterruptMessageCase) -> None:
+    """The interrupt's `message` shows each argument the model sent with the value the tool will receive.
+
+    A default and an argument a validation hook added stay on the server, at any depth, since the message goes to
+    the client. Where a validated value can't be matched to what the model sent, the message keeps the model's value.
+    """
+
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name=case.tool.__name__, json_args=case.json_args)}
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+        output_type=[str, DeferredToolRequests],
+        toolsets=[FunctionToolset([case.tool], requires_approval=True)],
+        capabilities=list(case.capabilities),
+    )
+
+    events = await _collect_adapter_events(agent, create_input(UserMessage(id='m1', content='go')))
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    assert run_finished['outcome']['interrupts'][0]['message'] == case.message
+
+
+@pytestmark_interrupts
+async def test_run_finished_interrupt_message_without_validated_args() -> None:
+    """A request without `validated_args`, such as one built by hand, shows the model's arguments.
+
+    Not a run through the adapter: the adapter runs the agent with `run_stream_events()`, whose requests always carry them.
+    """
+
+    async def event_generator():
+        yield AgentRunResultEvent(
+            result=AgentRunResult(
+                output=DeferredToolRequests(
+                    approvals=[ToolCallPart('delete_file', '{"path": ".env"}', tool_call_id='call_0')]
+                )
+            )
+        )
+
+    run_input = create_input(UserMessage(id='m1', content='delete .env'))
+    event_stream = AGUIEventStream(run_input, ag_ui_version=_INTERRUPTS_AG_UI_VERSION)
+    events = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+
+    run_finished = next(e for e in events if e['type'] == 'RUN_FINISHED')
+    interrupt = run_finished['outcome']['interrupts'][0]
+    assert interrupt['message'] == snapshot('Approve delete_file({"path":".env"})?')
 
 
 @pytestmark_interrupts
@@ -11062,11 +11336,16 @@ def _enqueuing_agent() -> Agent[object, str]:
     return agent
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_ag_ui', name='reminder'):
+    pass
+
+
 class _TurnScopedReminder(AbstractCapability[object]):
     async def before_model_request(
         self, ctx: RunContext[object], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
@@ -11090,7 +11369,7 @@ async def test_request_scoped_reminder_is_not_streamed(manage_system_prompt: Lit
         json.loads(encoded.removeprefix('data: ')) async for encoded in adapter.encode_stream(adapter.run_stream())
     ]
 
-    assert [event for event in events if event['type'] == 'ACTIVITY_SNAPSHOT'] == []
+    assert [event for event in events if event['type'] in ('ACTIVITY_SNAPSHOT', 'RUN_ERROR')] == []
     assert 'Reminder' not in json.dumps(events)
 
 
@@ -12269,9 +12548,10 @@ async def test_second_rejected_response_without_a_message_does_not_name_the_firs
 
 
 def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_side():
-    """A frame's mark in `TextContent` metadata never reaches the client; the application's own keys do."""
-    marked = framework_frame_text('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', author='tool')
-    with_origin = framework_frame_text('<report>\nDone.\n</report>', metadata={'origin': 'app'})
+    """The reserved namespace of `TextContent` metadata never reaches the client; the application's own keys do."""
+    reserved = {'__pydantic_ai__': {'framework_frame': True}}
+    marked = TextContent('<pyai:tool_result tool_name="t">\nDone.\n</pyai:tool_result>', metadata=reserved)
+    with_origin = TextContent('<report>\nDone.\n</report>', metadata={**reserved, 'origin': 'app'})
     content = [marked, {'nested': with_origin}, TextContent('plain', metadata={'tag': 1}), 'text']
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('Go.')]),
@@ -12297,4 +12577,4 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'origin' in dumped
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
-    assert is_framework_frame(marked)
+    assert marked.metadata == reserved

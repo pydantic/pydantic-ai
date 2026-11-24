@@ -85,6 +85,7 @@ try:
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
+        ToolPlanDeltaV2ChatStreamResponse,
         ToolV2,
         ToolV2Function,
         Usage as CohereUsage,
@@ -165,12 +166,16 @@ _THINKING_TOKEN_BUDGETS: dict[ThinkingEffort, int] = {
 See [the Cohere docs](https://docs.cohere.com/docs/reasoning).
 """
 
+_TOOL_PLAN_VENDOR_PART_ID = 'tool_plan'
+"""Parts-manager key of the streamed plan Cohere writes before its tool calls."""
+
 _FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
     'COMPLETE': 'stop',
     'STOP_SEQUENCE': 'stop',
     'MAX_TOKENS': 'length',
     'TOOL_CALL': 'tool_call',
     'ERROR': 'error',
+    'TIMEOUT': 'error',
 }
 
 
@@ -410,6 +415,11 @@ class CohereModel(Model[AsyncClientV2]):
     def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         parts: list[ModelResponsePart] = []
+        if tool_plan := response.message.tool_plan:
+            # A thinking part, not text: text streamed before a tool call would become `run_stream`'s output.
+            parts.append(
+                ThinkingPart(content=tool_plan, provider_name=self.system, provider_details={'tool_plan': True})
+            )
         if response.message.content is not None:
             for content in response.message.content:
                 if content.type == 'text':
@@ -466,11 +476,15 @@ class CohereModel(Model[AsyncClientV2]):
     def _map_model_response(self, message: ModelResponse) -> AssistantChatMessageV2 | None:
         texts: list[str] = []
         thinking: list[str] = []
+        tool_plans: list[str] = []
         tool_calls: list[ToolCallV2] = []
+        has_tool_calls = bool(message.tool_calls)
         for item in message.parts:
             match item:
                 case TextPart():
                     texts.append(item.content)
+                case ThinkingPart() if has_tool_calls and self._is_own_tool_plan(item):
+                    tool_plans.append(item.content)
                 case ThinkingPart():
                     thinking.append(item.content)
                 case ToolCallPart():
@@ -489,6 +503,8 @@ class CohereModel(Model[AsyncClientV2]):
             # the OpenAI and Anthropic adapters.
             return None
         message_param = AssistantChatMessageV2(role='assistant')
+        if tool_plans:
+            message_param.tool_plan = '\n\n'.join(tool_plans)
         if texts or thinking:
             contents: list[TextAssistantMessageV2ContentOneItem | ThinkingAssistantMessageV2ContentOneItem] = []
             if thinking:
@@ -499,6 +515,14 @@ class CohereModel(Model[AsyncClientV2]):
         if tool_calls:
             message_param.tool_calls = tool_calls
         return message_param
+
+    def _is_own_tool_plan(self, part: ThinkingPart) -> bool:
+        """Whether `part` is the plan this provider wrote before its tool calls, which goes back as `tool_plan`."""
+        return (
+            part.provider_name == self.system
+            and part.provider_details is not None
+            and part.provider_details.get('tool_plan') is True
+        )
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
@@ -638,6 +662,14 @@ class CohereStreamedResponse(StreamedResponse):
                     self.provider_response_id = event.id
             case ContentDeltaV2ChatStreamResponse():
                 yield from self._handle_content_delta(event)
+            case ToolPlanDeltaV2ChatStreamResponse():
+                if event.delta and event.delta.message and (tool_plan := event.delta.message.tool_plan):
+                    yield from self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=_TOOL_PLAN_VENDOR_PART_ID,
+                        content=tool_plan,
+                        provider_name=self._provider_name,
+                        provider_details={'tool_plan': True},
+                    )
             case ToolCallStartV2ChatStreamResponse() | ToolCallDeltaV2ChatStreamResponse():
                 yield from self._handle_tool_call(event)
             case MessageEndV2ChatStreamResponse():

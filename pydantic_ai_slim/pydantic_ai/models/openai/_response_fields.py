@@ -1,4 +1,4 @@
-"""Usage, Responses finish reasons, status and refusals, logprobs and compaction items."""
+"""Usage, Responses finish reasons, status and refusals, input transformations, logprobs and compaction items."""
 
 from __future__ import annotations as _annotations
 
@@ -7,9 +7,11 @@ from typing import Any, Literal
 from openai.types import chat, responses
 from openai.types.chat import ChatCompletionChunk, chat_completion_token_logprob
 from openai.types.responses import ResponseCompactionItem
+from openai.types.responses.response import InputTransformation
 from openai.types.responses.response_status import ResponseStatus
 
 from ... import usage
+from ..._instrumentation import add_input_transformations_event
 from ..._utils import is_str_dict as _is_str_dict
 from ...messages import STANDING_PROMPT_PLANTED_KEY, CompactionPart, FinishReason, ModelResponseState
 
@@ -22,6 +24,19 @@ RESPONSES_FINISH_REASON_MAP: dict[
     'cancelled': 'error',
     'failed': 'error',
 }
+
+
+def report_input_transformations(transformations: list[InputTransformation]) -> list[dict[str, object]]:
+    """Report the reasoning items OpenAI withheld on the current span, and return them for `provider_details`.
+
+    On newer models, the Responses API drops a replayed reasoning item whose earlier conversation changed
+    (in testing, also one from another model) and lists it in `input_transformations`. Nothing else in
+    the response says the model answered without that reasoning. `provider_details` keeps it inspectable
+    after the run; the span event surfaces it in the trace, on the model request that lost it.
+    """
+    reported: list[dict[str, object]] = [transformation.model_dump(mode='json') for transformation in transformations]
+    add_input_transformations_event('openai', reported)
+    return reported
 
 
 def response_status_to_state(status: ResponseStatus | None, *, background: bool) -> ModelResponseState:
@@ -148,7 +163,7 @@ def map_usage(
         k: v
         for k, v in usage_data.items()
         if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
-        if isinstance(v, int)
+        if isinstance(v, int) and not isinstance(v, bool)
     }
     response_data = dict(model=model, usage=usage_data)
     if isinstance(response_usage, responses.ResponseUsage):

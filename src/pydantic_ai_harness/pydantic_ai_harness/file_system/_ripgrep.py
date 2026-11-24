@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.workspaces import CommandResult, Workspace
+from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceOutputLimitError
 
 from ._workspace_search import MAX_OUTPUT_BYTES, MAX_RECORD_BYTES, SEARCH_TIMEOUT
 
@@ -34,7 +34,12 @@ _MISSING = 127
 
 _ERROR_STATUS = '2'
 
-_UNREADABLE = re.compile(r'rg: (?P<path>.+?): (?:IO error for operation on .+?: )?(?P<reason>[^:]+?) \(os error \d+\)')
+_UNREADABLE = re.compile(
+    # The lookahead checks how the line ends once, so a line that cannot match fails there rather
+    # than once for every way of splitting it at `: `; `\A` keeps a search from retrying it at each `rg: `.
+    r'\Arg: (?=.*: [^:]+ \(os error \d+\)\Z)'
+    r'(?P<path>.+?): (?:IO error for operation on .+?: )?(?P<reason>[^:]+?) \(os error \d+\)'
+)
 """An error `rg` reports for one path it could not open, after which it carries on with the rest."""
 
 _T = TypeVar('_T')
@@ -84,17 +89,21 @@ async def run_ripgrep(
     Raises `RipgrepNotFoundError` when `rg` is not on the workspace's PATH, and `ModelRetry` when it
     reports any other error (an invalid pattern, say), so the model can correct the call.
     """
-    command = shlex.join(['rg', '--null', '--color=never', *arguments])
-    script = (
-        f'cd {shlex.quote(cwd)} || exit\n'
-        f'command -v rg > /dev/null 2>&1 || exit {_MISSING}\n'
-        f'{{ {command}; echo "{_STATUS_PREFIX}$?" >&2; }} | head -c {MAX_OUTPUT_BYTES}'
-    )
-    result = await workspace.run(script, shell=True, timeout=SEARCH_TIMEOUT)
-    status, detail = _exit_status(result)
-
-    output = result.stdout
-    output_cut = len(output.encode('utf-8', errors='surrogateescape')) >= MAX_OUTPUT_BYTES
+    windows = workspace.platform == 'windows'
+    # On Windows, `/` keeps the paths it prints in the form the rest of the search reads.
+    argv = ['rg', '--null', '--color=never', *(['--path-separator', '/'] if windows else []), *arguments]
+    if windows:
+        output, output_cut, status, detail = await _run_windows(workspace, argv, cwd)
+    else:
+        script = (
+            f'cd {shlex.quote(cwd)} || exit\n'
+            f'command -v rg > /dev/null 2>&1 || exit {_MISSING}\n'
+            f'{{ {shlex.join(argv)}; echo "{_STATUS_PREFIX}$?" >&2; }} | head -c {MAX_OUTPUT_BYTES}'
+        )
+        result = await workspace.run(script, shell=True, timeout=SEARCH_TIMEOUT)
+        status, detail = _exit_status(result)
+        output = result.stdout
+        output_cut = len(output.encode('utf-8', errors='surrogateescape')) >= MAX_OUTPUT_BYTES
     results: list[_T] = []
     records, truncated = _split_records(output, listing=listing, output_cut=output_cut)
     # Prepared a batch at a time, so a capped search stops preparing once it has enough.
@@ -114,6 +123,20 @@ async def run_ripgrep(
     if not truncated and not output_cut and status not in ('0', '1') and not partial:
         raise ModelRetry(f'ripgrep failed: {detail or f"exit code {status}"}')
     return results, truncated, unreadable
+
+
+async def _run_windows(workspace: Workspace, argv: list[str], cwd: str) -> tuple[str, bool, str, str]:
+    """Run `rg` without a shell: its output, whether it was cut, its exit status, and its stderr.
+
+    Output past the workspace's own cap is cut there, rather than by `head -c`: up to that cap, about 10 MiB, it is
+    kept whole, and past it only the workspace's preview of its start is, so a search that the caller filters
+    heavily may return fewer matches than on POSIX. Either way, the result is marked as cut.
+    """
+    try:
+        result = await workspace.run(argv, cwd=cwd, timeout=SEARCH_TIMEOUT)
+    except WorkspaceOutputLimitError as error:
+        return error.stdout, True, '0', ''
+    return result.stdout, False, str(result.exit_code), result.stderr.strip()
 
 
 def _exit_status(result: CommandResult) -> tuple[str, str]:

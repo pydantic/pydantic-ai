@@ -6,18 +6,11 @@ from typing import Literal, assert_never, cast
 
 import httpx2
 
-from pydantic_ai._model_errors import (
-    connection_error,
-    google_retry_after,
-    google_status_category,
-    http_status_category,
-    transport_status_error,
-)
+from pydantic_ai._model_errors import connection_error, google_status_error, google_transport_status_error
 from pydantic_ai._utils import is_google_files_api_url, is_str_dict
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
-    ModelHTTPError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -96,7 +89,7 @@ _CONTENT_FILTER_FINISH_REASONS = frozenset(
 
 `NO_IMAGE` and `IMAGE_OTHER` are deliberately absent: neither names a content-policy refusal, so both take the
 generic empty-response error instead of the moderation block that the capability converts into a prompt-rephrasing
-retry — `models/google.py` likewise leaves `IMAGE_OTHER` unmapped.
+retry — `models/google.py` maps `IMAGE_OTHER` to `None`, as it does `OTHER`.
 """
 
 
@@ -241,24 +234,18 @@ class GoogleImageGenerationModel(ImageGenerationModel):
                 )
         except errors.APIError as e:
             if (status_code := e.code) >= 400:
-                status = e.status if isinstance(e.status, str) else None
-                body = cast(object, e.details)  # pyright: ignore[reportUnknownMemberType]
-                error = ModelHTTPError.for_category(
-                    google_status_category(status, e.message, body) or http_status_category(status_code, e.message),
+                raise google_status_error(
+                    self.model_name,
                     status_code=status_code,
-                    model_name=self.model_name,
-                    body=body,
+                    status=e.status if isinstance(e.status, str) else None,
+                    message=e.message,
+                    body=cast(object, e.details),  # pyright: ignore[reportUnknownMemberType]
                     headers=dict(e.response.headers) if e.response is not None else None,  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-                    provider_error_code=status,
-                )
-                error.retry_after = google_retry_after(error)
-                raise error from e
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
         except httpx2.HTTPStatusError as e:
             # A retrying transport raises this for a status it gave up on, and `google.genai` lets it through unwrapped.
-            error = transport_status_error(self.model_name, e.response)
-            error.retry_after = google_retry_after(error)
-            raise error from e
+            raise google_transport_status_error(self.model_name, e.response) from e
         except httpx2.TransportError as e:
             # `google.genai` doesn't wrap connection errors and timeouts in its own exceptions.
             timeout = isinstance(e, httpx2.TimeoutException)

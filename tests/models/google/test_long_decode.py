@@ -23,10 +23,12 @@ import json
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
+from importlib.metadata import version
 from typing import Literal
 
 import httpx2
 import pytest
+from packaging.version import Version
 
 from pydantic_ai import Agent, capture_run_messages
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UsageLimitExceeded
@@ -524,20 +526,24 @@ async def test_per_request_input_limit_reads_the_first_request(
 async def test_failed_continuation_request_raises(
     stream: bool, failure: Literal['status', 'transport-gave-up', 'event-hook'], allow_model_requests: None
 ):
-    """A continuation request that fails fails the model request, as google-genai does not retry it.
+    """A continuation request that fails fails the model request.
 
     That includes an `HTTPStatusError` raised by a retrying transport that gave up on the status, or by a response
-    event hook, which google-genai lets through unwrapped, from inside the stream too. Not streamed, the output of the
-    requests before it is lost, though billed. Streamed, the run keeps what was streamed as an interrupted response
-    carrying the finished requests' usage.
+    event hook, which google-genai lets through unwrapped, from inside the stream too. Streamed, google-genai 2.31.0
+    and later first send such a request 3 more times from the same continuation token, while they raise an error
+    status they read themselves at once. Not streamed, the output of the requests before it is lost, though billed.
+    Streamed, the run keeps what was streamed as an interrupted response carrying the finished requests' usage.
     """
     requests: list[dict[str, object]] = []
     error = {'error': {'code': 503, 'message': 'The model is overloaded.', 'status': 'UNAVAILABLE'}}
-    failed: httpx2.Response | httpx2.HTTPStatusError = httpx2.Response(503, json=error)
-    if failure == 'transport-gave-up':
-        request = httpx2.Request('POST', 'https://generativelanguage.googleapis.com/')
-        failed = httpx2.HTTPStatusError('Server error 503', request=request, response=failed)
-    responses = [*_two_requests(stream)[:1], failed]
+    attempts = 4 if stream and failure != 'status' and Version(version('google-genai')) >= Version('2.31.0') else 1
+    responses: list[httpx2.Response | httpx2.HTTPStatusError] = [*_two_requests(stream)[:1]]
+    for _ in range(attempts):
+        failed: httpx2.Response | httpx2.HTTPStatusError = httpx2.Response(503, json=error)
+        if failure == 'transport-gave-up':
+            request = httpx2.Request('POST', 'https://generativelanguage.googleapis.com/')
+            failed = httpx2.HTTPStatusError('Server error 503', request=request, response=failed)
+        responses.append(failed)
     model = _model(responses, requests, raise_for_status=failure == 'event-hook')
     agent = Agent(model, model_settings={'max_tokens': 100_000})
 
@@ -545,7 +551,8 @@ async def test_failed_continuation_request_raises(
         await _run(agent, stream)
 
     assert exc_info.value.status_code == 503
-    assert len(requests) == 2
+    assert len(requests) == 1 + attempts
+    assert requests[2:] == [requests[1]] * (attempts - 1)
     if stream:
         assert messages[1:] == snapshot(
             [

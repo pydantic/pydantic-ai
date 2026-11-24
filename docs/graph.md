@@ -165,11 +165,8 @@ async def start(ctx: StepContext[None, None, int]) -> DivisibleBy5:  # (4)!
     return DivisibleBy5(ctx.inputs)
 
 
-g.add(
-    g.node(DivisibleBy5),  # (5)!
-    g.node(Increment),
-    g.edge_from(g.start_node).to(start),  # (6)!
-)
+g.add_reachable(DivisibleBy5)  # (5)!
+g.add(g.edge_from(g.start_node).to(start))  # (6)!
 
 fives_graph = g.build()  # (7)!
 
@@ -184,7 +181,7 @@ async def main():
 2. The `Increment` node doesn't return `End`, so the `RunEndT` generic parameter is omitted, and so is deps, which it doesn't use.
 3. Create a [`GraphBuilder`][pydantic_graph.graph_builder.GraphBuilder] declaring the input and output types of the graph.
 4. Define a [step](graph/builder/steps.md) that wraps the initial input as the first `BaseNode`. The builder calls this when execution leaves [`g.start_node`][pydantic_graph.graph_builder.GraphBuilder.start_node].
-5. Register each `BaseNode` subclass with [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node] so the builder knows about it; outgoing edges are inferred from each node's `run` return type.
+5. Register `DivisibleBy5` and its reachable successors with [`g.add_reachable()`][pydantic_graph.graph_builder.GraphBuilder.add_reachable]; outgoing edges are inferred from each node's `run` return type.
 6. Wire the start node into the entry step.
 7. [`g.build()`][pydantic_graph.graph_builder.GraphBuilder.build] returns a [`Graph`][pydantic_graph.graph_builder.Graph] ready to execute.
 8. [`graph.run()`][pydantic_graph.graph_builder.Graph.run] is async and returns the raw output value (the `int` returned by the `End` node).
@@ -207,6 +204,27 @@ stateDiagram-v2
   decision --> [*]
   Increment --> DivisibleBy5
 ```
+
+### Registering reachable nodes
+
+Use [`g.add_reachable()`][pydantic_graph.graph_builder.GraphBuilder.add_reachable] to register
+`BaseNode` classes recursively from one or more roots, as in the example above. To register
+individual classes instead, use [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node]
+and [`g.add()`][pydantic_graph.graph_builder.GraphBuilder.add]:
+
+```py {test="skip" lint="skip"}
+g.add(g.node(DivisibleBy5), g.node(Increment))
+```
+
+Discovery follows `run` return annotations and already configured paths through steps, decisions,
+joins, broadcasts and maps. Existing outgoing paths are preserved; annotations supply paths only
+for `BaseNode` classes that have none. Configure bridge paths **before** calling `add_reachable()`.
+Only nodes reachable from the supplied roots are inspected. Cycles, duplicate roots and repeated
+calls do not duplicate inferred edges.
+
+Registration does not instantiate node classes. Your start step and `run` methods still construct
+node instances and supply their constructor arguments. Connect `g.start_node` explicitly, as above.
+Complete discovery before calling `g.build()`.
 
 ### Nodes in separate modules
 
@@ -241,9 +259,14 @@ class Second(BaseNode[None, None, int]):
 ```
 
 Neither module reads the other's class while it is being imported: the annotations are resolved when
-you register the classes with [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node], and the
+you register the classes with [`g.node()`][pydantic_graph.graph_builder.GraphBuilder.node] or
+[`g.add_reachable()`][pydantic_graph.graph_builder.GraphBuilder.add_reachable], and the
 `run` bodies execute later still. Importing the classes directly (`from .second import Second`)
 fails with a circular `ImportError`.
+
+For independent tasks whose routing belongs in the composition root, use ordinary step functions:
+define the function in its own module, import it, then register it with `g.step(imported_function)`
+and connect its edges there. The function's module does not need to import the builder.
 
 ## Stateful Graphs
 

@@ -327,7 +327,10 @@ async def test_posix_search_reports_failed_sort(tmp_path: Path) -> None:
         await tools.list_files(workspace=backend)
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason='root reads a mode-000 file')
+@pytest.mark.skipif(
+    os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+    reason='root reads a mode-000 file, and Windows does not enforce POSIX file modes',
+)
 async def test_posix_grep_skips_an_unreadable_file(tmp_path: Path, no_rg_path: str) -> None:
     (tmp_path / 'a.txt').write_text('needle\n')
     locked = tmp_path / 'locked.txt'
@@ -345,6 +348,45 @@ async def test_posix_grep_skips_an_unreadable_file(tmp_path: Path, no_rg_path: s
             await tools.grep('a(', workspace=workspace)
     finally:
         locked.chmod(0o644)
+
+
+async def test_posix_search_reads_each_unreadable_record(tmp_path: Path, no_rg_path: str) -> None:
+    """Each NUL-terminated record the search script writes for a file it could not read is named once.
+
+    The records are written to stderr here rather than produced by a mode-000 file, so the case runs as root
+    too, and a file name that holds the record prefix can be shown to stay whole.
+    """
+    prefix = '__harness_posix_unreadable='
+
+    class Answering(LocalWorkspaceBackend):
+        """A local workspace whose search script answers with `stderr` and no output."""
+
+        stderr = ''
+
+        async def run(
+            self,
+            command: WorkspaceCommand,
+            *,
+            shell: bool = False,
+            env: Mapping[str, str] | None = None,
+            timeout: float | None = None,
+        ) -> CommandResult:
+            if isinstance(command, str) and prefix in command:
+                return CommandResult(exit_code=0, stdout='', stderr=self.stderr)
+            return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+    tools = FileSystem[None](tools=['grep']).get_toolset()
+    assert isinstance(tools, FileSystemToolset)
+    backend = Answering(tmp_path, env={'PATH': no_rg_path})
+    backend.stderr = f'{prefix}locked.txt\0grep: a warning\n{prefix}odd{prefix}name.txt\0__harness_posix_status=0\n'
+    assert await tools.grep('needle', workspace=backend) == (
+        f'No matches found.\n[2 paths could not be read (Permission denied): locked.txt, odd{prefix}name.txt]'
+    )
+    # A failed search reports its other stderr, including a prefix that no NUL follows.
+    backend.stderr = f'{prefix}locked.txt\0grep: a failure\n{prefix}cut__harness_posix_status=2\n'
+    with pytest.raises(ModelRetry) as error:
+        await tools.grep('needle', workspace=backend)
+    assert str(error.value) == f'POSIX search failed: grep: a failure\n{prefix}cut'
 
 
 async def test_the_fallback_is_logged_once_per_workspace(

@@ -58,13 +58,17 @@ from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.messages import (
     BinaryContent,
+    BinaryImage,
     CompactionPart,
+    ImageUrl,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     ModelResponsePart,
     ModelSettingsDeltaPart,
+    OperatorSource,
     StructuredContent,
     SystemPromptPart,
     TextPart,
@@ -687,11 +691,16 @@ def _progress_state(ctx: RunContext[None]) -> str:
     return f'The user has asked {_questions_asked(ctx)} question(s) so far.'
 
 
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_ui_roundtrip', name='reminder'):
+    pass
+
+
 class _RequestScopedReminder(AbstractCapability[None]):
     async def before_model_request(
         self, ctx: RunContext[None], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        ctx.enqueue(SystemPromptPart('Reminder: keep it short.', scope='request'))
+        ctx.enqueue(_ReminderPart(content='Reminder: keep it short.', source=OperatorSource(), scope='request'))
         return request_context
 
 
@@ -722,6 +731,7 @@ _AGUI_ACTIVITY = (
     "With `framing_announcement='when_needed'`, a dropped mid-conversation system prompt also takes the framing "
     "announcement out of the standing prompt on the next turn; accepted, and documented: UI apps set `'always'`"
 )
+_AGUI_FILE_IDENTIFIER = "`AGUIAdapter.dump_messages` doesn't carry a user file's custom `identifier`; #14284"
 _RETRY = (
     "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
     '`outcome="failed"` instead of `"retried"`; #8185'
@@ -981,6 +991,26 @@ SCENARIOS = [
     ),
     Scenario(id='multimodal_tool_return', script=_image_script, setup=_image_tools),
     Scenario(
+        id='custom_file_identifiers',
+        script=_text_script,
+        gaps=_gaps(_AGUI_FILE_IDENTIFIER, ('load', 'dump', 'agui'), ('load', 'stream', 'agui')),
+        seed=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        [
+                            'Question 0',
+                            BinaryImage(data=_PNG.data, media_type='image/png', identifier='chart'),
+                            BinaryContent(data=b'%PDF-1.7', media_type='application/pdf', identifier='contract'),
+                            ImageUrl(url='https://example.com/logo.png', identifier='logo'),
+                        ]
+                    )
+                ]
+            ),
+            ModelResponse(parts=[TextPart('Three files received.')]),
+        ],
+    ),
+    Scenario(
         id='structured_content',
         script=_enqueue_script,
         setup=_enqueue_structured_tools,
@@ -1104,6 +1134,8 @@ class Client(ABC):
     def sanitize(self, adapter: UIAdapter[Any, Any, Any, Any, Any], messages: list[ModelMessage]) -> list[ModelMessage]:
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', 'Parts carrying the system voice were stripped', UserWarning)
+            # The server's own history has capability parts, which `dump_messages()` never sends to a client.
+            warnings.filterwarnings('ignore', 'Capability parts were dropped', UserWarning)
             return adapter.sanitize_messages(messages)
 
     async def turn(

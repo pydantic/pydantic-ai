@@ -52,11 +52,13 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter
 from pydantic_core import to_json
 from typing_extensions import TypedDict
 
+from .. import _model_errors
 from .._utils import generate_tool_call_id
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     FilePart,
     FinishReason,
@@ -92,6 +94,7 @@ from ..models._tool_choice import ResolvedToolChoice
 from ..profiles import DEFAULT_THINKING_TAGS
 from ..tools import ToolDefinition
 from ._utils import (
+    read_rejected_upgrade,
     reject_forced_tool_choice,
     seed_pcm_audio,
     seed_retry_feedback_text,
@@ -594,6 +597,8 @@ async def _seed_request_items(
                 | ToolAvailabilityDeltaPart()
                 | CapabilityLoadDeltaPart()
                 | ModelSettingsDeltaPart()
+                # Rendered into the parts below by `wrap_seeded_system_prompts` before seeding.
+                | CapabilityPart()
             ):
                 # System prompts are seeded through session instructions, and tool-availability news
                 # from a prior standard run is stale here: the session advertises its own tools.
@@ -1143,8 +1148,9 @@ def map_connect_errors(model_name: str) -> Generator[None]:
 
     Wrap the initial dial so anything that stops the session coming up surfaces as a
     [`RealtimeError`][pydantic_ai.realtime.RealtimeError], or a
-    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] where the failure carries an HTTP status,
-    each naming the model — mirroring [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] in the error category of its status and error code
+    where the failure carries an HTTP status, each naming the model — mirroring
+    [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
     Reconnects dial outside this manager so the reconnect loop keeps treating a drop as retryable.
     """
     try:
@@ -1154,11 +1160,10 @@ def map_connect_errors(model_name: str) -> Generator[None]:
         # carry no HTTP status, so they map to `RealtimeError` like a regular non-status provider error.
         raise RealtimeError(model_name=model_name, message=str(e)) from e
     except websockets.InvalidStatus as e:
-        # The WebSocket upgrade itself was rejected (bad key → 401, unknown model → 404); this carries a
-        # real HTTP status, so it maps to `ModelHTTPError` exactly like a regular request.
-        response = e.response
-        body = response.body.decode(errors='replace') if response.body else response.reason_phrase
-        raise ModelHTTPError(status_code=response.status_code, model_name=model_name, body=body) from e
+        # The WebSocket upgrade itself was rejected with a real HTTP status, so it raises what the same
+        # response to a regular request raises.
+        body, headers = read_rejected_upgrade(e)
+        raise _model_errors.openai_compatible_response_error(model_name, e.response.status_code, body, headers) from e
     except websockets.WebSocketException as e:
         # Any other WebSocket-level handshake failure — the server closed the socket mid-handshake (e.g. a
         # gateway rejecting an unknown model) instead of sending an `error` event, a bad upgrade, etc.
@@ -1350,7 +1355,7 @@ async def expect_event(
     deadline = time.monotonic() + timeout
     while True:
         try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
+            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError:
             expected = ' or '.join(map(repr, expected_types))
             raise RealtimeHandshakeError(f'timed out waiting for a {expected} event') from None
