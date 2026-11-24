@@ -60,19 +60,12 @@ async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator
 def deferring_agent(end_strategy: EndStrategy, deferral: Deferral) -> Agent[None, Summary]:
     agent = Agent(FunctionModel(respond, stream_function=stream), output_type=Summary, end_strategy=end_strategy)
 
-    if deferral == 'requires_approval':
-
-        @agent.tool_plain(requires_approval=True)
-        def delete_file(path: str) -> str:  # pragma: no cover
-            return f'deleted {path}'
-
-    else:
-
-        @agent.tool_plain
-        def delete_file(path: str) -> str:
-            if deferral == 'approval_required':
-                raise ApprovalRequired
-            raise CallDeferred
+    # With `requires_approval=True`, the call is deferred by its tool's kind, so the tool never runs.
+    @agent.tool_plain(requires_approval=deferral == 'requires_approval')
+    def delete_file(path: str) -> str:
+        if deferral == 'approval_required':
+            raise ApprovalRequired
+        raise CallDeferred
 
     return agent
 
@@ -82,12 +75,7 @@ async def run_agent(
 ) -> tuple[Summary, list[ModelMessage], list[AgentStreamEvent]]:
     events: list[AgentStreamEvent] = []
     if route == 'run':
-
-        async def handler(_ctx: object, stream_events: AsyncIterator[AgentStreamEvent]) -> None:
-            async for event in stream_events:
-                events.append(event)
-
-        result = await agent.run('Clean up.', event_stream_handler=handler)
+        result = await agent.run('Clean up.')
         return result.output, result.all_messages(), events
     if route == 'run_stream':
         async with agent.run_stream('Clean up.') as streamed:
@@ -122,7 +110,7 @@ async def test_call_deferred_while_running_gets_a_result_when_the_run_ends_on_ou
 
     assert output == Summary(text='done')
     assert delete_file_results(messages) == [DEFERRED_RESULT]
-    if route != 'run_stream':
+    if route == 'run_stream_events':
         call_events = [
             e for e in events if isinstance(e, FunctionToolCallEvent) and e.part.tool_call_id == 'call_delete'
         ]
