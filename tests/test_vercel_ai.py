@@ -8782,8 +8782,12 @@ def test_user_file_computed_identifier_is_not_dumped(
         pytest.param('https://example.com/x.pdf', id='url'),
     ],
 )
-def test_user_file_non_string_identifier_is_ignored(url: str):
-    """`provider_metadata` is client-supplied, so an identifier that isn't a string falls back to the computed one."""
+@pytest.mark.parametrize(
+    'identifier',
+    [pytest.param({'not': 'a string'}, id='non-string'), pytest.param('', id='empty')],
+)
+def test_user_file_unusable_identifier_falls_back_to_computed(url: str, identifier: object):
+    """`provider_metadata` is client-supplied, so an empty or non-string identifier gives way to the computed one."""
     ui_message = UIMessage(
         id='msg1',
         role='user',
@@ -8791,7 +8795,7 @@ def test_user_file_non_string_identifier_is_ignored(url: str):
             FileUIPart(
                 url=url,
                 media_type='application/pdf',
-                provider_metadata={'pydantic_ai': {'identifier': {'not': 'a string'}}},
+                provider_metadata={'pydantic_ai': {'identifier': identifier}},
             )
         ],
     )
