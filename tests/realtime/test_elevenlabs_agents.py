@@ -77,7 +77,7 @@ from pydantic_ai.realtime.lifecycle import (
 from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import IsDatetime, try_import
+from ..conftest import IsDatetime, IsStr, try_import
 from .ws_helpers import collect_codec_events
 
 with try_import() as imports_successful:
@@ -357,6 +357,7 @@ def test_profile() -> None:
         supports_webrtc=False,
         supports_seeding_images=False,
         supports_seeding_audio=False,
+        supports_appending_voice_instructions=False,
         supports_thinking=False,
         async_tool_call_mode='never',
         supports_async_tool_calls=False,
@@ -2844,25 +2845,36 @@ async def test_client_tool_call_maps_to_tool_call_with_serialized_args() -> None
     ]
 
 
-@pytest.mark.parametrize('ended_by', ['quiet', 'next-frame', 'drop'])
+@pytest.mark.parametrize('ended_by', ['quiet', 'next-frame', 'drop', 'malformed-frame'])
 async def test_a_replys_parallel_tool_calls_are_one_response(ended_by: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # Verified live: a reply's parallel calls come as separate frames, back to back, and nothing follows until their
     # results are in. They are one response, which ends once no more come.
     monkeypatch.setattr(rt_elevenlabs, '_TOOL_CALL_BATCH_WINDOW', 0.01)
-    after: list[dict[str, Any]] = {'quiet': [], 'next-frame': [_VOICED], 'drop': []}[ended_by]
+    bad_audio = {'type': 'audio', 'audio_event': {'audio_base_64': '!!!!', 'event_id': 2}}
+    after: list[dict[str, Any]] = {'quiet': [], 'next-frame': [_VOICED], 'drop': [], 'malformed-frame': [bad_audio]}[
+        ended_by
+    ]
     connection, ws = _connection(
         [_tool_call_frame('get_weather'), _tool_call_frame('get_time', tool_call_id='call_2'), *after]
     )
-    ws.hold_open = ended_by != 'drop'
+    ws.hold_open = ended_by in ('quiet', 'next-frame')
     frames = connection.frames()
     seen: list[Any] = []
+    last: RealtimeFrame = []
     while not any(isinstance(event, ResponseEnded) for event in seen):
-        seen += await anext(frames)
+        last = await anext(frames)
+        seen += last
     started = [event for event in seen if isinstance(event, ResponseStarted)]
     ended = [event for event in seen if isinstance(event, ResponseEnded)]
     calls = [event.tool_call_id for event in seen if isinstance(event, ToolCall)]
     assert (len(started), calls) == (1, ['call_1', 'call_2'])
     assert [(event.status, event.finish_reason) for event in ended] == [('completed', 'tool_call')]
+    if ended_by == 'malformed-frame':
+        # Any frame but another call ends them, by its type alone: the malformed one does, and reports its payload.
+        error = last[-1]
+        assert isinstance(error, RealtimeSessionErrorEvent)
+        assert error.recoverable
+        assert error.message.startswith('Failed to parse ElevenLabs Agents event')
 
 
 async def test_fire_and_forget_tool_calls_never_send_a_result() -> None:
@@ -3599,6 +3611,107 @@ async def test_a_dropped_connection_loses_the_response_under_way() -> None:
                 message='ElevenLabs Agents connection closed: received 1000 (OK); no close frame sent',
                 recoverable=False,
             ),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'malformed, payload_model',
+    [
+        ({'type': 'context_usage', 'context_usage_event': {'context_tokens': 'many'}}, '_ContextUsageEvent'),
+        ({'type': 'agent_response', 'agent_response_event': {'event_id': 2}}, '_AgentResponseEvent'),
+        ({'type': 'user_transcript', 'user_transcription_event': {}}, '_UserTranscriptEvent'),
+    ],
+    ids=['context-usage', 'agent-response', 'user-transcript'],
+)
+async def test_a_malformed_frame_still_ends_the_reply_its_type_ends(
+    malformed: dict[str, Any], payload_model: str
+) -> None:
+    # What a frame ends follows from its type alone, so the reply ends with a malformed frame as with a well-formed
+    # one, which is a recoverable error, and the next reply is a response of its own, after the user's words.
+    connection, ws = _connection()
+    frames = await _frames(
+        connection,
+        ws,
+        [
+            _agent_response('Hi.'),
+            malformed,
+            {'type': 'user_transcript', 'user_transcription_event': {'user_transcript': 'Again.'}},
+            {
+                'type': 'agent_response',
+                'agent_response_event': {'agent_response': 'Done.', 'event_id': 2, 'response_id': 'resp_2'},
+            },
+            _VOICED,
+        ],
+    )
+    assert frames == snapshot(
+        [
+            [
+                ResponseStarted(response_id='pydantic_ai_response_1', basis='inferred', provider_id=False),
+                OutputTranscript(text='Hi.', is_final=True, item_id='resp_1'),
+            ],
+            [
+                ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                RealtimeSessionErrorEvent(
+                    message=IsStr(
+                        regex=rf'Failed to parse ElevenLabs Agents event: 1 validation error for {payload_model}\n.*',
+                        regex_flags=re.DOTALL,
+                    )
+                ),
+            ],
+            [
+                UserTurnStarted(turn_id='pydantic_ai_user_turn_1'),
+                UserTurnEnded(turn_id='pydantic_ai_user_turn_1'),
+                InputTranscript(text='Again.', is_final=True),
+            ],
+            [
+                ResponseStarted(
+                    response_id='pydantic_ai_response_2',
+                    basis='inferred',
+                    user_turn_id='pydantic_ai_user_turn_1',
+                    provider_id=False,
+                ),
+                OutputTranscript(text='Done.', is_final=True, item_id='resp_2'),
+            ],
+            [
+                ResponseDone(provider_response_id='resp_2', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_2',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                SessionUsage(usage=RequestUsage(input_tokens=10), response_scoped=False, context_window_used=0.1),
+            ],
+        ]
+    )
+
+    # The reply is over before the connection drops, so it isn't lost with it.
+    connection, ws = _connection()
+    assert await _frames(connection, ws, [_agent_response('Hi.'), malformed]) == snapshot(
+        [
+            [
+                ResponseStarted(response_id='pydantic_ai_response_1', basis='inferred', provider_id=False),
+                OutputTranscript(text='Hi.', is_final=True, item_id='resp_1'),
+            ],
+            [
+                ResponseDone(provider_response_id='resp_1', provider_details={'conversation_id': 'conv_1'}),
+                ResponseEnded(
+                    response_id='pydantic_ai_response_1',
+                    status='completed',
+                    provider_details={'conversation_id': 'conv_1'},
+                ),
+                RealtimeSessionErrorEvent(
+                    message=IsStr(
+                        regex=rf'Failed to parse ElevenLabs Agents event: 1 validation error for {payload_model}\n.*',
+                        regex_flags=re.DOTALL,
+                    )
+                ),
+            ],
         ]
     )
 

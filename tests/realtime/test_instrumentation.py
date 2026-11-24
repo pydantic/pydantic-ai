@@ -18,6 +18,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -42,16 +43,21 @@ from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
+    DataCapabilityPart,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
+    OperatorSource,
+    OperatorText,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
     SpeechPart,
     TextPart,
     ToolCallPart,
+    ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -93,6 +99,13 @@ from .test_session import FakeRealtimeModel, make_tool_manager
 
 with try_import() as openai_live_installed:
     from pydantic_ai.realtime.openai_live import OpenAILiveModelSettings
+
+with try_import() as elevenlabs_agents_installed:
+    from pydantic_ai.providers.elevenlabs import ElevenLabsProvider
+    from pydantic_ai.realtime.elevenlabs_agents import (
+        ElevenLabsAgentsRealtimeModel,
+        ElevenLabsAgentsRealtimeModelSettings,
+    )
 
 with try_import() as mcp_installed:
     from fastmcp import FastMCP
@@ -436,6 +449,42 @@ def _weather_agent(*, name: str | None = None, capabilities: list[Instrumentatio
 
 
 # --- tool spans: owned by the `Instrumentation` capability via `Agent.realtime_session` ----------
+
+
+@dataclass(kw_only=True)
+class _SeededNudgePart(InstructionCapabilityPart, namespace='test_realtime_redaction', name='nudge'):
+    pass
+
+
+@dataclass(kw_only=True)
+class _SeededPagePart(DataCapabilityPart, namespace='test_realtime_redaction', name='page', tag='fetched_page'):
+    pass
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_seeded_capability_parts_honor_include_content(include_content: bool) -> None:
+    """Capability parts in seeded history reach the session span's `pydantic_ai.all_messages` only with content on."""
+    settings, exporter = _settings(include_content=include_content)
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('Check the page.'),
+                _SeededNudgePart(content=OperatorText('SENTINEL-capability-instruction'), source=OperatorSource()),
+                _SeededPagePart(content='SENTINEL-capability-data', source=ToolResultSource(tool_name='fetch')),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('Done.')]),
+    ]
+    agent: Agent[None, str] = Agent()
+    agent.instrument = settings
+    async with agent.realtime(_Model(_Connection([ResponseDone()])), message_history=history).session() as session:
+        _ = [e async for e in session]
+
+    [session_span] = [s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent']
+    exported = json.dumps(dict(session_span.attributes or {}), default=str)
+    assert 'pydantic_ai.all_messages' in exported
+    for sentinel in ('SENTINEL-capability-instruction', 'SENTINEL-capability-data'):
+        assert (sentinel in exported) is include_content
 
 
 async def test_nested_agent_run_nests_under_session_span() -> None:
@@ -829,6 +878,89 @@ async def test_request_config_omits_model_settings_without_content() -> None:
         assert 'secret persona' not in json.dumps(dict(attributes))
         assert 'model_request_parameters' in attributes
         assert attributes['gen_ai.request.max_tokens'] == 4096
+
+
+@pytest.mark.skipif(not elevenlabs_agents_installed(), reason='websockets not installed')
+async def test_request_config_filters_elevenlabs_agents_settings() -> None:
+    # Like the embedding and image spans' recorded settings, which leave out `extra_body`, the realtime
+    # `model_settings` blob leaves out the custom-LLM request body and the `secret__` dynamic variables.
+    settings, exporter = _settings()
+    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), ResponseDone()])
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model=ElevenLabsAgentsRealtimeModel('agent_x', provider=ElevenLabsProvider(api_key='k')),
+        model_settings=ElevenLabsAgentsRealtimeModelSettings(
+            max_tokens=4096,
+            elevenlabs_agents_custom_llm_extra_body={'value': 'sentinel'},
+            elevenlabs_agents_dynamic_variables={'secret__x': 'sentinel', 'name': 'Ana'},
+        ),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = exporter.get_finished_spans()
+    for span in spans:
+        assert 'sentinel' not in json.dumps(dict(span.attributes or {}))
+        for event in span.events:
+            assert 'sentinel' not in json.dumps(dict(event.attributes or {}))
+    session_attributes = {s.name: s for s in spans}['invoke_agent agent'].attributes
+    assert session_attributes is not None
+    assert json.loads(str(session_attributes['model_settings'])) == snapshot(
+        {'max_tokens': 4096, 'elevenlabs_agents_dynamic_variables': {'name': 'Ana'}}
+    )
+
+
+@pytest.mark.skipif(not elevenlabs_agents_installed(), reason='websockets not installed')
+async def test_request_config_omits_filtered_out_elevenlabs_agents_settings() -> None:
+    # Settings holding only the custom-LLM request body and `secret__` dynamic variables record no
+    # `model_settings` at all.
+    settings, exporter = _settings()
+    conn = _Connection([ToolCall(tool_call_id='c1', tool_name='get_weather', args='{"city": "Paris"}'), ResponseDone()])
+    session = RealtimeSession(
+        conn,
+        _ok_runner,
+        instrumentation=settings,
+        model=ElevenLabsAgentsRealtimeModel('agent_x', provider=ElevenLabsProvider(api_key='k')),
+        model_settings=ElevenLabsAgentsRealtimeModelSettings(
+            elevenlabs_agents_custom_llm_extra_body={'value': 'sentinel'},
+            elevenlabs_agents_dynamic_variables={'secret__x': 'sentinel'},
+        ),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    spans = exporter.get_finished_spans()
+    assert spans
+    for span in spans:
+        attributes = dict(span.attributes or {})
+        assert 'model_settings' not in attributes
+        assert 'sentinel' not in json.dumps(attributes)
+    session_attributes = {s.name: s for s in spans}['invoke_agent agent'].attributes
+    assert session_attributes is not None
+    assert 'model_settings' not in json.loads(str(session_attributes['logfire.json_schema']))['properties']
+
+
+@pytest.mark.skipif(not elevenlabs_agents_installed(), reason='websockets not installed')
+async def test_request_config_keeps_empty_elevenlabs_agents_dynamic_variables() -> None:
+    # An empty `elevenlabs_agents_dynamic_variables` is recorded as given.
+    settings, exporter = _settings()
+    session = RealtimeSession(
+        _Connection([ResponseDone()]),
+        _ok_runner,
+        instrumentation=settings,
+        model=ElevenLabsAgentsRealtimeModel('agent_x', provider=ElevenLabsProvider(api_key='k')),
+        model_settings=ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_dynamic_variables={}),
+    )
+    async with session:
+        _ = [e async for e in session]
+
+    session_attributes = {s.name: s for s in exporter.get_finished_spans()}['invoke_agent agent'].attributes
+    assert session_attributes is not None
+    assert json.loads(str(session_attributes['model_settings'])) == snapshot(
+        {'elevenlabs_agents_dynamic_variables': {}}
+    )
 
 
 async def test_session_span_records_lifecycle_spans() -> None:

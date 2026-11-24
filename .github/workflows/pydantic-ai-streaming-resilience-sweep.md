@@ -37,7 +37,7 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "[streaming-resilience-sweep] "
-    labels: [streaming]
+    labels: [area:streaming]
     close-older-key: "[streaming-resilience-sweep]"
     close-older-issues: false
     expires: 7d
@@ -51,7 +51,7 @@ env:
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
 if: ${{ needs.provider_health.outputs.ready == 'true' }}
 engine:
-  model: anthropic/${{ vars.GH_AW_MODEL }}
+  model: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:

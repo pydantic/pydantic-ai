@@ -281,7 +281,7 @@ fit for a product, two alternatives sit outside it:
 
 | Limitation | Tracking |
 | --- | --- |
-| SIP is not built in; bridge telephony through a provider such as Twilio. | [Deployment](deployment.md#siptelephony-bridge) |
+| SIP is not built in; bridge a phone call through a provider such as Twilio. | [Twilio Media Streams](deployment.md#twilio-media-streams) |
 | Pydantic AI fixes a session's tools when it connects (OpenAI and xAI accept mid-session tool updates), so `defer_loading=True` tools and tool-contributing capabilities are [rejected](capabilities.md#deferred-capability-loading). | [#7288](https://github.com/pydantic/pydantic-ai/issues/7288) |
 | Realtime-specific exchange hooks are not yet available; use [run and tool hooks](capabilities.md) and [session events](events.md). | [#7190](https://github.com/pydantic/pydantic-ai/issues/7190) |
 | Provider resumption handles cannot be persisted and resumed in another process. | [#7302](https://github.com/pydantic/pydantic-ai/issues/7302) |

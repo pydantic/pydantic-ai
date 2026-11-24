@@ -74,6 +74,7 @@ from ..profiles.google import (
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
+    _with_google_cloud_media_types,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
@@ -178,6 +179,7 @@ LatestGoogleModelNames = Literal[
     'gemini-4-carbon',
     'gemini-4-argon',
     'gemini-4-hydrogen',
+    'gemini-4-neon',
     'gemini-3.1-pro-preview',
     'gemini-3.8-flash',
     'gemini-3.5-flash-lite',
@@ -763,19 +765,40 @@ class GoogleModel(Model[Client]):
         return frozenset({self.system})
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Set `google_supports_batch_api` by the client's transport, before the user's `profile=` applies.
+        """Set the profile defaults that follow the client's transport, before the user's `profile=` applies.
 
         Batch Mode is the Gemini API's: Google Cloud runs batch prediction jobs from Cloud Storage or BigQuery instead.
+        The Gemini API rejects `presence_penalty` and `frequency_penalty` for every model (verified live 2026-11-04),
+        while Google Cloud accepts them for the models `google_model_profile` says do. Google Cloud also reads more
+        image and document media types than the Gemini API.
+        On the Gemini API, `gemini-2.5-flash-lite` also gets `google_minimal_thinking_budget=512`.
         """
-        return merge_profile(profile, GoogleModelProfile(google_supports_batch_api=not self._is_google_cloud))
+        if self._is_google_cloud:
+            profile = merge_profile(profile, GoogleModelProfile(google_supports_batch_api=False))
+            return _with_google_cloud_media_types(profile)
+        profile = merge_profile(
+            profile, GoogleModelProfile(google_supports_batch_api=True, google_supports_penalties=False)
+        )
+        # Verified live 2026-11-23 against the Gemini API: `gemini-2.5-flash-lite` rejects a `thinking_budget` below 512
+        # with `Please choose a value between 512 and 24576`, while `gemini-2.5-flash` accepts 128. Vertex documents the
+        # same minimum but is not probed, so it keeps 128: https://github.com/pydantic/pydantic-ai/issues/14206
+        if self._model_name == 'gemini-2.5-flash-lite':
+            profile = merge_profile(profile, GoogleModelProfile(google_minimal_thinking_budget=512))
+        return profile
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('google_supports_penalties', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'frequency_penalty', 'presence_penalty'}
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
         """The model profile.
 
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
-        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the default levels. A
-        `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+        `google_thinking_levels` of `MINIMAL` and `HIGH`, and `gemini-4-neon` models to `LOW`, `MEDIUM`, `HIGH` and
+        `XHIGH`; on Vertex AI both keep the default levels. A `google_thinking_levels` set by the provider or the
+        `profile=` argument takes precedence.
 
         On Vertex AI, `gemini-3.1-pro-preview` can turn thinking off with `thinking_budget=0`, so it isn't
         marked always-on there and gets `google_disables_thinking_with_zero_budget`, unless the provider or
@@ -800,6 +823,21 @@ class GoogleModel(Model[Client]):
             and not self._is_google_cloud
         ):
             return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
+        # Verified live 2026-11-18 against the Gemini API: `gemini-4-neon` accepts `LOW`, `MEDIUM`, `HIGH` and
+        # `XHIGH`, and returns 400 `Thinking level MINIMAL is not supported for this model`. Vertex is not probed and
+        # its thinking table doesn't list the model, so Vertex keeps the default levels.
+        # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+        if (
+            self._model_name.startswith('gemini-4-neon')
+            and 'google_thinking_levels' not in profile
+            and not self._is_google_cloud
+        ):
+            return {
+                **profile,
+                'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH')),
+                'google_supports_minimal_thinking_level': False,
+            }
         # Google documents Gemini 3 Pro as unable to turn thinking off, and the Gemini API 400s
         # `thinking_budget=0` for it, but Vertex (`global`) accepts it and returns no thoughts: verified live
         # 2026-10-23 on `gemini-3.1-pro-preview` and its `-customtools` variant, 8 of 8 reasoning prompts.
@@ -1243,7 +1281,7 @@ class GoogleModel(Model[Client]):
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             budget_map: dict[ThinkingEffort, int] = {
-                'minimal': _GEMINI_2_5_PRO_MIN_THINKING_BUDGET,
+                'minimal': profile.get('google_minimal_thinking_budget', _GEMINI_2_5_PRO_MIN_THINKING_BUDGET),
                 'low': 2048,
                 'medium': 8192,
                 'high': 24576,
@@ -1295,6 +1333,7 @@ class GoogleModel(Model[Client]):
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options = _request_http_options(self.client, model_settings, headers)
+        supports_penalties = 'presence_penalty' not in self._unsupported_settings()
 
         # See `GoogleModelSettings.google_cached_content` for why these three fields are stripped.
         _warn_on_cached_content_strips(cached_content, system_instruction, tools)
@@ -1307,8 +1346,8 @@ class GoogleModel(Model[Client]):
             top_k=model_settings.get('top_k'),
             max_output_tokens=model_settings.get('max_tokens'),
             stop_sequences=model_settings.get('stop_sequences'),
-            presence_penalty=model_settings.get('presence_penalty'),
-            frequency_penalty=model_settings.get('frequency_penalty'),
+            presence_penalty=model_settings.get('presence_penalty') if supports_penalties else None,
+            frequency_penalty=model_settings.get('frequency_penalty') if supports_penalties else None,
             seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=self._translate_thinking(model_settings, model_request_parameters),

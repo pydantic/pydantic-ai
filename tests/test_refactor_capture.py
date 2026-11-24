@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -28,6 +29,7 @@ from pydantic_ai.capabilities import BatchModelRequests
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import StreamedResponse, override_allow_model_requests
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime._core import Owed
 
 from .batch_utils import FAST_BATCH_SETTINGS
 from .conftest import IsStr, try_import
@@ -52,6 +54,7 @@ with try_import() as imports_successful:
         compare,
         main,
         normalized,
+        recorded,
     )
 
 # Imported before the `REALTIME` session's capture starts, so the capture finds `ReplayWebSocket` among the classes
@@ -152,6 +155,7 @@ def test_no_stream():
 REQUESTS = """
 import asyncio
 import random
+import threading
 import time
 import uuid
 from contextlib import suppress
@@ -181,6 +185,11 @@ async def post(http, **content):
 
 
 def test_json_over_httpx():
+    # A thread an earlier test left running can draw from `random` after the capture seeds it, as the keepalive ping of
+    # a `websockets` connection does.
+    pinging = threading.Thread(target=random.getrandbits, args=(32,))
+    pinging.start()
+    pinging.join()
     content = dict(json=dict(text={text!r}, pick=random.randrange(1000)), headers={{'xi-api-key': 'secret'}})
     asyncio.run(post(httpx, **content))
 
@@ -527,25 +536,197 @@ def test_connection_defined_after_the_capture_started():
     asyncio.run(scripted())
 """
 
+SESSION = """
+import asyncio
+from dataclasses import dataclass
+
+import pytest
+
+from pydantic_ai import RunContext
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.realtime import RealtimeSession, infer_realtime_model
+from pydantic_ai.realtime._core import SessionCore
+from pydantic_ai.realtime.codec import AudioDelta, OutputTranscript, ResponseDone
+from pydantic_ai.realtime.lifecycle import InferredLifecycle, LifecycleEvent
+from pydantic_ai.tool_manager import ToolManager
+from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.usage import RunUsage
+
+from tests.realtime_connections import InferredConnection
+
+
+class Scripted(InferredConnection):
+    def __init__(self, *, fails=False):
+        self.fails = fails
+
+    async def send_input(self, content):
+        pass
+
+    async def codec_events(self):
+        if self.fails:
+            raise RuntimeError('provider went away')
+        yield AudioDelta(data=b'\\x01\\x00')
+        yield OutputTranscript(text={text!r}, is_final=True)
+        yield ResponseDone()
+
+
+class Session(RealtimeSession):
+    label = 'not a method'
+
+    def stream_audio(self):
+        return super().stream_audio()
+
+
+class Unlisted(Session):
+    def new_messages(self):
+        raise RuntimeError('cannot list the new messages')
+
+
+def session(cls=Session, *, fails=False, **kwargs):
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_step=0)
+    ctx.tool_manager = ToolManager(FunctionToolset(), ctx=ctx, tools={{}})
+    return cls(Scripted(fails=fails), tool_manager=ctx.tool_manager, **kwargs)
+
+
+async def converse():
+    talk = session()
+    with pytest.raises(UserError, match='async with'):
+        talk.stream_audio()
+    async with talk:
+        audio = talk.stream_audio()
+        transcripts = talk.stream_transcripts()
+        deltas = talk.stream_transcripts(delta=True)
+        [event async for event in talk]
+        [item for view in (audio, transcripts, deltas) async for item in view]
+        with pytest.raises(UserError, match='exactly one active'):
+            talk.played_audio_bytes
+        await talk.close()
+    with pytest.raises(UserError, match='closed'):
+        [event async for event in talk]
+
+
+async def fail():
+    talk = session(fails=True)
+    async with talk:
+        with pytest.raises(RuntimeError, match='provider went away') as failure:
+            [event async for event in talk]
+        handled = KeyError('handled')
+        handled.__context__ = failure.value
+        try:
+            raise handled
+        except KeyError:
+            await talk.close()
+    # Recording what the closed session holds raises its failure again, which must leave the chain of the error being
+    # handled, which holds it, as it was.
+    assert handled.__context__ is failure.value
+    assert failure.value.__context__ is None
+
+
+async def close_with_audio_unread():
+    async with session() as talk:
+        audio = talk.stream_audio()
+    assert audio
+
+
+async def close_with_a_failing_read():
+    # A read the capture can't make stops the test, rather than leave a record without it.
+    with pytest.raises(RuntimeError, match='cannot list the new messages'):
+        async with session(Unlisted):
+            pass
+
+
+async def close_with_an_unseen_failure():
+    # `close` raises the failure no consumer of the event stream saw, and what the session holds is still recorded.
+    with pytest.raises(RuntimeError, match='provider went away'):
+        async with session(fails=True) as talk:
+            [item async for item in talk.stream_transcripts()]
+
+
+def test_session():
+    asyncio.run(converse())
+    asyncio.run(fail())
+    asyncio.run(close_with_audio_unread())
+    asyncio.run(close_with_a_failing_read())
+    asyncio.run(close_with_an_unseen_failure())
+
+
+def test_session_out_of_a_loop():
+    with pytest.raises(UserError, match='retain_images_max'):
+        session(retain_images_max=-1)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Unknown(LifecycleEvent):
+    pass
+
+
+class Lifecycle(InferredLifecycle):
+    def take_pending(self):
+        return super().take_pending()
+
+
+class Core(SessionCore):
+    def take_effects(self):
+        return super().take_effects()
+
+
+def test_core_and_lifecycle():
+    lifecycle = Lifecycle()
+    core = Core(model_name=lambda: None, provider_name=None, provider_url=None, conversation_id=None, run_id=None)
+    for event in lifecycle.frame_for([OutputTranscript(text={text!r}, is_final=True), ResponseDone()]):
+        core.apply(event)
+        core.wait_tokens()
+    core.take_effects()
+    core.all_messages()
+    with pytest.raises(TypeError, match='no handling'):
+        core.apply(Unknown())
+    lifecycle.take_pending()
+
+
+def test_infer_realtime_model(monkeypatch):
+    monkeypatch.setenv('OPENAI_API_KEY', 'test')
+    infer_realtime_model('openai:gpt-realtime')
+    with pytest.raises(UserError, match='provider:model'):
+        infer_realtime_model('openai')
+"""
+
 
 @pytest.fixture
 def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCapture:
-    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, `UI` or `REALTIME`, carrying `text`, into
-    `capture_dir`.
+    """Capture an in-process pytest session over `STREAMS` and `REQUESTS`, `UI`, `REALTIME` or `SESSION`, carrying
+    `text`, into `capture_dir`.
 
     It runs as `main` runs each side.
     """
     monkeypatch.setenv('PYTEST_DISABLE_PLUGIN_AUTOLOAD', '1')
     monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
+    # The inner sessions share this worker's `random` with every thread an earlier test left running, and such a
+    # thread can draw from it between the capture's seed and an inner test's draw: Prefect's events client keeps a
+    # `websockets` connection open whose pings draw `random.getrandbits(32)`. So the capture's seed also seeds `rng`,
+    # and `random.randrange`, the draw the inner tests assert on, reads `rng`: a thread that draws through
+    # `random.getrandbits`, as a `websockets` ping does, can't shift it.
+    rng = random.Random()
+    seed = random.seed
+    # Pyright can't infer a lambda parameter's type with nothing to infer it from.
+    monkeypatch.setattr(random, 'seed', lambda a: (seed(a), rng.seed(a)))  # pyright: ignore[reportUnknownLambdaType,reportUnknownArgumentType]
+    monkeypatch.setattr(random, 'randrange', rng.randrange)
 
     def run(
-        capture_dir: Path, *args: str, text: str = 'hello', ui: bool = False, realtime: bool = False
+        capture_dir: Path,
+        *args: str,
+        text: str = 'hello',
+        ui: bool = False,
+        realtime: bool = False,
+        session: bool = False,
     ) -> pytest.RunResult:
         pytester.makeconftest(CONFTEST)
         if ui:
             pytester.makepyfile(test_ui=UI.format(text=text))
         elif realtime:
             pytester.makepyfile(test_realtime=REALTIME.format(text=text))
+        elif session:
+            pytester.makepyfile(test_session=SESSION.format(text=text))
         else:
             pytester.makepyfile(test_streams=STREAMS.format(text=text), test_requests=REQUESTS.format(text=text))
         return pytester.runpytest_inprocess(
@@ -624,8 +805,9 @@ def test_capture_records_each_stream_per_test(run: RunCapture, tmp_path: Path):
 def test_capture_records_each_request_per_test(run: RunCapture, tmp_path: Path):
     """A request sent over `httpx` or `httpx2` is recorded with its body, and a call on an SDK mock with its arguments.
 
-    `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture. The API keys
-    the session's requests carry, under ElevenLabs' `xi-api-key` and Anthropic's `x-api-key`, are left out.
+    `random` is seeded per test, so the value `test_json_over_httpx` draws is the same in every capture, even after a
+    thread drew through `random.getrandbits`. The API keys the session's requests carry, under ElevenLabs' `xi-api-key`
+    and Anthropic's `x-api-key`, are left out.
     """
     run(tmp_path).assert_outcomes(passed=11)
 
@@ -1216,6 +1398,305 @@ def test_capture_records_what_realtime_connections_send_and_yield(
     )
 
 
+def test_capture_records_what_realtime_sessions_do(run: RunCapture, tmp_path: Path):
+    """Each core call, session iteration, tap and error, what a closed session holds, and each model inferred.
+
+    `Session` and `Core` stand in for subclasses defined once the capture started, which override some of the methods
+    recorded, and `Lifecycle` for a lifecycle a test calls directly; the calls the session's connection makes on its own
+    lifecycle are in its `realtime` records instead.
+    """
+    run(tmp_path, session=True).assert_outcomes(passed=4)
+
+    lines = (tmp_path / 'main.jsonl').read_text().splitlines()
+    records = [record for line in lines if (record := json.loads(line))['kind'] == 'session']
+    assert [
+        (
+            record['node'].split('::')[1],
+            record['target'].rsplit('.', 2)[-2] + '.' + record['target'].rsplit('.', 1)[-1],
+            {key: record[key] for key in ('session', 'core', 'lifecycle') if key in record},
+            sorted(set(record) - {'kind', 'node', 'target', 'session', 'core', 'lifecycle', 'error'}),
+            record.get('error'),
+        )
+        for record in records
+    ] == snapshot(
+        [
+            (
+                'test_session',
+                'Session.stream_audio',
+                {'session': 0},
+                [],
+                'UserError: Enter the realtime session with `async with` before streaming it.',
+            ),
+            ('test_session', 'Session.stream_audio', {'session': 0}, ['items', 'kwargs'], None),
+            ('test_session', 'Session.stream_transcripts', {'session': 0}, ['items', 'kwargs'], None),
+            ('test_session', 'Session.stream_transcripts', {'session': 0}, ['items', 'kwargs'], None),
+            ('test_session', 'Session.__aiter__', {'session': 0}, ['events'], None),
+            ('test_session', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            (
+                'test_session',
+                'Session.played_audio_bytes',
+                {'session': 0},
+                [],
+                'UserError: `played_audio_bytes` needs exactly one active `stream_audio()` iterator to report the playback position of, not 0; keep your own accounting instead.',
+            ),
+            ('test_session', 'SessionCore.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            (
+                'test_session',
+                'Session.close',
+                {'session': 0},
+                ['all_messages', 'drops', 'new_messages', 'played_audio_bytes', 'usage'],
+                None,
+            ),
+            (
+                'test_session',
+                'Session.__aiter__',
+                {'session': 0},
+                ['events'],
+                'UserError: This realtime session is closed and cannot be iterated.',
+            ),
+            ('test_session', 'Session.__aiter__', {'session': 1}, ['events'], 'RuntimeError: provider went away'),
+            ('test_session', 'SessionCore.apply', {'core': 1}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 1}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.apply', {'core': 1}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 1}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 1}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 1}, ['args', 'kwargs', 'result'], None),
+            (
+                'test_session',
+                'Session.close',
+                {'session': 1},
+                ['all_messages', 'drops', 'new_messages', 'played_audio_bytes', 'usage'],
+                None,
+            ),
+            ('test_session', 'Session.stream_audio', {'session': 2}, ['items', 'kwargs'], None),
+            ('test_session', 'SessionCore.apply', {'core': 2}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 2}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 2}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 2}, ['args', 'kwargs', 'result'], None),
+            (
+                'test_session',
+                'Session.close',
+                {'session': 2},
+                ['all_messages', 'drops', 'new_messages', 'played_audio_bytes', 'usage'],
+                None,
+            ),
+            ('test_session', 'SessionCore.apply', {'core': 3}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 3}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 3}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 3}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'Unlisted.__aexit__', {'session': 3}, [], 'RuntimeError: cannot list the new messages'),
+            ('test_session', 'Session.stream_transcripts', {'session': 4}, ['items', 'kwargs'], None),
+            ('test_session', 'SessionCore.apply', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.apply', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.take_effects', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            ('test_session', 'SessionCore.all_messages', {'core': 4}, ['args', 'kwargs', 'result'], None),
+            (
+                'test_session',
+                'Session.close',
+                {'session': 4},
+                ['all_messages', 'drops', 'new_messages', 'played_audio_bytes', 'usage'],
+                None,
+            ),
+            ('test_session', 'Session.__aexit__', {'session': 4}, [], 'RuntimeError: provider went away'),
+            (
+                'test_session_out_of_a_loop',
+                'Session.__init__',
+                {'session': 0},
+                [],
+                'UserError: `retain_images_max` must be at least 0, or `None` for no limit.',
+            ),
+            ('test_core_and_lifecycle', 'Lifecycle.frame_for', {'lifecycle': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.apply', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.wait_tokens', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.take_effects', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_core_and_lifecycle', 'Core.all_messages', {'core': 0}, ['args', 'kwargs', 'result'], None),
+            (
+                'test_core_and_lifecycle',
+                'Core.apply',
+                {'core': 0},
+                ['args', 'kwargs'],
+                'TypeError: The session core has no handling for the lifecycle event Unknown().',
+            ),
+            ('test_core_and_lifecycle', 'Lifecycle.take_pending', {'lifecycle': 0}, ['args', 'kwargs', 'result'], None),
+            ('test_infer_realtime_model', 'model.infer_realtime_model', {}, ['args', 'kwargs', 'result'], None),
+            (
+                'test_infer_realtime_model',
+                'model.infer_realtime_model',
+                {},
+                ['args', 'kwargs'],
+                "UserError: Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got 'openai'.",
+            ),
+        ]
+    )
+    assert [
+        (record['target'].rsplit('.', 1)[-1], record['kwargs'], record['items'])
+        for record in records
+        if 'items' in record
+    ] == snapshot(
+        [
+            ('stream_audio', {}, ['AQA=']),
+            (
+                'stream_transcripts',
+                {},
+                [
+                    {
+                        'speaker': 'assistant',
+                        'transcript': 'hello',
+                        'audio': None,
+                        'interrupted_at_ms': None,
+                        'timestamps': None,
+                        'id': None,
+                        'provider_name': None,
+                        'provider_details': None,
+                        'part_kind': 'speech',
+                    }
+                ],
+            ),
+            (
+                'stream_transcripts',
+                {'delta': True},
+                [{'index': 0, 'speaker': 'assistant', 'delta': 'hello', 'transcript': 'hello'}],
+            ),
+            ('stream_audio', {}, []),
+            ('stream_transcripts', {}, []),
+        ]
+    )
+    assert [
+        ([event['type'] for event in record['events']], record.get('error')) for record in records if 'events' in record
+    ] == snapshot(
+        [
+            (['PartStartEvent', 'PartDeltaEvent', 'PartDeltaEvent', 'PartEndEvent', 'RealtimeTurnCompleteEvent'], None),
+            ([], 'UserError: This realtime session is closed and cannot be iterated.'),
+            ([], 'RuntimeError: provider went away'),
+        ]
+    )
+    assert [
+        {
+            'session': record['session'],
+            'all_messages': [message['kind'] for message in record['all_messages']],
+            'new_messages': [message['kind'] for message in record['new_messages']],
+            'requests': record['usage']['requests'],
+            'played_audio_bytes': record['played_audio_bytes'],
+            'drops': record['drops'],
+        }
+        for record in records
+        if record['target'].endswith('.close')
+    ] == snapshot(
+        [
+            {
+                'session': 0,
+                'all_messages': ['response'],
+                'new_messages': ['response'],
+                'requests': 1,
+                'played_audio_bytes': {
+                    'error': 'UserError: `played_audio_bytes` needs exactly one active `stream_audio()` iterator to report the playback position of, not 0; keep your own accounting instead.'
+                },
+                'drops': {
+                    '_audio_tap_drops': 0,
+                    '_transcript_tap_drops': 0,
+                    '_queue_dropped_deltas': 0,
+                    '_queue_dropped_structural': 0,
+                },
+            },
+            {
+                'session': 1,
+                'all_messages': [],
+                'new_messages': [],
+                'requests': 0,
+                'played_audio_bytes': {'error': 'RuntimeError: provider went away'},
+                'drops': {
+                    '_audio_tap_drops': 0,
+                    '_transcript_tap_drops': 0,
+                    '_queue_dropped_deltas': 0,
+                    '_queue_dropped_structural': 0,
+                },
+            },
+            {
+                'session': 2,
+                'all_messages': [],
+                'new_messages': [],
+                'requests': 0,
+                'played_audio_bytes': 0,
+                'drops': {
+                    '_audio_tap_drops': 0,
+                    '_transcript_tap_drops': 0,
+                    '_queue_dropped_deltas': 0,
+                    '_queue_dropped_structural': 0,
+                },
+            },
+            {
+                'session': 4,
+                'all_messages': [],
+                'new_messages': [],
+                'requests': 0,
+                'played_audio_bytes': {'error': 'RuntimeError: provider went away'},
+                'drops': {
+                    '_audio_tap_drops': 0,
+                    '_transcript_tap_drops': 0,
+                    '_queue_dropped_deltas': 0,
+                    '_queue_dropped_structural': 0,
+                },
+            },
+        ]
+    )
+    assert [
+        record['result'] for record in records if record['target'].endswith('.wait_tokens') and record['result']
+    ] == snapshot(
+        [
+            [{'type': 'Owed', 'value': {'kind': 'response', 'key': 'pydantic_ai_response_1', 'epoch': 0}}],
+            [{'type': 'Owed', 'value': {'kind': 'response', 'key': 'pydantic_ai_response_1', 'epoch': 0}}],
+            [{'type': 'Owed', 'value': {'kind': 'response', 'key': 'pydantic_ai_response_1', 'epoch': 0}}],
+        ]
+    )
+    (frame_for,) = [record for record in records if record['target'].endswith('.frame_for')]
+    assert (
+        [event['type'] for event in frame_for['args'][0]],
+        [event['type'] for event in frame_for['result']],
+    ) == snapshot(
+        (['OutputTranscript', 'ResponseDone'], ['ResponseStarted', 'OutputTranscript', 'ResponseDone', 'ResponseEnded'])
+    )
+    assert [record.get('result') for record in records if record['target'].endswith('.infer_realtime_model')] == (
+        snapshot(
+            [
+                {
+                    'type': 'pydantic_ai.realtime.openai.OpenAIRealtimeModel',
+                    'model_name': 'gpt-realtime',
+                    'system': 'openai',
+                    'base_url': 'https://api.openai.com/v1/',
+                },
+                None,
+            ]
+        )
+    )
+
+
 async def test_capture_keeps_what_ui_adapter_subclasses_are(tmp_path: Path):
     """A subclass defined once the capture started keeps its type parameters, and its abstract methods."""
     capture = RefactorCapture(tmp_path)
@@ -1485,6 +1966,7 @@ stream events: head 11
 requests: head 10
 ui records: head 0
 realtime records: head 0
+session records: head 0
 nodes per stream module, head:
   pydantic_ai.models.function: 3
   test_streams: 1
@@ -1497,7 +1979,8 @@ nodes per request target, head:
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
 nodes per ui target, head:
 nodes per realtime target, head:
-nodes that recorded no request or realtime record, head: 2
+nodes per session target, head:
+nodes that recorded no request, realtime or session record, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
 only in base: 0, only in head: 0, differing: 0
@@ -1507,6 +1990,7 @@ stream events: head 9
 requests: head 9
 ui records: head 0
 realtime records: head 0
+session records: head 0
 nodes per stream module, head:
   pydantic_ai.models.function: 2
   test_streams: 1
@@ -1519,7 +2003,8 @@ nodes per request target, head:
   tests.models.mock_openai.MockOpenAI.chat_completions_create: 1
 nodes per ui target, head:
 nodes per realtime target, head:
-nodes that recorded no request or realtime record, head: 2
+nodes per session target, head:
+nodes that recorded no request, realtime or session record, head: 2
   test_streams.py::test_no_stream
   test_streams.py::test_subclass_defined_after_the_capture_started
 only in base: 1, only in head: 0, differing: 6
@@ -1553,7 +2038,8 @@ def test_compare_flags_a_changed_request_header(run: RunCapture, tmp_path: Path,
 def test_compare_names_the_nodes_that_recorded_no_request(
     run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
-    """A selected node that recorded no request or realtime record is listed, whether it recorded a stream or nothing.
+    """A selected node that recorded no request, realtime or session record is listed, whether it recorded a stream or
+    nothing.
 
     Listing it doesn't fail the comparison.
     """
@@ -1566,7 +2052,7 @@ def test_compare_names_the_nodes_that_recorded_no_request(
     assert compare(base, head) == 0
     assert capsys.readouterr().out.splitlines()[-4:] == snapshot(
         [
-            'nodes that recorded no request or realtime record, head: 2',
+            'nodes that recorded no request, realtime or session record, head: 2',
             '  test_streams.py::test_no_stream',
             '  test_streams.py::test_subclass_defined_after_the_capture_started',
             'only in base: 0, only in head: 0, differing: 0',
@@ -1601,12 +2087,14 @@ stream events: head 0
 requests: head 0
 ui records: head 1
 realtime records: head 0
+session records: head 0
 nodes per stream module, head:
 nodes per request target, head:
 nodes per ui target, head:
   test_ui.MediaTypeAdapter.load_messages: 1
 nodes per realtime target, head:
-nodes that recorded no request or realtime record, head: 1
+nodes per session target, head:
+nodes that recorded no request, realtime or session record, head: 1
   test_ui.py::test_media_type_set_or_implied
 only in base: 0, only in head: 0, differing: 1
   differing: test_ui.py::test_media_type_set_or_implied
@@ -1662,6 +2150,17 @@ def test_main_extracts_the_base_commit_where_no_symlink_leads(tmp_path: Path, mo
         ([*pytest_command, f'{CAPTURE_OPTION}={out / "head"}', 'tests/test_nothing.py'], ''),
     ]
     assert os.path.realpath(out) == str(out)
+
+
+def test_recorded_sorts_a_set():
+    """A set comes out in one order, whatever order it iterates in, as two equal sets can on the two sides."""
+    assert recorded(frozenset({'b', 'c', 'a'})) == snapshot(['a', 'b', 'c'])
+    assert recorded({Owed('response', 'r1', 0), Owed('input', '0', 0)}) == snapshot(
+        [
+            {'type': 'Owed', 'value': {'kind': 'input', 'key': '0', 'epoch': 0}},
+            {'type': 'Owed', 'value': {'kind': 'response', 'key': 'r1', 'epoch': 0}},
+        ]
+    )
 
 
 def test_normalized_replaces_values_that_change_between_runs():

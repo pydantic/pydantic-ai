@@ -17,7 +17,7 @@ from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.direct import model_request
-from pydantic_ai.messages import ModelRequest
+from pydantic_ai.messages import ModelRequest, ThinkingPart
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
 
 from .cassette_utils import single_request_body
@@ -40,8 +40,9 @@ with try_import() as mistral_imports:
     from pydantic_ai.providers.mistral import MistralProvider
 
 with try_import() as openai_imports:
-    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
 
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
@@ -55,6 +56,7 @@ _PROVIDER_SKIP_MARKS: dict[str, pytest.MarkDecorator] = {
     'cerebras': pytest.mark.skipif(not cerebras_imports(), reason='cerebras (openai) not installed'),
     'google': pytest.mark.skipif(not google_imports(), reason='google-genai not installed'),
     'mistral': pytest.mark.skipif(not mistral_imports(), reason='mistral not installed'),
+    'deepinfra': pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
 }
 
 
@@ -75,6 +77,9 @@ class WireCase:
     """Keys that must NOT appear in the request body."""
     expect_warning: str | None = None
     """If set, a `UserWarning` matching this regex must be emitted during the run."""
+    thinks: bool | None = None
+    """Whether the response must carry a `ThinkingPart`, to show the setting changed what the model did; `None` skips
+    the check."""
     match_body: bool = False
     """Make the request body part of the cassette match.
 
@@ -251,6 +256,24 @@ CASES = [
         match_body=True,
     ),
     WireCase(
+        id='google-gemini-25-flash-minimal-budget',
+        provider='google',
+        model_name='gemini-2.5-flash',
+        thinking='minimal',
+        present={'generationConfig.thinkingConfig.thinking_budget': 128},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-25-flash-lite-minimal-budget',
+        provider='google',
+        model_name='gemini-2.5-flash-lite',
+        thinking='minimal',
+        # Gemini 2.5 Flash-Lite 400s on a budget below 512 ("Please choose a value between 512 and 24576"), so
+        # `minimal` sends 512 there rather than the 128 the other Gemini 2.5 models get.
+        present={'generationConfig.thinkingConfig.thinking_budget': 512},
+        match_body=True,
+    ),
+    WireCase(
         id='google-gemini-31-pro-false-lowest-level',
         provider='google',
         model_name='gemini-3.1-pro-preview',
@@ -324,6 +347,62 @@ CASES = [
         expect_warning='XHIGH is not a valid ThinkingLevel',
         match_body=True,
     ),
+    WireCase(
+        id='google-gemini-4-neon-xhigh',
+        provider='google',
+        model_name='gemini-4-neon',
+        thinking='xhigh',
+        present={'generationConfig.thinkingConfig.thinking_level': 'XHIGH'},
+        expect_warning='XHIGH is not a valid ThinkingLevel',
+        match_body=True,
+    ),
+    # Gemma 4 on the Gemini API takes only `MINIMAL` and `HIGH`, and 400s on any `thinking_budget` or other level.
+    WireCase(
+        id='google-gemma-4-disable-sends-minimal',
+        provider='google',
+        model_name='gemma-4-31b-it',
+        thinking=False,
+        present={'generationConfig.thinkingConfig.thinking_level': 'MINIMAL'},
+        thinks=False,
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemma-4-low-snaps-to-minimal',
+        provider='google',
+        model_name='gemma-4-31b-it',
+        thinking='low',
+        present={'generationConfig.thinkingConfig.thinking_level': 'MINIMAL'},
+        thinks=False,
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemma-4-high',
+        provider='google',
+        model_name='gemma-4-31b-it',
+        thinking='high',
+        present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
+        thinks=True,
+        match_body=True,
+    ),
+    # Gemma 4 on an OpenAI-compatible host, through the Google family profile: `thinking` becomes `reasoning_effort`.
+    WireCase(
+        id='deepinfra-gemma-4-disable',
+        provider='deepinfra',
+        model_name='google/gemma-4-31B-it',
+        thinking=False,
+        present={'reasoning_effort': 'none'},
+        thinks=False,
+        match_body=True,
+    ),
+    WireCase(
+        id='deepinfra-gemma-4-high',
+        provider='deepinfra',
+        model_name='google/gemma-4-31B-it',
+        thinking='high',
+        present={'reasoning_effort': 'high'},
+        thinks=True,
+        match_body=True,
+    ),
     # Mistral: Small 4 and Medium 3.5 take the binary `reasoning_effort` ('high'/'none');
     # dated (always-on) magistral ids must never receive it (https://docs.mistral.ai/capabilities/reasoning/).
     WireCase(
@@ -393,7 +472,13 @@ CASES = [
 
 
 def _build_model(
-    case: WireCase, *, groq_api_key: str, cerebras_api_key: str, gemini_api_key: str, mistral_api_key: str
+    case: WireCase,
+    *,
+    groq_api_key: str,
+    cerebras_api_key: str,
+    gemini_api_key: str,
+    mistral_api_key: str,
+    deepinfra_api_key: str,
 ) -> Model:
     if case.provider == 'groq':
         return GroqModel(case.model_name, provider=GroqProvider(api_key=groq_api_key))
@@ -403,6 +488,11 @@ def _build_model(
         return GoogleModel(case.model_name, provider=GoogleProvider(api_key=gemini_api_key))
     if case.provider == 'mistral':
         return MistralModel(case.model_name, provider=MistralProvider(api_key=mistral_api_key))
+    if case.provider == 'deepinfra':
+        provider = OpenAICompatibleProvider(
+            'deepinfra', base_url='https://api.deepinfra.com/v1/openai', api_key=deepinfra_api_key
+        )
+        return OpenAIChatModel(case.model_name, provider=provider)
     raise ValueError(f'unknown provider {case.provider!r}')  # pragma: no cover
 
 
@@ -414,6 +504,7 @@ async def test_reasoning_wire_contract(
     cerebras_api_key: str,
     gemini_api_key: str,
     mistral_api_key: str,
+    deepinfra_api_key: str,
     vcr: Cassette,
 ):
     """Reasoning settings produce the correct request wire body: a `thinking` disable signal where the model
@@ -424,6 +515,7 @@ async def test_reasoning_wire_contract(
         cerebras_api_key=cerebras_api_key,
         gemini_api_key=gemini_api_key,
         mistral_api_key=mistral_api_key,
+        deepinfra_api_key=deepinfra_api_key,
     )
     if case.groq_reasoning_effort is not None:
         settings = GroqModelSettings(groq_reasoning_effort=case.groq_reasoning_effort)
@@ -436,9 +528,11 @@ async def test_reasoning_wire_contract(
     agent = Agent(model, model_settings=settings)
     if case.expect_warning is not None:
         with pytest.warns(UserWarning, match=case.expect_warning):
-            await agent.run('What is 2+2? Reply with just the number.')
+            result = await agent.run('What is 2+2? Reply with just the number.')
     else:
-        await agent.run('What is 2+2? Reply with just the number.')
+        result = await agent.run('What is 2+2? Reply with just the number.')
+    if case.thinks is not None:
+        assert any(isinstance(part, ThinkingPart) for part in result.response.parts) is case.thinks
 
     body = single_request_body(vcr)
     for path, value in case.present.items():

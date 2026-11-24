@@ -38,7 +38,7 @@ from pydantic_ai_harness.coder import Coder
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
-from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT
+from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT, delete_live_machine
 
 pytestmark = pytest.mark.boxd_live
 
@@ -76,7 +76,7 @@ async def _owned(client: boxd.AsyncBoxd, working_dir: str | None = None) -> Asyn
         yield backend
     finally:
         if backend.ref is not None:
-            await BoxdSandbox(client=client).destroy(backend.ref)
+            await delete_live_machine(backend.ref, client)
 
 
 async def _wait_for_status(client: boxd.AsyncBoxd, machine_id: str, status: str) -> None:
@@ -134,7 +134,7 @@ async def test_fork_copies_files_and_running_processes_and_the_copies_diverge(cl
             await copy.run(['sh', '-c', 'echo after > state.txt'], timeout=60)
             assert (await source.run(['cat', 'state.txt'], timeout=60)).stdout == 'before\n'
         finally:
-            await sandbox.destroy(ref)
+            await delete_live_machine(ref, client)
 
 
 async def test_fork_wakes_a_suspended_machine_so_the_copy_keeps_its_memory(client: boxd.AsyncBoxd) -> None:
@@ -153,7 +153,7 @@ async def test_fork_wakes_a_suspended_machine_so_the_copy_keeps_its_memory(clien
                 await copy.run(['sh', '-c', f'cat state.txt; {_TICKING}'], timeout=60)
             ).stdout == 'unflushed\nticking\n'
         finally:
-            await sandbox.destroy(ref)
+            await delete_live_machine(ref, client)
 
 
 async def test_timeout_raises_with_the_partial_output_and_stops_the_command(client: boxd.AsyncBoxd) -> None:
@@ -226,7 +226,10 @@ async def test_a_machine_that_is_not_isolated_is_neither_used_nor_deleted(client
     )
     try:
         await client.machines.wait_until_ready(machine.id)
-        probe = await client.machines.exec(machine.id, _BOXD_SERVICES)
+        # boxd writes `boxd-env.sh` a moment after `wait_until_ready` returns, so the probe first waits up to
+        # 30 seconds for it.
+        wait_for_env = "timeout 30 sh -c 'until test -e /etc/profile.d/boxd-env.sh; do sleep 0.1; done'"
+        probe = await client.machines.exec(machine.id, f'{wait_for_env}; {_BOXD_SERVICES}')
         assert str(probe.stdout).splitlines() == ['200', 'env-installed']
         ref = WorkspaceRef(provider='boxd', id=machine.id)
         with pytest.raises(WorkspaceUnavailableError, match='is not isolated'):
@@ -259,7 +262,7 @@ async def test_a_snapshot_of_a_machine_on_a_network_is_refused(client: boxd.Asyn
                     await restored.run(['true'], timeout=30)
             finally:
                 assert restored.ref is not None
-                await BoxdSandbox(client=client).destroy(restored.ref)
+                await delete_live_machine(restored.ref, client)
         finally:
             await client.snapshots.delete(snapshot)
 
@@ -349,7 +352,7 @@ async def test_secrets_reach_the_machine_as_stand_ins(client: boxd.AsyncBoxd) ->
         assert (await restored.run(['sh', '-c', probe], timeout=60)).stdout.split()[1:] == ['bxds_', 'no-value']
     finally:
         for ref in machines:
-            await BoxdSandbox(client=client).destroy(ref)
+            await delete_live_machine(ref, client)
         with contextlib.suppress(boxd.NotFoundError):
             await client.snapshots.delete(snapshot)
         await client.secrets.delete(secret, scope='private-unattached')

@@ -1,0 +1,70 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepinfra.com/v1/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "156"
+      content-type:
+      - application/json
+      host:
+      - api.deepinfra.com
+    body:
+      type: json
+      content:
+        model: google/gemma-4-31B-it
+        stream: false
+        messages:
+        - role: user
+          content: What is 2+2? Reply with just the number.
+        reasoning_effort: high
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "707"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        service_tier: default
+        id: chatcmpl-RL3cyeRlNVCaBpF2xk5i9vs7
+        object: chat.completion
+        created: 1794706240
+        model: google/gemma-4-31B-it
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "4"
+            reasoning_content: |-
+              The user is asking for the sum of 2+2.
+              The user specifically requested to reply with *just* the number.
+
+              Calculation: 2 + 2 = 4.
+              Constraint: Just the number.
+
+              Final Answer: 4.
+            name: null
+            tool_calls: null
+          finish_reason: stop
+          logprobs: null
+        usage:
+          prompt_tokens: 29
+          total_tokens: 88
+          completion_tokens: 59
+          estimated_cost: 0.0000294
+          prompt_tokens_details: null
+          completion_tokens_details:
+            reasoning_tokens: 55
+  recorded_at: 2026-11-15T01:30:40.435384+00:00

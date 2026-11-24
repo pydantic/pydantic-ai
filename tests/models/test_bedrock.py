@@ -59,6 +59,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UnsupportedSettingWarning,
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
@@ -9510,6 +9511,41 @@ async def test_bedrock_non_flagged_model_keeps_sampling_settings(
     assert sent['additionalModelRequestFields'] == snapshot({'top_k': 5})
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_claude_thinking_drops_the_sampling_settings_it_rejects(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """With thinking, Claude on Bedrock rejects `temperature` other than `1`, `top_p` below `0.95` and any `top_k`.
+
+    They're dropped silently, as on the Anthropic API, instead of failing the request with a 400.
+    """
+    settings = BedrockModelSettings(thinking=True, temperature=0.5, top_p=0.9, top_k=5)
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    result = await agent.run('What is 2+2? Answer with the number only.')
+
+    assert result.output.strip() == snapshot('4')
+    sent = single_request_body(vcr)
+    assert sent.get('inferenceConfig') == snapshot({'maxTokens': 64000})
+    assert sent['additionalModelRequestFields'] == snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_claude_drops_top_p_set_together_with_temperature(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """Claude Haiku 4.5 on Bedrock takes `temperature` or `top_p`, not both, so `top_p` is dropped silently."""
+    settings = BedrockModelSettings(max_tokens=16, temperature=0.2, top_p=0.3)
+    model = BedrockConverseModel('us.anthropic.claude-haiku-4-5-20251001-v1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=settings)
+
+    await agent.run('What is 2+2? Answer with the number only.')
+
+    sent = single_request_body(vcr)
+    assert sent['inferenceConfig'] == snapshot({'maxTokens': 16, 'temperature': 0.2})
+
+
 BEDROCK_OPENAI_CONVERSE_MODELS_WITHOUT_SAMPLING_SETTINGS = [
     'us.openai.gpt-5.6-sol',
     'us.openai.gpt-5.6-luna',
@@ -9612,6 +9648,80 @@ def test_bedrock_xai_grok_drops_sampling_settings(bedrock_provider: BedrockProvi
         f"Sampling parameters ['temperature', 'top_p', 'top_k'] are not supported by "
         f"'{model_name}'. These settings will be ignored."
     ]
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'sends_stop_sequences'),
+    [
+        ('us.anthropic.claude-sonnet-5-5', True),
+        ('us.amazon.nova-micro-v1:0', True),
+        ('us.meta.llama3-3-70b-instruct-v1:0', True),
+        ('us.deepseek.r1-v1:0', True),
+        ('mistral.mistral-large-2402-v1:0', True),
+        ('us.writer.palmyra-x5-v1:0', True),
+        ('us.openai.gpt-6.1-sol', False),
+        ('openai.gpt-oss-120b-1:0', False),
+        ('us.xai.grok-4.7', False),
+        ('qwen.qwen3-32b-v1:0', False),
+        ('google.gemma-3-27b-it', False),
+        ('zai.glm-5', False),
+        ('moonshotai.kimi-k2.5', False),
+        ('minimax.minimax-m2.5', False),
+        ('nvidia.nemotron-super-3-120b', False),
+        ('deepseek.v3.2', False),
+        ('mistral.mistral-large-3-675b-instruct', False),
+        ('writer.palmyra-vision-7b', False),
+    ],
+)
+def test_bedrock_drops_stop_sequences_where_converse_rejects_them(
+    bedrock_provider: BedrockProvider, model_name: str, sends_stop_sequences: bool, recwarn: pytest.WarningsRecorder
+):
+    """Converse answers `stopSequences` with a 400 on the models with `bedrock_supports_stop_sequences=False`.
+
+    "This model doesn't support the stopSequences field. Remove stopSequences and try again." Those models drop it
+    with an `UnsupportedSettingWarning`, like `OpenAIResponsesModel`, and the others still send it.
+    Not a VCR test: the setting is dropped before any request, and the two tests below send one each way.
+    """
+    model = BedrockConverseModel(model_name, provider=bedrock_provider)
+    settings = BedrockModelSettings(max_tokens=64, stop_sequences=['5'])
+
+    prepared, _ = model.prepare_request(settings, ModelRequestParameters())
+
+    warned = [str(w.message) for w in recwarn if issubclass(w.category, UnsupportedSettingWarning)]
+    if sends_stop_sequences:
+        assert (prepared, warned) == (settings, [])
+    else:
+        assert (prepared, warned) == (
+            {'max_tokens': 64},
+            [f'The `stop_sequences` setting is not supported by model {model.model_id!r} and will be ignored.'],
+        )
+
+
+async def test_bedrock_stop_sequences_dropped_where_converse_rejects_them(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """gpt-oss rejects `stopSequences` with a 400, so the run succeeds without them, after a warning."""
+    model = BedrockConverseModel('openai.gpt-oss-20b-1:0', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(stop_sequences=['5']))
+
+    with pytest.warns(UnsupportedSettingWarning, match='`stop_sequences`'):
+        result = await agent.run('Count from 1 to 10, separated by spaces. Reply with just the numbers.')
+
+    assert 'stopSequences' not in single_request_body(vcr).get('inferenceConfig', {})
+    assert result.output == snapshot('1 2 3 4 5 6 7 8 9 10')
+
+
+async def test_bedrock_stop_sequences_sent_where_converse_accepts_them(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette
+):
+    """Claude takes `stopSequences`, so the response stops before `5`."""
+    model = BedrockConverseModel('us.anthropic.claude-haiku-5-5', provider=bedrock_provider)
+    agent = Agent(model, model_settings=ModelSettings(stop_sequences=['5']))
+
+    result = await agent.run('Count from 1 to 10, separated by spaces. Reply with just the numbers.')
+
+    assert single_request_body(vcr)['inferenceConfig']['stopSequences'] == ['5']
+    assert result.output == snapshot('1 2 3 4 ')
 
 
 class _CountTokensCapturingClient:

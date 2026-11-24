@@ -96,9 +96,9 @@ def emit_otel_events(
         scoring_run_id: Identifier shared by every result produced by one scoring
             pass over one target call. Written to `logfire.scorer.run_id`.
         include_baggage: When True (the default), each emitted event also carries
-            every key from the current OTel baggage as an attribute. Standard
-            `gen_ai.*` and `error.type` attributes always win on conflict, and
-            baggage keys in the reserved `logfire.scorer.*` namespace are dropped.
+            every key from the current OTel baggage as an attribute, except keys in
+            the reserved `gen_ai.evaluation.*` and `logfire.scorer.*` namespaces and
+            the `error.type` key.
     """
     if not results and not failures:
         return
@@ -107,15 +107,25 @@ def emit_otel_events(
     shared_attrs = _baggage_attrs() if include_baggage else {}
     shared_attrs[_ATTR_RUN_ID] = scoring_run_id
     shared_attrs[_ATTR_TARGET] = target
+    # Log processors can copy the baggage of a record's context onto the record (logfire>=6 does when
+    # `add_baggage_to_attributes` is on, its default), which would bypass `include_baggage` and the
+    # reserved-key filter. Clearing it keeps the parent span, so events stay nested under the call.
+    record_context = baggage.clear()
     for result in results:
-        _emit_result(result, shared_attrs)
+        _emit_result(result, shared_attrs, record_context)
     for failure in failures:
-        _emit_failure(failure, shared_attrs)
+        _emit_failure(failure, shared_attrs, record_context)
 
 
 def _baggage_attrs() -> dict[str, Any]:
-    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved `logfire.scorer.*` keys."""
-    return {str(k): v for k, v in baggage.get_all().items() if not str(k).startswith(_LOGFIRE_SCORER_PREFIX)}
+    """Snapshot the current OTel baggage as a flat attribute mapping, minus the reserved keys."""
+    # Every attribute an event writes is `error.type` or falls under one of these prefixes.
+    reserved_prefixes = ('gen_ai.evaluation.', _LOGFIRE_SCORER_PREFIX)
+    return {
+        str(k): v
+        for k, v in baggage.get_all().items()
+        if not str(k).startswith(reserved_prefixes) and str(k) != _ATTR_ERROR_TYPE
+    }
 
 
 def build_parent_context(span_reference: SpanReference | None) -> Context | None:
@@ -140,15 +150,17 @@ def build_parent_context(span_reference: SpanReference | None) -> Context | None
 # --- emission helpers ---------------------------------------------------------
 
 
-def _emit_result(result: EvaluationResult, shared_attrs: Mapping[str, Any]) -> None:
+def _emit_result(result: EvaluationResult, shared_attrs: Mapping[str, Any], context: Context) -> None:
     attrs = _base_attrs(shared_attrs, result.name, result.source, result.evaluator_version)
     _set_score_attrs(attrs, result.value)
     if result.reason is not None:
         attrs[_ATTR_EXPLANATION] = result.reason
-    _get_logger().emit(LogRecord(event_name=_EVENT_NAME, body=_format_result_body(result), attributes=attrs))
+    _get_logger().emit(
+        LogRecord(context=context, event_name=_EVENT_NAME, body=_format_result_body(result), attributes=attrs)
+    )
 
 
-def _emit_failure(failure: EvaluatorFailure, shared_attrs: Mapping[str, Any]) -> None:
+def _emit_failure(failure: EvaluatorFailure, shared_attrs: Mapping[str, Any], context: Context) -> None:
     attrs = _base_attrs(shared_attrs, failure.name, failure.source, failure.evaluator_version)
     # Prefer the actual raising exception class when available; fall back to the
     # generic marker for legacy `EvaluatorFailure` instances constructed without it.
@@ -157,6 +169,7 @@ def _emit_failure(failure: EvaluatorFailure, shared_attrs: Mapping[str, Any]) ->
         attrs[_ATTR_EXPLANATION] = failure.error_message
     _get_logger().emit(
         LogRecord(
+            context=context,
             event_name=_EVENT_NAME,
             body=_format_failure_body(failure),
             attributes=attrs,

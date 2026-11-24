@@ -23,6 +23,7 @@ from ...exceptions import ModelConnectionError
 from ...messages import BinaryImage, FilePart, ModelResponse, ModelResponseStreamEvent, TextPart, ToolCallPart
 from .. import StreamedResponse
 from .._decode_errors import MapStreamDecodeErrors
+from .._history_digest import Hasher
 from .._tool_call_ids import stored_tool_call_id
 from ._citations import (
     jsonable_annotation,
@@ -31,7 +32,7 @@ from ._citations import (
     responses_output_text_annotation_ta,
 )
 from ._errors import map_api_errors, response_error, response_error_type
-from ._history_digest import Hasher, with_history_digest
+from ._history_digest import with_history_digest
 from ._model_names import OpenAIModelName
 from ._native_tools import (
     map_code_interpreter_tool_call,
@@ -46,6 +47,7 @@ from ._response_fields import (
     map_compaction_item,
     map_logprobs,
     map_usage,
+    report_input_transformations,
     response_status_to_state,
 )
 from ._settings import OpenAIResponsesModelSettings, echoed_store
@@ -142,6 +144,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             self.provider_details = {
                 **(self.provider_details or {}),
                 'prompt_cache_diagnostics': diagnostics.model_dump(mode='json'),
+            }
+        if response.input_transformations:
+            self.provider_details = {
+                **(self.provider_details or {}),
+                'input_transformations': report_input_transformations(response.input_transformations),
             }
         if (store := echoed_store(response, self._model_settings)) is not None:
             self.provider_details = {**(self.provider_details or {}), 'store': store}

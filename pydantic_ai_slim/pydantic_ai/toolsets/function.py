@@ -16,7 +16,7 @@ from .._instructions import (
     resolve_instruction_function,
     validate_instruction_name,
 )
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, ToolNamePath
 from ..exceptions import ModelRetry, UserError
 from ..messages import InstructionChangePolicy, InstructionPart, ToolKind, ToolKindLike, ToolPartKind
 from ..tools import (
@@ -78,6 +78,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         *,
         max_retries: int | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
@@ -100,13 +101,20 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             timeout: Timeout in seconds for tool execution. If a tool takes longer than this,
                 a retry prompt is returned to the model. Individual tools can override this with their own timeout.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs the tools: `False` runs them
+                outside their durable unit, in workflow code, and `True` keeps the engine's default placement.
+                Defaults to `None`, the engine's default placement.
+                Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
             docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added to the toolset, unless overridden when adding a function.
+                A [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was built with.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added to the toolset, unless overridden when adding a function.
+                A [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was built with.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added to the toolset, unless overridden when adding a function.
+                A [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was built with.
             strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
@@ -138,6 +146,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         self.max_retries = max_retries
         self.timeout = timeout
+        self.durable = durable
         self._id = id
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
@@ -192,6 +201,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
@@ -215,6 +225,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -238,6 +249,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -309,6 +321,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                If `None`, the default value is determined by the toolset.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -337,6 +352,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -366,6 +382,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKind[KindArgsT, KindContentT],
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
@@ -389,6 +406,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolPartKind | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -412,6 +430,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         metadata: dict[str, Any] | None = None,
         tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
+        durable: bool | None = None,
         defer_loading: bool | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
@@ -484,6 +503,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 See [Typed Tool Parts](../tools-advanced.md#typed-tool-parts) for more info.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                If `None`, the default value is determined by the toolset.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -513,6 +535,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 metadata=metadata,
                 tool_kind=tool_kind,
                 timeout=timeout,
+                durable=durable,
                 defer_loading=defer_loading,
                 include_return_schema=include_return_schema,
             )
@@ -634,6 +657,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         tool_kind: ToolKindLike | None = None,
         timeout: float | None = None,
         include_return_schema: bool | None = None,
+        durable: bool | None = None,
     ) -> Tool[AgentDepsT]:
         """Add a function as a tool to the toolset.
 
@@ -687,6 +711,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Defaults to None (no timeout).
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, the default value is determined by the toolset.
+            durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
+                outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
+                If `None`, the default value is determined by the toolset.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -698,6 +725,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict = self.strict
         if sequential is None:
             sequential = self.sequential
+        if durable is None:
+            durable = self.durable
         if requires_approval is None:
             requires_approval = self.requires_approval
         if defer_loading is None:
@@ -722,6 +751,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             metadata=metadata,
             tool_kind=tool_kind,
             timeout=timeout,
+            durable=durable,
             defer_loading=defer_loading,
             include_return_schema=include_return_schema,
         )
@@ -739,8 +769,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     def add_tool(self, tool: Tool[AgentDepsT]) -> None:
         """Add a tool to the toolset.
 
-        The toolset's `strict` and `include_return_schema` apply to the tool when the tool leaves them unset,
-        its `sequential`, `requires_approval`, and `defer_loading` apply when they're set to `True`, its
+        The toolset's `strict`, `include_return_schema`, and `durable` apply to the tool when the tool leaves them
+        unset, its `sequential`, `requires_approval`, and `defer_loading` apply when they're set to `True`, its
         `metadata` is merged into the tool's, and its `max_retries` applies when the tool sets none.
 
         Args:
@@ -754,6 +784,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tool.strict = self.strict
         if tool.include_return_schema is None and self.include_return_schema is not None:
             tool.include_return_schema = self.include_return_schema
+        if tool.durable is None:
+            tool.durable = self.durable
         if self.sequential and not tool.sequential:
             tool.sequential = True
             tool._sequential_from_toolset = True  # pyright: ignore[reportPrivateUsage]
@@ -798,9 +830,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             # or when a wrapper other than `PrefixedToolset` and `RenamedToolset` renames tools,
             # nested inside or around them, whether or not it calls `super().get_tools()`. If it
             # then names an unrelated tool, `prepare` reads that tool's count.
-            exposed = original_name
-            for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
-                exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
+            exposed = _exposed_tool_name(original_name, ctx._tool_name_path)  # pyright: ignore[reportPrivateUsage]
             run_context = replace(
                 ctx,
                 tool_name=original_name,
@@ -884,3 +914,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 raise ModelRetry(f'Timed out after {timeout} seconds.') from None
         else:
             return await tool.call_func(tool_args, ctx)
+
+
+def _exposed_tool_name(original_name: str, tool_name_path: ToolNamePath) -> str:
+    """The name the model calls a tool by, applying the `PrefixedToolset` and `RenamedToolset` layers innermost first."""
+    exposed = original_name
+    for layer in reversed(tool_name_path):
+        exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
+    return exposed
