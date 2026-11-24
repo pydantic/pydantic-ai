@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import json
 import warnings
-from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Any, Literal
@@ -100,6 +100,10 @@ from pydantic_ai.ui._adapter import (
     resolve_allow_uploaded_files,
 )
 from pydantic_ai.ui._utils import set_ui_message_id
+from pydantic_ai.ui.vercel_ai import VercelAIEventStream
+
+with try_import() as ag_ui_imports_successful:
+    from pydantic_ai.ui.ag_ui import AGUIEventStream
 
 pytestmark = [
     pytest.mark.vcr,
@@ -410,20 +414,16 @@ async def test_event_stream_error_closes_open_text():
 
 
 async def test_event_stream_restarted_part_ends_open_text():
-    """A `PartStartEvent` can arrive while the previous part is still open. #11734
+    """A republished `PartStartEvent` ends the still-open part before the new start is emitted. #11734
 
-    A retried durable activity republishes the model events it already published
-    (`durable_exec/temporal/_event_stream.py` documents this), so a subscriber reads the first
-    attempt's `PartStartEvent` and deltas, then the retry's `PartStartEvent` for the same index
-    with no `PartEndEvent` between them. The open part is ended before the new start is emitted —
-    the same cleanup the error path does — so the run never finishes with a message part still
-    streaming (`Cannot send 'RUN_FINISHED' while text messages are still active`).
+    A retried durable activity republishes the model events it already published, so the retry's
+    `PartStartEvent` arrives with no `PartEndEvent` for the first attempt's part before it.
     """
 
     async def event_generator() -> AsyncIterator[NativeEvent]:
         yield PartStartEvent(index=0, part=TextPart(content='Hel'))
         yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
-        # The activity retry republishes its part start without a `PartEndEvent` first.
+        # The retry republishes its part start without a `PartEndEvent` first.
         yield PartStartEvent(index=0, part=TextPart(content='Hel'))
         yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
         yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
@@ -449,136 +449,243 @@ async def test_event_stream_restarted_part_ends_open_text():
     )
 
 
-def _ag_ui_start_key(event: dict[str, Any]) -> tuple[str, str]:
-    """Identity of an AG-UI `*_START` event, for pairing it with its `*_END`."""
-    return (event['type'][: -len('_START')], str(event.get('messageId') or event.get('toolCallId')))
+def _restarted_text() -> list[NativeEvent]:
+    return [
+        PartStartEvent(index=0, part=TextPart(content='Hel')),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo')),
+        PartStartEvent(index=0, part=TextPart(content='Hel')),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world')),
+        PartEndEvent(index=0, part=TextPart(content='Hello, world')),
+    ]
 
 
-def _ag_ui_end_key(event: dict[str, Any]) -> tuple[str, str]:
-    """Identity of an AG-UI `*_END` event, as `{{<_kind>}}_START` keys are spelled."""
-    return (event['type'][: -len('_END')], str(event.get('messageId') or event.get('toolCallId')))
+def _restarted_thinking() -> list[NativeEvent]:
+    return [
+        PartStartEvent(index=0, part=ThinkingPart(content='Hel')),
+        PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo')),
+        PartStartEvent(index=0, part=ThinkingPart(content='Hel')),
+        PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo, world')),
+        PartEndEvent(index=0, part=ThinkingPart(content='Hello, world')),
+    ]
 
 
-def _assert_ag_ui_no_start_open_at_run_finished(events: list[dict[str, Any]]) -> None:
-    """Mirror of the AG-UI client verifier's rule: `RUN_FINISHED` with an open start is invalid.
+def _restarted_tool_call() -> list[NativeEvent]:
+    def call_part(args: str) -> ToolCallPart:
+        return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
 
-    `verifyEvents` (TypeScript `@ag-ui/client`) rejects `RUN_FINISHED` while a text message is
-    still open; the same bookkeeping covers tool calls and the thinking/reasoning envelopes.
-    `RUN_STARTED` does not end with `_START` and needs no special case.
-    """
-    open_starts: list[tuple[str, str]] = []
+    return [
+        PartStartEvent(index=0, part=call_part('{"tz": ')),
+        PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"U')),
+        PartStartEvent(index=0, part=call_part('{"tz": ')),
+        PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}')),
+        PartEndEvent(index=0, part=call_part('{"tz": "UTC"}')),
+        FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True),
+        FunctionToolResultEvent(part=ToolReturnPart(tool_name='get_time', tool_call_id='call_0', content='12:00')),
+    ]
+
+
+def _encode_ag_ui(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
+    # Pinned to the declared floor, so the thinking envelope is the same on every installed SDK.
+    event_stream = AGUIEventStream[None, Any](thread_id='thread_1', run_id='run_1', ag_ui_version='0.1.10')
+    return event_stream.encode_stream(event_stream.transform_stream(events))
+
+
+def _encode_vercel_ai(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
+    event_stream = VercelAIEventStream[None, Any]()
+    return event_stream.encode_stream(event_stream.transform_stream(events))
+
+
+def _with_numbered_ids(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`events` without timestamps, with generated message and part IDs numbered in order of appearance."""
+    ids: dict[str, str] = {}
     for event in events:
-        type_ = event['type']
-        if type_ == 'RUN_FINISHED':
-            assert not open_starts, f'still open at RUN_FINISHED: {open_starts}'
-        elif type_.endswith('_START'):
-            open_starts.append(_ag_ui_start_key(event))
-        elif type_.endswith('_END'):
-            open_starts.remove(_ag_ui_end_key(event))
+        event.pop('timestamp', None)
+        for key in ('id', 'messageId', 'parentMessageId'):
+            if key in event:
+                event[key] = ids.setdefault(event[key], f'id-{len(ids) + 1}')
+    return events
 
 
-def _assert_vercel_no_part_open_at_finish(events: list[dict[str, Any]]) -> None:
-    """Every Vercel AI data stream start is closed before the `finish` chunk.
+@dataclass(frozen=True)
+class RestartedPartCase:
+    id: str
+    encode: Callable[[AsyncIterator[NativeEvent]], AsyncIterator[str]]
+    native_events: Callable[[], list[NativeEvent]]
+    """A part's start and deltas, then its start republished with no `PartEndEvent` in between."""
+    expected: list[dict[str, Any]]
+    marks: tuple[pytest.MarkDecorator, ...] = ()
 
-    An unclosed `text-start`/`reasoning-start` leaves the client message streaming, and an
-    unclosed `tool-input-start` leaves the call in `input-streaming` (its closing chunk is
-    `tool-input-available`/`tool-input-error`, emitted when the call result or error arrives).
+
+_needs_ag_ui = pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
+
+RESTARTED_PART_CASES = [
+    RestartedPartCase(
+        id='ag-ui-text',
+        encode=_encode_ag_ui,
+        native_events=_restarted_text,
+        expected=snapshot(
+            [
+                {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+                {'type': 'TEXT_MESSAGE_START', 'messageId': 'id-1', 'role': 'assistant'},
+                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': 'id-1', 'delta': 'Hel'},
+                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': 'id-1', 'delta': 'lo'},
+                {'type': 'TEXT_MESSAGE_END', 'messageId': 'id-1'},
+                {'type': 'TEXT_MESSAGE_START', 'messageId': 'id-2', 'role': 'assistant'},
+                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': 'id-2', 'delta': 'Hel'},
+                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': 'id-2', 'delta': 'lo, world'},
+                {'type': 'TEXT_MESSAGE_END', 'messageId': 'id-2'},
+                {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            ]
+        ),
+        marks=(_needs_ag_ui,),
+    ),
+    RestartedPartCase(
+        id='ag-ui-thinking',
+        encode=_encode_ag_ui,
+        native_events=_restarted_thinking,
+        expected=snapshot(
+            [
+                {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+                {'type': 'THINKING_START'},
+                {'type': 'THINKING_TEXT_MESSAGE_START'},
+                {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Hel'},
+                {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'lo'},
+                {'type': 'THINKING_TEXT_MESSAGE_END'},
+                {'type': 'THINKING_END'},
+                {'type': 'THINKING_START'},
+                {'type': 'THINKING_TEXT_MESSAGE_START'},
+                {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Hel'},
+                {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'lo, world'},
+                {'type': 'THINKING_TEXT_MESSAGE_END'},
+                {'type': 'THINKING_END'},
+                {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            ]
+        ),
+        marks=(_needs_ag_ui,),
+    ),
+    RestartedPartCase(
+        id='ag-ui-tool-call',
+        encode=_encode_ag_ui,
+        native_events=_restarted_tool_call,
+        expected=snapshot(
+            [
+                {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+                {'type': 'TEXT_MESSAGE_START', 'messageId': 'id-1', 'role': 'assistant'},
+                {'type': 'TEXT_MESSAGE_END', 'messageId': 'id-1'},
+                {
+                    'type': 'TOOL_CALL_START',
+                    'toolCallId': 'call_0',
+                    'toolCallName': 'get_time',
+                    'parentMessageId': 'id-1',
+                },
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"tz": '},
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '"U'},
+                {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+                {
+                    'type': 'TOOL_CALL_START',
+                    'toolCallId': 'call_0',
+                    'toolCallName': 'get_time',
+                    'parentMessageId': 'id-1',
+                },
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"tz": '},
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '"UTC"}'},
+                {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+                {
+                    'type': 'TOOL_CALL_RESULT',
+                    'messageId': 'id-2',
+                    'toolCallId': 'call_0',
+                    'content': '12:00',
+                    'role': 'tool',
+                },
+                {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            ]
+        ),
+        marks=(_needs_ag_ui,),
+    ),
+    RestartedPartCase(
+        id='vercel-ai-text',
+        encode=_encode_vercel_ai,
+        native_events=_restarted_text,
+        expected=snapshot(
+            [
+                {'type': 'start'},
+                {'type': 'start-step'},
+                {'type': 'text-start', 'id': 'id-1'},
+                {'type': 'text-delta', 'delta': 'Hel', 'id': 'id-1'},
+                {'type': 'text-delta', 'delta': 'lo', 'id': 'id-1'},
+                {'type': 'text-end', 'id': 'id-1'},
+                {'type': 'text-start', 'id': 'id-2'},
+                {'type': 'text-delta', 'delta': 'Hel', 'id': 'id-2'},
+                {'type': 'text-delta', 'delta': 'lo, world', 'id': 'id-2'},
+                {'type': 'text-end', 'id': 'id-2'},
+                {'type': 'finish-step'},
+                {'type': 'finish'},
+            ]
+        ),
+    ),
+    RestartedPartCase(
+        id='vercel-ai-thinking',
+        encode=_encode_vercel_ai,
+        native_events=_restarted_thinking,
+        expected=snapshot(
+            [
+                {'type': 'start'},
+                {'type': 'start-step'},
+                {'type': 'reasoning-start', 'id': 'id-1'},
+                {'type': 'reasoning-delta', 'id': 'id-1', 'delta': 'Hel'},
+                {'type': 'reasoning-delta', 'id': 'id-1', 'delta': 'lo'},
+                {'type': 'reasoning-end', 'id': 'id-1'},
+                {'type': 'reasoning-start', 'id': 'id-2'},
+                {'type': 'reasoning-delta', 'id': 'id-2', 'delta': 'Hel'},
+                {'type': 'reasoning-delta', 'id': 'id-2', 'delta': 'lo, world'},
+                {'type': 'reasoning-end', 'id': 'id-2'},
+                {'type': 'finish-step'},
+                {'type': 'finish'},
+            ]
+        ),
+    ),
+    RestartedPartCase(
+        id='vercel-ai-tool-call',
+        encode=_encode_vercel_ai,
+        native_events=_restarted_tool_call,
+        expected=snapshot(
+            [
+                {'type': 'start'},
+                {'type': 'start-step'},
+                {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'get_time'},
+                {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"tz": '},
+                {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '"U'},
+                {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'get_time'},
+                {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"tz": '},
+                {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '"UTC"}'},
+                {
+                    'type': 'tool-input-available',
+                    'toolCallId': 'call_0',
+                    'toolName': 'get_time',
+                    'input': {'tz': 'UTC'},
+                },
+                {'type': 'tool-output-available', 'toolCallId': 'call_0', 'output': '12:00'},
+                {'type': 'finish-step'},
+                {'type': 'finish'},
+            ]
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in RESTARTED_PART_CASES])
+async def test_event_stream_restarted_part_in_encoders(case: RestartedPartCase) -> None:
+    """A republished `PartStartEvent` ends the still-open part before the new start, in each real encoder. #11734
+
+    The client sees the first attempt's partial part as its own, ended part, followed by the retry's full part.
     """
-    open_parts: list[str] = []
-    streaming_calls: set[str] = set()
-    for event in events:
-        type_ = event['type']
-        if type_ in ('text-start', 'reasoning-start'):
-            open_parts.append(str(event['id']))
-        elif type_ in ('text-end', 'reasoning-end'):
-            open_parts.remove(str(event['id']))
-        elif type_ == 'tool-input-start':
-            streaming_calls.add(str(event['toolCallId']))
-        elif type_ in ('tool-input-available', 'tool-input-error'):
-            streaming_calls.discard(str(event['toolCallId']))
-        elif type_ == 'finish':
-            assert not open_parts, f'message parts still open at finish: {open_parts}'
-            assert not streaming_calls, f'calls still input-streaming at finish: {streaming_calls}'
 
+    async def native_events() -> AsyncIterator[NativeEvent]:
+        for event in case.native_events():
+            yield event
 
-@pytest.mark.parametrize('part_kind', ['thinking', 'tool-call'])
-@pytest.mark.parametrize('protocol', ['ag-ui', 'vercel-ai'])
-async def test_event_stream_restarted_part_ends_open_part_in_real_encoders(protocol: str, part_kind: str) -> None:
-    """A republished `PartStartEvent` ends the still-open part under the real encoders. #11734
-
-    Beyond the dummy-stream text case above, the issue names a thinking part and a tool call
-    part: their end events differ per protocol, so this feeds the republished-start stream
-    through the AG-UI and Vercel AI encoders and asserts the output is verifier-valid — every
-    start has an end before the run finishes.
-    """
-
-    async def event_generator() -> AsyncIterator[NativeEvent]:
-        if part_kind == 'thinking':
-            yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
-            yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo'))
-            # The activity retry republishes its part start with no `PartEndEvent` before it.
-            yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
-            yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', world'))
-            yield PartEndEvent(index=0, part=ThinkingPart(content='Hello, world'))
-        else:
-
-            def call_part(args: str) -> ToolCallPart:
-                return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
-
-            yield PartStartEvent(index=0, part=call_part('{"tz": '))
-            yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
-            # The activity retry republishes its part start with no `PartEndEvent` before it.
-            yield PartStartEvent(index=0, part=call_part('{"tz": '))
-            yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
-            yield PartEndEvent(index=0, part=call_part('{"tz": "UTC"}'))
-            yield FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True)
-            yield FunctionToolResultEvent(
-                part=ToolReturnPart(tool_name='get_time', tool_call_id='call_0', content='12:00')
-            )
-
-    if protocol == 'ag-ui':
-        pytest.importorskip('ag_ui')
-        from ag_ui.core import RunAgentInput, UserMessage
-
-        from pydantic_ai.ui.ag_ui import AGUIEventStream
-
-        run_input = RunAgentInput(
-            thread_id='thread_1',
-            run_id='run_1',
-            messages=[UserMessage(id='msg_1', content='Hello')],
-            state={},
-            context=[],
-            tools=[],
-            forwarded_props={},
-            resume=None,
-        )
-        event_stream = AGUIEventStream(run_input=run_input)
-        # The stream is consumed inside each protocol branch so the receiver stays a concrete
-        # type; a union-typed receiver makes `encode_stream`'s parameter unsolvable for pyright.
-        events = [
-            json.loads(event.removeprefix('data: '))
-            async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
-            if '[DONE]' not in event
-        ]
-    else:
-        from pydantic_ai.ui.vercel_ai import VercelAIEventStream
-        from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
-
-        run_input = SubmitMessage(
-            id='foo',
-            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])],
-        )
-        event_stream = VercelAIEventStream(run_input=run_input)
-        events = [
-            json.loads(event.removeprefix('data: '))
-            async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
-            if '[DONE]' not in event
-        ]
-
-    if protocol == 'ag-ui':
-        _assert_ag_ui_no_start_open_at_run_finished(events)
-    else:
-        _assert_vercel_no_part_open_at_finish(events)
+    events = [json.loads(e.removeprefix('data: ')) async for e in case.encode(native_events()) if '[DONE]' not in e]
+    assert _with_numbered_ids(events) == case.expected
 
 
 async def test_event_stream_error_closes_open_thinking():
