@@ -20,7 +20,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AgentToolset, FunctionToolset
-from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace, WorkspaceBackend
+from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
+    LocalWorkspaceBackend,
+    Workspace,
+    WorkspaceBackend,
+    WorkspaceError,
+)
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.sub_agents import AgentOverride, SubAgent, SubAgents
 from pydantic_ai_harness.sub_agents._disk import ParsedAgent, parse_agent_markdown
@@ -262,6 +268,21 @@ class TestDiskLoading:
         with pytest.warns(UserWarning, match='Skipping unreadable disk sub-agent file'):
             listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
         assert listing is not None and '- valid' in listing and 'broken' not in listing
+
+    async def test_file_whose_authority_cannot_be_resolved_is_skipped_with_warning(self, tmp_path: Path) -> None:
+        # A backend whose `realpath` refuses a link it can't follow, such as a link loop in a sandbox shell, makes
+        # `authority_of` raise. The file is skipped like an unreadable one rather than failing the run or loading it.
+        class _LoopRefusingBackend(LocalWorkspaceBackend):
+            async def realpath(self, path: str) -> str:
+                if path.endswith('loop.md'):
+                    raise WorkspaceError(f'cannot resolve {path!r}')
+                return await super().realpath(path)
+
+        _write_agent(tmp_path, 'loop.md', '---\nname: loop\n---\nPlanted.')
+        _write_agent(tmp_path, 'valid.md', '---\nname: valid\n---\nWork.')
+        with pytest.warns(UserWarning, match='Skipping unreadable disk sub-agent file'):
+            listing = await _listing(SubAgents(agent_folders=['.']), _LoopRefusingBackend(tmp_path))
+        assert listing is not None and '- valid' in listing and 'loop' not in listing
 
 
 class TestCodexDiskLoading:

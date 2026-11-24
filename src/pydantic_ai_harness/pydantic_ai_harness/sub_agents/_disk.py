@@ -38,7 +38,7 @@ from typing import TypeGuard
 
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.settings import ThinkingLevel
-from pydantic_ai.workspaces import Workspace
+from pydantic_ai.workspaces import Workspace, WorkspaceError
 from pydantic_ai_harness._workspace import stat_or_none
 
 
@@ -213,6 +213,23 @@ def _warn_unreadable(path: str, exc: Exception) -> None:
     warnings.warn(f'Skipping unreadable disk sub-agent file {path!r}: {exc}', stacklevel=3)
 
 
+async def _read_operator_file(workspace: Workspace, path: str, lowered: list[str]) -> str | None:
+    """The text of a definition file at `'operator'` authority, or `None` for one that isn't loaded.
+
+    A file below `'operator'` is added to `lowered` unread: its body would become a delegate's instructions, and its
+    description would be listed in the parent's. A file whose authority the workspace can't resolve, such as a link
+    loop on a sandbox shell, or that can't be read, is skipped with a warning.
+    """
+    try:
+        if await workspace.authority_of(path) != 'operator':
+            lowered.append(path)
+            return None
+        return await workspace.read_text(path)
+    except (WorkspaceError, OSError, UnicodeDecodeError) as exc:
+        _warn_unreadable(path, exc)
+        return None
+
+
 async def _load_folder(workspace: Workspace, folder: str, lowered: list[str]) -> list[DiskDefinition]:
     """Every `.md` or `.toml` definition directly in `folder`, sorted by name; a missing folder has none.
 
@@ -227,14 +244,8 @@ async def _load_folder(workspace: Workspace, folder: str, lowered: list[str]) ->
     for entry in entries:
         if entry.is_dir or not entry.name.endswith(('.md', '.toml')):
             continue
-        if await workspace.authority_of(entry.path) != 'operator':
-            # Its body would become a delegate's instructions, and its description would be listed in the parent's.
-            lowered.append(entry.path)
-            continue
-        try:
-            text = await workspace.read_text(entry.path)
-        except (OSError, UnicodeDecodeError) as exc:
-            _warn_unreadable(entry.path, exc)
+        text = await _read_operator_file(workspace, entry.path, lowered)
+        if text is None:
             continue
         try:
             parsed = (
