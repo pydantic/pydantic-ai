@@ -53,9 +53,11 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      # `auto` restores a cache on `pull_request`, from a scope the PR's own `CI` run can write.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
+          enable-cache: false
 
       - name: Create or update CI duration report
         run: uv run --no-project --with certifi python .github/scripts/ci_duration.py report --poll-seconds 600
