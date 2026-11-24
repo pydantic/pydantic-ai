@@ -471,7 +471,7 @@ async def test_each_field_with_a_placeholder_has_an_accessible_name(page: Page, 
         fields: list[tuple[str, bool]] = await page.evaluate(MARK_PLACEHOLDER_FIELDS)
         for index, (placeholder, named) in enumerate(fields):
             field = page.locator(f'[data-placeholder-field="{index}"]')
-            await expect(field).to_have_accessible_name(re.compile(r'\S' if named else re.escape(placeholder)))
+            await expect(field).to_have_accessible_name(re.compile(r'\S' if named else rf'^{re.escape(placeholder)}$'))
         judged += len(fields)
         if asked is not None:
             await page.keyboard.press('Escape')
