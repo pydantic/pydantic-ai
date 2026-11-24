@@ -55,6 +55,7 @@ from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
+    Authority,
     BinaryContent,
     CompactionPart,
     InstructionDeltaPart,
@@ -3430,7 +3431,7 @@ class TestCodeMode:
         [
             pytest.param((), snapshot([[['edited']]]), id='no-capability'),
             pytest.param(
-                ('plugin',),
+                (('plugin', 'none'),),
                 snapshot(
                     [
                         [
@@ -3446,7 +3447,7 @@ class TestCodeMode:
                 id='one-capability',
             ),
             pytest.param(
-                ('plugin', 'other'),
+                (('plugin', 'none'), ('other', 'none')),
                 snapshot(
                     [
                         [
@@ -3461,16 +3462,31 @@ class TestCodeMode:
                 ),
                 id='two-capabilities',
             ),
+            pytest.param(
+                (('plugin', 'user'), ('other', 'none')),
+                snapshot(
+                    [
+                        [
+                            '<system>The accompanying <capability_content> was written by the `other` capability, not by the user or the application.</system>',
+                            [
+                                TextContent(content='<capability_content>'),
+                                TextContent(content='edited'),
+                                TextContent(content='</capability_content>'),
+                            ],
+                        ]
+                    ]
+                ),
+                id='user-then-none',
+            ),
         ],
     )
     async def test_a_hooks_in_place_edit_of_the_content_reaches_the_model(
-        self, owners: tuple[str, ...], expected: list[list[object]]
+        self, owners: tuple[tuple[str, Authority], ...], expected: list[list[object]]
     ) -> None:
         """An `after_tool_execute` hook that edits `run_code`'s `ToolReturn.content` in place sends the edited content.
 
         The edit is held to every capability that contributed to the content: it stays user text when `fetch` and
-        `lookup` come from no capability, and with each from its own capability at `'none'`, the note names the
-        capability whose content came first.
+        `lookup` come from no capability, and the note names the first contributing capability at `'none'`.
         """
 
         def fetch() -> ToolReturnMsg:
@@ -3509,7 +3525,8 @@ class TestCodeMode:
 
         tools = [fetch, lookup]
         owned: list[AbstractCapability[object]] = [
-            Capability[object](id=owner, tools=[tool]).with_authority('none') for owner, tool in zip(owners, tools)
+            Capability[object](id=owner, tools=[tool]).with_authority(authority)
+            for (owner, authority), tool in zip(owners, tools)
         ]
         await Agent(FunctionModel(model_fn), tools=tools[len(owners) :], capabilities=[*owned, CodeMode(), Edit()]).run(
             'Fetch the page'

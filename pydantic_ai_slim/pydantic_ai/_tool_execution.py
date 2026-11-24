@@ -174,7 +174,8 @@ class NestedCallContent(list[_messages.UserContent]):
         """Each called tool's content, after the run ids of the capabilities it passed through, innermost first.
 
         Content edited in place is one segment, after the run id of every capability that contributed to it, in the
-        order the content came, so the edit is held to each of them.
+        order the content came, so the edit is held to each of them. Only a capability at `'none'` frames the content
+        as data, so the note on the result names the first of them at `'none'`.
         """
         if not self.matches_segments():
             unedited = NestedCallContent(self.segments).owned_segments()
