@@ -43,8 +43,8 @@ from pydantic_ai_harness.e2b_sandbox import (
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
-from ..display_contract_live import check_display_contract, is_blank
-from ..display_fakes import full_display
+from ..computer_use.display_contract_live import check_display_contract, is_blank
+from ..computer_use.display_fakes import full_display
 
 pytestmark = pytest.mark.e2b_live
 

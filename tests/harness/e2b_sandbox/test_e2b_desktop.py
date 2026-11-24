@@ -18,8 +18,8 @@ from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
-from .._fake_x_display import FakeDisplay
-from ..display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
+from ..computer_use._fake_x_display import FakeDisplay
+from ..computer_use.display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
 from .fake_e2b import FakeE2B
 
 
