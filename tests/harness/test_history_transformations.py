@@ -158,7 +158,8 @@ def _authority(part: ModelRequestPart) -> Authority:
     """`effective_authority` for every request part, until #12434 lands it: then this stub goes."""
     if isinstance(part, CapabilityPart):
         return effective_authority(part)
-    return next((authority for kind, authority in _PART_AUTHORITY.items() if isinstance(part, kind)), 'none')
+    default: Authority = 'none'
+    return next((authority for kind, authority in _PART_AUTHORITY.items() if isinstance(part, kind)), default)
 
 
 _RANK: list[Authority] = ['none', 'user', 'operator']
@@ -197,7 +198,10 @@ async def _vercel_ai(native: RouteRun, directory: Path) -> list[ModelMessage]:
 
 
 async def _ag_ui(native: RouteRun, directory: Path) -> list[ModelMessage]:
-    return AGUIAdapter.load_messages(AGUIAdapter.dump_messages(native.messages))
+    with warnings.catch_warnings():
+        # The lowest supported ag-ui-protocol can't carry encrypted reasoning, which the adapter warns about.
+        warnings.filterwarnings('ignore', 'ag-ui-protocol .* predates the `encrypted_value` field', UserWarning)
+        return AGUIAdapter.load_messages(AGUIAdapter.dump_messages(native.messages))
 
 
 async def _sub_agent_handoff(native: RouteRun, directory: Path) -> list[ModelMessage]:
@@ -343,7 +347,9 @@ class _Compared:
         """
         native = Counter(signature(part) for part in self.native)
         replaced = native - self.carried or native
-        ceiling = min((authority for _, _, authority, _ in replaced), key=_RANK.index)
+        ceiling: Authority = min(
+            (authority for _, _, authority, _ in replaced), key=lambda authority: _RANK.index(authority)
+        )
         return [part for part in self.created if _RANK.index(_authority(part)) > _RANK.index(ceiling)]
 
     def new(self) -> Counter[Signature]:
