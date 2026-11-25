@@ -3128,8 +3128,8 @@ Run `/sandbox PROVIDER` (`local smol`, `local boxlite`, `e2b`, `boxd`, `daytona`
 `sprites`, or `kubernetes`) in a new conversation, before its first prompt. `local smol` and `local boxlite` run a
 microVM on this machine, with SmolVM or BoxLite; `/sandbox local` alone asks which, and says what each still needs.
 The others are cloud sandboxes. Pax copies this checkout (the branch, its unpushed commits, and
-uncommitted files) into a new sandbox, and every command and file edit of the conversation runs
-there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+uncommitted files) into a new sandbox, saying which step it is on, and every command and file edit of the
+conversation runs there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
 the conversation runs. To work on this machine again, run `/new`.
 
 A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If Pax stops

@@ -430,6 +430,10 @@ class TestCommand:
             "Fake's proxy, outside the sandbox, holds the token until the sandbox is deleted.\n"
             'Your files here stay as they are: ask the agent to push, then pull here. ! commands run in the sandbox too.'
         )
+        # The editor is put away while a command runs, so these lines are what the user watches meanwhile.
+        console = loaded.host.console.file
+        assert isinstance(console, io.StringIO)
+        assert console.getvalue() == 'Starting the sandbox in Fake...\nCopying your checkout into it...\n'
         assert provider.created == [GitHubCredential(login='Ada', token='gho_secret')]
         # The history records the sandbox before any prompt, so every copy of the conversation finds it.
         request, response = loaded.host.conversation.messages
