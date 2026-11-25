@@ -188,6 +188,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_system_prompt_role': None,
     'openai_chat_supports_multiple_system_messages': True,
     'openai_chat_streaming_repeats_usage_totals': False,
+    'openai_chat_completion_tokens_omit_reasoning': False,
     'openai_chat_supports_web_search': False,
     'openai_chat_audio_input_encoding': 'base64',
     'openai_chat_supports_file_urls': False,
@@ -475,6 +476,7 @@ def test_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_responses_supports_max_reasoning_effort': False,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_supports_phase': True,
             'tool_addition_mode': 'with_definitions',
@@ -549,6 +551,7 @@ def test_openai_gpt_5_6():
             'tool_addition_mode': 'with_definitions',
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
@@ -606,6 +609,7 @@ def test_openai_gpt_6_astra():
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_supports_prompt_cache_breakpoints': True,
             'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'xhigh'}),
@@ -802,6 +806,7 @@ def test_openai_gpt_4o():
             'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'openai_responses_supports_max_reasoning_effort': False,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
@@ -881,6 +886,7 @@ def test_openai_codex_gpt_5_6():
             'openai_supports_phase': True,
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_tool_choice_accepts_additional_tools': True,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
@@ -2004,6 +2010,7 @@ def test_openrouter_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
+            'delegates_unprompted': True,
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
@@ -2332,6 +2339,7 @@ def test_github_copilot_openai_gpt_5_4():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
+            'delegates_unprompted': True,
             'openai_chat_supports_max_completion_tokens': True,
         }
     )
@@ -2610,6 +2618,7 @@ def test_azure_openai_gpt_5():
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
             'supports_inline_system_prompts': True,
+            'delegates_unprompted': True,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': False,
@@ -3183,6 +3192,7 @@ def test_litellm_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'delegates_unprompted': True,
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -3521,6 +3531,7 @@ def test_together_qwen():
                             WebSearchTool,
                         }
                     ),
+                    'delegates_unprompted': True,
                     'may_tokenize_special_tokens_in_content': False,
                 }
             ),
@@ -4180,6 +4191,7 @@ def test_github_openai_bare_name():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'delegates_unprompted': True,
         }
     )
 
@@ -4303,6 +4315,7 @@ def test_vercel_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'delegates_unprompted': True,
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -4707,6 +4720,7 @@ def test_stav_openai():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_reasoning_efforts': frozenset({'high', 'low', 'medium', 'minimal'}),
+            'delegates_unprompted': True,
             'may_tokenize_special_tokens_in_content': False,
         }
     )
