@@ -4912,7 +4912,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "attachments": [], "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -4940,7 +4940,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "attachments": [], "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -5021,7 +5021,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "attachments": [], "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -5194,7 +5194,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "attachments": [], "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                         ),
                                     ],
                                 )
