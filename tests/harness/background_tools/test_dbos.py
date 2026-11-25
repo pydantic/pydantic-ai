@@ -19,7 +19,6 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ToolCallPart,
-    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -103,8 +102,6 @@ def _background_result(messages: list[ModelMessage]) -> bool:
 def _model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if _background_result(messages):
         return ModelResponse(parts=[TextPart(content='done')])
-    if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-        return ModelResponse(parts=[TextPart(content='waiting')])
     return ModelResponse(
         parts=[
             ToolCallPart(tool_name='research', args={}, tool_call_id='research-call'),
