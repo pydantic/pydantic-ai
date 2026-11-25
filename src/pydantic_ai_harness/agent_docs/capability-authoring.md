@@ -273,8 +273,9 @@ Pick by asking what the capability's toolset registers:
   URL. Two resources stay two capabilities; two of one resource collide, which
   is the right answer for a mistake.
 - **Hooks that apply one run-wide policy** (a wrap-up, a budget, a run-level
-  setting) -- declare a default `id`. A second instance can only repeat or
-  contradict the first. Override `combine` when the field-by-field merge picks
+  setting) -- declare a default `id`: this is the "single fixed concern" of
+  [Building Custom Capabilities](../../../docs/capabilities/custom.md), and a
+  second instance can only repeat or contradict the first. Override `combine` when the field-by-field merge picks
   the wrong value, such as a margin that should take the larger of two.
 - **Hooks, guards, observers that compose** (several validators, several
   observers) -- no default `id`. Several per agent is the normal shape, and
