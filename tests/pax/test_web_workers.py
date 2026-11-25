@@ -33,7 +33,7 @@ from pydantic_ai_pax.builtin_plugins.web.workers import Workers
 from pydantic_ai_pax.config import PluginSettings
 from pydantic_ai_pax.plugins import TaskInfo, TaskProgress
 from pydantic_ai_pax.runtime.tasks import resume_prompt
-from tests.harness.sub_agents._sent import sent_texts
+from tests.harness.sub_agents._sent import sent_texts, sent_voices
 from tests.pax.test_web import TOKEN, WIRE, MakeWeb, Web, make_web, receive_until
 
 __all__ = ['make_web']
@@ -171,7 +171,9 @@ def test_workers_stream_steer_and_control(make_web: MakeWeb) -> None:
         assert (restarted.status, restarted.prompt, restarted.background) == ('running', 'and the docs?', False)
         assert (again.id, again.outcome) == (task_id, 'ok')
         [history] = continued
-        assert prompts(history) == ['child', 'focus on tests', 'and the docs?'], 'the model sees what it did before'
+        assert sent_voices(history) == [('agent', 'child'), ('user', 'focus on tests'), ('user', 'and the docs?')], (
+            "the model sees what it did before, and the user's messages as the user's"
+        )
         live = [
             message.item.text
             for task_items in messages
@@ -257,7 +259,8 @@ def test_a_prompted_task_runs_beside_a_turn_with_code_mode_on(make_web: MakeWeb)
         messages, finished = until_finished(socket)
         assert finished.outcome == 'ok', record.output
         assert not [message for message in messages if isinstance(message, TurnEnded)], 'the turn still runs'
-        assert prompts(web_.shell.tasks.history(record.id)) == ['child', 'and the docs?']
+        # The saved task predates agent voice, so its prompt is a plain user prompt; the user's own message stays theirs.
+        assert sent_voices(web_.shell.tasks.history(record.id)) == [('user', 'child'), ('user', 'and the docs?')]
         web_.portal.call(release.set)
         receive_until(socket, TurnEnded)
         assert prompts(web_.shell.session.messages) == ['hold']
@@ -285,7 +288,7 @@ def test_a_task_takes_no_prompt_once_its_agent_delegates_no_more(make_web: MakeW
             'This agent delegates no tasks now, so its tasks take no prompts. Turn sub-agents on first.'
         )
         assert record.user_stopped and record.status == 'finished', 'left as it was'
-        assert prompts(web_.shell.tasks.history(record.id)) == ['child']
+        assert sent_voices(web_.shell.tasks.history(record.id)) == [('user', 'child')]
         assert web_.shell.session.messages == conversation
         assert web_.post('/api/input', {'text': '/exit'}).json() == {'menu': None}
 
