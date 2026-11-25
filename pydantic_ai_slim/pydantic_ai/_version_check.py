@@ -76,18 +76,44 @@ def start_version_check(cache: VersionCache | None) -> threading.Thread | None:
         return None
 
     now = time.time()
-    # A timestamp from the future is a clock that was wrong when it was written, not a check that
-    # is still fresh: trusting it would put off the next check until the clock caught up with it.
-    if (
-        cache is not None
-        and (checked_at := cache['checked_at']) is not None
-        and 0 <= now - checked_at < _CHECK_INTERVAL
-    ):
+    if cache is not None and not _is_due(cache, now):
         return None
 
     thread = threading.Thread(target=_check_for_updates, args=(now, cache), daemon=True)
     thread.start()
     return thread
+
+
+def claim_due_check() -> float | None:
+    """Claim the version check for a client that makes the request itself, such as Pax, and return when it was claimed.
+
+    Returns `None`, and the client must not make the request, unless a banner has announced the check and
+    none was made in the last 24 hours. The claim is recorded in the shared cache before the request, so
+    the banner and every such client make one request per 24 hours between them. Pass the response to
+    `record_response` so the banner can show what it found.
+    """
+    if (cache := read_cache()) is None or not _is_due(cache, now := time.time()):
+        return None
+    try:
+        _write_cache({'checked_at': now, 'latest': cache['latest']})
+    except Exception:
+        return None
+    return now
+
+
+def record_response(checked_at: float, response: object) -> None:
+    """Keep the latest versions from an endpoint response in the shared cache, as of the claim at `checked_at`."""
+    if (fetched := _latest_from_response(response)) is not None:
+        try:
+            _write_cache({'checked_at': checked_at, 'latest': fetched})
+        except Exception:
+            pass
+
+
+def _is_due(cache: VersionCache, now: float) -> bool:
+    # A timestamp from the future is a clock that was wrong when it was written, not a check that
+    # is still fresh: trusting it would put off the next check until the clock caught up with it.
+    return (checked_at := cache['checked_at']) is None or not 0 <= now - checked_at < _CHECK_INTERVAL
 
 
 def _check_for_updates(now: float, cache: VersionCache | None) -> None:

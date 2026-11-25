@@ -30,7 +30,7 @@ from typing import IO, TYPE_CHECKING, Annotated
 
 from anyio import CancelScope, open_process, run_process, to_thread
 from packaging.version import InvalidVersion, Version
-from pydantic import StringConstraints, TypeAdapter, ValidationError
+from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import _version_check
@@ -147,7 +147,7 @@ def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = 
 
     with httpx.Client(transport=transport, timeout=TIMEOUT, follow_redirects=True) as client:
         if channel == 'stable':
-            if _version_check.version_check_enabled() and (version := _checked_version(client)) is not None:
+            if (version := _checked_version(client)) is not None:
                 return version
             response = client.get(PYPI_URL).raise_for_status()
             return _PYPI_PROJECT.validate_json(response.content)['info']['version']
@@ -156,21 +156,27 @@ def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = 
 
 
 def _checked_version(client: 'httpx.Client') -> str | None:
-    """The newest Pax release from Pydantic AI's version check, or `None` when it can't say and PyPI should.
+    """The newest Pax release from Pydantic AI's version check, or `None` when PyPI should answer instead.
 
-    Sends the version check's `User-Agent`, see https://pydantic.dev/docs/ai/production/network-requests/.
+    The check keeps the library's limits: only once a banner has announced it, and at most once per 24 hours
+    shared with the banner, see https://pydantic.dev/docs/ai/production/network-requests/. Every other lookup,
+    and any that fails, goes to PyPI.
     """
     import httpx
 
+    if (checked_at := _version_check.claim_due_check()) is None:
+        return None
     product = f'{DISTRIBUTION}/{metadata.version(DISTRIBUTION)}'
     try:
         response = client.get(
             _version_check.VERSION_CHECK_URL, headers={'User-Agent': _version_check.user_agent(product)}
         ).raise_for_status()
-        if (entry := _REGISTRIES.validate_json(response.content)['pypi'].get(DISTRIBUTION)) is None:
+        body = response.json()
+        _version_check.record_response(checked_at, body)
+        if (entry := _REGISTRIES.validate_python(body)['pypi'].get(DISTRIBUTION)) is None:
             return None
         return _RELEASE.validate_python(entry)['latest']
-    except (httpx.HTTPError, ValidationError):
+    except (httpx.HTTPError, ValueError):
         return None
 
 
