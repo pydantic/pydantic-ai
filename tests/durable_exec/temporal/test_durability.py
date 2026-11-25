@@ -496,8 +496,8 @@ class _OverrideExtra(AbstractCapability[object]):
 @workflow.defn
 class StackedOverrideDurableAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str, added: Literal['extra', 'instrumentation']) -> str:
-        extra = _OverrideExtra() if added == 'extra' else Instrumentation(InstrumentationSettings())
+    async def run(self, prompt: str, added: Literal['operation', 'instrumentation']) -> str:
+        extra = _PerRunDurableOperation() if added == 'operation' else Instrumentation(InstrumentationSettings())
         with simple_durable_agent.override(capabilities=[*simple_durable_agent.root_capability.capabilities, extra]):
             return (await simple_durable_agent.run(prompt)).output
 
@@ -506,8 +506,8 @@ async def test_durability_override_capabilities_in_workflow(client: Client):
     """Inside a workflow, stacking onto `root_capability.capabilities` keeps the bound `TemporalDurability`.
 
     Re-binding it there would raise, as it cannot register activities once the workflow runs. What the override
-    adds follows the per-run rules: `Instrumentation` is allowed, and a capability with no registered activities
-    fails the workflow.
+    adds follows the per-run rules: `Instrumentation` is allowed, and a capability with `@durable_operation` methods,
+    which have no registered activities, fails the workflow.
     """
     async with Worker(
         client,
@@ -526,12 +526,12 @@ async def test_durability_override_capabilities_in_workflow(client: Client):
         with pytest.raises(WorkflowFailureError) as exc_info:
             await client.execute_workflow(
                 StackedOverrideDurableAgentWorkflow.run,
-                args=['What is the capital of Mexico?', 'extra'],
-                id=f'{StackedOverrideDurableAgentWorkflow.__name__}_extra',
+                args=['What is the capital of Mexico?', 'operation'],
+                id=f'{StackedOverrideDurableAgentWorkflow.__name__}_operation',
                 task_queue=TASK_QUEUE,
             )
 
-    assert 'Capabilities added per-run inside a Temporal workflow are not supported: _OverrideExtra.' in str(
+    assert 'Capabilities added per-run inside a Temporal workflow are not supported: _PerRunDurableOperation.' in str(
         exc_info.value.cause
     )
 
