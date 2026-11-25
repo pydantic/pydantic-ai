@@ -24,7 +24,6 @@ from _pytest.mark import ParameterSet
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, PrepareTools
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilitySource, ModelMessagesTypeAdapter
 from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import ToolDefinition
@@ -98,17 +97,13 @@ _WRAPS: dict[Route, Callable[[str, ToolArgs, AgentInfo], ToolCall]] = {
 
 _PULL = 'https://github.com/pydantic/pydantic-ai/pull/'
 _CONTENT = f"{_PULL}14327: a nested call's `ToolReturn.content` is attributed to the route's own tool"
-_ATTRIBUTE_FROM_TOOLSET = (
-    f"{_PULL}14374: the call's capability is looked up from `ToolDefinition.capability_id`, which a prepare hook "
-    'that rebuilds the definition leaves out'
-)
 _ISSUE = 'https://github.com/pydantic/pydantic-ai/issues/'
 _BACKGROUND_NAME = (
     f'{_ISSUE}12391: `BackgroundTools` folds `ToolReturn.content` into its result frame, which keeps the frame but drops the '
     'capability that wrote it (`background_tools/_capability.py`, `_format_background_result`)'
 )
 _PLAN_IN_CARRIER = (
-    "`Planning` finds the plan a plan tool returned only in that tool's own `ToolReturnPart`, so after a plan tool "
+    f"{_ISSUE}14441: `Planning` finds the plan a plan tool returned only in that tool's own `ToolReturnPart`, so after a plan tool "
     'runs inside another carrier it records the plan again in a `<plan_reminder>`'
 )
 
@@ -117,12 +112,6 @@ KNOWN: dict[tuple[str, Route], tuple[str, type[Exception]]] = {
     ('probe:tool_return_content', 'ipython_code_mode'): (_CONTENT, AssertionError),
     ('probe:tool_return_content', 'tool_bridge'): (_CONTENT, AssertionError),
     ('probe:tool_return_content', 'background_tools'): (_BACKGROUND_NAME, AssertionError),
-    ('probe:tool_return_content', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, AssertionError),
-    ('probe:enqueued', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, AssertionError),
-    # A tool that emits capability events is refused once its definition no longer names its capability.
-    ('FileSystem', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, UserError),
-    ('DeduplicateFileReads', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, UserError),
-    ('Planning', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, UserError),
     ('Planning', 'code_mode'): (_PLAN_IN_CARRIER, AssertionError),
     ('Planning', 'ipython_code_mode'): (_PLAN_IN_CARRIER, AssertionError),
     ('Planning', 'background_tools'): (_PLAN_IN_CARRIER, AssertionError),
