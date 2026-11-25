@@ -160,7 +160,7 @@ class TestCoder:
         )
         assert model.last_model_request_parameters is not None
         tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
-        assert tools[-5:] == ['delegate_task', 'list_tasks', 'message_task', 'answer_task', 'cancel_task']
+        assert tools[-6:] == ['delegate_task', 'list_tasks', 'check_task', 'message_task', 'answer_task', 'cancel_task']
         with pytest.raises(ValueError, match='`task_control` requires `sub_agents=True`'):
             Coder(sub_agents=False, task_control=TaskControl())
 

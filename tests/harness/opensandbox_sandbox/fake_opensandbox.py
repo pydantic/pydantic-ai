@@ -23,6 +23,7 @@ import asyncio
 import codecs
 import json
 import os
+import shlex
 import signal
 import time
 import uuid
@@ -36,6 +37,9 @@ from urllib.parse import parse_qsl
 import anyio
 import httpx
 from opensandbox.config import ConnectionConfig
+from pydantic import TypeAdapter
+
+from ..computer_use._fake_x_display import FakeDisplay
 
 API_KEY = 'fake-key'
 DOMAIN = 'opensandbox.invalid'
@@ -63,6 +67,10 @@ def _error(status: int, code: str, message: str) -> httpx.Response:
     return _json(status, {'code': code, 'message': message})
 
 
+_CREDENTIALS = TypeAdapter(list[dict[str, object]])
+"""The credentials the SDK sends to the vault, each with a `name`."""
+
+
 @dataclass
 class FakeSandbox:
     id: str
@@ -72,7 +80,10 @@ class FakeSandbox:
     resource: dict[str, str]
     expires_at: str | None
     network_policy: dict[str, Any] | None = None
+    credential_proxy: dict[str, object] | None = None
     secure_access: bool = False
+    credential_vault: dict[str, object] | None = None
+    """What the egress sidecar's Credential Vault was created with, values included."""
     state: str = 'Running'
     processes: dict[str, asyncio.subprocess.Process] = field(default_factory=lambda: {})
     streams: list[asyncio.Queue[tuple[str, Any]]] = field(default_factory=lambda: [])
@@ -125,6 +136,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         """Send output lines without their newline, as execd before 1.1.1 does."""
         self.image_working_dir = '/'
         """Where a command sent with no `cwd` starts, as execd starts it in the image's working directory."""
+        self.display: Callable[[str, float | None], tuple[str, str, int]] | None = None
+        """Answers the X display's commands, as a sandbox with a desktop does; every other command still runs."""
         self.connection = ConnectionConfig(domain=DOMAIN, api_key=API_KEY, transport=self)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -134,7 +147,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             raise httpx.ConnectError('connection refused')
         if self.refuse is not None:
             return _error(*self.refuse, f'refused: {self.refuse[1]}')
-        if request.url.host != DOMAIN:
+        # Any API address reaches the fake, so tests can set the domain clients see.
+        if request.url.host == f'execd.{DOMAIN}':
             return await self._execd(request)
         if self.api_key is not None and request.headers.get('open-sandbox-api-key') != self.api_key:
             return _error(401, 'INVALID_API_KEY', 'Authentication credentials are invalid.')
@@ -174,6 +188,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             env=body.get('env') or {},
             resource=body.get('resourceLimits') or {},
             network_policy=body.get('networkPolicy'),
+            credential_proxy=body.get('credentialProxy'),
             secure_access=body.get('secureAccess', False),
             expires_at=None if timeout is None else (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
         )
@@ -261,6 +276,22 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
                 if sandbox.state != 'Running':
                     raise httpx.ConnectError('connection refused')
                 return await self._command(sandbox, json.loads(request.content))
+            case ['credential-vault'] if request.method == 'POST':
+                # The egress sidecar's vault, which answers with sanitized metadata only.
+                vault: dict[str, object] = json.loads(request.content)
+                sandbox.credential_vault = vault
+                credentials = _CREDENTIALS.validate_python(vault['credentials'])
+                return _json(
+                    201,
+                    {
+                        'revision': 1,
+                        'credentials': [
+                            {'name': credential['name'], 'sourceType': 'inline', 'revision': 1}
+                            for credential in credentials
+                        ],
+                        'bindings': [],
+                    },
+                )
             # A request the backend never makes.
             case _:  # pragma: no cover
                 raise AssertionError(f'unexpected execd request {request.url.path}')
@@ -270,10 +301,16 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         if not os.path.isdir(cwd):
             return _error(400, 'INVALID_REQUEST_BODY', f'working directory does not exist: {cwd}')
         stream_breaks = sandbox.stream_breaks
+        command = body['command']
+        if self.display is not None and FakeDisplay.answers(command):
+            envs: dict[str, str] = body.get('envs') or {}
+            assert envs.get('DISPLAY') == ':1'
+            stdout, stderr, exit_code = self.display(command, None)
+            command = f'printf %s {shlex.quote(stdout)}; printf %s {shlex.quote(stderr)} >&2; exit {exit_code}'
         process = await asyncio.create_subprocess_exec(
             '/bin/bash',
             '-c',
-            body['command'].replace('/tmp/pydantic-ai', self.pid_dir),
+            command.replace('/tmp/pydantic-ai', self.pid_dir),
             cwd=cwd,
             env={'PATH': os.environ['PATH'], **sandbox.env, **(body.get('envs') or {})},
             stdin=asyncio.subprocess.DEVNULL,

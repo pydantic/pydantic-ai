@@ -21,6 +21,7 @@ import httpx
 import pytest
 from opensandbox.config import ConnectionConfig
 from opensandbox.exceptions import SandboxApiException, SandboxConnectionException, SandboxTimeoutException
+from opensandbox.models.sandboxes import CredentialProxyConfig, NetworkPolicy, NetworkRule
 
 from pydantic_ai import RunContext
 from pydantic_ai.exceptions import UserError
@@ -38,6 +39,8 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 from ...conftest import no_leaked_tasks
 from . import fake_opensandbox
 from .fake_opensandbox import DOMAIN, FakeOpenSandbox, wait_until_gone
+
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 _MODULE = 'pydantic_ai_harness.opensandbox_sandbox._backend'
 
@@ -70,6 +73,10 @@ class TestConstruction:
             ({'ref': WorkspaceRef(provider='docker', id='x')}, "expected 'opensandbox'"),
             ({'image': 'i', 'working_dir': 'relative'}, 'working_dir must be an absolute path'),
             ({'image': 'i', 'sandbox_timeout': 0}, 'sandbox_timeout must be an integer of at least 1'),
+            (
+                {'image': 'i', 'network_policy': NetworkPolicy(), 'allow_internet_access': False},
+                'pass `network_policy` or `allow_internet_access=False`, not both',
+            ),
         ],
     )
     def test_invalid_arguments_are_refused(self, kwargs: dict[str, object], message: str) -> None:
@@ -166,6 +173,21 @@ class TestNetworkPolicy:
         await _create(server, working_dir, **settings).working_dir()
         [sandbox] = server.sandboxes.values()
         assert sandbox.network_policy == expected
+        assert sandbox.credential_proxy is None
+
+    async def test_network_policy_and_credential_proxy_pass_through(
+        self, server: FakeOpenSandbox, working_dir: str
+    ) -> None:
+        network_policy = NetworkPolicy(
+            defaultAction='deny', egress=[NetworkRule(action='allow', target='api.github.com')]
+        )
+        backend = _create(
+            server, working_dir, network_policy=network_policy, credential_proxy=CredentialProxyConfig(enabled=True)
+        )
+        await backend.working_dir()
+        [sandbox] = server.sandboxes.values()
+        assert sandbox.network_policy == network_policy.model_dump(by_alias=True, exclude_none=True)
+        assert sandbox.credential_proxy == {'enabled': True}
 
 
 class TestSecureAccess:

@@ -21,6 +21,8 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -39,7 +41,7 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import (
     ModelContextWindowExceededError,
-    UnexpectedModelBehavior,
+    ModelEmptyResponseError,
     UserError,
 )
 from pydantic_ai.messages import MultiModalContent
@@ -71,6 +73,8 @@ with try_import() as imports_successful:
         ChatToolCallDeltaEventDeltaMessageToolCalls,
         ChatToolCallStartEventDelta,
         ChatToolCallStartEventDeltaMessage,
+        ChatToolPlanDeltaEventDelta,
+        ChatToolPlanDeltaEventDeltaMessage,
         ContentDeltaV2ChatStreamResponse,
         ContentStartV2ChatStreamResponse,
         MessageEndV2ChatStreamResponse,
@@ -80,6 +84,7 @@ with try_import() as imports_successful:
         ToolCallStartV2ChatStreamResponse,
         ToolCallV2,
         ToolCallV2Function,
+        ToolPlanDeltaV2ChatStreamResponse,
         Usage,
         UsageTokens,
         UserChatMessageV2,
@@ -1188,9 +1193,12 @@ async def test_request_stream_error_on_entry(allow_model_requests: None) -> None
 async def test_request_stream_empty(allow_model_requests: None) -> None:
     client = MockAsyncClientV2.create_stream_mock([])
     model = CohereModel('command-r', provider=CohereProvider(cohere_client=client))
-    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without content or tool calls'):
+    with pytest.raises(
+        ModelEmptyResponseError, match='Streamed response ended without content or tool calls'
+    ) as exc_info:
         async with model.request_stream([], None, ModelRequestParameters()):
             pass  # pragma: no cover
+    assert exc_info.value.model_name == 'command-r'
 
 
 async def test_stream_error_during_iteration(allow_model_requests: None):
@@ -1257,6 +1265,12 @@ async def test_stream_event_edge_cases(allow_model_requests: None):
                     tool_calls=ChatToolCallDeltaEventDeltaMessageToolCalls(function=None)
                 )
             ),
+        ),
+        # ToolPlanDelta with an empty delta: guard clause skips entirely.
+        ToolPlanDeltaV2ChatStreamResponse(delta=None),
+        ToolPlanDeltaV2ChatStreamResponse(delta=ChatToolPlanDeltaEventDelta(message=None)),
+        ToolPlanDeltaV2ChatStreamResponse(
+            delta=ChatToolPlanDeltaEventDelta(message=ChatToolPlanDeltaEventDeltaMessage(tool_plan=None))
         ),
         # MessageEnd with no delta: guard clause skips entirely.
         MessageEndV2ChatStreamResponse(delta=None),
@@ -1409,7 +1423,18 @@ async def test_stream_text_with_vcr(allow_model_requests: None, co_api_key: str)
 
 @pytest.mark.vcr(additional_matchers=['body'])
 async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str):
-    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    """The streamed `tool_plan` lands in history and goes back as `tool_plan` beside its tool call.
+
+    The follow-up body is read off the wire with a request hook, which fires on replay too. `CohereProvider` takes a
+    legacy `httpx.AsyncClient`, so the shared `request_capture` fixture, an `httpx2` client, can't be injected.
+    """
+    sent: list[httpx.Request] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request)
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [record]})
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key, http_client=http_client))
     agent = Agent(model)
     calls: list[str] = []
 
@@ -1439,11 +1464,16 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
             ),
             ModelResponse(
                 parts=[
+                    ThinkingPart(
+                        content='I will use the get_temperature tool to find the temperature in Paris.',
+                        provider_name='cohere',
+                        provider_details={'tool_plan': True},
+                    ),
                     ToolCallPart(
                         tool_name='get_temperature',
                         args='{"city": "Paris"}',
                         tool_call_id=IsStr(),
-                    )
+                    ),
                 ],
                 usage=RequestUsage(
                     details={'input_tokens': 50, 'output_tokens': 23},
@@ -1458,7 +1488,7 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'TOOL_CALL'},
-                provider_response_id='1defc2f3-bc25-4cdb-9042-90340d7e547b',
+                provider_response_id='9c122db1-c91a-4802-b8e3-f3ae2738db8f',
                 finish_reason='tool_call',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1479,11 +1509,11 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
             ModelResponse(
                 parts=[TextPart(content='The temperature in Paris is 24 degrees Celsius.')],
                 usage=RequestUsage(
-                    details={'input_tokens': 57, 'output_tokens': 11},
-                    input_tokens=1538,
+                    details={'input_tokens': 72, 'output_tokens': 11},
+                    input_tokens=1555,
                     output_tokens=23,
-                    cache_read_tokens=1024,
-                    cost=Decimal('0.000061125'),
+                    cache_read_tokens=1488,
+                    cost=Decimal('0.0000617625'),
                 ),
                 model_name='command-r7b-12-2024',
                 model_id='cohere:command-r7b-12-2024',
@@ -1491,7 +1521,7 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
                 provider_name='cohere',
                 provider_url='https://api.cohere.com',
                 provider_details={'finish_reason': 'COMPLETE'},
-                provider_response_id='f0becd6d-5bff-42b1-9b4d-598f083891d0',
+                provider_response_id='cbdf0fda-9519-4780-801d-16eed5b1a671',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -1500,15 +1530,238 @@ async def test_stream_tool_with_vcr(allow_model_requests: None, co_api_key: str)
     )
     assert result.usage == snapshot(
         RunUsage(
-            details={'input_tokens': 107, 'output_tokens': 34},
+            details={'input_tokens': 122, 'output_tokens': 34},
             output_tokens=76,
-            cache_read_tokens=2048,
-            input_tokens=2988,
-            cost=Decimal('0.000123450'),
+            cache_read_tokens=2512,
+            input_tokens=3005,
+            cost=Decimal('0.0001240875'),
             requests=2,
             tool_calls=1,
         )
     )
+    assert json.loads(sent[1].content)['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'tool_calls': [
+                {
+                    'id': IsStr(),
+                    'type': 'function',
+                    'function': {'name': 'get_temperature', 'arguments': '{"city":"Paris"}'},
+                }
+            ],
+            'tool_plan': 'I will use the get_temperature tool to find the temperature in Paris.',
+        }
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_tool_plan_captured_and_replayed_non_streamed(allow_model_requests: None, co_api_key: str):
+    """A non-streamed `tool_plan` lands in history and goes back as `tool_plan` beside its tool call.
+
+    The follow-up body is read off the wire with a request hook, which fires on replay too. `CohereProvider` takes a
+    legacy `httpx.AsyncClient`, so the shared `request_capture` fixture, an `httpx2` client, can't be injected.
+    """
+    sent: list[httpx.Request] = []
+
+    async def record(request: httpx.Request) -> None:
+        sent.append(request)
+
+    http_client = httpx.AsyncClient(event_hooks={'request': [record]})
+    model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key, http_client=http_client))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_temperature(city: str) -> str:
+        """Get the current temperature in a city."""
+        return '24 degrees Celsius'
+
+    result = await agent.run('Use get_temperature to find the temperature in Paris, then report the result.')
+
+    assert result.all_messages()[1].parts == snapshot(
+        [
+            ThinkingPart(
+                content='I will use the get_temperature tool to find the temperature in Paris.',
+                provider_name='cohere',
+                provider_details={'tool_plan': True},
+            ),
+            ToolCallPart(
+                tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id='get_temperature_k7d4nf42pe3e'
+            ),
+        ]
+    )
+    assert json.loads(sent[1].content)['messages'][1] == snapshot(
+        {
+            'role': 'assistant',
+            'tool_calls': [
+                {
+                    'id': 'get_temperature_k7d4nf42pe3e',
+                    'type': 'function',
+                    'function': {'name': 'get_temperature', 'arguments': '{"city":"Paris"}'},
+                }
+            ],
+            'tool_plan': 'I will use the get_temperature tool to find the temperature in Paris.',
+        }
+    )
+
+
+ROLL_DIE_CALL = ToolCallPart(tool_name='roll_die', args='{}', tool_call_id='roll_die_1')
+ROLL_DIE_CALL_JSON: dict[str, object] = {
+    'id': 'roll_die_1',
+    'type': 'function',
+    'function': {'name': 'roll_die', 'arguments': '{}'},
+}
+ROLL_DIE_RETURN = ModelRequest(parts=[ToolReturnPart(tool_name='roll_die', content='4', tool_call_id='roll_die_1')])
+
+
+@pytest.mark.parametrize(
+    'response_parts,follow_up,expected',
+    [
+        pytest.param(
+            [
+                ThinkingPart(
+                    content='I will roll the die.', provider_name='cohere', provider_details={'tool_plan': True}
+                ),
+                ROLL_DIE_CALL,
+            ],
+            ROLL_DIE_RETURN,
+            snapshot(
+                {
+                    'role': 'assistant',
+                    'tool_calls': [ROLL_DIE_CALL_JSON],
+                    'tool_plan': 'I will roll the die.',
+                }
+            ),
+            id='own-tool-plan',
+        ),
+        pytest.param(
+            [ThinkingPart(content='Let me reason.', signature='sig', provider_name='anthropic'), ROLL_DIE_CALL],
+            ROLL_DIE_RETURN,
+            snapshot(
+                {
+                    'role': 'assistant',
+                    'content': [{'type': 'thinking', 'thinking': 'Let me reason.'}],
+                    'tool_calls': [ROLL_DIE_CALL_JSON],
+                }
+            ),
+            id='foreign-thinking',
+        ),
+        pytest.param(
+            [ThinkingPart(content='Reasoning trace.'), ROLL_DIE_CALL],
+            ROLL_DIE_RETURN,
+            snapshot(
+                {
+                    'role': 'assistant',
+                    'content': [{'type': 'thinking', 'thinking': 'Reasoning trace.'}],
+                    'tool_calls': [ROLL_DIE_CALL_JSON],
+                }
+            ),
+            id='cohere-reasoning',
+        ),
+        pytest.param(
+            [ThinkingPart(content='first'), ThinkingPart(content='second'), ROLL_DIE_CALL],
+            ROLL_DIE_RETURN,
+            snapshot(
+                {
+                    'role': 'assistant',
+                    'content': [{'type': 'thinking', 'thinking': 'first\n\nsecond'}],
+                    'tool_calls': [ROLL_DIE_CALL_JSON],
+                }
+            ),
+            id='two-thinking-parts',
+        ),
+        pytest.param(
+            [
+                ThinkingPart(
+                    content='I will roll the die.', provider_name='openai', provider_details={'tool_plan': True}
+                ),
+                ROLL_DIE_CALL,
+            ],
+            ROLL_DIE_RETURN,
+            snapshot(
+                {
+                    'role': 'assistant',
+                    'content': [{'type': 'thinking', 'thinking': 'I will roll the die.'}],
+                    'tool_calls': [ROLL_DIE_CALL_JSON],
+                }
+            ),
+            id='foreign-tool-plan-marker',
+        ),
+        pytest.param(
+            [
+                ThinkingPart(
+                    content='I will roll the die.', provider_name='cohere', provider_details={'tool_plan': 'yes'}
+                ),
+                ROLL_DIE_CALL,
+            ],
+            ROLL_DIE_RETURN,
+            snapshot(
+                {
+                    'role': 'assistant',
+                    'content': [{'type': 'thinking', 'thinking': 'I will roll the die.'}],
+                    'tool_calls': [ROLL_DIE_CALL_JSON],
+                }
+            ),
+            id='malformed-tool-plan-marker',
+        ),
+        pytest.param(
+            [
+                ThinkingPart(
+                    content='I will roll the die.', provider_name='cohere', provider_details={'tool_plan': True}
+                ),
+                TextPart('No die.'),
+            ],
+            ModelRequest.user_text_prompt('Try again.'),
+            snapshot(
+                {
+                    'role': 'assistant',
+                    'content': [
+                        {'type': 'thinking', 'thinking': 'I will roll the die.'},
+                        {'type': 'text', 'text': 'No die.'},
+                    ],
+                }
+            ),
+            id='tool-plan-without-tool-call',
+        ),
+    ],
+)
+async def test_thinking_replayed_as_tool_plan_only_for_own_plan_with_tool_calls(
+    allow_model_requests: None,
+    response_parts: list[ThinkingPart | TextPart | ToolCallPart],
+    follow_up: ModelRequest,
+    expected: dict[str, object],
+):
+    """Only Cohere's own tagged plan, beside tool calls, goes back as `tool_plan`; other thinking keeps its mapping.
+
+    Not a VCR test: each case hand-builds a history to reach one mapping branch, which no recording holds, so a mock
+    transport answers and reads the outgoing JSON.
+    The history is dumped and loaded first, pinning the stored `provider_name` and `provider_details` the replay reads.
+    """
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(
+            200,
+            json={
+                'id': 'resp-1',
+                'finish_reason': 'COMPLETE',
+                'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'Done.'}]},
+                'usage': {'tokens': {'input_tokens': 10, 'output_tokens': 5}},
+            },
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    agent = Agent(CohereModel('command-a-03-2025', provider=CohereProvider(api_key='test', http_client=http_client)))
+
+    history: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Roll a die.'),
+        ModelResponse(parts=response_parts),
+        follow_up,
+    ]
+    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
+    await agent.run(message_history=stored)
+
+    assert json.loads(sent[0].content)['messages'][1] == expected
 
 
 @pytest.mark.vcr(additional_matchers=['body'])

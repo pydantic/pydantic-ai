@@ -13,26 +13,23 @@ Let an agent discover and message other agent sessions without controlling their
 
 ## In-process example
 
-[InMemoryPeerNetwork][pydantic_ai_harness.peers.InMemoryPeerNetwork] connects sessions in one application. Give each recipient a [LocalPeerInbox][pydantic_ai_harness.peers.LocalPeerInbox], and pass that same inbox both to `join()` and to its [Peers][pydantic_ai_harness.peers.Peers] capability. Joining without an inbox is send-only: incoming messages are refused.
+[InMemoryPeerNetwork][pydantic_ai_harness.peers.InMemoryPeerNetwork] connects sessions in one application. Pass it to each agent's [Peers][pydantic_ai_harness.peers.Peers] capability: the agent joins the network under its `name` when it is built, and receives in a new [LocalPeerInbox][pydantic_ai_harness.peers.LocalPeerInbox].
 
 ```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai_harness import Peers
-from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox
+from pydantic_ai_harness.peers import InMemoryPeerNetwork
 
 network = InMemoryPeerNetwork()
-alice_inbox = LocalPeerInbox()
-bob_inbox = LocalPeerInbox()
-alice_view = network.join(handle='alice', inbox=alice_inbox)
-bob_view = network.join(handle='bob', inbox=bob_inbox)
-
-alice = Agent('{{ anthropic:large }}', capabilities=[Peers(network=alice_view, inbox=alice_inbox)])
-bob = Agent('{{ anthropic:large }}', capabilities=[Peers(network=bob_view, inbox=bob_inbox)])
+alice = Agent('{{ anthropic:large }}', name='alice', capabilities=[Peers(network)])
+bob = Agent('{{ anthropic:large }}', name='bob', capabilities=[Peers(network)])
 
 alice.run_sync('Use list_peers to find bob, then send_message with your findings about the migration.')
 result = bob.run_sync('Review the migration findings sent by alice.')
 print(result.output)
 ```
+
+Handles are unique within a network, and an agent with no `name` raises `UserError` when it is built. Binding `Peers(network)` to the same agent again, as a run capability or from a capability function, keeps its handle and inbox; passing another inbox raises `UserError`. Pass `Peers(network, handle='alice')` to join under another handle, or `Peers(network, inbox=LocalPeerInbox(path=...))` to keep incoming messages in a file.
 
 The model gets `list_peers(query='')` and `send_message(to, text, reply_to=None)`. The list shows other reachable sessions, including their handle, ID, status, `waiting_for`, `status_since`, `accepts_messages`, pending-message count, title, workspace, and branch. The optional query filters by handle, title, workspace, or branch; the list is capped at `max_listed` (default `30`). Send to a listed handle or ID. The send result says whether the message was delivered to a running peer, queued for a peer with no active run, or refused, and includes the message ID for accepted messages. `reply_to` can reference an earlier message ID; it does not wait for a reply.
 
@@ -40,9 +37,22 @@ The model gets `list_peers(query='')` and `send_message(to, text, reply_to=None)
 
 ## Transport and persistence
 
-[InMemoryPeerNetwork][pydantic_ai_harness.peers.InMemoryPeerNetwork] is an in-process example, not a cross-process transport. Its members stay joined, and their handles taken, for the network's lifetime; to retire a session, set its inbox's `accepting` to `False`. For sessions across processes or machines, implement [PeerNetwork.peers()][pydantic_ai_harness.peers.PeerNetwork.peers] and [PeerNetwork.send()][pydantic_ai_harness.peers.PeerNetwork.send] in the host. The host owns peer identity, routing, authentication, and any user-visible notifications; the model supplies the recipient, text, and optional `reply_to` ID. [Peers][pydantic_ai_harness.peers.Peers] also passes a `key` built from the sending tool call (`run_id:run_step:tool_call_id`); a retried send with the same key must not deliver a second message. [InMemoryPeerNetwork][pydantic_ai_harness.peers.InMemoryPeerNetwork] derives the message ID from it, so [LocalPeerInbox][pydantic_ai_harness.peers.LocalPeerInbox] drops a repeat, both while the first copy is pending and after it was read: the inbox remembers the IDs of its last `max_pending` acknowledged messages. [PeerNetwork.peers()][pydantic_ai_harness.peers.PeerNetwork.peers] returns other peers as [PeerInfo][pydantic_ai_harness.peers.PeerInfo] objects. [PeerNetwork.send()][pydantic_ai_harness.peers.PeerNetwork.send] builds a [PeerMessage][pydantic_ai_harness.peers.PeerMessage] whose `sender` is a [PeerSender][pydantic_ai_harness.peers.PeerSender] supplied by the host from its own authenticated identity, never from the model's tool arguments. It delivers the message and returns a [PeerDelivery][pydantic_ai_harness.peers.PeerDelivery] with status `delivered`, `queued`, or `refused`; it raises `LookupError` for a peer that disappeared.
+To set the `workspace` or `title` that `list_peers` shows, or to join a peer that is not one agent, call `join()` yourself. It returns this peer's [PeerConnection][pydantic_ai_harness.peers.PeerConnection]; pass it to `Peers` together with the same inbox. Joining without an inbox is send-only: incoming messages are refused.
 
-`LocalPeerInbox(path=...)` saves pending messages to an atomically replaced JSON file at a host-chosen per-recipient path. Use a private directory for that path. An inbox without `path` keeps messages only in memory. Use `LocalPeerInbox(accepting=False)` to refuse new messages, or change its `accepting` flag later; pending messages are retained. A file-backed inbox does not provide a network or coordinate simultaneous writers across processes. Pass the same inbox to the recipient's transport endpoint and `Peers(inbox=...)`; without an inbox bound to [Peers][pydantic_ai_harness.peers.Peers], the capability provides sending tools but does not read a recipient inbox.
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import Peers
+from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox
+
+network = InMemoryPeerNetwork()
+inbox = LocalPeerInbox()
+connection = network.join(handle='alice', inbox=inbox, workspace='/work/api', title='Fix auth')
+alice = Agent('{{ anthropic:large }}', capabilities=[Peers(connection, inbox=inbox)])
+```
+
+[InMemoryPeerNetwork][pydantic_ai_harness.peers.InMemoryPeerNetwork] is an in-process example, not a cross-process transport. Its members stay joined, and their handles taken, for the network's lifetime; to retire a session, set its inbox's `accepting` to `False`. For sessions across processes or machines, implement [PeerConnection.peers()][pydantic_ai_harness.peers.PeerConnection.peers] and [PeerConnection.send()][pydantic_ai_harness.peers.PeerConnection.send] in the host. The host owns peer identity, routing, authentication, and any user-visible notifications; the model supplies the recipient, text, and optional `reply_to` ID. [Peers][pydantic_ai_harness.peers.Peers] also passes a `key` built from the sending tool call (`run_id:run_step:tool_call_id`); a retried send with the same key must not deliver a second message. [InMemoryPeerNetwork][pydantic_ai_harness.peers.InMemoryPeerNetwork] derives the message ID from it, so [LocalPeerInbox][pydantic_ai_harness.peers.LocalPeerInbox] drops a repeat, both while the first copy is pending and after it was read: the inbox remembers the IDs of its last `max_pending` acknowledged messages. [PeerConnection.peers()][pydantic_ai_harness.peers.PeerConnection.peers] returns other peers as [PeerInfo][pydantic_ai_harness.peers.PeerInfo] objects. [PeerConnection.send()][pydantic_ai_harness.peers.PeerConnection.send] builds a [PeerMessage][pydantic_ai_harness.peers.PeerMessage] whose `sender` is a [PeerSender][pydantic_ai_harness.peers.PeerSender] supplied by the host from its own authenticated identity, never from the model's tool arguments. It delivers the message and returns a [PeerDelivery][pydantic_ai_harness.peers.PeerDelivery] with status `delivered`, `queued`, or `refused`; it raises `LookupError` for a peer that disappeared.
+
+`LocalPeerInbox(path=...)` saves pending messages to an atomically replaced JSON file at a host-chosen per-recipient path. Use a private directory for that path. An inbox without `path` keeps messages only in memory. Use `LocalPeerInbox(accepting=False)` to refuse new messages, or change its `accepting` flag later; pending messages are retained. A file-backed inbox does not provide a network or coordinate simultaneous writers across processes. Pass the same inbox to the recipient's transport endpoint and `Peers(connection, inbox=...)`; without an inbox bound to [Peers][pydantic_ai_harness.peers.Peers], the capability provides sending tools but does not read a recipient inbox.
 
 To hold messages in host storage instead, implement [PeerInbox][pydantic_ai_harness.peers.PeerInbox]. [Peers][pydantic_ai_harness.peers.Peers] calls `take(run_id)` before and after each model request: the first call claims the inbox for that run, and each call returns the messages the run has not taken yet. It calls `acknowledge(message_id)` once a message has entered conversation history, and `release(run_id)` when the run ends; messages taken but not acknowledged stay held for the next run. While one run holds the inbox, `take` returns nothing to another. [LocalPeerInbox][pydantic_ai_harness.peers.LocalPeerInbox] is the in-process implementation.
 
@@ -63,7 +73,7 @@ To hold messages in host storage instead, implement [PeerInbox][pydantic_ai_harn
 
 `text` is limited to `MAX_MESSAGE_BYTES` UTF-8 bytes. The inbox file of `LocalPeerInbox` is not a cross-process contract: other processes reach a recipient through the host's transport, which admits each message into the recipient's inbox.
 
-Incoming text is framed as untrusted peer data on the user channel, with typed provenance metadata. The model sees it as `<peer_message sender="alice" id="msg-1">...</peer_message>`, framed by core with the sender handle the host supplied, so it never reads as the user speaking. It is not an instruction from the receiving user and cannot grant approval. A host that delivers peer messages itself must send each one as its own message part: merged into a user prompt, peer text loses its provenance and reads as the user's own words. A peer message that reaches a running agent can still steer it into any tool that does not require approval, so if peers can reach the agent, require approval for tools with side effects. [read_peer_message(part)][pydantic_ai_harness.peers.read_peer_message] reads a [PeerMessage][pydantic_ai_harness.peers.PeerMessage] from a tagged message part by its metadata, not by matching the displayed text. Native message serialization preserves that metadata; adapters that discard `TextContent.metadata` lose the provenance marker on round-trip.
+Incoming text is delivered as a [PeerMessagePart][pydantic_ai_harness.peers.PeerMessagePart], a [capability part](../capabilities/custom.md#capability-parts) with no authority. The model sees it on the user channel as `<peer_message sender="alice" id="msg-1">...</peer_message>`, with the sender handle the host supplied and a note that the peer wrote it, not the user or the application, so it never reads as the user speaking. The text is sent as written: text in it that imitates a frame gets a note naming the peer instead of being escaped. It is not an instruction from the receiving user and cannot grant approval. A host that delivers peer messages itself must send each one as its own message part: merged into a user prompt, peer text loses its provenance and reads as the user's own words. A peer message that reaches a running agent can still steer it into any tool that does not require approval, so if peers can reach the agent, require approval for tools with side effects. Find peer messages in history by type, or with [read_peer_message(part)][pydantic_ai_harness.peers.read_peer_message], which reads the [PeerMessage][pydantic_ai_harness.peers.PeerMessage] a part carries, not its displayed text. It also reads a message an earlier version delivered as a `UserPromptPart` marked by its metadata.
 
 ## Limits and scope
 
@@ -79,7 +89,7 @@ Unlike [Subagents](subagents.md), [Peers][pydantic_ai_harness.peers.Peers] does 
 
 ::: pydantic_ai_harness.peers.InMemoryPeerNetwork
 
-::: pydantic_ai_harness.peers.PeerNetwork
+::: pydantic_ai_harness.peers.PeerConnection
 
 ::: pydantic_ai_harness.peers.PeerInfo
 
@@ -92,6 +102,8 @@ Unlike [Subagents](subagents.md), [Peers][pydantic_ai_harness.peers.Peers] does 
 ::: pydantic_ai_harness.peers.PeerSender
 
 ::: pydantic_ai_harness.peers.PeerMessage
+
+::: pydantic_ai_harness.peers.PeerMessagePart
 
 ::: pydantic_ai_harness.peers.read_peer_message
 

@@ -87,7 +87,7 @@ def test_normalize_tracked_job(job: ci_duration.JsonObject, expected: tuple[str,
         'check',
         'test examples on 3.13',
         'test Temporal latest on Python 3.10',
-        'test FastMCP 4 compatibility',
+        'test FastMCP 3 compatibility (latest)',
     ],
 )
 def test_non_test_jobs_are_not_tracked(name: str):

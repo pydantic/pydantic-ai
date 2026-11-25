@@ -359,8 +359,8 @@ class _FakeBatchAPI:
     replies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     status: str = 'ended'
     message: dict[str, Any] = field(default_factory=lambda: _message([{'type': 'text', 'text': 'Hi!'}]))
-    created: list[tuple[list[dict[str, Any]], str | None]] = field(
-        default_factory=list[tuple[list[dict[str, Any]], str | None]]
+    created: list[tuple[list[dict[str, Any]], list[str]]] = field(
+        default_factory=list[tuple[list[dict[str, Any]], list[str]]]
     )
     raw_creates: list[bytes] = field(default_factory=list[bytes])
     sent: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
@@ -378,7 +378,9 @@ class _FakeBatchAPI:
         if path == '/v1/messages/batches':
             self.raw_creates.append(request.read())
             items = json.loads(request.read())['requests']
-            self.created.append((items, request.headers.get('anthropic-beta')))
+            # Before anthropic 2.9.0, the SDK adds `message-batches-2024-09-24` to every batch create.
+            betas = request.headers.get('anthropic-beta', '').split(',')
+            self.created.append((items, [b for b in betas if b not in ('', 'message-batches-2024-09-24')]))
             if self.replies:
                 reply = {'type': 'succeeded', 'message': self.replies[len(self.created) - 1]}
                 self.results.append({item['custom_id']: reply for item in items})
@@ -643,8 +645,8 @@ async def test_anthropic_batches_are_grouped_by_beta_flags(allow_model_requests:
         (custom_ids, betas)
         for custom_ids, betas in ((tuple(r['custom_id'] for r in items), b) for items, b in api.created)
     ] == [
-        (('plain',), 'message-batches-2024-09-24'),
-        (('beta',), 'interleaved-thinking-2025-05-14,message-batches-2024-09-24'),
+        (('plain',), []),
+        (('beta',), ['interleaved-thinking-2025-05-14']),
     ]
 
 
@@ -666,10 +668,7 @@ async def test_anthropic_batch_is_created_with_the_client_default_betas(
         [await model.batch_encode(_request('beta', AnthropicModelSettings(anthropic_betas=['b-setting'])))]
     )
 
-    assert [betas for _, betas in api.created] == [
-        'b-client,message-batches-2024-09-24',
-        'b-client,b-setting,message-batches-2024-09-24',
-    ]
+    assert [betas for _, betas in api.created] == [['b-client'], ['b-client', 'b-setting']]
 
 
 async def test_anthropic_batch_request_is_the_request_sent_outside_a_batch(allow_model_requests: None) -> None:

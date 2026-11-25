@@ -25,11 +25,11 @@ agent = Agent(capabilities=[ModelFallback('{{ openai:medium }}', '{{ anthropic:m
 
 A model that was already attempted in the step is skipped, whichever capability attempted it, so listing the agent's own model among the candidates doesn't cause a duplicate request.
 
-Falling back is not retrying: the next model usually can't use the prompt cache that earlier requests built on the first one, and can answer differently and at a different price. Leave a transient failure, like a dropped connection, to a retry of the same model, with a budget small enough that it doesn't hold up the fallback when the model stays down. See [Recovery scopes compared](../retries.md#recovery-scopes) and [Choosing one retry owner](../retries.md#choosing-one-retry-owner).
+Falling back is not retrying: the next model usually can't use the prompt cache that earlier requests built on the first one, and can answer differently and at a different price. Leave a transient failure, like a dropped connection, to a retry of the same model, with a budget small enough that it doesn't hold up the fallback when the model stays down: add [`RetryOnModelErrors`](retry-on-model-errors.md), and each model in the chain is retried before the request moves on to the next one (see [Retry or fall back](retry-on-model-errors.md#retry-or-fall-back)). See [Recovery scopes compared](../retries.md#recovery-scopes) and [Choosing one retry owner](../retries.md#choosing-one-retry-owner).
 
 ## When to fall back
 
-By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response, when the model [refuses](#refusals), and when the [output is cut off](#token-limit) by the token limit: `fallback_on` defaults to `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`.
+By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response, or sends a response the model can't use, such as an empty stream (see [Handling Model API Errors](../models/overview.md#handling-model-api-errors)), when the model [refuses](#refusals), and when the [output is cut off](#token-limit) by the token limit: `fallback_on` defaults to `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`.
 
 The `fallback_on` parameter takes the same forms as [`FallbackModel`'s](../models/overview.md#fallback-model), whose default is `(ModelAPIError,)`:
 
@@ -100,7 +100,7 @@ for attempt in result.response.failed_attempts or []:
 When every model has failed or been rejected, `ModelFallback` raises [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] with every exception, plus a [`ResponseRejected`][pydantic_ai.models.fallback.ResponseRejected] counting any rejected responses.
 
 !!! note
-    Provider SDKs often retry failed requests themselves before raising, which delays falling back. Set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. As with `FallbackModel`, a candidate's own `settings` apply only to that candidate, and settings on the agent or run apply to every candidate. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
+    Provider SDKs often retry failed requests themselves before raising, which delays falling back. Set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to `0` on the agent, or on each candidate model but the last. Or add [`RetryOnModelErrors`](retry-on-model-errors.md), which turns the SDK's retries off for you and retries each model in a way you control. As with `FallbackModel`, a candidate's own `settings` apply only to that candidate, and settings on the agent or run apply to every candidate. See [The layers](../retries.md#the-layers) in the retries guide for the full retry map.
 
 A run that reaches its `timeout=` stops with [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] wherever it is, including in the middle of a candidate's request: the remaining candidates aren't attempted. Likewise, a request that exceeds the run's [usage limits](../agent.md#usage-limits) raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] whatever `fallback_on` says, as another model wouldn't change that.
 
@@ -224,13 +224,74 @@ Each model attempted is an *attempt* within the same request step, not a new ste
 
 - `before_model_request` and `wrap_model_request` run once per step, and the model never sees a retry prompt.
 - [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] runs again for every attempt, with `request_context.model` set to the model about to serve it. [`RunContext.model`][pydantic_ai.tools.RunContext.model] stays the model selected for the step, so a hook that depends on the serving model, its [profile](../models/overview.md#inspecting-a-models-profile) or its context window reads `request_context.model`. The model's own message preparation and token counting are redone for each candidate, and so is any preparation a capability does in `prepare_model_request`, rather than inherited from the previous one. The built-in compaction capabilities, including the Harness ones, still run in `before_model_request` for now, so they decide once per step for the step's model, and every candidate inherits that decision. See [Retrying and falling back](custom.md#model-request-attempts).
+- Instructions and model settings are resolved again for each model after the first, with that model as `ctx.model`: the agent's and capabilities' [instructions](../agent.md#instructions), including [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] functions, and [`model_settings`](../agent.md#model-run-settings) and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] callables. So each model is sent the instructions and settings it would be sent on its own, and the request recorded in message history has the instructions and settings of the model that answered. Settings a `before_model_request` hook changed still apply on top. Instruction parts a `before_model_request` hook changed are sent to every model as the hook left them. Other hooks, and the run's tools, see the step's model as `ctx.model`. See [Instructions for each model](#instructions-for-each-model).
 - A [native tool factory](../native-tools.md#dynamic-configuration) is called again for each model after the first, with that model as `ctx.model`, so each model is sent the native tools it would be sent on its own, and a [provider-adaptive tool](overview.md#provider-adaptive-tools)'s local fallback is offered to a model its native tool doesn't apply to. A native tool a `before_model_request` hook removed stays removed.
 - `after_model_request` hooks of capabilities outside `ModelFallback` only ever see the response that was accepted. `ModelFallback` is positioned innermost, so it judges a response before them.
 - `usage.requests` counts the step once, so [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds how many steps the agent takes rather than how many models it tried. The tokens and cost of every attempt that produced a response, including rejected ones, are counted in the run's usage and checked against token and cost limits before the next attempt.
 
+## Instructions for each model
+
+Instructions and model settings that depend on the model can read it from `ctx.model`. `ModelFallback` resolves them again for each model it moves on to, and with [`sticky=True`](#staying-on-the-model-that-answered) for the model a conversation stays on. That way, a model a request falls back to is sent its own instructions and settings, not the first model's:
+
+```python {title="model_fallback_instructions.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart
+from pydantic_ai.capabilities import AbstractCapability, ModelFallback
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.settings import ModelSettings
+
+
+@dataclass
+class PerModelTuning(AbstractCapability[Any]):
+    def get_instructions(self):
+        def instructions(ctx: RunContext[Any]) -> str:
+            if ctx.model.model_name == 'backup':
+                return 'Answer in one word.'
+            return 'Answer briefly.'
+
+        return instructions
+
+    def get_model_settings(self):
+        def settings(ctx: RunContext[Any]) -> ModelSettings:
+            return {'temperature': 0.0 if ctx.model.model_name == 'backup' else 0.7}
+
+        return settings
+
+
+def primary_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelAPIError(model_name='primary', message='Overloaded')
+
+
+def backup_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    temperature = (info.model_settings or {}).get('temperature')
+    return ModelResponse(parts=[TextPart(f'{info.instructions} (temperature {temperature})')])
+
+
+# These deterministic responses stand in for calls to a primary model that's down and a backup model.
+primary = FunctionModel(primary_response, model_name='primary')
+backup = FunctionModel(backup_response, model_name='backup')
+
+agent = Agent(primary, capabilities=[PerModelTuning(), ModelFallback(backup)])
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> Answer in one word. (temperature 0.0)
+request = result.all_messages()[0]
+assert isinstance(request, ModelRequest)
+print(request.instructions)
+#> Answer in one word.
+```
+
+Text that depends on the model is best left with the default [`on_change='rewrite'`][pydantic_ai.messages.InstructionPart.on_change]: switching models starts a new prompt cache anyway, so rewriting the instructions costs nothing extra.
+
+Only the instructions and model settings are resolved again: a toolset from [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], `before_model_request` and `wrap_model_request` hooks, and the tools the model calls see the model selected for the step as `ctx.model`. Toolsets' instructions, like an MCP server's, are resolved once per step too, so an attempt doesn't ask a toolset for them again under durable execution. The instructions of [deferred capabilities][pydantic_ai.capabilities.AbstractCapability.defer_loading] the model has loaded, which are delivered through message history, are also resolved once per step. An agent or capability instruction function that makes a [durable call](../durable_execution/overview.md) runs again for each model after the first, and so makes that call again. A suspended response that's [continued](#continuing-suspended-responses) keeps the instructions it was sent.
+
 ## Failed attempts and telemetry
 
-Failed attempts are recorded the same way [`FallbackModel` records them](../models/overview.md#failed-attempts-and-usage). The response that answers lists every attempt `ModelFallback` moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], and when every model fails, the [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] lists them in `attempts`. A rejected response's tokens and cost are counted once, in the run's [`RunUsage`][pydantic_ai.usage.RunUsage], whichever of the two you use.
+Failed attempts are recorded the same way [`FallbackModel` records them](../models/overview.md#failed-attempts-and-usage). The response that answers lists every attempt `ModelFallback` moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], along with any attempt [`RetryOnModelErrors`](retry-on-model-errors.md) retried, which has a [`kind`][pydantic_ai.messages.ModelRequestAttempt.kind] of `'retry'` rather than `'fallback'`, and when every model fails, the [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] lists them in `attempts`. A rejected response's tokens and cost are counted once, in the run's [`RunUsage`][pydantic_ai.usage.RunUsage], whichever of the two you use.
 
 When the agent is [instrumented](../logfire.md), the model request (`chat`) span is named after the model that answered and describes it, with its usage. Each failed attempt gets its own `model request attempt <model name>` child span with an ERROR status: an error is recorded on it as an exception, and a rejected response carries its usage, cost and finish reason. The span names the model it tried in its `gen_ai.request.model` and `gen_ai.provider.name` attributes, and its zero-based position among the request's attempts in `pydantic_ai.model_request.attempt`. When every model fails, the `chat` span is named after the last model attempted. See [Failed attempts and usage](../models/overview.md#failed-attempts-and-usage) for how these spans relate to the ones the tried model opens itself.
 
@@ -297,6 +358,8 @@ Under a [durability capability](../durable_execution/overview.md), each attempt 
 
 A streamed request is consumed inside its durable unit, where its events reach a durability capability's `event_stream_handler`, so a stream that fails after producing output there is raised rather than fallen back from, as outside durable execution, and what it produced counts towards the run's usage.
 
+The exception and response handlers in `fallback_on` run in workflow code, not in the model's durable operation, as they decide which model is tried next. When Temporal replays a workflow, they run again over the recorded errors and responses, so keep them deterministic and free of I/O. To log from one on Temporal, use `workflow.logger`, which skips records while the workflow is replaying; move other I/O into a [durable capability operation](custom.md#durable-capability-operations).
+
 A model `ModelFallback` moves to is rebuilt for its activity like any model a run uses: a model name string is built on the worker, and a model instance must be registered with the durability capability's `models`, then given to `ModelFallback` by that name:
 
 ```python {title="model_fallback_temporal.py" test="skip"}
@@ -317,6 +380,14 @@ agent = Agent(
     ],
 )
 ```
+
+Instructions and model settings are resolved again for each model a step falls back to (see [Instructions for each model](#instructions-for-each-model)):
+
+!!! warning "Upgrading with runs in flight"
+    Resolving instructions and settings again for a fallback attempt changes what a run records once it falls back. Before upgrading, let in-flight runs finish, or deploy the upgrade as a new version:
+
+    - A run recorded before the upgrade that already fell back, and whose instructions make a durable call, schedules a durable unit on replay that its history doesn't have. That's a nondeterminism error on Temporal, Azure and Render, a `DBOSUnexpectedStepError` on DBOS, and shifted `#n` step names on Lambda, Absurd and pgtask.
+    - On Prefect, a flow run retried across the upgrade whose fallback attempt now gets different instructions or settings misses the model request's task cache and sends that request again.
 
 A `FallbackModel` instead runs its whole chain inside one activity, along with the deadlines it gives each model, and when every model fails, its [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] reaches the workflow without the attempts it lists, so the usage of the responses it rejected isn't recorded.
 

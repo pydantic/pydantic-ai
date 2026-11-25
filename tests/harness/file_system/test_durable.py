@@ -10,14 +10,15 @@ from uuid import uuid4
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace, SetToolMetadata
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 
 pytest.importorskip('temporalio')
 
 from temporalio import workflow
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowFailureError
+from temporalio.exceptions import ActivityError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
@@ -79,6 +80,27 @@ class DefaultFileWorkflow(PydanticAIWorkflow):
         return [str(p.content) for m in result.all_messages() for p in m.parts if p.part_kind == 'tool-return']
 
 
+_activity_write_agent = Agent(
+    FunctionModel(_default_model, stream_function=_default_stream),
+    name='activity_write',
+    capabilities=[
+        LocalWorkspace('/'),
+        FileSystem(),
+        SetToolMetadata(tools=['write_file'], temporal=None),
+        TemporalDurability(),
+    ],
+)
+
+
+@workflow.defn
+class ActivityWriteWorkflow(PydanticAIWorkflow):
+    __pydantic_ai_agents__ = [_activity_write_agent]
+
+    @workflow.run
+    async def run(self, root: str) -> None:
+        await _activity_write_agent.run(root + '/note.txt')
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return 'asyncio'  # Temporal's test server requires an asyncio event loop.
@@ -98,6 +120,24 @@ async def test_temporal_default_runner_veto(tmp_path: Path) -> None:
             )
     assert 'denied' in str(returns)
     assert (tmp_path / 'protected.txt').read_text() == 'original'
+
+
+async def test_temporal_write_in_an_activity_fails_closed(tmp_path: Path) -> None:
+    async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
+        client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
+        async with Worker(client, task_queue='activity-write', workflows=[ActivityWriteWorkflow]):
+            with pytest.raises(WorkflowFailureError) as exc_info:
+                await client.execute_workflow(
+                    ActivityWriteWorkflow.run,
+                    str(tmp_path),
+                    id=uuid4().hex,
+                    task_queue='activity-write',
+                    execution_timeout=timedelta(seconds=120),
+                )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert "FileSystem's 'write_file' tool cannot ask listeners about a change" in str(activity_error.cause)
+    assert not (tmp_path / 'note.txt').exists()
 
 
 @pytest.mark.parametrize(

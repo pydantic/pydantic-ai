@@ -39,6 +39,7 @@ the workflow does next -- each of which the trace shows running on the workflow 
 - `_run_context.py`: the run context and its event emission.
 - `capabilities/combined.py`: hook dispatch across the run's capabilities.
 - `in_flight.py`: the end rule that decides whether the run waits for in-flight work before it ends.
+- `capabilities/retry_on_model_errors.py`: the wait before each retry, which must be the same on replay.
 - `durable_exec/*.py` (the top level) and `durable_exec/temporal/` (recursively): every module, so a
   new one is checked without being listed. Their activity-side calls are accepted in `_ACCEPTED`.
 
@@ -199,7 +200,7 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
         'time-to-first-chunk telemetry, stamped when each attempt issues its request; nothing in the run reads it',
     ),
     (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_tool_calls', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
-    (f'{CORE}/_agent_graph.py', 'CallToolsNode._handle_final_result', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
+    (f'{CORE}/_agent_graph.py', 'final_tool_results_request', 'pydantic_ai._utils.now_utc'): (1, _TIMESTAMP),
     (f'{CORE}/agent/__init__.py', '_synthetic_capability_id', 'uuid.uuid4'): (
         1,
         'a run-local key for an unnamed capability; every path that persists a capability key requires an explicit `id`',
@@ -215,7 +216,7 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
     ),
     (f'{CORE}/agent/__init__.py', '_run_lifecycle_hooks', 'asyncio.wait'): (1, _WAIT_STATE),
     (f'{CORE}/durable_exec/temporal/_activity_execution.py', '_await_with_single_cancel', 'asyncio.wait'): (
-        1,
+        2,
         'waits on a single activity or child-workflow handle, so there is no completion order to reproduce',
     ),
 }
@@ -360,6 +361,7 @@ def test_workflow_side_code_makes_no_new_nondeterministic_calls():
         f'{CORE}/agent/__init__.py',
         f'{CORE}/in_flight.py',
         f'{CORE}/capabilities/combined.py',
+        f'{CORE}/capabilities/retry_on_model_errors.py',
         f'{CORE}/run.py',
         f'{CORE}/tool_manager.py',
         *sorted(path.relative_to(REPO_ROOT).as_posix() for paths in engine_modules.values() for path in paths),

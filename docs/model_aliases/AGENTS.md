@@ -18,6 +18,8 @@ covers choosing those models. How pages write aliases is in the "Model names" se
   one tier name across providers at very different prices.
 - Read prices from the `genai-prices` package (`genai_prices.data`), which Pydantic AI already
   depends on.
+- Leave a model out of the tiers while the installed `genai-prices` has no price for it. Keep each
+  tier on its current model until a `genai-prices` release prices the new one.
 - Give a tier the provider's newest model at that price.
 - A newer model that matches an older one's capability at the same or lower price replaces it. Drop
   the older model from the lineup, then fill any tier it leaves with the gap rule below. Never keep

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -29,6 +30,7 @@ with try_import() as imports_successful:
     from .workspace_helpers import CreateCall, WorkspaceHarness, client_is_closed, use_host_credentials
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='render not installed')
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 def _ctx() -> RunContext[None]:
@@ -63,6 +65,7 @@ def test_env_is_not_shown_in_repr() -> None:
         ({'sandbox_timeout': 1.5}, 'sandbox_timeout must be an integer of at least 1, got 1.5'),
         ({'sandbox_timeout': True}, 'sandbox_timeout must be an integer of at least 1, got True'),
         ({'sandbox_timeout': 86_401}, 'sandbox_timeout must be at most 86400 seconds, got 86401'),
+        ({'desktop': (0, 0)}, '`desktop` must be a `(width, height)` of at least 1 pixel each, got (0, 0)'),
         (
             {'defer_loading': True, 'id': 'render'},
             (
@@ -82,6 +85,7 @@ def test_capability_declines_foreign_reference() -> None:
 
 
 @pytest.mark.parametrize(('allow_internet_access', 'policy'), [(False, 'deny-all'), (True, 'allow-all')])
+@posix_only
 async def test_settings_shape_a_new_sandbox(
     workspace_harness: WorkspaceHarness, allow_internet_access: bool, policy: str
 ) -> None:
@@ -97,6 +101,7 @@ async def test_settings_shape_a_new_sandbox(
     assert workspace_harness.create_calls['sb-1'] == CreateCall(120, policy, idle_timeout_seconds=0)
 
 
+@posix_only
 async def test_backend_attaches_without_creating(workspace_harness: WorkspaceHarness) -> None:
     capability = RenderSandbox(client=workspace_harness.client, working_dir=str(workspace_harness.root))
     owned = workspace_harness.backend()
@@ -108,6 +113,7 @@ async def test_backend_attaches_without_creating(workspace_harness: WorkspaceHar
     assert workspace_harness.created == ['sb-1']
 
 
+@posix_only
 async def test_destroy_terminates_by_id_and_treats_a_missing_sandbox_as_gone(
     workspace_harness: WorkspaceHarness,
 ) -> None:
@@ -158,6 +164,7 @@ async def test_foreign_reference_is_rejected() -> None:
         await RenderSandbox().destroy(foreign)
 
 
+@posix_only
 async def test_destroy_opens_and_closes_its_own_client(
     workspace_harness: WorkspaceHarness, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -180,6 +187,7 @@ async def test_destroy_without_credentials_is_unavailable(monkeypatch: pytest.Mo
         await RenderSandbox().destroy(WorkspaceRef(provider='render', id='sb-1'))
 
 
+@posix_only
 async def test_agent_run_works_in_the_sandbox_and_leaves_it_running(workspace_harness: WorkspaceHarness) -> None:
     capability = RenderSandbox(client=workspace_harness.client, working_dir=str(workspace_harness.root))
     results = await call_tools(
@@ -192,6 +200,7 @@ async def test_agent_run_works_in_the_sandbox_and_leaves_it_running(workspace_ha
     assert workspace_harness.terminated == []
 
 
+@posix_only
 async def test_later_runs_reattach_to_the_same_sandbox(workspace_harness: WorkspaceHarness) -> None:
     # Continuing from message history, or passing the stored ref, must reach the first run's sandbox.
     call = ToolCallPart('write_file', {'path': 'note.txt', 'content': 'kept'})
@@ -224,10 +233,13 @@ def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([RenderSandbox])['$defs']
     assert sorted(definitions['spec_params_RenderSandbox']['properties']) == [
         'allow_internet_access',
+        'authority',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
+        'path_authority',
         'sandbox_timeout',
         'working_dir',
     ]
@@ -241,5 +253,6 @@ def test_from_spec_forwards_the_spec_fields() -> None:
         'env': {'FOO': 'bar'},
         'allow_internet_access': False,
         'sandbox_timeout': 120,
+        'desktop': (1440, 900),
     }
     assert RenderSandbox[None].from_spec(**spec_fields) == RenderSandbox[None](**spec_fields)

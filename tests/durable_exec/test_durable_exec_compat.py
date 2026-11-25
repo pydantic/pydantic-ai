@@ -76,8 +76,10 @@ from pydantic_ai.messages import (
     CapabilityEvent,
     CapabilityLoadDeltaEvent,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     CustomEvent,
+    DataCapabilityPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
     EnqueuedMessagesEvent,
@@ -101,6 +103,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
@@ -142,6 +145,7 @@ from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
+from ..manifests import union_members
 from ..workspace_fakes import FakeWorkspace
 
 
@@ -204,6 +208,7 @@ def test_public_engine_builder_exports() -> None:
         'external_event_scope',
         'record_durable_unit',
         'replay_scope',
+        'model_error_retry_after',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
 
@@ -277,6 +282,7 @@ TEMPORAL_ACTIVITY_NAMES = {
     'agent__compat__dynamic_toolset__dynamic__call_tool',
     'agent__compat__dynamic_toolset__dynamic__validate_args',
     'agent__compat__capability__compat__operation',
+    'agent__compat__external_event_ask',
 }
 
 TEMPORAL_CHILD_WORKFLOW_NAMES = {
@@ -840,6 +846,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                     'kind': 'function',
                     'metadata': None,
                     'timeout': None,
+                    'durable': None,
                     'defer_loading': False,
                     'unless_native': None,
                     'with_native': None,
@@ -953,6 +960,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # The live wrapper a capability's `get_wrapper_model` built around `model`, with the model it wraps; the
         # durable unit re-applies the hook to the model it rebuilds, so it's never carried across.
         '_serving_wrapper',
+        # The request's messages as the hooks left them, set caller-side after every hook has run, for readers of
+        # the request (such as `TrajectoryJudge`) in `after_model_request`; a durable hook never sees it.
+        '_hooked_messages',
     }
     projected = {field.name for field in fields(ModelRequestContextProjection)}
     context_fields = {field.name for field in fields(ModelRequestContext)}
@@ -999,6 +1009,11 @@ class GoldenCheckpointEvent(CapabilityEvent, namespace='golden', name='checkpoin
     label: str
 
 
+@dataclass(kw_only=True)
+class GoldenReportPart(DataCapabilityPart, namespace='golden', name='report', tag='report', attributes=('label',)):
+    label: str
+
+
 def test_event_payload_goldens() -> None:
     """Pin the wire shape of both event families, tag included.
 
@@ -1022,17 +1037,6 @@ def test_event_payload_goldens() -> None:
         'event_kind': 'capability',
         'label': 'start',
     }
-
-
-def _union_members(union: object) -> set[type]:
-    """The classes a union admits, with nested unions flattened and `Annotated` wrappers removed."""
-    members: set[type] = set()
-    for member in get_union_args(union):
-        if get_union_args(member):
-            members |= _union_members(member)
-        else:
-            members.add(member)
-    return members
 
 
 def test_every_stream_event_and_message_part_round_trips_through_the_json_codec() -> None:
@@ -1059,6 +1063,7 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
         InstructionDeltaPart(id=None, content='delta'),
         InstructionBaselinePart(instructions=[InstructionPart('baseline')]),
         CompactionPart(content='summary'),
+        GoldenReportPart(content='report', source=OperatorSource(), label='l'),
     ]
     response_parts: list[ModelResponsePart] = [
         TextPart('text'),
@@ -1111,26 +1116,28 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
     # `RetryPromptPart` stays in the union for type checking and the published JSON schema: the
     # discriminator translates a legacy payload into one of its replacements, so it never
     # round-trips as itself. Parts and deltas match by exact type, since several members subclass
-    # another member; events match by `isinstance`, as `CustomEvent` and `CapabilityEvent` are
-    # covered by registered subclasses.
+    # another member, except `CapabilityPart`, which is covered by a registered subclass; events match
+    # by `isinstance`, as `CustomEvent` and `CapabilityEvent` are covered by registered subclasses.
     assert {
         member.__name__
-        for member in _union_members(ModelRequestPart)
-        if not any(type(part) is member for part in request_parts)
+        for member in union_members(ModelRequestPart)
+        if not any(
+            isinstance(part, member) if member is CapabilityPart else type(part) is member for part in request_parts
+        )
     } == {'RetryPromptPart'}
     assert [
         member.__name__
-        for member in _union_members(ModelResponsePart)
+        for member in union_members(ModelResponsePart)
         if not any(type(part) is member for part in response_parts)
     ] == []
     assert [
         member.__name__
-        for member in _union_members(ModelResponsePartDelta)
+        for member in union_members(ModelResponsePartDelta)
         if not any(type(delta) is member for delta in deltas)
     ] == []
     assert [
         member.__name__
-        for member in _union_members(AgentStreamEvent)
+        for member in union_members(AgentStreamEvent)
         if not any(isinstance(event, member) for event in events)
     ] == []
 

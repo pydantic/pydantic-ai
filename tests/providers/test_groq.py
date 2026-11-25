@@ -84,7 +84,7 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('meta-llama/Llama-Guard-4-12B')
     meta_model_profile_mock.assert_called_with('llama-guard-4-12b')
     assert meta_profile is not None
-    assert meta_profile.get('supports_json_object_output', False) is False
+    assert meta_profile.get('supports_json_object_output', False) is True
     assert meta_profile.get('supports_json_schema_output', False) is False
     assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 

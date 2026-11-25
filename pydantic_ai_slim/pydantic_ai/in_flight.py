@@ -142,7 +142,8 @@ class InFlightWork(Generic[T]):
         self._task = task
         self._cancel = cancel
         self._on_settled = on_settled
-        self._done = asyncio.Event()
+        # The registry runs on asyncio only, and sets its events from loop callbacks, outside any task.
+        self._done = asyncio.Event()  # noqa: TID251
         self._value: _utils.Option[T] = None
         self._error: BaseException | None = None
         if task is not None:
@@ -285,7 +286,7 @@ class InFlightRegistry:
         self._live: dict[str, InFlightWork[Any]] = {}
         self._started: set[InFlightWork[Any]] = set()
         self._failures: list[BaseException] = []
-        self._changed = asyncio.Event()
+        self._changed = asyncio.Event()  # noqa: TID251  (set from loop callbacks, see `_done`)
         self._closed = False
         self._waited: dict[InFlightWork[Any], None] | None = None
         """While the run waits to end, the draining work it waited for, including work started during the wait."""
@@ -501,7 +502,7 @@ class InFlightRegistry:
     def _notify(self) -> None:
         """Wake whoever waits for work to settle or content to be queued, so they check again."""
         self._changed.set()
-        self._changed = asyncio.Event()
+        self._changed = asyncio.Event()  # noqa: TID251  (set from loop callbacks, see `_done`)
 
     def _emit(self, phase: InFlightWorkPhase, works: Sequence[InFlightWork[Any]]) -> None:
         # Nothing streams events once the run has ended.
