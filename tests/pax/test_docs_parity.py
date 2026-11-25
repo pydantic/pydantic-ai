@@ -1,4 +1,4 @@
-"""Keep the Pax front pages in sync: `docs/harness/clai2.md` and the Pax README.
+"""Keep the Pax front pages in sync: `docs/harness/pax.md` and the Pax README.
 
 The page used to be generated from the README. It is a page in its own right now, so these tests
 take over from the generator: the two surfaces tell one story, and only the markup each renderer
@@ -18,7 +18,7 @@ from pathlib import Path
 from tests.docs_model_aliases import resolve_model_aliases
 
 ROOT = Path(__file__).parent.parent.parent
-PAGE = ROOT / 'docs' / 'harness' / 'clai2.md'
+PAGE = ROOT / 'docs' / 'harness' / 'pax.md'
 README = ROOT / 'src' / 'pydantic_ai_pax' / 'README.md'
 
 # Any fence, whatever its info string: ```bash, ```text, bare ```, or ```toml title="..." .

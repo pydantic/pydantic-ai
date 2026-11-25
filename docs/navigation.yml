@@ -765,10 +765,11 @@ navigation:
     slug: ""
     contents:
       - page: "Overview"
-        path: "harness/clai2.md"
+        path: "harness/pax.md"
         slug: "pax"
         aliases:
           - "harness/pax"
+          - "harness/clai2"
       - page: "Legacy clai"
         path: "cli.md"
         slug: "integrations/cli"

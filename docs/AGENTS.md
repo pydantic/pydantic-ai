@@ -43,7 +43,7 @@ The docs index and repository README tell the same story on two surfaces. Keep t
 - README snippets that cannot run in the documentation test environment are excluded by `tests/test_examples.py`, not by fence attributes, so README fences remain compatible with GitHub rendering.
 - When the shared tagline or Harness framing changes, check `docs/harness/index.md` and `src/pydantic_ai_harness/README.md` too.
 
-# Pax front pages: `docs/harness/clai2.md` and `src/pydantic_ai_pax/README.md`
+# Pax front pages: `docs/harness/pax.md` and `src/pydantic_ai_pax/README.md`
 
 The Pax page and the Pax README tell the same story on two surfaces. The page was generated from the README until the beta; it is a page in its own right now, and `tests/pax/test_docs_parity.py` holds the pair together:
 

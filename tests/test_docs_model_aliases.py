@@ -29,7 +29,7 @@ DOCS = Path(__file__).parent.parent / 'docs'
 
 # Pages that are deliberately about specific models or versions, so they may name them directly.
 EXEMPT_PAGES = {
-    'harness/clai2.md': "documents Pax's own default model and the account@model syntax "
+    'harness/pax.md': "documents Pax's own default model and the account@model syntax "
     'with real Codex IDs, and mirrors the Pax README, which GitHub and PyPI render without '
     'resolving aliases',
     'changelog.md': 'release notes name the models of their time',
