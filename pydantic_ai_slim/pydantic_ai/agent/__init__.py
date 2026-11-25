@@ -4255,15 +4255,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
         # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
         # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
-        # this in sync with the `iter` call site.
-        resolved_caps = await self._resolve_run_capabilities(
-            run_context,
-            base_capability=base_capability,
-            extra_capabilities=extra_capabilities,
-            instrumentation_cap=instrumentation_cap,
-            inject_deferred_loader=True,
-            base_is_override=base_is_override,
-        )
+        # this in sync with the `iter` call site. Like `iter`, the session's setup hooks run without an enclosing
+        # run's context, so a session started from a tool doesn't dispatch their durable operations through that run.
+        with set_current_run_context(None):
+            resolved_caps = await self._resolve_run_capabilities(
+                run_context,
+                base_capability=base_capability,
+                extra_capabilities=extra_capabilities,
+                instrumentation_cap=instrumentation_cap,
+                inject_deferred_loader=True,
+                base_is_override=base_is_override,
+            )
         run_capability = resolved_caps.run_capability
         if run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
             # Realtime does not select a workspace yet; don't suggest attaching a capability that is already here.
@@ -4327,9 +4329,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         native_tools: list[AbstractNativeTool] = []
         for native_tool in resolved_caps.native_tools:
             if not isinstance(native_tool, AbstractNativeTool):
-                resolved_native = native_tool(run_context)
-                if inspect.isawaitable(resolved_native):
-                    resolved_native = await resolved_native
+                with set_current_run_context(None):
+                    resolved_native = native_tool(run_context)
+                    if inspect.isawaitable(resolved_native):
+                        resolved_native = await resolved_native
                 if resolved_native is None:
                     continue
                 native_tool = resolved_native
@@ -4343,7 +4346,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_toolsets=resolved_caps.toolsets,
             run_capability=run_capability,
         )
-        toolset = await toolset.for_run(run_context)
+        with set_current_run_context(None):
+            toolset = await toolset.for_run(run_context)
 
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.

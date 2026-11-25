@@ -1491,6 +1491,30 @@ async def test_operations_called_from_a_nested_runs_for_run_and_wrap_run_run_dir
     assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot([])
 
 
+async def test_operations_called_from_a_nested_realtime_sessions_setup_run_directly() -> None:
+    """A realtime session started from a tool starts as a top-level one does, like a nested run."""
+    from ..realtime.test_session import FakeRealtimeConnection, FakeRealtimeModel
+
+    outer = ResolvesAmbientlyInForRun()
+    inner = ResolvesAmbientlyInForRun()
+    inner_agent = Agent(name='inner_realtime', capabilities=[inner])
+    agent = Agent(TestModel(), name='outer_of_realtime', capabilities=[outer, RecordingDurability()])
+
+    @agent.tool_plain
+    async def talk() -> str:
+        async with inner_agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).session():
+            pass
+        return 'done'
+
+    await agent.run('test')
+
+    # Each one's `for_run` and `wrap_run`, each on its own instance.
+    assert (outer.calls, inner.calls) == (2, 2)
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot([])
+
+
 async def test_run_replacement_that_drops_the_bound_id_is_refused() -> None:
     """A replacement under a different `id` leaves the bound operations unreachable.
 
