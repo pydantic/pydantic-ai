@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pydantic_ai.messages import CompactionPart, ModelRequest, ModelResponse, SystemPromptPart, TextPart
+from pydantic_ai_harness.compaction._receipts import is_receipt_message
 
 from .test_capability_routes import PROBES, _native  # pyright: ignore[reportPrivateUsage]
 from .test_history_transformations import TRANSFORMS, NativeRun
@@ -38,7 +39,8 @@ async def test_the_fallback_switch_finishes_on_the_backup(tmp_path: Path) -> Non
 
 async def test_summarizing_replaces_history_with_a_summary(tmp_path: Path) -> None:
     native, output = await _transformed('summarizing', tmp_path)
-    assert len(output) < len(native.messages)
+    assert native.messages[2] not in output  # the tool call's result
+    assert any(is_receipt_message(message) for message in output)  # pyright: ignore[reportArgumentType]
     summaries = [
         part
         for message in output
@@ -50,9 +52,11 @@ async def test_summarizing_replaces_history_with_a_summary(tmp_path: Path) -> No
 
 
 async def test_the_sliding_window_keeps_the_newest_messages(tmp_path: Path) -> None:
+    """The tool call and its result make way for a receipt naming what was dropped; the first prompt stays."""
     native, output = await _transformed('sliding_window', tmp_path)
-    assert output[-1] == native.messages[-1]
-    assert len(output) < len(native.messages)
+    assert native.messages[0] in output and output[-1] == native.messages[-1]
+    assert native.messages[1] not in output and native.messages[2] not in output
+    assert any(is_receipt_message(message) for message in output)  # pyright: ignore[reportArgumentType]
 
 
 async def test_the_provider_trim_cuts_at_the_compaction_block(tmp_path: Path) -> None:

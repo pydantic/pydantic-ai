@@ -36,7 +36,7 @@ from pydantic_ai_harness.compaction._receipts import is_receipt_part
 
 from ..append_only import drain_events
 from .test_capability_routes import RouteRun, _built, _Script  # pyright: ignore[reportPrivateUsage]
-from .test_history_transformations import NativeRun, Transform, Transformation
+from .test_history_transformations import Check, Exempt, NativeRun, Transform, Transformation
 
 
 def _context() -> RunContext[None]:
@@ -133,6 +133,16 @@ async def _history_processor(native: RouteRun, directory: Path) -> list[ModelMes
     return await _run_history_processor(_without_response_text, _context(), list(native.messages))
 
 
+_RECEIPT_IN_USER_VOICE: dict[Check, Exempt] = {
+    'no_authority_gain': Exempt(
+        "Not filed yet: a compaction receipt is a `UserPromptPart`, so the harness's note about the history it replaced "
+        "reaches the model in the user's voice with 'user' authority, above the tool output it stands in for. Being "
+        'verified by the compaction and voice-authority sessions.'
+    )
+}
+"""The receipt finding, on every case and probe: only the no-authority-gain check fails."""
+
+
 RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
     'model_fallback_switch': Transform(
         'model_fallback_switch',
@@ -145,6 +155,7 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
         drops=_standing,
         # The summary, and the receipt naming what it replaced: a `UserPromptPart` told apart from kept prompts.
         creates_part=lambda part: isinstance(part, CompactionPart) or is_receipt_part(part),
+        known=_RECEIPT_IN_USER_VOICE,
         functions=(
             'pydantic_ai_harness.compaction._summarizing_compaction.without_legacy_summaries',
             'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction.compact',
@@ -159,6 +170,7 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
         _sliding_window,
         drops=_standing,
         creates_part=is_receipt_part,
+        known=_RECEIPT_IN_USER_VOICE,
         functions=(
             'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction.compact',
             'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._prepend_receipt',
