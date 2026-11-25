@@ -1057,7 +1057,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         monty = MontyRunState()
         try:
             session = await monty.get_session(
-                type_check=True, type_check_stubs=type_check_stubs, limits=limits, in_temporal_workflow=in_temporal
+                type_check=True, type_check_stubs=type_check_stubs, limits=limits, use_portal=in_temporal
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for

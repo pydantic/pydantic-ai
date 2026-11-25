@@ -793,6 +793,22 @@ Code Mode also resets the session if the server won't store the session a snippe
 longer has a run's stored state (for example because it expired); in the second case it tells the
 model the connection was lost, as for a dropped connection outside Temporal.
 
+## Azure Durable Task durability
+
+`CodeMode` also works alongside `AzureDurableTaskDurability`. Install
+`pydantic-ai-harness[codemode,azure-durable-task]` and follow the [Azure Durable Task
+guide](../azure_durable_task/README.md) to drive the agent with `run_durable` and register its
+activities.
+
+As under Temporal, `run_code` executes in orchestrator code and nested tool calls are activities, which
+`asyncio.gather` schedules concurrently. The SDK replays the orchestrator from the start each time an
+activity finishes, so every replay re-runs the run's snippets against the recorded results: a sandbox
+sleep is a durable timer, `max_duration_seconds` is off in orchestrator code, and `os_access`
+callbacks, `mount` access and host-clock calls must be deterministic. While a snippet computes, the
+orchestrator thread waits for it, so move heavy computation into a tool. Turns don't run as
+activities on Azure Durable Task, so a remote `monty_sandbox` must be reachable whenever the
+orchestrator replays.
+
 ## Observability
 
 With [Logfire](https://pydantic.dev/logfire) or any OpenTelemetry backend, each `run_code` span fans out into spans for its nested tool calls. The `run_code` tool return also carries metadata with every nested call:

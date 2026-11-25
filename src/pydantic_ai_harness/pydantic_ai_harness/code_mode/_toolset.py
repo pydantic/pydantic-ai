@@ -72,6 +72,7 @@ from pydantic_ai_harness._monty_exec import (
     Snapshot,
     TurnComplete,
     TurnFeed,
+    in_durable_task_orchestration,
     in_temporal_workflow,
 )
 from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest, model_safe_result
@@ -1339,6 +1340,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         type_check_stubs: str | None,
         limits: ResourceLimits,
         in_workflow: bool,
+        use_portal: bool,
     ) -> tuple[Callable[[], Awaitable[Snapshot]], BlockingPortal | None]:
         """How to start feeding `code`, and the portal to call Monty through: in turns, or on the live session."""
         if in_workflow and run_state.stores_sessions and (run_turn := self._durable_turn(ctx)) is not None:
@@ -1348,7 +1350,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return partial(feed.start, code, type_check_stubs), None
         type_check = type_check_stubs is not None
         session = await run_state.get_session(
-            type_check=type_check, type_check_stubs=type_check_stubs, limits=limits, in_temporal_workflow=in_workflow
+            type_check=type_check, type_check_stubs=type_check_stubs, limits=limits, use_portal=use_portal
         )
         start = partial(
             session.feed_start,
@@ -1436,11 +1438,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         capture = execution.capture
 
         in_workflow = in_temporal_workflow()
+        # Temporal workflow code and Durable Task orchestrator code both replay, and neither loop can be
+        # woken from Monty's thread, so Monty is called through a portal (see `call_monty`).
+        replays = in_workflow or in_durable_task_orchestration()
         configured = _resolve_resource_limits(self.resource_limits)
-        # `run_code` executes in workflow code and Temporal replays it. An elapsed timer may make the
-        # original run and replay take different branches, which Temporal cannot record.
-        limits = configured | {'max_feed_duration_secs': None} if in_workflow else configured
-        if repl is not None and await repl.restore(run_state, limits=limits, in_temporal_workflow=in_workflow):
+        # `run_code` executes in workflow code and the engine replays it. An elapsed timer may make the
+        # original run and replay take different branches, which the engine cannot record.
+        limits = configured | {'max_feed_duration_secs': None} if replays else configured
+        if repl is not None and await repl.restore(run_state, limits=limits, use_portal=replays):
             # The type checker would reject the names the restored state defines.
             fresh_repl = type_check = False
         executor = partial(
@@ -1465,6 +1470,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 type_check_stubs=type_check_stubs if type_check else None,
                 limits=limits,
                 in_workflow=in_workflow,
+                use_portal=replays,
             )
             return await self._feed(executor(portal=portal), start, run_state, execution, fresh_repl=fresh_repl)
 
