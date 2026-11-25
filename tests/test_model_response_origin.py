@@ -21,6 +21,7 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     TextPart,
+    TextPartDelta,
 )
 from pydantic_ai.capabilities import ModelFallback
 from pydantic_ai.exceptions import ModelAPIError
@@ -36,7 +37,8 @@ async def failure_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
 
 
 async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    yield 'hello'
+    yield 'hel'
+    yield 'lo'
 
 
 async def _stream_events(agent: Agent[None, str]) -> tuple[list[AgentStreamEvent], str]:
@@ -65,13 +67,14 @@ async def test_model_fallback_streams_the_next_model_as_the_next_attempt():
 
     assert events == snapshot(
         [
-            PartStartEvent(index=0, part=TextPart(content='hello')),
+            PartStartEvent(index=0, part=TextPart(content='hel')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo')),
             PartEndEvent(index=0, part=TextPart(content='hello')),
         ]
     )
     origin = ModelResponseOrigin(run_id=run_id, run_step=1, attempt=2)
-    assert [_origin(event) for event in events] == [origin, origin, origin]
+    assert [_origin(event) for event in events] == [origin, origin, origin, origin]
     assert origin.response_id == f'{run_id}:1:2'
 
 
