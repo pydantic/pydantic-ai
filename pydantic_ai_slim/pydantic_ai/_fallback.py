@@ -129,6 +129,8 @@ SpecModelError = Literal[
     'ModelNotFoundError',
     'ModelSchemaTooComplexError',
     'ModelRequestTimeout',
+    'ModelEmptyResponseError',
+    'ModelInvalidResponseError',
     'ContentFilterError',
     'OutputTokenLimitExceeded',
 ]

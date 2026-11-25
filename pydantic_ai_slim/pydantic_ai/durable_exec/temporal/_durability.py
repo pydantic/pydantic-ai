@@ -10,7 +10,7 @@ from typing import Any, Literal, TypeAlias, cast
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
 from temporalio.client import Client, WorkflowHandle
-from temporalio.workflow import ActivityConfig
+from temporalio.workflow import ActivityCancellationType, ActivityConfig, LocalActivityConfig
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
 from pydantic_ai._cancel import provide_run_deadline
@@ -43,6 +43,7 @@ from pydantic_ai.exceptions import (
     ModelRequestTimeout,
     UserError,
 )
+from pydantic_ai.external_events import external_event_scope
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
@@ -60,6 +61,7 @@ from ._event_stream import (
     stream_agent_events,
     workflow_stream_event_handler,
 )
+from ._external_events import TemporalExternalEventWaiter, ask_activity
 from ._function_toolset import gate_tool_instance_defaults
 from ._operation_backend import (
     TemporalBoundOperation,
@@ -350,6 +352,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # Populated by for_agent().
         self._operation_backend: TemporalOperationBackend | None = None
+        self._external_event_waiter: TemporalExternalEventWaiter | None = None
         self._child_workflow_metadata_capability = False
         self._retry_on_model_errors = False
         """Whether the agent was built with `RetryOnModelErrors`, so the model activity doesn't retry model errors."""
@@ -449,6 +452,20 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # --- Toolset wrapping ---
         self._register_toolsets(agent)
+
+        # A local activity calls an external-event wait's `ask`, so it takes the activity config's
+        # timeouts, retry policy and cancellation type, the settings a local activity has.
+        config = self.activity_config
+        self._external_event_waiter = TemporalExternalEventWaiter(
+            ask_activity=ask_activity(self.name),
+            ask_config=LocalActivityConfig(
+                start_to_close_timeout=config.get('start_to_close_timeout'),
+                schedule_to_close_timeout=config.get('schedule_to_close_timeout'),
+                schedule_to_start_timeout=config.get('schedule_to_start_timeout'),
+                retry_policy=config.get('retry_policy'),
+                cancellation_type=config.get('cancellation_type', ActivityCancellationType.TRY_CANCEL),
+            ),
+        )
 
     def _wrap_other_leaf_toolset(self, ts: AbstractToolset[AgentDepsT]) -> WrapperToolset[AgentDepsT] | None:
         ts_id = ts.id
@@ -616,7 +633,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Disable threads inside Temporal workflows, and keep replayed work out of telemetry."""
+        """Disable threads inside Temporal workflows, keep replayed work out of telemetry, and wait for external events durably."""
         if not self.in_durable_context:
             return await handler()
         if (
@@ -630,7 +647,14 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
                 'model request activity leaves retrying model errors to it. Add it to the agent instead of the run.'
             )
 
-        with disable_threads(), set_agent_graph_sleep(workflow.sleep), replay_scope(is_replaying=_replaying_history):
+        waiter = self._external_event_waiter
+        assert waiter is not None
+        with (
+            disable_threads(),
+            set_agent_graph_sleep(workflow.sleep),
+            replay_scope(is_replaying=_replaying_history),
+            external_event_scope(waiter),
+        ):
             return await super().wrap_run(ctx, handler=handler)
 
     def _companion_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
@@ -820,6 +844,10 @@ def worker_registrations(
         return [], []
     registrations = backend.registrations()
     activities = [registration for registration in registrations if not isinstance(registration, type)]
+    # Bound with the backend. Not a durable operation, so not one of the backend's: it calls an external-event wait's `ask`.
+    waiter = durability._external_event_waiter  # pyright: ignore[reportPrivateUsage]
+    assert waiter is not None
+    activities.append(waiter.ask_activity)
     # A worker only registers the child workflows of toolsets that select one, so workers for agents that don't use
     # the feature keep exactly their activity registrations.
     workflows: list[type] = []

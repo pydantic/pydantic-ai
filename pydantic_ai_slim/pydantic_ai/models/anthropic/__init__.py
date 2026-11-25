@@ -21,7 +21,7 @@ from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict, is
 from ..._warnings import PydanticAIDeprecationWarning
 from ...capabilities.abstract import AbstractCapability
 from ...computer_use import COMPUTER_KIND
-from ...exceptions import UserError
+from ...exceptions import ModelEmptyResponseError, UserError
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
@@ -2674,7 +2674,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, BetaRawMessageStartEvent)
 

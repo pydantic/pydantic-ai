@@ -77,7 +77,6 @@ from pydantic_ai.capabilities import (
     BatchModelRequests,
     Capability,
     DynamicCapability,
-    HandleDeferredToolCalls,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -103,7 +102,9 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
@@ -326,6 +327,75 @@ class RunSyncDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return simple_durable_agent.run_sync(prompt).output
+
+
+async def _submit_output_tool(ctx: RunContext[None]) -> str:
+    await ctx.submit_output('final_result', {'response': 'submitted'})
+    return 'done'
+
+
+def _call_submit_output_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('_submit_output_tool', {})])
+
+
+def _submit_output_agent(name: str, metadata: dict[str, Any] | None) -> Agent[None, str]:
+    toolset = FunctionToolset[None](id=f'{name}_tools')
+    toolset.add_function(_submit_output_tool, metadata=metadata)
+    return Agent(
+        FunctionModel(_call_submit_output_tool),
+        name=name,
+        deps_type=NoneType,
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+
+submit_output_in_activity_agent = _submit_output_agent('durability_submit_output_in_activity', None)
+submit_output_in_workflow_agent = _submit_output_agent('durability_submit_output_in_workflow', {'temporal': False})
+
+
+@workflow.defn
+class SubmitOutputInActivityWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_activity_agent.run(prompt)).output
+
+
+@workflow.defn
+class SubmitOutputInWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_workflow_agent.run(prompt)).output
+
+
+async def test_durability_submit_output_needs_the_tool_in_the_workflow(client: Client):
+    """`submit_output()` can't reach the run from a tool's activity, but works from a tool opted out of one."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubmitOutputInActivityWorkflow, SubmitOutputInWorkflowWorkflow],
+        plugins=[AgentPlugin(submit_output_in_activity_agent), AgentPlugin(submit_output_in_workflow_agent)],
+    ):
+        output = await client.execute_workflow(
+            SubmitOutputInWorkflowWorkflow.run,
+            args=['Finish'],
+            id=SubmitOutputInWorkflowWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'submitted'
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                SubmitOutputInActivityWorkflow.run,
+                args=['Finish'],
+                id=SubmitOutputInActivityWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert isinstance(activity_error.cause, ApplicationError)
+    assert activity_error.cause.type == 'UserError'
+    assert 'in the same process as the run itself' in activity_error.cause.message
 
 
 async def test_durability_run_sync_in_workflow_fails_the_workflow(client: Client):
@@ -1403,6 +1473,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
     if prompt.content == 'not_found':
         raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
+    if prompt.content == 'empty_response':
+        raise ModelEmptyResponseError('test-model', 'Streamed response ended without content or tool calls')
+    if prompt.content == 'invalid_response':
+        raise ModelInvalidResponseError('test-model', 'Invalid response', body='<html>Bad gateway</html>')
     if prompt.content == 'quota':
         raise ModelHTTPError.for_category(ModelQuotaExceededError, status_code=402, model_name='test-model')
     if prompt.content == 'request_timeout':
@@ -1483,6 +1557,21 @@ class NonRetryableModelErrorWorkflow:
             3,
             'ModelNotFoundError ModelHTTPError non_retryable=False',
             id='unlisted-rejection-category',
+        ),
+        pytest.param(
+            # An unusable response used to be a plain `UnexpectedModelBehavior`, which the framework adds to every
+            # retry policy. It still reports that name, so Temporal doesn't retry it, and the workflow gets the model
+            # error for a `ModelFallback` or retry capability to handle.
+            'empty_response',
+            1,
+            'ModelEmptyResponseError UnexpectedModelBehavior non_retryable=False',
+            id='empty-response',
+        ),
+        pytest.param(
+            'invalid_response',
+            1,
+            'ModelInvalidResponseError UnexpectedModelBehavior non_retryable=False',
+            id='invalid-response',
         ),
     ],
 )
@@ -2478,60 +2567,6 @@ async def test_durability_wrap_run_disables_threads(client: Client):
         assert output == 'Echo: test'
 
 
-# --- Durability wrap_run refuses external-event waits ---
-
-
-def _approval_needed_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
-
-
-def _ask_in_process(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
-    raise AssertionError('unreachable')  # pragma: no cover
-
-
-_external_event_agent = Agent(
-    FunctionModel(_approval_needed_fn),
-    name='external_event_test',
-    deps_type=type(None),
-    capabilities=[
-        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
-        HandleDeferredToolCalls[None](_ask_in_process),
-    ],
-)
-
-
-@_external_event_agent.tool_plain(name='delete', requires_approval=True)
-def _delete_needs_approval(path: str) -> str:
-    raise AssertionError('unreachable')  # pragma: no cover
-
-
-@workflow.defn
-class ExternalEventWaitWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await _external_event_agent.run(prompt)
-        return result.output  # pragma: no cover
-
-
-async def test_durability_wrap_run_refuses_external_event_waits(client: Client):
-    """A workflow can't record a wait for an external event yet, so the engine fails the workflow clearly instead of waiting in process."""
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[ExternalEventWaitWorkflow],
-        plugins=[AgentPlugin(_external_event_agent)],
-    ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
-            await client.execute_workflow(
-                ExternalEventWaitWorkflow.run,
-                args=['clean up'],
-                id=ExternalEventWaitWorkflow.__name__,
-                task_queue=TASK_QUEUE,
-            )
-
-    assert 'does not support waiting for external events yet' in str(exc_info.value.cause)
-
-
 # --- Durability validation ---
 
 
@@ -2763,8 +2798,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 7
+    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset + the external-event `ask`
+    assert len(bound.temporal_activities) == 8
 
 
 def test_durability_temporal_registrations_before_binding():
@@ -2782,8 +2817,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for both function toolsets
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for both function toolsets + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_temporal_activities_rejects_omitting_child_workflows():
@@ -2863,8 +2898,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for <agent> and the shared toolset (once)
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for <agent> and the shared toolset (once) + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_activity_config_not_mutated():
