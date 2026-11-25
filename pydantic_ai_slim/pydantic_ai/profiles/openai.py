@@ -417,8 +417,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     `OpenAIProvider` also disables it for the GPT-5.1 through GPT-5.5 families, which OpenAI's API answers with a 400
     for `minimal` (verified live on gpt-5.1, gpt-5.2, gpt-5.3-codex, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.5
-    and their dated snapshots). gpt-5.5-cyber-preview and gpt-5.3-codex-spark are covered by the prefix only; the
-    other ids under these prefixes return 404 (shut down or nonexistent). `openai_model_profile` leaves it on,
+    and their dated snapshots). gpt-5.5-cyber-preview and gpt-5.3-codex-spark are covered by the prefix only. The
+    `-pro` and `-chat` variants set `openai_reasoning_efforts`, which decides instead; the other ids under these
+    prefixes return 404 (shut down or nonexistent). `openai_model_profile` leaves it on,
     because OpenRouter accepts `minimal` for these models. `OpenAIProvider(base_url=...)` keeps the flag off, as a
     proxy to OpenAI should; for another server that serves these model names and accepts `minimal`, pass
     `profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=True)`.
