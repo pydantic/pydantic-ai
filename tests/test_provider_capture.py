@@ -17,8 +17,6 @@ from pydantic_ai.messages import (
 
 from .provider_capture import CAPTURED_PROVIDERS, CapturedProvider, capture
 
-pytestmark = pytest.mark.anyio
-
 HISTORY: list[ModelMessage] = [
     ModelRequest(parts=[SystemPromptPart('SYSTEM_MARK'), UserPromptPart('USER_MARK')]),
     ModelResponse(parts=[TextPart('ASSISTANT_MARK'), ToolCallPart('fetch', {'url': 'x'}, tool_call_id='call_1')]),

@@ -120,13 +120,15 @@ class CapturedRequest:
         Tool call arguments aren't text in a voice, so they're left out.
 
         A model without inline system messages gets the application's voice as a `<system>` frame in the user turn,
-        so text in such a frame counts as `'system'`, whatever role carries it. Text in another frame in the user turn,
-        sent either in one piece or as an opening tag, the body and a closing tag, is `'data'`.
+        so text in such a frame counts as `'system'`. Text in another frame in the user turn, including a reserved
+        `pyai:` one, is `'data'`. Either kind of frame may come in one piece or as an opening tag, the body and a
+        closing tag.
         """
         voices: list[tuple[Voice, str]] = []
         open_frame: str | None = None
         for voice, text in _VOICE_READERS[self.provider](self.body):
-            if _is_inline_system(text):
+            stripped = text.strip()
+            if open_frame is None and _is_framed(stripped, 'system'):
                 voices.append(('system', text))
             elif voice != 'user':
                 voices.append((voice, text))
@@ -134,16 +136,15 @@ class CapturedRequest:
                 # Text after the closing tag in the same piece isn't framed, so the whole piece counts as unframed.
                 closing = f'</{open_frame}>'
                 closes = text.count(closing)
-                voices.append(
-                    ('data' if closes == 0 or (closes == 1 and text.strip().endswith(closing)) else voice, text)
-                )
-                if closing in text:
+                framed = closes == 0 or (closes == 1 and stripped.endswith(closing))
+                voices.append((_frame_voice(open_frame) if framed else voice, text))
+                if closes:
                     open_frame = None
-            elif (opened := _FRAME_OPEN.fullmatch(text.strip())) is not None:
+            elif (opened := _FRAME_OPEN.fullmatch(stripped)) is not None:
                 open_frame = opened.group(1)
-                voices.append(('data', text))
+                voices.append((_frame_voice(open_frame), text))
             else:
-                voices.append(('data' if _is_framed(text.strip()) else voice, text))
+                voices.append(('data' if _is_framed(stripped) else voice, text))
         return voices
 
     def voices_of(self, marker: str) -> list[Voice]:
@@ -185,18 +186,21 @@ def _texts(content: Any) -> Iterator[str]:
                 yield from _texts(item[key])
 
 
-_FRAME_OPEN = re.compile(r'<([a-z][a-z0-9_]*)(?: [^<>]*)?>')
-_FRAMED = re.compile(r'<([a-z][a-z0-9_]*)(?: [^<>]*)?>.*</\1>', re.DOTALL)
+_TAG = r'[a-z][a-z0-9_]*(?::[a-z][a-z0-9_]*)?'
+_FRAME_OPEN = re.compile(rf'<({_TAG})(?: [^<>]*)?>')
+_FRAMED = re.compile(rf'<({_TAG})(?: [^<>]*)?>.*</\1>', re.DOTALL)
 
 
-def _is_framed(text: str) -> bool:
-    """Whether all of `text` is one frame: an opening tag at the start, and its only closing tag at the end."""
+def _is_framed(text: str, tag: str | None = None) -> bool:
+    """Whether all of `text` is one frame, named `tag` if given: an opening tag first, its only closing tag last."""
     framed = _FRAMED.fullmatch(text)
-    return framed is not None and text.count(f'</{framed.group(1)}>') == 1
+    if framed is None or (tag is not None and framed.group(1) != tag):
+        return False
+    return text.count(f'</{framed.group(1)}>') == 1
 
 
-def _is_inline_system(text: str) -> bool:
-    return text.startswith('<system>') and text.endswith('</system>')
+def _frame_voice(tag: str) -> Voice:
+    return 'system' if tag == 'system' else 'data'
 
 
 def _role_voice(role: str) -> Voice:

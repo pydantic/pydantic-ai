@@ -1,4 +1,4 @@
-"""Running each capability case's calls, and what the model sees of the parts they add, shared by the conformance suites.
+"""Running each capability case's calls, and what the model sees of the parts they add, for the conformance suites.
 
 `run_native` runs a case's calls as plain tool calls, with every capability it builds lowered to
 `with_authority('none')`, and `typed_history` reads back each part the calls added besides what a call returned:
