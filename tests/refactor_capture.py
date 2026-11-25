@@ -15,8 +15,9 @@ environment come from the working tree both times, so the library code is the on
 
 Each stream is one JSON line of kind `stream`: the events its `__aiter__` hands the consumer, `PartEndEvent`s and
 `FinalResultEvent`s included, the error iteration raised if any, and the response `get()` builds once iteration ends,
-or once the test ends if the stream still lives then; a response `get()` can't build, or the capture can't write, is
-recorded as the error. A stream holds what the run iterating it holds, like its
+or once the test ends if the stream still lives then, as it is when the test ends, so what the run sets on it once
+iteration ended, like its usage's cost, shows; a response `get()` can't build, or the capture can't write, is recorded
+as the error. A stream holds what the run iterating it holds, like its
 dependencies, so the capture holds a stream only while the recording of its iteration lives.
 The capture wraps `__aiter__` on `StreamedResponse` and on every subclass that overrides it, whether the subclass is
 defined before the capture starts or after; one that overrides `__init_subclass__` without calling `super()`, or
@@ -836,7 +837,8 @@ class RefactorCapture:
         """
         for record, stream_ref in self._streams:
             if (stream := stream_ref()) is not None:
-                record['response'] = recorded_response(stream)
+                record['response'] = built_response(stream)
+            record['response'] = recorded_value(record['response'])
         self._order_tool_calls()
         self.records.extend(sorted(self._durable_names, key=json.dumps))
         for calls in sorted(self._cache_key_calls, key=json.dumps):
@@ -935,7 +937,7 @@ class RefactorCapture:
                 - {StreamedResponse.__module__}
             ),
             'events': events,
-            'response': recorded_response(stream),
+            'response': built_response(stream),
         }
         self.records.append(record)
         self._streams.append((record, weakref.ref(stream)))
@@ -961,7 +963,7 @@ class RefactorCapture:
                 record['error'] = normalized(f'{type(e).__name__}: {e}')
                 raise
             finally:
-                record['response'] = recorded_response(stream)
+                record['response'] = built_response(stream)
 
         return recorded()
 
@@ -2070,12 +2072,13 @@ def recorded_value(value: object, decode: Callable[[object], object] | None = No
         return {'unrecorded': normalized(f'{type(e).__name__}: {e}')}
 
 
-def recorded_response(stream: StreamedResponse) -> object:
-    """The response `stream` builds, normalized, or the error building or normalizing it raised, which is left to the
-    consumer, who reads it again, rather than raised into the code under test.
+def built_response(stream: StreamedResponse) -> object:
+    """The response `stream` builds, or the error building it raised, which is left to the consumer, who reads it
+    again, rather than raised into the code under test. It's normalized when the test ends, so what the run sets on it
+    once iteration ended, like its usage's cost, shows.
     """
     try:
-        return normalized(stream.get())
+        return stream.get()
     except Exception as e:
         return {'unrecorded': normalized(f'{type(e).__name__}: {e}')}
 

@@ -2577,7 +2577,8 @@ To resolve this, you can:
 async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
     """A stream holds what the run iterating it holds, like its dependencies, so the capture holds it only while the
     recording of its iteration lives. The response it builds is recorded once iteration ends, and again when the test
-    ends if the stream still lives then; one that can't be written is recorded as the error, never raised.
+    ends if the stream still lives then, as it is when the test ends, so what the run sets on it in between shows, even
+    once the stream is gone; one that can't be written is recorded as the error, never raised.
 
     Garbage collection is off, as in `tests/test_run_reference_cycles.py`, so only reference counting frees them.
     """
@@ -2611,6 +2612,15 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
         kept.provider_details = {'set': 'once iteration ended'}
         async with model_request_stream(
             FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
+        ) as dropped:
+            async for _ in dropped:
+                pass
+        dropped.usage.details['counted_once_iteration_ended'] = 1
+        dropped_ref = weakref.ref(dropped)
+        del dropped
+        assert dropped_ref() is None
+        async with model_request_stream(
+            FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
         ) as unwritable:
             unwritable.provider_details = {'unwritable': Unwritable()}
             async for _ in unwritable:
@@ -2620,7 +2630,8 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
         gc.enable()
         capture.pytest_unconfigure()
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
-    *streams, unwritten = [record for record in records if record['kind'] == 'stream']
+    *streams, counted, unwritten = [record for record in records if record['kind'] == 'stream']
+    assert counted['response']['usage']['details'] == {'counted_once_iteration_ended': 1}
     assert unwritten['response'] == snapshot(
         {'unrecorded': 'PydanticSerializationError: Error serializing to JSON: RuntimeError: unwritable'}
     )
