@@ -212,12 +212,18 @@ def _note_frame(tag: str, attrs: dict[str, str | None], open_tag: str) -> str:
     """
     if all(value is None or _NOTE_PATH.fullmatch(value) for value in attrs.values()):
         return open_tag
-    identity = {name: value for name, value in attrs.items() if name in _IDENTITY_ATTRIBUTES}
+    identity = {
+        name: value
+        for name, value in attrs.items()
+        if name in _IDENTITY_ATTRIBUTES and (value is None or _NOTE_IDENTIFIER.fullmatch(value))
+    }
     return capability_frame_tags(tag, attrs=identity)[0]
 
 
 _IDENTITY_ATTRIBUTES = frozenset({'kind', 'capability'})
-"""The `<pyai:data>` attributes that say what's inside it, which `_data_frame_attributes` only fills from code."""
+"""The `<pyai:data>` attributes that say what's inside it, which no kind can declare (`check_capability_frame`).
+
+They're still checked as plain identifiers before a note quotes them: an unknown part's `kind` comes from history."""
 
 
 def _note(part: CapabilityPart, authority: Authority, frame: str) -> str | None:

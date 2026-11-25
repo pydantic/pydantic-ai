@@ -111,7 +111,7 @@ def test_video_example_reuses_ingestion_and_recalls_memory(monkeypatch: pytest.M
                 not isinstance(part.content, str)
                 and (
                     text := ''.join(item.content for item in part.content if isinstance(item, TextContent))
-                ).startswith('<memory>')
+                ).startswith('<pyai:data kind="memory.snapshot">')
                 and 'visual examples' in text
                 for part in prompts
             )
