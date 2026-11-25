@@ -1032,7 +1032,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
     async def on_run_success(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> None:
         for entry in self._get('on_run_success'):
             # A hook that absorbed the run's cancellation doesn't let the next one commit.
-            raise_if_run_cancelled(ctx._cancellation)  # pyright: ignore[reportPrivateUsage]
+            await raise_if_run_cancelled(ctx.__dict__.get('_cancellation'))
             await _call_entry(entry, 'on_run_success', ctx, result=result)
 
     async def before_node_run(

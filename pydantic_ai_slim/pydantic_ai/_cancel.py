@@ -29,6 +29,8 @@ from contextvars import ContextVar
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import anyio.lowlevel
+
 from . import _utils
 from .exceptions import UserError
 
@@ -306,15 +308,18 @@ class RunCancellation:
         self._issued.clear()
 
 
-def raise_if_run_cancelled(cancellation: RunCancellation | None) -> None:
-    """Re-raise a cancellation of the run that a hook absorbed, so the run still ends cancelled.
+async def raise_if_run_cancelled(cancellation: RunCancellation | None) -> None:
+    """Re-raise a cancellation of the run that a hook absorbed or shielded itself from, so the run still ends cancelled.
 
-    A first-party request (`cancel()`, a token or the deadline) is read from the run's controller, and an external
-    `Task.cancel()` from the task's cancelling count.
+    A first-party request (`cancel()`, a token or the deadline) is read from the run's controller, an external
+    `Task.cancel()` from the task's cancelling count, and a cancelled enclosing `anyio` scope is delivered by a
+    checkpoint, taken only then.
     """
     if cancellation is not None and cancellation.cancel_requested:
         raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
     _utils.raise_if_cancelling()
+    if _utils.in_cancelled_anyio_scope():
+        await anyio.lowlevel.checkpoint()
 
 
 @dataclasses.dataclass

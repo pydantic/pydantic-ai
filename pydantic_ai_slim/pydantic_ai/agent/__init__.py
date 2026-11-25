@@ -526,12 +526,12 @@ async def _dispatch_run_success(
         return
     # A cancellation requested or delivered as the run finished, even one a toolset's exit absorbed, still ends the
     # run cancelled, so nothing is committed for it. `CombinedCapability` checks again before each capability's hook.
-    raise_if_run_cancelled(cancellation)
+    await raise_if_run_cancelled(cancellation)
     # The run's own context, so a nested run's durable operations dispatch through its run, not the enclosing one.
     with set_current_run_context(run_ctx):
         await run_capability.on_run_success(run_ctx, result=result)
     # A hook that absorbed the run's cancellation doesn't let the run return its result.
-    raise_if_run_cancelled(cancellation)
+    await raise_if_run_cancelled(cancellation)
 
 
 def _is_model(value: object) -> TypeIs[models.Model[Any]]:

@@ -17,6 +17,7 @@ from types import NoneType
 from typing import Any, Literal, cast
 
 import anyio
+import anyio.lowlevel
 import pytest
 from pydantic import BaseModel, ValidationError
 
@@ -2856,6 +2857,30 @@ class TestRunSuccessHooks:
         with pytest.raises(RunCancelled):
             await Agent(TestModel(), capabilities=[Hooks[Any](run_success=absorb)]).run('hello')
         assert log == ['absorbed']
+
+    async def test_an_enclosing_scope_cancelled_during_a_shielded_hook_stops_the_next_one(self):
+        log: list[str] = []
+        outer = anyio.CancelScope()
+
+        async def shielded_commit(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            with anyio.CancelScope(shield=True):
+                outer.cancel()
+                await anyio.lowlevel.checkpoint()
+            log.append('shielded')
+
+        async def commit(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            # Commits without awaiting, so only a checkpoint before it delivers the scope's cancellation.
+            log.append('committed')  # pragma: no cover
+
+        agent = Agent(
+            TestModel(), capabilities=[Hooks[Any](run_success=commit), Hooks[Any](run_success=shielded_commit)]
+        )
+        with outer:
+            await agent.run('hello')
+            log.append('returned')  # pragma: no cover
+
+        assert outer.cancelled_caught
+        assert log == ['shielded']
 
     async def test_an_agent_run_error_carries_the_runs_conversation(self):
         @dataclass

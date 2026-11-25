@@ -1143,8 +1143,8 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         `result` is the result the run returns. [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run]
         runs inside `wrap_run`, before the toolsets and models exit, and the run can still fail or end
         cancelled after it. This is called only for a run that ends with its result: not when the run
-        raises, is cancelled, or is left before it produced a result, and not when a toolset's exit
-        raises. That makes it the place to commit what a run produced, such as saving its
+        raises or is cancelled before it, or is left before it produced a result, and not when a
+        toolset's exit raises. That makes it the place to commit what a run produced, such as saving its
         conversation. It is also called for a result that `on_run_error` recovered or `wrap_run`
         returned without calling its handler.
 

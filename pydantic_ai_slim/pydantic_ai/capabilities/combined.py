@@ -671,7 +671,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 # A hook that absorbed the run's cancellation doesn't let the next one commit.
-                raise_if_run_cancelled(ctx._cancellation)  # pyright: ignore[reportPrivateUsage]
+                await raise_if_run_cancelled(ctx.__dict__.get('_cancellation'))
                 await capability.on_run_success(cap_ctx, result=result)
 
     # --- Node run lifecycle hooks ---
