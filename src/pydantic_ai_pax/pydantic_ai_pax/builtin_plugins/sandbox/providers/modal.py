@@ -15,12 +15,7 @@ from importlib.util import find_spec
 from pathlib import Path
 
 from pydantic_ai.workspaces import WorkspaceRef
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
-    SANDBOX_ENV,
-    GitHubCredential,
-    harness_ref,
-    ref_provider,
-)
+from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
 
 
@@ -32,8 +27,6 @@ class ModalProvider:
     title: str = 'Modal'
     working_dir: str = '/root/workspace'
     token_in_sandbox: bool = True
-    has_desktop_url: bool = False
-    desktop_url_is_bearer: bool = False
     desktop_at_create: bool = True
 
     def missing(self, *, desktop: bool = False) -> str | None:
@@ -61,18 +54,12 @@ class ModalProvider:
         # Nothing after Modal creates the sandbox can fail, so there is nothing here to clean up.
         await backend.get_sandbox()
         assert backend.ref is not None
-        return WorkspaceRef(provider=ref_provider(self.name, desktop=desktop), id=backend.ref.id), backend
+        return backend.ref, backend
 
     def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.modal_sandbox import ModalSandboxBackend
 
-        return ModalSandboxBackend(
-            ref=harness_ref('modal', ref), working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop
-        )
-
-    async def desktop_url(self, backend: SandboxBackend) -> str | None:
-        del backend
-        return None
+        return ModalSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop)
 
     async def close(self, backend: SandboxBackend) -> None:
         del backend  # Modal's own client is shared by the process, and closes with it.
@@ -80,4 +67,4 @@ class ModalProvider:
     async def delete(self, ref: WorkspaceRef) -> None:
         from pydantic_ai_harness.modal_sandbox import ModalSandbox
 
-        await ModalSandbox[None]().destroy(harness_ref('modal', ref))
+        await ModalSandbox[None]().destroy(ref)

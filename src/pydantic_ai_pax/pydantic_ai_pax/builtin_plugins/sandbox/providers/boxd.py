@@ -20,8 +20,6 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     GITHUB_HOSTS,
     SANDBOX_ENV,
     GitHubCredential,
-    harness_ref,
-    ref_provider,
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
@@ -47,8 +45,6 @@ class BoxdProvider:
     title: str = 'boxd'
     working_dir: str = '/home/boxd/workspace'
     token_in_sandbox: bool = False
-    has_desktop_url: bool = True
-    desktop_url_is_bearer: bool = False
     desktop_at_create: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, boxd.AsyncBoxd]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'boxd.AsyncBoxd'], init=False, compare=False, repr=False
@@ -99,7 +95,7 @@ class BoxdProvider:
                 finally:
                     await client.close()
             raise
-        return WorkspaceRef(provider=ref_provider(self.name, desktop=desktop), id=machine.id), backend
+        return WorkspaceRef(provider=self.name, id=machine.id), backend
 
     def _backend(
         self, client: 'boxd.AsyncBoxd', *, secrets: list[str] | None = None, desktop: bool = False
@@ -118,17 +114,10 @@ class BoxdProvider:
 
         client = self._client()
         backend = BoxdSandboxBackend(
-            client=client, ref=harness_ref('boxd', ref), working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop
+            client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop
         )
         self._clients[backend] = client
         return backend
-
-    async def desktop_url(self, backend: SandboxBackend) -> str | None:
-        from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
-
-        assert isinstance(backend, BoxdSandboxBackend)
-        url = (await backend.get_sandbox()).access.desktop_url
-        return url if url.startswith(('http://', 'https://')) else None
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:
@@ -139,7 +128,7 @@ class BoxdProvider:
 
         client = self._client()
         try:
-            await BoxdSandbox[None](client=client).destroy(harness_ref('boxd', ref))
+            await BoxdSandbox[None](client=client).destroy(ref)
             # A secret outlives its machine and only the machine named it, so every GitHub secret of Pax's that
             # no machine names goes: this machine's, and any whose machine boxd deleted itself, such as on an idle
             # timer. Another `/sandbox boxd` caught between making its secret and its machine fails, as boxd

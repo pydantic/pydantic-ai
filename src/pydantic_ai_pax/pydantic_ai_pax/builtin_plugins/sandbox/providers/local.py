@@ -48,7 +48,6 @@ from pydantic_ai_harness.computer_use import (
 from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
-    harness_ref,
     ref_provider,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
@@ -72,7 +71,7 @@ def _not_on_intel_mac(title: str) -> str | None:
 
 
 async def _boot(
-    backend: SandboxBackend, name: str, delete: Callable[[WorkspaceRef], Awaitable[None]], *, desktop: bool = False
+    backend: SandboxBackend, name: str, delete: Callable[[WorkspaceRef], Awaitable[None]]
 ) -> tuple[WorkspaceRef, SandboxBackend]:
     """Boot a new VM and make its working folder, deleting it if that fails; the ref `/sandbox` records for it."""
     try:
@@ -83,7 +82,7 @@ async def _boot(
                 await delete(backend.ref)
         raise
     assert backend.ref is not None
-    return WorkspaceRef(provider=ref_provider(name, desktop=desktop), id=backend.ref.id), backend
+    return WorkspaceRef(provider=ref_provider(name), id=backend.ref.id), backend
 
 
 @dataclass(frozen=True)
@@ -94,8 +93,6 @@ class SmolProvider:
     title: str = 'SmolVM'
     working_dir: str = '/workspace'
     token_in_sandbox: bool = True
-    has_desktop_url: bool = False
-    desktop_url_is_bearer: bool = False
     desktop_at_create: bool = False
 
     def missing(self, *, desktop: bool = False) -> str | None:
@@ -118,7 +115,7 @@ class SmolProvider:
         return _not_on_intel_mac(self.title) or f'SmolVM support is not installed. {_INSTALL}'
 
     def _backend(self, ref: WorkspaceRef | None, *, desktop: bool = False) -> SandboxBackend:
-        ref = None if ref is None else harness_ref('smol', ref)
+        ref = None if ref is None else WorkspaceRef(provider='smol', id=ref.id)
         if find_spec('smol') is not None:
             from pydantic_ai_harness.smol_sandbox import SmolSandbox, SmolSandboxBackend
 
@@ -145,14 +142,10 @@ class SmolProvider:
     async def create(
         self, *, github: GitHubCredential | None, desktop: bool = False
     ) -> tuple[WorkspaceRef, SandboxBackend]:
-        return await _boot(self._backend(None, desktop=desktop), self.name, self.delete, desktop=desktop)
+        return await _boot(self._backend(None, desktop=desktop), self.name, self.delete)
 
     def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         return self._backend(ref, desktop=desktop)
-
-    async def desktop_url(self, backend: SandboxBackend) -> str | None:
-        del backend
-        return None
 
     async def close(self, backend: SandboxBackend) -> None:
         from pydantic_ai_harness._smolvm_cli import SmolvmCliBackend
@@ -177,7 +170,7 @@ class SmolProvider:
         if find_spec('smol') is not None:
             from pydantic_ai_harness.smol_sandbox import SmolSandbox
 
-            await SmolSandbox[None]().destroy(harness_ref('smol', ref))
+            await SmolSandbox[None]().destroy(WorkspaceRef(provider='smol', id=ref.id))
         else:
             from pydantic_ai_harness._smolvm_cli import delete_machine
 
@@ -192,8 +185,6 @@ class BoxLiteProvider:
     title: str = 'BoxLite'
     working_dir: str = '/workspace'
     token_in_sandbox: bool = True
-    has_desktop_url: bool = False
-    desktop_url_is_bearer: bool = False
     desktop_at_create: bool = True
 
     def missing(self, *, desktop: bool = False) -> str | None:
@@ -214,7 +205,7 @@ class BoxLiteProvider:
             # Checks the name, so a history cannot open a box of another tool's, such as one with folders mounted.
             return BoxLiteSandbox[None](
                 working_dir=self.working_dir, env=SANDBOX_ENV, allow_internet_access=True, desktop=desktop
-            ).backend(harness_ref('boxlite', ref))
+            ).backend(WorkspaceRef(provider='boxlite', id=ref.id))
         return BoxLiteSandboxBackend(
             image=IMAGE,
             allow_internet_access=True,
@@ -227,14 +218,10 @@ class BoxLiteProvider:
     async def create(
         self, *, github: GitHubCredential | None, desktop: bool = False
     ) -> tuple[WorkspaceRef, SandboxBackend]:
-        return await _boot(self._backend(None, desktop=desktop), self.name, self.delete, desktop=desktop)
+        return await _boot(self._backend(None, desktop=desktop), self.name, self.delete)
 
     def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         return self._backend(ref, desktop=desktop)
-
-    async def desktop_url(self, backend: SandboxBackend) -> str | None:
-        del backend
-        return None
 
     async def close(self, backend: SandboxBackend) -> None:
         # The box stops when Pax exits, keeping its disk, so there is nothing to write back or stop.
@@ -246,7 +233,7 @@ class BoxLiteProvider:
             raise WorkspaceUnavailableError(missing)
         from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
 
-        await BoxLiteSandbox[None]().destroy(harness_ref('boxlite', ref))
+        await BoxLiteSandbox[None]().destroy(WorkspaceRef(provider='boxlite', id=ref.id))
 
 
 class _ReachedDisplay:

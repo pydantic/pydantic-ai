@@ -21,8 +21,6 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     GITHUB_HOSTS,
     SANDBOX_ENV,
     GitHubCredential,
-    harness_ref,
-    ref_provider,
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
@@ -35,12 +33,6 @@ KEY_NAME = 'DAYTONA_API_KEY'
 SECRET_LABEL = 'clai-github-secret'
 """The sandbox label naming its GitHub secret, so `delete` deletes the secret too."""
 
-VNC_PORT = 6080
-"""The port Daytona's desktop snapshot serves its noVNC viewer on."""
-
-PREVIEW_EXPIRES_SECONDS = 300
-"""How long a signed preview link minted on demand for interactive desktop access stays valid."""
-
 
 @dataclass(frozen=True)
 class DaytonaProvider:
@@ -50,8 +42,6 @@ class DaytonaProvider:
     title: str = 'Daytona'
     working_dir: str = '/home/daytona/workspace'
     token_in_sandbox: bool = False
-    has_desktop_url: bool = True
-    desktop_url_is_bearer: bool = True
     desktop_at_create: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, daytona.AsyncDaytona]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'daytona.AsyncDaytona'],
@@ -124,7 +114,7 @@ class DaytonaProvider:
                         await client.close()
             raise
         self._clients[backend] = client
-        return WorkspaceRef(provider=ref_provider(self.name, desktop=desktop), id=sandbox.id), backend
+        return WorkspaceRef(provider=self.name, id=sandbox.id), backend
 
     def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
@@ -133,26 +123,10 @@ class DaytonaProvider:
         # which a backend left to open its own client would not read.
         client = self._client()
         backend = DaytonaSandboxBackend(
-            client=client,
-            ref=harness_ref('daytona', ref),
-            working_dir=self.working_dir,
-            env=SANDBOX_ENV,
-            desktop=desktop,
+            client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop
         )
         self._clients[backend] = client
         return backend
-
-    async def desktop_url(self, backend: SandboxBackend) -> str | None:
-        from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
-
-        assert isinstance(backend, DaytonaSandboxBackend)
-        if backend.display is None:
-            return None
-        # Ensure Daytona's VNC and noVNC services are running before minting the signed preview URL.
-        await backend.display.display_size()
-        sandbox = await backend.get_sandbox()
-        signed = await sandbox.create_signed_preview_url(VNC_PORT, expires_in_seconds=PREVIEW_EXPIRES_SECONDS)
-        return signed.url if signed.url.startswith(('http://', 'https://')) else None
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:
@@ -171,7 +145,7 @@ class DaytonaProvider:
             # for a retry to find it by, rather than the token in the organization with nothing pointing to it.
             if secret is not None:
                 await _delete_secret(client, secret)
-            await self._destroy(client, harness_ref('daytona', ref))
+            await self._destroy(client, ref)
         finally:
             await client.close()
 

@@ -137,8 +137,6 @@ class FakeProvider:
     title: str = 'Fake'
     working_dir: str = '/home/user/workspace'
     token_in_sandbox: bool = False
-    has_desktop_url: bool = False
-    desktop_url_is_bearer: bool = False
     desktop_at_create: bool = False
     requirement: str | None = None
     created: list[GitHubCredential | None] = field(default_factory=list[GitHubCredential | None])
@@ -160,8 +158,8 @@ class FakeProvider:
         if self.creating is not None:
             await self.creating.wait()
         env = {**SANDBOX_ENV, 'GH_TOKEN': 'stand-in'} if github is not None else SANDBOX_ENV
-        provider = f'{self.name}-desktop' if desktop else self.name
-        ref = WorkspaceRef(provider=provider, id=f'sbx-{len(self.created)}')
+        del desktop
+        ref = WorkspaceRef(provider=self.name, id=f'sbx-{len(self.created)}')
         folder = anyio.Path(self.folder(ref))
         await folder.mkdir()
         # A fresh global config per sandbox, as a new sandbox has.
@@ -173,10 +171,6 @@ class FakeProvider:
         del desktop
         self.reopened.append(ref)
         return self._backend(ref, {})
-
-    async def desktop_url(self, backend: FakeSandboxBackend) -> str | None:
-        del backend
-        return None
 
     async def delete(self, ref: WorkspaceRef) -> None:
         if self.delete_error is not None:

@@ -20,8 +20,6 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     GITHUB_HOSTS,
     SANDBOX_ENV,
     GitHubCredential,
-    harness_ref,
-    ref_provider,
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
@@ -41,8 +39,6 @@ class E2BProvider:
     title: str = 'E2B'
     working_dir: str = '/home/user/workspace'
     token_in_sandbox: bool = False
-    has_desktop_url: bool = False
-    desktop_url_is_bearer: bool = False
     desktop_at_create: bool = True
 
     def missing(self, *, desktop: bool = False) -> str | None:
@@ -84,18 +80,12 @@ class E2BProvider:
                 with anyio.CancelScope(shield=True):
                     await self.delete(backend.ref)
             raise
-        return WorkspaceRef(provider=ref_provider(self.name, desktop=desktop), id=sandbox.sandbox_id), backend
+        return WorkspaceRef(provider=self.name, id=sandbox.sandbox_id), backend
 
     def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
 
-        return E2BSandboxBackend(
-            client=self._client(), ref=harness_ref('e2b', ref), working_dir=self.working_dir, desktop=desktop
-        )
-
-    async def desktop_url(self, backend: SandboxBackend) -> str | None:
-        del backend
-        return None
+        return E2BSandboxBackend(client=self._client(), ref=ref, working_dir=self.working_dir, desktop=desktop)
 
     async def close(self, backend: SandboxBackend) -> None:
         del backend  # `e2b.E2B` holds no open connection between requests.
@@ -103,4 +93,4 @@ class E2BProvider:
     async def delete(self, ref: WorkspaceRef) -> None:
         from pydantic_ai_harness.e2b_sandbox import E2BSandbox
 
-        await E2BSandbox[None](client=self._client()).destroy(harness_ref('e2b', ref))
+        await E2BSandbox[None](client=self._client()).destroy(ref)

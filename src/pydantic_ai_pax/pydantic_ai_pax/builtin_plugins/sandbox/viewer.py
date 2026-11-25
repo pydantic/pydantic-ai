@@ -5,8 +5,6 @@ Serves a minimal self-contained page on `127.0.0.1` with a per-launch token:
   screenshot and subtle markers for clicks, moves, and drags.
 - Supports on-demand live screenshots (`POST /api/capture`) via `Display.screenshot()` and optional client-side
   auto-refresh while the page is open.
-- Exposes an on-demand "Open live desktop" button (`POST /api/live-url`) when the sandbox provider offers a
-  native interactive desktop URL (such as boxd's console Desktop view or Daytona's noVNC preview).
 - Sets `frame-ancestors 'self' http://127.0.0.1:* http://localhost:*` so Pax's web UI embeds it directly as a
   side panel.
 """
@@ -92,26 +90,14 @@ class DesktopSession:
         ref: WorkspaceRef,
         title: str,
         capture: Callable[[], Awaitable[bytes]],
-        live_url: Callable[[], Awaitable[str | None]],
-        has_live_url: bool = False,
     ) -> None:
         self.ref = ref
         self.key = sandbox_key(ref)
         self.title = title
         self._capture = capture
-        self._live_url = live_url
-        self.has_live_url = has_live_url
         self._frames: deque[DesktopFrame] = deque(maxlen=MAX_FRAMES)
         self._seq = 0
         self._subscribers: set[asyncio.Queue[DesktopFrame | None]] = set()
-        self._seeded = False
-
-    @property
-    def seeded(self) -> bool:
-        return self._seeded
-
-    def mark_seeded(self) -> None:
-        self._seeded = True
 
     @property
     def frames(self) -> list[DesktopFrame]:
@@ -151,10 +137,6 @@ class DesktopSession:
         """Take a fresh screenshot directly from the sandbox display and publish it."""
         png = await self._capture()
         return self.record(png, summary='Live snapshot')
-
-    async def live_url(self) -> str | None:
-        """Fetch a provider-native live desktop URL on demand."""
-        return await self._live_url()
 
     def subscribe(self) -> asyncio.Queue[DesktopFrame | None]:
         queue: asyncio.Queue[DesktopFrame | None] = asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_SIZE)
@@ -222,16 +204,9 @@ def _viewer_html(*, session: DesktopSession, token: str, nonce: str) -> str:
         {
             'key': session.key,
             'token': token,
-            'hasLiveUrl': session.has_live_url,
             'frames': [frame.meta() for frame in session.frames],
         }
     ).replace('</', '<\\/')
-    live_button = (
-        '<button id="live-btn" class="btn primary" type="button" title="Open the provider interactive desktop">'
-        'Interactive desktop ↗</button>'
-        if session.has_live_url
-        else ''
-    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -258,7 +233,6 @@ header {{
 }}
 .btn:hover {{ background: #2c3347; }}
 .btn.active {{ border-color: var(--accent); color: #fff; }}
-.btn.primary {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
 .btn:disabled {{ opacity: 0.5; cursor: wait; }}
 .stage {{
   flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
@@ -294,7 +268,6 @@ header {{
   <button id="refresh-btn" class="btn" type="button">Refresh</button>
   <button id="auto-btn" class="btn" type="button" aria-pressed="false">Auto: off</button>
   <button id="follow-btn" class="btn active" type="button" aria-pressed="true">Live</button>
-  {live_button}
 </header>
 <main class="stage">
   <div id="empty" class="empty">Waiting for the first screenshot. Click <strong>Refresh</strong> to capture the current screen now.</div>
@@ -327,7 +300,6 @@ const stripEl = document.getElementById('strip');
 const refreshBtn = document.getElementById('refresh-btn');
 const autoBtn = document.getElementById('auto-btn');
 const followBtn = document.getElementById('follow-btn');
-const liveBtn = document.getElementById('live-btn');
 
 const qs = (extra = '') => '?token=' + encodeURIComponent(CFG.token) + '&sandbox=' + encodeURIComponent(CFG.key) + extra;
 const frameUrl = (seq) => '/frames/' + seq + '.png' + qs();
@@ -453,28 +425,6 @@ autoBtn.onclick = () => {{
     autoTimer = setInterval(capture, 2000);
   }}
 }};
-if (liveBtn) {{
-  liveBtn.onclick = async () => {{
-    liveBtn.disabled = true;
-    try {{
-      const res = await fetch('/api/live-url?sandbox=' + encodeURIComponent(CFG.key), {{
-        method: 'POST',
-        headers: {{ '{HEADER}': CFG.token }},
-      }});
-      if (res.ok) {{
-        const data = await res.json();
-        if (data.url) window.open(data.url, '_blank', 'noopener,noreferrer');
-      }} else {{
-        errorEl.textContent = await res.text();
-      }}
-    }} catch (err) {{
-      errorEl.textContent = String(err);
-    }} finally {{
-      liveBtn.disabled = false;
-    }}
-  }};
-}}
-
 const source = new EventSource('/events' + qs());
 source.onmessage = (event) => {{
   try {{ addFrame(JSON.parse(event.data)); }} catch {{}}
@@ -559,17 +509,6 @@ def create_viewer_app(viewer: DesktopViewer, *, token: str, hosts: frozenset[str
         except Exception as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return JSONResponse(item.meta())
-
-    @app.post('/api/live-url')
-    async def live_url(sandbox: str = Query(...)) -> JSONResponse:
-        session = _get_session(sandbox)
-        try:
-            url = await session.live_url()
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        if url is None:
-            raise HTTPException(status_code=404, detail='This sandbox provider has no native live desktop URL.')
-        return JSONResponse({'url': url})
 
     return _ViewerGuard(app, token=token, hosts=hosts)
 

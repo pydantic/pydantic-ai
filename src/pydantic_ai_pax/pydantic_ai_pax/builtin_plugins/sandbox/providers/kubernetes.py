@@ -20,8 +20,6 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
-    harness_ref,
-    ref_provider,
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
@@ -42,8 +40,6 @@ class KubernetesProvider:
     working_dir: str = '/workspace/checkout'
     """Below sandboxd's default root, which the docs' templates also make the home, so the token is not in the checkout."""
     token_in_sandbox: bool = True
-    has_desktop_url: bool = False
-    desktop_url_is_bearer: bool = False
     desktop_at_create: bool = False
 
     def missing(self, *, desktop: bool = False) -> str | None:
@@ -80,18 +76,12 @@ class KubernetesProvider:
                 await backend.aclose()
             raise
         assert backend.ref is not None
-        return WorkspaceRef(provider=ref_provider(self.name, desktop=desktop), id=backend.ref.id), backend
+        return backend.ref, backend
 
     def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandboxBackend
 
-        return KubernetesSandboxBackend(
-            ref=harness_ref('kubernetes', ref), working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop
-        )
-
-    async def desktop_url(self, backend: SandboxBackend) -> str | None:
-        del backend
-        return None
+        return KubernetesSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop)
 
     async def close(self, backend: SandboxBackend) -> None:
         # Stops the `kubectl port-forward` the backend started.
@@ -102,7 +92,7 @@ class KubernetesProvider:
 
         # The ref names the claim's namespace; the warm pool is only for new claims.
         namespace = ref.id.partition('/')[0]
-        await KubernetesSandbox[None](warm_pool='', namespace=namespace).destroy(harness_ref('kubernetes', ref))
+        await KubernetesSandbox[None](warm_pool='', namespace=namespace).destroy(ref)
 
 
 def _kubernetes(backend: SandboxBackend) -> 'KubernetesSandboxBackend':

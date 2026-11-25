@@ -26,8 +26,6 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
     give_github_login,
-    harness_ref,
-    ref_provider,
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
@@ -58,8 +56,6 @@ class OpenSandboxProvider:
     title: str = 'OpenSandbox'
     working_dir: str = '/workspace'
     token_in_sandbox: bool = False
-    has_desktop_url: bool = False
-    desktop_url_is_bearer: bool = False
     desktop_at_create: bool = True
 
     def missing(self, *, desktop: bool = False) -> str | None:
@@ -163,22 +159,18 @@ class OpenSandboxProvider:
                 finally:
                     await backend.aclose()
             raise
-        return WorkspaceRef(provider=ref_provider(self.name, desktop=desktop), id=sandbox.id), backend
+        return WorkspaceRef(provider=self.name, id=sandbox.id), backend
 
     def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
 
         return OpenSandboxBackend(
-            ref=harness_ref('opensandbox', ref),
+            ref=ref,
             connection=self._connection(),
             working_dir=self.working_dir,
             env=SANDBOX_ENV,
             desktop=desktop,
         )
-
-    async def desktop_url(self, backend: SandboxBackend) -> str | None:
-        del backend
-        return None
 
     async def close(self, backend: SandboxBackend) -> None:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
@@ -190,4 +182,4 @@ class OpenSandboxProvider:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox
 
         # The sandbox's egress sidecar, and the token in its memory, go with it.
-        await OpenSandbox[None](connection=self._connection()).destroy(harness_ref('opensandbox', ref))
+        await OpenSandbox[None](connection=self._connection()).destroy(ref)

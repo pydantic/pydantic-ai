@@ -20,8 +20,6 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     SANDBOX_ENV,
     GitHubCredential,
-    harness_ref,
-    ref_provider,
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
@@ -42,8 +40,6 @@ class SpritesProvider:
     title: str = 'Sprites'
     working_dir: str = '/home/sprite/workspace'
     token_in_sandbox: bool = True
-    has_desktop_url: bool = False
-    desktop_url_is_bearer: bool = False
     desktop_at_create: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, AsyncSpritesClient]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'AsyncSpritesClient'], init=False, compare=False, repr=False
@@ -71,7 +67,7 @@ class SpritesProvider:
 
         backend = SpritesSandboxBackend(
             client=client,
-            ref=None if ref is None else harness_ref('sprites', ref),
+            ref=ref,
             working_dir=self.working_dir,
             env=SANDBOX_ENV,
             desktop=desktop,
@@ -96,16 +92,12 @@ class SpritesProvider:
                     await self.close(backend)
             raise
         assert backend.ref is not None
-        return WorkspaceRef(provider=ref_provider(self.name, desktop=desktop), id=backend.ref.id), backend
+        return backend.ref, backend
 
     def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         # Built here, though it reads the key store: the token may be only in `/keys`, which a backend left to
         # open its own client would not read.
         return self._backend(self._client(), ref, desktop=desktop)
-
-    async def desktop_url(self, backend: SandboxBackend) -> str | None:
-        del backend
-        return None
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:
@@ -114,7 +106,7 @@ class SpritesProvider:
     async def delete(self, ref: WorkspaceRef) -> None:
         client = await to_thread.run_sync(self._client)
         try:
-            await self._destroy(client, harness_ref('sprites', ref))
+            await self._destroy(client, ref)
         finally:
             await client.aclose()
 
