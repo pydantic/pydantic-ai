@@ -8,7 +8,7 @@ A capability is conformant when its entry in `CASES` (`tests/capability_cases.py
 
 Each area says what it requires and how the suite checks it. Contracts are `Contract(applies, exempt)` entries in `CONTRACTS`, run by `tests/harness/test_capability_contracts.py`; an exempt case must still break its contract, so fixing the capability fails the suite until the exemption is removed. Link an exemption that records a bug to the issue that tracks it.
 
-The contracts are numbered C0, C1, … in the order they land. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
+The contracts are numbered C0, C1, … as this checklist assigns them, not in the order they land. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
 
 ## Coverage
 
@@ -55,7 +55,7 @@ The rules behind these are in [Message History & Prompt Caching](message-history
 - C3, role-site guard (planned): every site that builds a system or developer part is in an allowlist with its reason.
 - C4, transformation registry (planned): every function that returns `list[ModelMessage]` is registered, and sources survive each one.
 - C5, attribution on spans (planned): OpenTelemetry message parts keep each capability part's source.
-- C6, instruction sources: `test_instruction_source_authority.py`'s canary test puts a marker in each instruction source (`Skills`, `RepoContext` walk-up and nested, `Memory`, MCP server instructions, `SubAgents` `create_agent` instructions) at `'none'` and at `'operator'`, and checks the marker appears only in tool output or framed data at `'none'` and where it does today at `'operator'`. A source that breaks this is a strict xfail linked to its fix (MCP: [#13117](https://github.com/pydantic/pydantic-ai/issues/13117); `SubAgents` `create_agent`: [#12433](https://github.com/pydantic/pydantic-ai/issues/12433)).
+- C6, instruction sources: `test_instruction_source_authority.py`'s canary test puts a marker in each instruction source (`Skills`, `RepoContext`'s working-directory, ancestor and nested files, `Memory`, MCP server instructions and tool descriptions, `SubAgents` `create_agent` instructions) at `'none'` and at `'operator'`, and checks the marker appears only in tool output or framed data at `'none'` and where it does today at `'operator'`. A source that breaks this is a strict xfail linked to its fix (MCP: [#13117](https://github.com/pydantic/pydantic-ai/issues/13117); `SubAgents` `create_agent`: [#12433](https://github.com/pydantic/pydantic-ai/issues/12433)).
 
 ## Durable execution
 

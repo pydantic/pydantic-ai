@@ -2,9 +2,11 @@
 system or user part, or a tool definition: only tool output, or a framed data part naming its source.
 
 Each source in `INSTRUCTION_SOURCES` gets a canary and runs at `'none'` and at `'operator'`. The `'operator'` run is the
-control that the case is wired, so a pass at `'none'` means the text was lowered, not that it never arrived. A source
-that breaks the contract today is a strict xfail linked to its fix. `create_agent`'s turns into an XPASS when #12433
-is fixed. The MCP cases also need their builds to pass `authority` into the toolset once #13117 gives it one.
+control that the case is wired, so a pass at `'none'` means the text was lowered, not that it never arrived. For
+`Memory`, which is data at every level, the control only shows the case is wired.
+
+A source that breaks the contract today is a strict xfail linked to its fix. `create_agent`'s turns into an XPASS when
+#12433 is fixed. The MCP cases also need their builds to pass `authority` into the toolset once #13117 gives it one.
 
 This is its own module rather than part of `test_capability_contracts.py`: it starts an MCP server, so CI's FastMCP 3
 lane runs it, and that lane can't build every capability the contract suite does.
@@ -151,6 +153,8 @@ class _InstructionSource:
     working_dir: str = '.'
     operator_reaches: Authority = 'operator'
     """The highest authority the text reaches the model at when its source is the operator's."""
+    known_break: str | None = None
+    """Why the source breaks the contract today, with its fix; the `'none'` case is then a strict xfail."""
 
 
 def _write(path: Path, content: str) -> None:
@@ -249,21 +253,25 @@ INSTRUCTION_SOURCES: dict[str, _InstructionSource] = {
     ),
     # Memory is data even from the operator's own store, attributed to the agent that wrote it.
     'memory': _InstructionSource(_memory, operator_reaches='none'),
-    'mcp_instructions': _InstructionSource(_mcp_instructions),
-    'mcp_tool_description': _InstructionSource(_mcp_tool_description),
-    'sub_agents_create_agent': _InstructionSource(_sub_agents, _sub_agents_calls),
-}
-
-_KNOWN_BREAKS = {
-    'mcp_instructions': (
-        'MCP servers have no authority yet; their text goes out as the operator (#13117). '
-        'Removing this needs the fix and `authority` passed into the toolset in `_mcp_instructions`'
+    'mcp_instructions': _InstructionSource(
+        _mcp_instructions,
+        known_break=(
+            'MCP servers have no authority yet; their text goes out as the operator (#13117). '
+            'Removing this needs the fix and `authority` passed into the toolset in `_mcp_instructions`'
+        ),
     ),
-    'mcp_tool_description': (
-        'MCP servers have no authority yet; their text goes out as the operator (#13117). '
-        'Removing this needs the fix and `authority` passed into the toolset in `_mcp_tool_description`'
+    'mcp_tool_description': _InstructionSource(
+        _mcp_tool_description,
+        known_break=(
+            'MCP servers have no authority yet; their text goes out as the operator (#13117). '
+            'Removing this needs the fix and `authority` passed into the toolset in `_mcp_tool_description`'
+        ),
     ),
-    'sub_agents_create_agent': 'model-written instructions become the child agent system prompt (#12433)',
+    'sub_agents_create_agent': _InstructionSource(
+        _sub_agents,
+        _sub_agents_calls,
+        known_break='model-written instructions become the child agent system prompt (#12433)',
+    ),
 }
 
 
@@ -280,10 +288,10 @@ async def _reached(name: str, directory: Path, authority: Authority) -> list[tup
 @pytest.mark.parametrize(
     'name',
     [
-        pytest.param(name, marks=pytest.mark.xfail(strict=True, reason=_KNOWN_BREAKS[name]))
-        if name in _KNOWN_BREAKS
-        else name
-        for name in INSTRUCTION_SOURCES
+        pytest.param(
+            name, marks=() if (why := source.known_break) is None else pytest.mark.xfail(strict=True, reason=why)
+        )
+        for name, source in INSTRUCTION_SOURCES.items()
     ],
 )
 async def test_text_below_operator_reaches_the_model_only_as_tool_output_or_framed_data(
@@ -295,7 +303,8 @@ async def test_text_below_operator_reaches_the_model_only_as_tool_output_or_fram
 
 
 @pytest.mark.parametrize('name', list(INSTRUCTION_SOURCES))
-async def test_the_same_text_from_the_operator_reaches_the_model_as_the_operator(name: str, tmp_path: Path) -> None:
+async def test_the_same_text_from_the_operator_reaches_the_model(name: str, tmp_path: Path) -> None:
     # The control for the test above: each case is wired so its source's level is what decides where the text goes.
+    # For `Memory`, data at every level, it only shows the case is wired.
     places = await _reached(name, tmp_path, 'operator')
     assert any(authority == INSTRUCTION_SOURCES[name].operator_reaches for _, authority in places), places
