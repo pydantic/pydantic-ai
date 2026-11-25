@@ -75,12 +75,6 @@ repos:
         language: python
         files: ^(src/pydantic_ai_pax/(README\.md|scripts/sync_docs_page\.py)|docs/harness/clai2\.md)$
         pass_filenames: false
-      - id: pax-provider-extras
-        name: Pax provider extras
-        entry: python src/pydantic_ai_pax/scripts/sync_provider_extras.py
-        language: python
-        files: ^(pydantic_ai_slim/pyproject\.toml|src/pydantic_ai_pax/(pyproject\.toml|scripts/sync_provider_extras\.py)|src/pydantic_clai2/pyproject\.toml)$
-        pass_filenames: false
       - id: format
         name: Format
         entry: make

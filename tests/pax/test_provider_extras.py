@@ -1,44 +1,46 @@
 """Pax offers an extra for every `pydantic-ai-slim` extra it does not deliberately skip.
 
 `pydantic_ai_slim/pyproject.toml` is the source of truth: a new slim extra fails here until Pax mirrors it
-or `EXCLUDED` in `scripts/sync_provider_extras.py` names it with a reason. That script writes the extras;
-these tests read the projects, not the installed metadata, so they are not VCR tests.
+or `EXCLUDED` names it with a reason. It reads the projects, not the installed metadata, so it is not a VCR test.
 """
 
-import importlib.util
 import tomllib
 from pathlib import Path
-from typing import Protocol, runtime_checkable
-
-import pytest
 
 ROOT = Path(__file__).parents[2]
+THIS = 'tests/pax/test_provider_extras.py'
 
+EXCLUDED: dict[str, str] = {
+    'logfire': 'Pax depends on `logfire[httpx]` directly.',
+    'sentence-transformers': 'Embeddings only; Pax runs no embedder.',
+    'voyageai': 'Embeddings only; Pax runs no embedder.',
+    'duckduckgo': 'A tool, not a model provider; plugins install tools through `pydantic-ai-harness` extras.',
+    'tavily': 'A tool, not a model provider; plugins install tools through `pydantic-ai-harness` extras.',
+    'exa': 'A tool, not a model provider; plugins install tools through `pydantic-ai-harness` extras.',
+    'web-fetch': 'A tool, not a model provider; plugins install tools through `pydantic-ai-harness` extras.',
+    'cli': 'The `clai` CLI; Pax is its own CLI and depends on what it needs directly.',
+    'realtime': 'Speech-to-speech sessions, which Pax does not run.',
+    'openai-realtime': 'Speech-to-speech sessions, which Pax does not run.',
+    'google-realtime': 'Speech-to-speech sessions, which Pax does not run.',
+    'xai-realtime': 'Speech-to-speech sessions, which Pax does not run.',
+    'elevenlabs-agents-realtime': 'Speech-to-speech sessions, which Pax does not run.',
+    'elevenlabs-realtime': 'Speech-to-speech sessions, which Pax does not run.',
+    'mcp': 'Installed by default.',
+    'mcp-tasks': 'Explicit MCP task execution pulls the FastMCP server stack; Pax does not use it.',
+    'evals': 'Pydantic Evals, which Pax does not use.',
+    'ui': 'UI adapters mounted in your own app; Pax serves its own web UI.',
+    'ag-ui': 'UI adapters mounted in your own app; Pax serves its own web UI.',
+    'web': '`Agent.to_web()`; Pax serves its own web UI with dependencies it declares.',
+    'retries': 'The legacy HTTPX retry helpers, which Pax does not use.',
+    'temporal': 'Durable execution, which Pax does not use.',
+    'dbos': 'Durable execution, which Pax does not use.',
+    'prefect': 'Durable execution, which Pax does not use.',
+    'spec': 'YAML agent specs, which Pax does not load.',
+}
+"""The `pydantic-ai-slim` extras Pax does not mirror, each with the reason."""
 
-@runtime_checkable
-class SyncScript(Protocol):
-    EXCLUDED: dict[str, str]
-    LOCAL: str
-    COMMAND: str
-
-    def main(self, argv: list[str]) -> int: ...
-
-
-def _load_script() -> SyncScript:
-    spec = importlib.util.spec_from_file_location(
-        'sync_provider_extras', ROOT / 'src' / 'pydantic_ai_pax' / 'scripts' / 'sync_provider_extras.py'
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    assert isinstance(module, SyncScript)
-    return module
-
-
-SCRIPT = _load_script()
-EXCLUDED = SCRIPT.EXCLUDED
-LOCAL = SCRIPT.LOCAL
-THIS = 'src/pydantic_ai_pax/scripts/sync_provider_extras.py'
+LOCAL = 'local'
+"""The `/sandbox` extra `all` leaves out: its SDKs have no Windows wheel."""
 
 
 def _extras(path: Path) -> dict[str, list[str]]:
@@ -73,8 +75,7 @@ def test_pax_mirrors_every_slim_extra_it_does_not_exclude() -> None:
     assert mirrored == expected, (
         "Pax's provider extras in src/pydantic_ai_pax/pyproject.toml must be every `pydantic-ai-slim` extra "
         f"except those in `EXCLUDED` in {THIS}, each pinned like Pax's own `pydantic-ai-slim` dependency. "
-        'For a new slim extra, exclude it there with a reason if Pax should not offer it, then run '
-        f'`{SCRIPT.COMMAND}`.'
+        'For a new slim extra, add it to Pax (and `all`) or exclude it with a reason.'
     )
 
 
@@ -85,7 +86,7 @@ def test_all_installs_every_extra_but_local() -> None:
     assert PAX['all'] == [
         f'pydantic-ai-slim[{",".join(sorted(MIRRORED))}]{SLIM_PIN}',
         f'pydantic-ai-harness[{",".join(sandboxes)}]{HARNESS_PIN}',
-    ], f"Pax's `all` extra is out of date; run `{SCRIPT.COMMAND}`."
+    ], "Pax's `all` extra in src/pydantic_ai_pax/pyproject.toml must list every other extra but `local`."
 
 
 def test_every_pax_extra_is_a_provider_a_sandbox_or_all() -> None:
@@ -93,8 +94,3 @@ def test_every_pax_extra_is_a_provider_a_sandbox_or_all() -> None:
     kinds = {name: deps[0].partition('[')[0] for name, deps in PAX.items() if name != 'all' and len(deps) == 1}
     assert set(kinds) | {'all'} == set(PAX)
     assert set(kinds.values()) == {'pydantic-ai-slim', 'pydantic-ai-harness'}
-
-
-def test_generated_extras_are_current(capsys: pytest.CaptureFixture[str]) -> None:
-    """Pax's generated block and the `pydantic-clai2` shim's extras match what the script writes."""
-    assert SCRIPT.main(['--check']) == 0, capsys.readouterr().out
