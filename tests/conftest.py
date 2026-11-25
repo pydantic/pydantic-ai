@@ -93,6 +93,10 @@ with suppress(ImportError):
 with suppress(ImportError):
     import openai  # pyright: ignore[reportUnusedImport] # noqa: F401
 
+# Every request a test prepares checks that no text below `'operator'` reaches the model as a system message (C2 in
+# `agent_docs/capability-conformance.md`).
+pydantic_ai.models._check_system_voice = True  # pyright: ignore[reportPrivateUsage]
+
 T = TypeVar('T')
 
 # Like `try_import` for a whole directory: these suites need their workspace member installed, which

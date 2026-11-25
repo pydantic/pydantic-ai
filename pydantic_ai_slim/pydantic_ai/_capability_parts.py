@@ -60,6 +60,7 @@ from .messages import (
     WorkspaceSource,
     _CapabilityInstructionsPart,  # pyright: ignore[reportPrivateUsage]
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
+    _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -100,7 +101,8 @@ def effective_authority(part: ModelRequestPart) -> Authority:
     - An [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]: the authority stored on it.
     - A system prompt and the framework's records of the run's state: `'operator'`.
     - A user prompt or the user's speech: `'user'`.
-    - Tool output, retry feedback and a compaction summary: `'none'`.
+    - Tool output, retry feedback and a compaction summary: `'none'`, except `'no_output'` feedback whose text is one
+      the agent loop writes, which is the framework's own and `'operator'`.
 
     A part of any other kind is `'none'`, so a kind added later carries no authority until it's given one here.
     """
@@ -109,6 +111,9 @@ def effective_authority(part: ModelRequestPart) -> Authority:
         return _lower_authority(asked, part.source.authority)
     if isinstance(part, InstructionDeltaPart):
         return part.authority
+    if isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part):
+        # The agent loop's own `'no_output'` text, which reaches the model as a system message.
+        return 'operator'
     for kind, authority in _PART_AUTHORITY.items():
         if isinstance(part, kind):
             return authority
@@ -499,3 +504,75 @@ def _record_body_lookalikes(
         tags.append(tag)
     if tags:
         found.setdefault(source, []).extend(t for t in tags if t not in found.get(source, ()))
+
+
+LOWERED_TEXT_MIN_LENGTH = 20
+"""The shortest text below `'operator'` that `lowered_text_in_system_voice` looks for.
+
+Shorter text, such as a one-word tool result, can turn up in the framework's own sentences by chance.
+"""
+
+
+def _texts_of(content: object) -> list[str]:
+    """The text in `content`: a string, or the strings and `TextContent` in a sequence of user content."""
+    if isinstance(content, str):
+        return [content]
+    if isinstance(content, Sequence):
+        items: Sequence[object] = content  # pyright: ignore[reportUnknownVariableType]
+        return [
+            item if isinstance(item, str) else item.content for item in items if isinstance(item, str | TextContent)
+        ]
+    return []
+
+
+def _authored_texts(part: ModelRequestPart) -> list[str]:
+    """The text `part` carries as its author wrote it, for finding it again after rendering."""
+    if isinstance(part, ToolReturnPart):
+        return [part.model_response_str(wrap_if_error=False)]
+    if isinstance(part, RetryFeedbackPart) and not isinstance(part.content, str):
+        # Validation errors, which reach the model as the text that lists them.
+        return [part.model_response()]
+    if isinstance(part, CapabilityPart):
+        return _texts_of(part.model_content())
+    if isinstance(part, SpeechPart):
+        return _texts_of(part.transcript)
+    if isinstance(part, UserPromptPart | RetryFeedbackPart | SystemPromptPart | CompactionPart | InstructionDeltaPart):
+        return _texts_of(part.content)
+    return []
+
+
+def _request_parts(messages: Sequence[ModelMessage]) -> list[ModelRequestPart]:
+    return [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+
+
+def _without(text: str, removed: Sequence[str]) -> str:
+    """`text` with each of `removed`, longest first, taken out."""
+    for piece in sorted(removed, key=len, reverse=True):
+        text = text.replace(piece, '\0')
+    return text
+
+
+def lowered_text_in_system_voice(authored: Sequence[ModelMessage], rendered: Sequence[ModelMessage]) -> list[str]:
+    """Where text below `'operator'` in `authored` reaches the model as a system message in `rendered`.
+
+    `rendered` is `authored` as `prepare_messages` has it before wrapping mid-conversation system messages in
+    `<system>` blocks, where every system message is still a `SystemPromptPart`. Text the application wrote at
+    `'operator'` is taken out of each first: the application may quote anything in its own words. What's left is the
+    framework's own text, which must not hold any text below `'operator'` of at least `LOWERED_TEXT_MIN_LENGTH`
+    characters.
+    """
+    operator: list[str] = []
+    lowered: list[str] = []
+    for part in _request_parts(authored):
+        texts = [text.strip() for text in _authored_texts(part) if text.strip()]
+        (operator if effective_authority(part) == 'operator' else lowered).extend(texts)
+    lowered = [text for text in lowered if len(text) >= LOWERED_TEXT_MIN_LENGTH]
+    residues = [
+        _without(part.content, operator) for part in _request_parts(rendered) if isinstance(part, SystemPromptPart)
+    ]
+    return [
+        f"a system message holds text below `'operator'`: {text[:80]!r}"
+        for residue in residues
+        for text in lowered
+        if text in residue
+    ]
