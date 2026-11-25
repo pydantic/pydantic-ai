@@ -1,11 +1,10 @@
 """Keep the Pax front pages in sync: `docs/harness/pax.md` and the Pax README.
 
-The page used to be generated from the README. It is a page in its own right now, so these tests
-take over from the generator: the two surfaces tell one story, and only the markup each renderer
-needs may differ. See the "Pax front pages" section of `docs/AGENTS.md` for the contract.
+The two surfaces tell one story, and only the markup each renderer needs may differ. See the
+"Pax front pages" section of `docs/AGENTS.md` for the contract.
 
-This has to run on a change to the README alone, which is the drift it exists to catch now that no
-generator does. That is why `.github/workflows/ci.yml` names this file in the `docs-only` job's
+This has to run on a change to the README alone, which is the drift it exists to catch. That is
+why `.github/workflows/ci.yml` names this file in the `docs-only` job's
 test list as well as reaching it through the pax and harness tiers; see `classify` there for the
 routing itself.
 """
@@ -42,8 +41,7 @@ def test_code_blocks_match() -> None:
     readme = _code_blocks(README.read_text(encoding='utf-8'))
     assert page == readme, (
         f'the Pax page and the Pax README disagree on a code block ({len(page)} on the page, '
-        f'{len(readme)} in the README). They are two surfaces of one story and no longer '
-        'generated from each other, so edit both.'
+        f'{len(readme)} in the README). They are two surfaces of one story, so edit both.'
     )
 
 
@@ -69,8 +67,7 @@ def _prose(text: str, *, is_readme: bool) -> list[str]:
     """The document's paragraphs with the surface-specific markup normalized away.
 
     Link targets, the README's badges and the page's front matter are the parts that are meant to
-    differ. Everything else is shared wording, and the generator used to guarantee it byte for
-    byte; this keeps that guarantee now that nothing regenerates either file.
+    differ. Everything else is shared wording, and this keeps it identical.
 
     Paragraphs rather than lines, because an absolute documentation URL is far longer than the
     relative path it replaces, so the two surfaces cannot wrap at the same places.
@@ -93,7 +90,7 @@ def test_prose_matches() -> None:
     readme = _prose(README.read_text(encoding='utf-8'), is_readme=True)
     assert page == readme, (
         'the Pax page and the Pax README disagree on wording. Edit both: they are two surfaces of '
-        'one story and nothing regenerates them. Only link targets, the README badges and the '
+        'one story. Only link targets, the README badges and the '
         "page's front matter are allowed to differ."
     )
 

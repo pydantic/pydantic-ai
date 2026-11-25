@@ -45,7 +45,7 @@ The docs index and repository README tell the same story on two surfaces. Keep t
 
 # Pax front pages: `docs/harness/pax.md` and `src/pydantic_ai_pax/README.md`
 
-The Pax page and the Pax README tell the same story on two surfaces. The page was generated from the README until the beta; it is a page in its own right now, and `tests/pax/test_docs_parity.py` holds the pair together:
+The Pax page and the Pax README tell the same story on two surfaces, and `tests/pax/test_docs_parity.py` holds them together. Edit both:
 
 - The page uses relative links; the README uses absolute documentation links and keeps its badges. A relative link in the README resolves against `src/pydantic_ai_pax/`, not `docs/`, so `../cli.md` would point at nothing on GitHub, and PyPI does not resolve relative links at all.
 - Both name models themselves rather than by alias. The page is in `EXEMPT_PAGES` of `tests/test_docs_model_aliases.py` because it documents Pax's own default model and the `account@model` syntax with real Codex IDs, which an alias would misstate. A code block is the one place on the page where an alias is allowed, since the parity test resolves aliases there and nowhere else.

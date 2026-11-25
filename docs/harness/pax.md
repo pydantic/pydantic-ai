@@ -483,7 +483,6 @@ need no account and cost nothing. To make them again, run
 
 ## Legacy CLI
 
-Pydantic AI also ships [`clai`](../cli.md), the chat CLI that came before Pax. It is not
-deprecated: it stays the quickest way to hold a conversation with a model, it serves the
-[Web Chat UI](../web.md) with `clai web`, and `agent.to_cli_sync()` opens the same chat from
-your own code. For a coding agent, use Pax.
+Pydantic AI also ships [`clai`](../cli.md), the legacy CLI that came before Pax. It still
+works, and it is still what serves the [Web Chat UI](../web.md) with `clai web` and what
+`agent.to_cli_sync()` opens from your own code. New work in the terminal belongs in Pax.
