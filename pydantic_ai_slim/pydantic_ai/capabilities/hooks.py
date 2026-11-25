@@ -941,8 +941,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
     def _has_on_node_run_error(self) -> bool:
         return type(self).on_node_run_error is not Hooks.on_node_run_error or bool(self._get('on_node_run_error'))
 
-    @property
-    def _has_on_run_success(self) -> bool:
+    def _dispatches_on_run_success(self, ctx: RunContext[AgentDepsT]) -> bool:
         return type(self).on_run_success is not Hooks.on_run_success or bool(self._get('on_run_success'))
 
     @property

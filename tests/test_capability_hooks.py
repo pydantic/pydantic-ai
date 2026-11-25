@@ -2612,14 +2612,25 @@ class TestRunSuccessHooks:
                 raise RuntimeError('toolset exit failed')
             return None
 
-    async def test_runs_after_toolset_exit_with_the_returned_result(self):
+    async def test_runs_after_toolset_and_model_exit_with_the_returned_result(self):
         log: list[str] = []
+
+        class ClosingModel(TestModel):
+            async def __aexit__(self, *args: Any) -> bool | None:
+                log.append('model:exit')
+                return await super().__aexit__(*args)
+
+        @dataclass
+        class SuppliesModel(AbstractCapability[Any]):
+            def get_model(self) -> ClosingModel:
+                return ClosingModel()
+
         recorder = self.Recorder(log)
-        agent = Agent(TestModel(), capabilities=[recorder], toolsets=[self.ClosingToolset(log)])
+        agent = Agent(capabilities=[SuppliesModel(), recorder], toolsets=[self.ClosingToolset(log)])
 
         result = await agent.run('hello')
 
-        assert log == ['recorder:after_run', 'toolset:exit', 'recorder:on_run_success']
+        assert log == ['recorder:after_run', 'toolset:exit', 'model:exit', 'recorder:on_run_success']
         assert recorder.results == [result]
         assert recorder.results[0] is result
 
@@ -2708,6 +2719,23 @@ class TestRunSuccessHooks:
 
         assert log == ['recovering:after_run', 'recovering:on_run_success', 'short_circuiting:on_run_success']
         assert [r.output for r in recovering.results + short_circuiting.results] == ['recovered', 'short-circuited']
+
+    async def test_a_combined_or_wrapper_capabilitys_own_hook_is_called(self):
+        """A subclass that overrides the hook is called even when nothing it wraps or combines defines one."""
+        log: list[str] = []
+
+        class CombinedOverride(CombinedCapability[Any]):
+            async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+                log.append('combined:on_run_success')
+
+        class WrapperOverride(WrapperCapability[Any]):
+            async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+                log.append('wrapper:on_run_success')
+
+        capabilities = [WrapperCapability(CombinedOverride([])), WrapperOverride(Hooks[Any]())]
+        await Agent(TestModel(), capabilities=capabilities).run('hello')
+
+        assert log == ['wrapper:on_run_success', 'combined:on_run_success']
 
     async def test_capabilities_are_called_innermost_first(self):
         log: list[str] = []
@@ -2843,14 +2871,21 @@ class TestRunSuccessHooks:
             async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
                 return result
 
-        agent = Agent(
-            TestModel(custom_output_text='done'),
-            capabilities=[AfterRunOnly(), Hooks[Any]()],
-            toolsets=[AbsorbingToolset(tools=[])],
-        )
-        result = await agent.run('hello', cancellation_token=token)
+        def never_called(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            raise AssertionError('an unloaded deferred hook is never called')  # pragma: no cover
 
-        assert result.output == 'done'
+        # An unloaded deferred capability's hook calls nothing, so it doesn't change how the run ends either.
+        unloaded = Hooks[Any](run_success=never_called, id='unloaded', description='Never loaded.', defer_loading=True)
+        for capabilities in ([AfterRunOnly(), Hooks[Any]()], [AfterRunOnly(), unloaded]):
+            token = CancellationToken()
+            agent = Agent(
+                TestModel(custom_output_text='done', call_tools=[]),
+                capabilities=capabilities,
+                toolsets=[AbsorbingToolset(tools=[])],
+            )
+            result = await agent.run('hello', cancellation_token=token)
+
+            assert result.output == 'done'
 
     async def test_a_hook_that_absorbs_the_cancellation_does_not_let_the_next_one_commit(self):
         log: list[str] = []

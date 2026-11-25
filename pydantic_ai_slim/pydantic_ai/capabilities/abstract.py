@@ -482,8 +482,8 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     def _has_on_node_run_error(self) -> bool:
         return type(self).on_node_run_error is not AbstractCapability.on_node_run_error
 
-    @property
-    def _has_on_run_success(self) -> bool:
+    def _dispatches_on_run_success(self, ctx: RunContext[AgentDepsT]) -> bool:
+        """Whether `on_run_success` calls a hook for this run, so a run that calls none ends as before it existed."""
         return type(self).on_run_success is not AbstractCapability.on_run_success
 
     @property
