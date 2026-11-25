@@ -45,6 +45,8 @@ class FakeSmol:
         self.vms: dict[str, FakeVM] = {}
         self.connections: list[tuple[str | None, smol.ConnectOptions | None]] = []
         """`(machine_id, conn)` for every create (`None` id) and connect."""
+        self.deletions: list[tuple[str, smol.ConnectOptions | None]] = []
+        """`(machine_id, conn)` for every delete by name."""
         self.commands: list[tuple[list[str], smol.ExecOptions | None]] = []
         self.spawned: list[subprocess.Popen[bytes]] = []
         """Every command's process, in order."""
@@ -52,6 +54,7 @@ class FakeSmol:
         """Answers a command (without the backend's wrapper) instead of running it, unless it returns `None`."""
         self.create_error: smol.SmolError | None = None
         self.connect_error: smol.SmolError | None = None
+        self.delete_error: smol.SmolError | None = None
         self.state_error: smol.SmolError | None = None
         self.open_error: smol.SmolError | None = None
         """When set, `exec_stream` raises it, like the SDK failing to start a command."""
@@ -65,6 +68,9 @@ class FakeSmol:
         self.connect_started = threading.Event()
         self.connect_gate: threading.Event | None = None
         """When set, `connect` boots the VM, then waits for it, to cancel a caller mid-connect."""
+        self.delete_started = threading.Event()
+        self.delete_gate: threading.Event | None = None
+        """When set, `delete_by_name` waits for it before deleting, to cancel a caller mid-delete."""
         self.open_started = threading.Event()
         self.open_gate: threading.Event | None = None
         """When set, `exec_stream` waits for it before starting the command, to cancel a caller mid-open."""
@@ -127,6 +133,20 @@ class FakeMachine:
         if cls.control.connect_gate is not None:
             cls.control.connect_gate.wait()
         return cls(vm)
+
+    @classmethod
+    def delete_by_name(
+        cls, machine_id: str, conn: smol.ConnectOptions | None = None, drain_secs: float | None = None
+    ) -> None:
+        """Delete a VM without booting it, running or not; a missing one is no error, as in the SDK."""
+        cls.control.deletions.append((machine_id, conn))
+        cls.control.delete_started.set()
+        if cls.control.delete_gate is not None:
+            cls.control.delete_gate.wait()
+        if cls.control.delete_error is not None:
+            raise cls.control.delete_error
+        if machine_id in cls.control.vms:
+            cls.control.destroy(machine_id)
 
     def state(self) -> str:
         if self.control.state_error is not None:

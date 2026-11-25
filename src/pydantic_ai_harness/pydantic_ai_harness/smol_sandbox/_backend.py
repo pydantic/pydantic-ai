@@ -29,9 +29,10 @@ command, or error handling:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, TypeVar, cast
 
 import anyio
@@ -90,6 +91,12 @@ _lifecycle: dict[str, asyncio.Task[object]] = {}
 Each one waits for the one started before it, so the latest finishing means they all have, and none
 stops when its callers are cancelled.
 """
+deleting: set[str] = set()
+"""VMs this process is deleting right now.
+
+A command the deletion cuts off ends with a closed connection while smolmachines still reports the VM
+as running, so the backend can't tell from the VM that it's gone until the deletion finishes.
+"""
 _HOST_UNAVAILABLE = frozenset(
     {'UNSUPPORTED_PLATFORM', 'RUNTIME_NOT_INSTALLED', 'KVM_UNAVAILABLE', 'HYPERVISOR_UNAVAILABLE'}
 )
@@ -108,6 +115,39 @@ ASYNCIO_ONLY = '`SmolSandbox` needs the asyncio event loop: the smol SDK runs it
 def local_target() -> smol.ConnectOptions:
     # Pinned, so a `SMOL_CLOUD_TOKEN` in the environment can't move the workspace to Smol Cloud.
     return smol.ConnectOptions(target='local')
+
+
+def check_allowed_hosts(allow_internet_access: bool, allowed_hosts: Sequence[str] | None) -> None:
+    """Raise `ValueError` for an allow-list that wouldn't apply."""
+    if allowed_hosts is None:
+        return
+    if isinstance(allowed_hosts, str) or not all(type(host) is str and host for host in allowed_hosts):
+        raise ValueError('allowed_hosts must be a sequence of non-empty host, IP or CIDR strings')
+    if not allowed_hosts or not allow_internet_access:
+        # smolvm reads an empty allow-list as no restriction.
+        raise ValueError('allowed_hosts needs allow_internet_access=True and at least one host')
+
+
+def resources(
+    cpus: int | None, memory_mb: int | None, allow_internet_access: bool, allowed_hosts: Sequence[str] | None
+) -> smol.ResourceSpec:
+    """The resources a new VM gets.
+
+    smolvm scopes egress to hostnames (and their subdomains) and to CIDR ranges separately, so each
+    entry goes to whichever list it parses as; a bare IP address is a single-address range.
+    """
+    check_allowed_hosts(allow_internet_access, allowed_hosts)
+    if allowed_hosts is None:
+        return smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, network=allow_internet_access)
+    hosts: list[str] = []
+    cidrs: list[str] = []
+    for host in allowed_hosts:
+        try:
+            cidrs.append(str(ipaddress.ip_network(host, strict=False)))
+        except ValueError:
+            hosts.append(host)
+    # Either list alone turns networking on, scoped to the lists; `network` would lift the scope.
+    return smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, allow_hosts=hosts or None, allow_cidrs=cidrs or None)
 
 
 def check_ref(ref: WorkspaceRef) -> None:
@@ -240,8 +280,11 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
             Alpine Linux root filesystem without pulling anything, unless `desktop` is set.
         cpus: vCPUs for a new VM; smolvm's default when `None`.
         memory_mb: Memory for a new VM in MiB; smolvm's default when `None`.
-        allow_internet_access: Whether a new VM gets unrestricted outbound network access, made from
-            this machine's network: the internet, but also its local network and services.
+        allow_internet_access: Whether a new VM gets outbound network access, made from this machine's
+            network: without `allowed_hosts`, the internet, but also its local network and services.
+        allowed_hosts: With `allow_internet_access`, the only hosts, IPs or CIDRs a new VM can connect to; a host
+            covers its subdomains, and names are checked when the VM looks them up, so content a host serves from
+            another domain, such as a CDN, needs that domain too. `None` leaves access unrestricted.
         working_dir: Absolute directory commands start in and relative paths resolve against, created
             if missing when the backend first reaches the VM; `None` uses the VM's own, `/` on the
             default image.
@@ -261,6 +304,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         cpus: int | None = None,
         memory_mb: int | None = None,
         allow_internet_access: bool = False,
+        allowed_hosts: Sequence[str] | None = None,
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
         desktop: bool | tuple[int, int] = False,
@@ -274,7 +318,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         self._ref = ref if sandbox is None else WorkspaceRef(provider='smol', id=sandbox.id)
         self._passed_in = sandbox is not None
         self._image = DEFAULT_DESKTOP_BASE_IMAGE if image is None and desktop else image
-        self._resources = smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, network=allow_internet_access)
+        self._resources = resources(cpus, memory_mb, allow_internet_access, allowed_hosts)
         self._working_dir = absolute_path('working_dir', working_dir)
         self._display = x11_display(
             self._run_argv,
@@ -455,6 +499,8 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
         The VM is probed only after a failure, to keep the round trip off successful commands; a probe
         that fails leaves the original error to propagate rather than ending the run on a guess.
         """
+        if machine.id in deleting:
+            return WorkspaceUnavailableError(_gone_message(machine.id))
         # Even a `NOT_FOUND` is checked: the error's code comes from its text, which may be the guest's.
         try:
             state = await asyncio.to_thread(machine.state)  # noqa: TID251  (not converted to anyio yet)

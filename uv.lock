@@ -6749,7 +6749,7 @@ name = "protobuf-py"
 version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "protobuf-py-ext", marker = "(platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'x86_64' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (platform_machine == 'AMD64' and platform_python_implementation == 'CPython' and sys_platform == 'win32') or (platform_machine == 'ARM64' and platform_python_implementation == 'CPython' and sys_platform == 'win32')" },
+    { name = "protobuf-py-ext", marker = "platform_machine == 'arm64' and platform_python_implementation == 'CPython' and sys_platform == 'darwin' or (platform_machine == 'aarch64' or platform_machine == 'x86_64') and platform_python_implementation == 'CPython' and sys_platform == 'linux' or (platform_machine == 'AMD64' or platform_machine == 'ARM64') and platform_python_implementation == 'CPython' and sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/72/ed/02fd902d9c51b7ff53dfc9a745eb11490722edfd30073af889e171f07b8e/protobuf_py-0.1.1.tar.gz", hash = "sha256:6bd08ac4d8f1661965bbe2685429d79043704cdd1ee720a7a89617331742240b", size = 133525, upload-time = "2026-06-24T19:02:15.271Z" }
 wheels = [
@@ -7394,7 +7394,7 @@ boxd = [
     { name = "boxd" },
 ]
 boxlite = [
-    { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux')" },
+    { name = "boxlite", marker = "python_full_version < '3.15' and ((platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux'))" },
 ]
 cdp-browser = [
     { name = "idna" },
@@ -7515,7 +7515,7 @@ slack = [
     { name = "pydantic-ai-slim", extra = ["mcp"] },
 ]
 smol = [
-    { name = "smolmachines", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'aarch64' and sys_platform == 'linux') or (platform_machine == 'x86_64' and sys_platform == 'linux')" },
+    { name = "smolmachines", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' or (platform_machine == 'aarch64' or platform_machine == 'x86_64') and sys_platform == 'linux'" },
 ]
 sprites = [
     { name = "sprites-py" },
@@ -7539,7 +7539,7 @@ requires-dist = [
     { name = "aws-durable-execution-sdk-python", marker = "python_full_version >= '3.11' and extra == 'aws-lambda'", specifier = ">=1.7.0,<4" },
     { name = "beartype", marker = "python_full_version >= '3.15' and extra == 'stackone'", specifier = ">=0.23.0rc2" },
     { name = "boxd", marker = "extra == 'boxd'", specifier = ">=0.3.3,<0.4" },
-    { name = "boxlite", marker = "(python_full_version < '3.15' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite')", specifier = ">=0.10.7,<0.11" },
+    { name = "boxlite", marker = "python_full_version < '3.15' and ((platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'boxlite') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'boxlite') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'boxlite'))", specifier = ">=0.10.7,<0.11" },
     { name = "browser-use", marker = "python_full_version >= '3.11' and extra == 'browser-use'", specifier = ">=0.13.6,<0.14" },
     { name = "daytona", marker = "extra == 'daytona'", specifier = ">=0.226.1,<1" },
     { name = "durabletask", marker = "extra == 'azure-durable-task'", specifier = ">=1.13.0,<2" },
@@ -7593,7 +7593,7 @@ requires-dist = [
     { name = "pyyaml", marker = "extra == 'skills'", specifier = ">=6.0.2" },
     { name = "render", marker = "extra == 'render'", specifier = ">=1.6.0" },
     { name = "ripgrep", marker = "sys_platform != 'android' and extra == 'coder'", specifier = "==14.1.0" },
-    { name = "smolmachines", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'smol') or (platform_machine == 'aarch64' and sys_platform == 'linux' and extra == 'smol') or (platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'smol')", specifier = ">=1.22.2,<2" },
+    { name = "smolmachines", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'smol' or (platform_machine == 'aarch64' or platform_machine == 'x86_64') and sys_platform == 'linux' and extra == 'smol'", specifier = ">=1.28.1,<2" },
     { name = "sprites-py", marker = "extra == 'sprites'", specifier = ">=0.7.0,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender'", specifier = ">=0.7.3,<0.8" },
     { name = "stackone-defender", marker = "python_full_version >= '3.11' and extra == 'prompt-injection-defender-ml'", specifier = ">=0.7.3,<0.8" },
@@ -7773,8 +7773,8 @@ groq = [
     { name = "groq" },
 ]
 huggingface = [
-    { name = "hf-xet", version = "1.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.14' and platform_machine == 'AMD64') or (python_full_version >= '3.14' and platform_machine == 'aarch64') or (python_full_version >= '3.14' and platform_machine == 'amd64') or (python_full_version >= '3.14' and platform_machine == 'arm64') or (python_full_version >= '3.14' and platform_machine == 'x86_64')" },
-    { name = "hf-xet", version = "1.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and platform_machine == 'AMD64') or (python_full_version < '3.14' and platform_machine == 'aarch64') or (python_full_version < '3.14' and platform_machine == 'amd64') or (python_full_version < '3.14' and platform_machine == 'arm64') or (python_full_version < '3.14' and platform_machine == 'x86_64')" },
+    { name = "hf-xet", version = "1.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and (platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64')" },
+    { name = "hf-xet", version = "1.4.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' and (platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64')" },
     { name = "huggingface-hub", version = "1.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "huggingface-hub", version = "1.16.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
 ]
@@ -7879,7 +7879,7 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.30.0,<3" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0,<2" },
-    { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'huggingface') or (platform_machine == 'aarch64' and extra == 'huggingface') or (platform_machine == 'amd64' and extra == 'huggingface') or (platform_machine == 'arm64' and extra == 'huggingface') or (platform_machine == 'x86_64' and extra == 'huggingface')", specifier = "<1.5.0" },
+    { name = "hf-xet", marker = "(platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64') and extra == 'huggingface'", specifier = "<1.5.0" },
     { name = "httpx", marker = "extra == 'retries'", specifier = ">=0.27" },
     { name = "httpx2", specifier = ">=2.7" },
     { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
@@ -9749,12 +9749,12 @@ wheels = [
 
 [[package]]
 name = "smolmachines"
-version = "1.22.2"
+version = "1.35.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/d6/b50862dfa8118ba15ad01c43f4b9677165a128f2f75dfcdfe828e1df6a3a/smolmachines-1.22.2-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:0a1ed133663e54d9e8e12470d1de400ee5e022a499283e032d3353ed153294ab", size = 50899795, upload-time = "2026-10-02T17:55:01.866Z" },
-    { url = "https://files.pythonhosted.org/packages/e5/21/468bacb86b7045bc32ffe4770b03c976f656ef2476c078067b197f195a70/smolmachines-1.22.2-cp39-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:484529199752a71bf53a7b554ce26a0656f121c990c3efc3271458479fb81e0e", size = 62054058, upload-time = "2026-10-02T17:55:06.28Z" },
-    { url = "https://files.pythonhosted.org/packages/a9/66/a81a18d62620388f359f08a87ba879532e7c2f406efd6820710c55c82d63/smolmachines-1.22.2-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:74b91b61101f2d470e4e1b837d269a6a47b5afe217d5be490354ca91bc004b02", size = 63715792, upload-time = "2026-10-02T17:55:10.379Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/87/8d94abff335cc3e81c2d6814ed2e7fc7314cb1a019195eb5076032769960/smolmachines-1.35.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:03d6c0bf72772479af0fe7c1a4d12e8ceae94a7cb827cb6cf408ea8e4e53a413", size = 45639125, upload-time = "2026-11-14T11:11:24.469Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/c1/ef88112095919c9acaadc59d51c187da09ab77bbe34ccad48a9955f477af/smolmachines-1.35.0-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:3ca2525623c76d5383645f9b4a90e07f5e7048610a299f651bd791918280d311", size = 44308080, upload-time = "2026-11-14T11:11:27.424Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/03/54c36702ea1ce902937b091bc9b578dda7d1000319a25678e04c9bfa13c5/smolmachines-1.35.0-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:78b7be0abfee8be16caf14336358f80eeb6709887a7fd8c752caa9ff6b5c5a2f", size = 46289498, upload-time = "2026-11-14T11:11:30.023Z" },
 ]
 
 [[package]]

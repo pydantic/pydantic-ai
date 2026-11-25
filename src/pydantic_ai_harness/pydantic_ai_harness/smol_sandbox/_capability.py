@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 import smol
@@ -47,7 +47,11 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
     """Memory for a new VM in MiB; smolvm's default when `None`."""
 
     allow_internet_access: bool = False
-    """Whether a new VM gets unrestricted outbound network access, made from this machine's network: the internet, but also its local network and services."""
+    """Whether a new VM gets outbound network access, made from this machine's network: without `allowed_hosts`, the internet, but also its local network and services."""
+
+    allowed_hosts: Sequence[str] | None = None
+    """With `allow_internet_access`, the only hosts, IPs or CIDRs a new VM can connect to, such as
+    `['pypi.org', 'files.pythonhosted.org']`; a host covers its subdomains. `None` leaves access unrestricted."""
 
     working_dir: str | None = '/workspace'
     """Absolute directory commands start in and relative paths resolve against, created if missing; `None` uses the VM's own."""
@@ -77,6 +81,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         check_working_dir(self.working_dir)
         check_path_authority(self.path_authority)
         checked_desktop_size(self.desktop)
+        _backend.check_allowed_hosts(self.allow_internet_access, self.allowed_hosts)
 
     def backend(self, ref: WorkspaceRef) -> SmolSandboxBackend:
         """Attach lazily to an existing VM, one `SmolSandbox` created."""
@@ -87,8 +92,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
         """Delete a VM by ref; one that is already gone returns quietly.
 
         A boot of it still in progress in this process finishes first, and the deletion isn't abandoned
-        when the caller is cancelled. The SDK has no delete by ID for a local VM, so this attaches first,
-        which boots a stopped VM briefly.
+        when the caller is cancelled. A stopped VM is deleted without booting it.
         """
         _backend.check_ref(ref)
         require_asyncio(_backend.ASYNCIO_ONLY)
@@ -112,6 +116,7 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
             cpus=self.cpus,
             memory_mb=self.memory_mb,
             allow_internet_access=self.allow_internet_access,
+            allowed_hosts=self.allowed_hosts,
             working_dir=self.working_dir,
             env=self.env,
             desktop=self.desktop,
@@ -119,10 +124,9 @@ class SmolSandbox(AbstractCapability[AgentDepsT]):
 
 
 async def _delete(machine_id: str) -> None:
+    # Running or not, and quiet when it's already gone.
+    _backend.deleting.add(machine_id)
     try:
-        machine = await asyncio.to_thread(smol.Machine.connect, machine_id, _backend.local_target())  # noqa: TID251  (not converted to anyio yet)
-    except smol.SmolError as error:
-        if error.code == 'NOT_FOUND':
-            return
-        raise
-    await asyncio.to_thread(machine.delete)  # noqa: TID251  (not converted to anyio yet)
+        await asyncio.to_thread(smol.Machine.delete_by_name, machine_id, _backend.local_target())  # noqa: TID251  (not converted to anyio yet)
+    finally:
+        _backend.deleting.discard(machine_id)

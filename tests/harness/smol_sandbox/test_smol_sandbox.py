@@ -131,6 +131,39 @@ async def test_capability_forwards_creation_options_on_the_local_target(
     assert Path(working_dir).is_dir()
 
 
+async def test_allowed_hosts_scope_a_new_vms_network(fake_smol: FakeSmol, working_dir: str) -> None:
+    capability = SmolSandbox[None](
+        allow_internet_access=True,
+        allowed_hosts=['pypi.org', 'files.pythonhosted.org', '10.0.0.0/8', '192.0.2.7', '2001:db8::/32'],
+        working_dir=working_dir,
+    )
+    backend = capability.get_workspace(None, ref=None)  # pyright: ignore[reportArgumentType]
+    assert isinstance(backend, SmolSandboxBackend)
+    await backend.run(['true'])
+    (vm,) = fake_smol.vms.values()
+    # Hosts and ranges go to smolvm's separate lists; `network` would lift the scope, so it stays unset.
+    assert vm.config.resources == smol.ResourceSpec(
+        allow_hosts=['pypi.org', 'files.pythonhosted.org'],
+        allow_cidrs=['10.0.0.0/8', '192.0.2.7/32', '2001:db8::/32'],
+    )
+
+
+@pytest.mark.parametrize(
+    ('kwargs', 'message'),
+    [
+        ({'allowed_hosts': ['pypi.org']}, 'needs allow_internet_access=True'),
+        ({'allow_internet_access': True, 'allowed_hosts': []}, 'at least one host'),
+        ({'allow_internet_access': True, 'allowed_hosts': 'pypi.org'}, 'must be a sequence'),
+        ({'allow_internet_access': True, 'allowed_hosts': ['']}, 'must be a sequence'),
+    ],
+)
+def test_allowed_hosts_that_would_not_apply_are_rejected(kwargs: dict[str, Any], message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        SmolSandbox[None](**kwargs)
+    with pytest.raises(ValueError, match=message):
+        SmolSandboxBackend(**kwargs)
+
+
 async def test_default_vm_has_no_network_and_its_own_resources(fake_smol: FakeSmol, working_dir: str) -> None:
     await SmolSandboxBackend(working_dir=working_dir).get_sandbox()
     (vm,) = fake_smol.vms.values()
@@ -264,17 +297,20 @@ async def test_cleanup_of_a_cancelled_boot_deletes_the_vm(fake_smol: FakeSmol, w
     with anyio.fail_after(5):
         await cleanup
     assert fake_smol.vms == {}
-    assert [machine_id for machine_id, _ in fake_smol.connections] == [None, ref.id]
+    assert [machine_id for machine_id, _ in fake_smol.connections] == [None]
+    assert [(machine_id, conn.target if conn else None) for machine_id, conn in fake_smol.deletions] == [
+        (ref.id, 'local')
+    ]
 
 
 async def test_cancelled_destroy_still_deletes(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
     assert backend.ref is not None
-    # `connect` boots a stopped VM; a cancelled caller must not leave it running undeleted.
-    fake_smol.connect_gate = gate = threading.Event()
+    # A cancelled caller must not leave the VM undeleted.
+    fake_smol.delete_gate = gate = threading.Event()
     caller = asyncio.create_task(SmolSandbox[None]().destroy(backend.ref))
-    assert await asyncio.to_thread(fake_smol.connect_started.wait, 5)
+    assert await asyncio.to_thread(fake_smol.delete_started.wait, 5)
     caller.cancel()
     with pytest.raises(asyncio.CancelledError):
         await caller
@@ -299,7 +335,8 @@ async def test_destroy_during_a_boot_and_a_failed_attach_still_deletes(fake_smol
     with anyio.fail_after(5):
         await asyncio.gather(boot, attach, cleanup)
     assert fake_smol.vms == {}
-    assert [machine_id for machine_id, _ in fake_smol.connections] == [None, booting.ref.id, booting.ref.id]
+    assert [machine_id for machine_id, _ in fake_smol.connections] == [None, booting.ref.id]
+    assert [machine_id for machine_id, _ in fake_smol.deletions] == [booting.ref.id]
 
 
 @pytest.mark.parametrize('opened', [True, False])
@@ -357,6 +394,30 @@ async def test_live_program_named_like_an_option_runs() -> None:  # pragma: lax 
     finally:
         assert backend.ref is not None
         await SmolSandbox[None]().destroy(backend.ref)
+
+
+@pytest.mark.smol_live
+async def test_live_allowed_hosts_reach_only_the_listed_hosts() -> None:  # pragma: lax no cover
+    backend = SmolSandboxBackend(allow_internet_access=True, allowed_hosts=['pypi.org'])
+    fetch = 'wget -q -T 10 -O /dev/null https://{} && echo reached || echo blocked'
+    try:
+        assert (await backend.run(fetch.format('pypi.org'), shell=True)).stdout == 'reached\n'
+        assert (await backend.run(fetch.format('example.com'), shell=True)).stdout == 'blocked\n'
+    finally:
+        assert backend.ref is not None
+        await SmolSandbox[None]().destroy(backend.ref)
+
+
+@pytest.mark.smol_live
+async def test_live_destroy_deletes_a_stopped_vm_without_booting_it() -> None:  # pragma: lax no cover
+    backend = SmolSandboxBackend()
+    await backend.run(['true'])
+    assert backend.ref is not None
+    machine = await asyncio.to_thread(smol.Machine.connect, backend.ref.id, _backend.local_target())
+    await asyncio.to_thread(machine.stop)
+    await SmolSandbox[None]().destroy(backend.ref)
+    listed = await asyncio.to_thread(smol.Machine.list, _backend.local_target())
+    assert backend.ref.id not in {summary.name for summary in listed}
 
 
 @pytest.mark.smol_live
@@ -460,10 +521,24 @@ async def test_destroy_deletes_by_ref_and_ignores_a_missing_vm(fake_smol: FakeSm
         await capability.destroy(WorkspaceRef(provider='e2b', id='sbx'))
 
 
+async def test_destroy_deletes_a_stopped_vm_without_booting_it(fake_smol: FakeSmol, working_dir: str) -> None:
+    backend = SmolSandboxBackend(working_dir=working_dir)
+    await backend.get_sandbox()
+    assert backend.ref is not None
+    (vm,) = fake_smol.vms.values()
+    vm.state = 'stopped'
+    await SmolSandbox[None]().destroy(backend.ref)
+    assert fake_smol.vms == {}
+    # Only the boot connected; deleting it never attached, so it never booted again.
+    assert [machine_id for machine_id, _ in fake_smol.connections] == [None]
+    assert vm.state == 'stopped'
+
+
 async def test_destroy_surfaces_other_failures(fake_smol: FakeSmol, working_dir: str) -> None:
     backend = SmolSandboxBackend(working_dir=working_dir)
     await backend.get_sandbox()
     assert backend.ref is not None
+    fake_smol.delete_error = smol.SmolError('SMOLVM_ERROR', 'engine busy')
     fake_smol.connect_error = smol.SmolError('SMOLVM_ERROR', 'engine busy')
     with pytest.raises(smol.SmolError, match='engine busy'):
         await SmolSandbox[None]().destroy(backend.ref)

@@ -68,7 +68,7 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 
 - `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
 - Its disk stays on this machine after the run. The VM shuts down when your process exits, but nothing deletes it. See [Clean up](#clean-up).
-- It has no network access. Pass `allow_internet_access=True` to install packages or clone repositories. That access is unrestricted and comes from this machine, so the VM can reach anything this machine can, such as your local network or a cloud metadata endpoint.
+- It has no network access. Pass `allow_internet_access=True` to install packages or clone repositories, and `allowed_hosts` to reach only what it needs. See [Network access](#network-access).
 - Commands run as the image's user, usually `root`, in `/workspace`, which is created if missing.
 - Without an `image`, the VM runs smolvm's own Alpine Linux, which has BusyBox but no Python, git or ripgrep. An `image` is any OCI image with a POSIX `/bin/sh`; smolvm pulls it the first time.
 
@@ -159,7 +159,7 @@ The agent can type only ASCII: an action that types or presses a character such 
 
 ## Clean up
 
-Delete a VM and its disk with the ref you stored. A VM that is already gone returns quietly. A stopped VM is booted briefly first, because smolmachines can't delete a local VM without attaching to it:
+Delete a VM and its disk with the ref you stored, running or stopped; a stopped VM isn't booted to delete it. A VM that is already gone returns quietly:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -204,6 +204,26 @@ If your program stops before it stores the ref, for example after a crash or Ctr
 
 Then delete it: `await SmolSandbox().destroy(WorkspaceRef(provider='smol', id='<id>'))`.
 
+## Network access
+
+```python {names="defined"}
+from pydantic_ai import Agent
+from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.smol_sandbox import SmolSandbox
+
+sandbox = SmolSandbox(
+    image='python:3.12-alpine',
+    allow_internet_access=True,
+    allowed_hosts=['pypi.org', 'files.pythonhosted.org'],
+)
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[sandbox, Coder()])
+result = agent.run_sync('Install requests and check that it imports.')
+```
+
+With `allow_internet_access=True` alone, the VM can connect anywhere this machine can, including your local network and services and a cloud metadata endpoint.
+
+`allowed_hosts` limits it to the hostnames, IP addresses and CIDR ranges you list. A hostname covers its subdomains, and it's checked when the VM looks the name up, so content a host serves from another domain, such as a CDN, needs that domain listed too. smolvm's [networking docs](https://github.com/smol-machines/smolvm/blob/main/docs/throwaway-machine/README.md) describe how it matches them.
+
 ## Use a VM you already have
 
 Pass one of these as `workspace=`:
@@ -236,14 +256,15 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 | `image` | OCI image for a new VM. Default: `None`, smolvm's own Alpine Linux, or `debian:bookworm-slim` with `desktop`. |
 | `cpus` | vCPUs for a new VM. Default: `None`, smolvm's default. |
 | `memory_mb` | Memory for a new VM in MiB. Default: `None`, smolvm's default. |
-| `allow_internet_access` | Whether a new VM has unrestricted outbound network access, from this machine's network. Default: `False`. |
+| `allow_internet_access` | Whether a new VM has outbound network access, from this machine's network. Default: `False`. |
+| `allowed_hosts` | With `allow_internet_access`, the only hostnames, IP addresses or CIDR ranges a new VM can connect to. See [Network access](#network-access). Default: `None`, no restriction. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`. `None` uses the VM's own, `/` without an image. |
 | `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the VM. The agent's commands can read these, so leave out secrets it shouldn't see. |
 | `desktop` | Give the VM a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 | `authority` | Who wrote the VM's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are VM paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`image`, `cpus`, `memory_mb` and `allow_internet_access` only shape a new VM. `working_dir` and `env` apply to every command. They and `desktop` also apply after you reattach.
+`image`, `cpus`, `memory_mb`, `allow_internet_access` and `allowed_hosts` only shape a new VM. `working_dir` and `env` apply to every command. They and `desktop` also apply after you reattach.
 
 ## Limits
 
