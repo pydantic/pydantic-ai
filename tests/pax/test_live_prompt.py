@@ -625,7 +625,7 @@ async def test_completion_iteration_is_bounded_before_materializing() -> None:
             assert live.buffer.text == '/many '
 
 
-async def test_recalled_history_gets_completions_and_completed_draft_survives_navigation() -> None:
+async def test_recalled_completion_preserves_the_nonempty_draft_and_is_undoable() -> None:
     ready = anyio.Event()
 
     class Output(io.StringIO):
@@ -642,10 +642,12 @@ async def test_recalled_history_gets_completions_and_completed_draft_survives_na
         live.feed('tab')
         assert live.buffer.text == '/help'
         live.feed('escape')
-        live.feed('up')
-        assert live.buffer.text == '/he'
         live.feed('down')
+        assert live.buffer.text == 'original draft'
+        live.feed('ctrl-z')
         assert live.buffer.text == '/help'
+        live.feed('ctrl-y')
+        assert live.buffer.text == 'original draft'
 
 
 async def popup_shows(live: LivePrompt, text: str) -> None:
@@ -712,6 +714,66 @@ async def test_history_walk_keeps_arrows_through_recalled_commands() -> None:
         assert live.buffer.text == 'newest'
         live.feed('down')
         assert live.buffer.text == 'draft'
+
+
+async def test_edited_recalled_command_keeps_history_arrows_until_tab_selects() -> None:
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['oldest', '/h']
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed('e')
+        await popup_shows(live, 'Hello command')
+        assert highlighted(live) == []
+        live.feed('up')
+        assert live.buffer.text == 'oldest'
+        live.feed('down')
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+
+    async with editor() as (live, _, _):
+        live.commands.register(Command(name='hello', description='Hello command', handler=lambda args: 'hi'))
+        live.buffer.history = ['/h']
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed('e')
+        await popup_shows(live, 'Hello command')
+        live.feed('tab')
+        assert highlighted(live)[0].startswith('/help ')
+        live.feed('down')
+        assert live.buffer.text == '/he'
+        assert highlighted(live)[0].startswith('/hello ')
+        live.feed('escape')
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+        live.feed('ctrl-z')
+        assert live.buffer.text == '/he'
+
+
+async def test_edited_multiline_recall_restores_draft_only_at_the_boundary() -> None:
+    async with editor() as (live, _, _):
+        live.buffer.history = ['first\nsecond']
+        live.buffer.insert('draft')
+        live.feed('up')
+        live.feed('x')
+        live.feed('up')
+        assert (live.buffer.text, live.buffer.cursor) == ('first\nsecondx', 5)
+        live.feed('down')
+        assert live.buffer.text == 'first\nsecondx'
+        live.feed('down')
+        assert live.buffer.text == 'draft'
+        live.feed('ctrl-z')
+        assert live.buffer.text == 'first\nsecondx'
+        live.feed('ctrl-y')
+        live.feed('enter')
+        assert await live.read() == 'draft'
+        for key in ('ctrl-z', 'ctrl-y'):
+            live.feed(key)
+            assert live.buffer.text == ''
+        live.feed('up')
+        live.feed('x')
+        live.feed('down')
+        assert live.buffer.text == 'draftx'
 
 
 async def test_tab_hands_arrows_to_popup_during_history_walk() -> None:
@@ -1004,7 +1066,7 @@ async def test_windows_ctrl_enter_steers_and_shift_enter_inserts_a_newline(shift
         if windows:
             assert await live.read() == 'one\ntwo'
         else:
-            # Ctrl+Enter is Enter and Ctrl-J a newline, as before.
+            # Ctrl+Enter is Enter and Ctrl+J a newline, as before.
             assert await live.read() == 'steer'
             assert await live.read() == 'LF\none\ntwo'
     assert steered == (['steer', 'LF'] if windows else [])

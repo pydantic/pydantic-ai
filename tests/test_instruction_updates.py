@@ -15,7 +15,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
 from pydantic_ai._instructions import recorded_prefix
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ModelFallback, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -47,6 +47,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -1093,6 +1094,233 @@ async def test_instruction_updates_suspended_resume_after_a_rewritten_block_chan
         'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.'
         '\n\nTerse.'
     )
+
+
+class OutsidePrefixModel(FunctionModel):
+    """A model that reads dynamic rewrite-mode instructions outside the cached prefix."""
+
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        return True
+
+
+def answer_ok(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('ok')])
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+async def test_instruction_updates_rewrite_outside_prefix_keeps_the_window():
+    """A dynamic rewrite-mode block can change, disappear and return without moving the prefix or the recorded changes.
+
+    A unit test: only the window bookkeeping is under test, and the wire form is pinned in `test_openai_prompt_cache`.
+    """
+    agent = Agent(WrapperModel(OutsidePrefixModel(answer_ok)), instructions='Stable.', deps_type=Settings)
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    history: list[ModelMessage] = []
+    for settings in [
+        Settings('Terse.', 'A'),
+        Settings('Terse.', 'B'),
+        Settings('Chatty.', 'B'),
+        Settings('', 'B'),
+        Settings('Back.', 'C'),
+    ]:
+        history = (await agent.run('Continue.', deps=settings, message_history=history)).all_messages()
+
+    assert [
+        (
+            request.instructions,
+            baseline_of(request) is not None,
+            [part.content for part in request.parts if isinstance(part, InstructionDeltaPart)],
+        )
+        for request in history
+        if isinstance(request, ModelRequest)
+    ] == [
+        ('Stable.\n\nA\n\nTerse.', True, []),
+        ('Stable.\n\nA\n\nTerse.', False, ['B']),
+        ('Stable.\n\nA\n\nChatty.', False, []),
+        ('Stable.\n\nA', False, []),
+        ('Stable.\n\nA\n\nBack.', False, ['C']),
+    ]
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+@pytest.mark.parametrize(
+    ('first', 'second'),
+    [
+        pytest.param(('Stable.', 'append'), ('Changed.', 'append'), id='literal'),
+        pytest.param(('Stable.', 'append'), ('Stable.', 'rewrite'), id='to-rewrite'),
+        pytest.param(('Stable.', 'rewrite'), ('Stable.', 'append'), id='to-append'),
+    ],
+)
+async def test_instruction_updates_rewrite_outside_prefix_other_changes_open_a_window(
+    first: tuple[str, Literal['append', 'rewrite']], second: tuple[str, Literal['append', 'rewrite']]
+):
+    """A changed literal block or a changed policy still moves the prefix, so the request opens a new window."""
+
+    def build(literal: str, policy: Literal['append', 'rewrite']) -> Agent[None, str]:
+        agent = Agent(OutsidePrefixModel(answer_ok), instructions=literal)
+
+        @agent.instructions(name='anchor', on_change='append')
+        def anchor() -> str:
+            return 'Anchor.'
+
+        @agent.instructions(name='flip')
+        def flip() -> InstructionPart:
+            return InstructionPart(content='Flip.', on_change=policy)
+
+        return agent
+
+    first_run = await build(*first).run('Continue.')
+    second_run = await build(*second).run('Continue.', message_history=first_run.all_messages())
+
+    requests = [message for message in second_run.all_messages() if isinstance(message, ModelRequest)]
+    # A new baseline records the current values, so the second request leads with its own literal block.
+    assert (baseline_of(requests[1]) is not None, requests[1].instructions) == (
+        True,
+        f'{second[0]}\n\nAnchor.\n\nFlip.',
+    )
+
+
+def test_instruction_updates_recorded_prefix_with_rewrites_outside_prefix():
+    """A request whose dynamic block changed in the window recorded it after the blocks the prefix keeps."""
+    literal = InstructionPart(content='Stable.')
+    style = InstructionPart(content='Terse.', dynamic=True)
+    state = InstructionPart(content='A', on_change='append', name='state', id=STATE_ID)
+    baseline = InstructionBaselinePart(instructions=[InstructionDigest.of(literal), InstructionDigest.of(style), state])
+
+    outside = {'rewrites_outside_prefix': True}
+    assert recorded_prefix(baseline, 'Stable.\n\nTerse.\n\nA', **outside) == [literal, style, state]
+    assert recorded_prefix(baseline, 'Stable.\n\nA\n\nChatty.', **outside) == [
+        literal,
+        state,
+        InstructionPart(content='Chatty.', dynamic=True),
+    ]
+    assert recorded_prefix(baseline, 'Stable.\n\nA', **outside) == [literal, state]
+    assert recorded_prefix(baseline, 'Other.\n\nA\n\nChatty.', **outside) is None
+    assert recorded_prefix(baseline, 'Stable.\n\nA\n\nChatty.') is None
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+async def test_instruction_updates_suspended_resume_after_a_rewrite_outside_prefix():
+    """A resumed turn keeps the append-mode block and the dynamic text its request was sent."""
+    agent = Agent(OutsidePrefixModel(answer_ok), deps_type=Settings)
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    first = await agent.run('Continue.', deps=Settings('Terse.', 'A'))
+    second = await agent.run('Continue.', deps=Settings('Chatty.', 'A'), message_history=first.all_messages())
+    history = ModelMessagesTypeAdapter.validate_json(second.all_messages_json())
+    assert history == second.all_messages()
+    history[-1] = scripted_response(
+        texts=['partial'], state='suspended', provider_response_id='paused', input_tokens=1, output_tokens=1
+    )
+    captured_parts: list[list[InstructionPart] | None] = []
+
+    class ResumeModel(ScriptedContinuationModel):
+        @property
+        def _rewrite_instructions_outside_prefix(self) -> bool:
+            return True
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            captured_parts.append(model_request_parameters.instruction_parts)
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    model = ResumeModel(
+        responses=[scripted_response(texts=['done'], provider_response_id='complete', input_tokens=1, output_tokens=1)]
+    )
+    await agent.run(model=model, deps=Settings('Later.', 'A'), message_history=history)
+    assert captured_parts == [
+        [
+            InstructionPart(content='A', dynamic=True, on_change='append', name='state', id=STATE_ID),
+            InstructionPart(content='Chatty.', dynamic=True),
+        ]
+    ]
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+@pytest.mark.parametrize('primary_keeps_window', [True, False])
+async def test_instruction_updates_attempt_at_another_model_records_its_window(primary_keeps_window: bool):
+    """An attempt moved to a model with the other window rule records the window that model reads."""
+    failing = False
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if failing:
+            raise ModelHTTPError(503, 'primary')
+        return ModelResponse(parts=[TextPart('ok')])
+
+    first_model = OutsidePrefixModel(primary) if primary_keeps_window else FunctionModel(primary)
+    second_model = FunctionModel(answer_ok) if primary_keeps_window else OutsidePrefixModel(answer_ok)
+    agent = Agent(first_model, deps_type=Settings, capabilities=[ModelFallback(second_model)])
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    first = await agent.run('Continue.', deps=Settings('Terse.', 'A'))
+    second = await agent.run('Continue.', deps=Settings('Terse.', 'B'), message_history=first.all_messages())
+    failing = True
+    third = await agent.run('Continue.', deps=Settings('Chatty.', 'B'), message_history=second.all_messages())
+
+    last = [message for message in third.all_messages() if isinstance(message, ModelRequest)][-1]
+    if primary_keeps_window:
+        assert recorded(baseline_of(last)) is not None
+        assert last.instructions == 'B\n\nChatty.'
+    else:
+        assert baseline_of(last) is None
+        assert last.instructions == 'A\n\nChatty.'
+
+
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
+async def test_instruction_updates_hook_changed_parts_keep_the_shared_window_rule():
+    """Parts a hook changed can't be recorded again for another model, so they open a window on every model."""
+
+    async def add_part(ctx: RunContext[Settings], request: ModelRequestContext) -> ModelRequestContext:
+        parameters = request.model_request_parameters
+        request.model_request_parameters = replace(
+            parameters, instruction_parts=[*(parameters.instruction_parts or []), InstructionPart(content='Hook.')]
+        )
+        return request
+
+    agent = Agent(
+        OutsidePrefixModel(answer_ok), deps_type=Settings, capabilities=[Hooks(before_model_request=add_part)]
+    )
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    first = await agent.run('Continue.', deps=Settings('Terse.', 'A'))
+    second = await agent.run('Continue.', deps=Settings('Chatty.', 'A'), message_history=first.all_messages())
+
+    requests = [message for message in second.all_messages() if isinstance(message, ModelRequest)]
+    assert baseline_of(requests[1]) is not None
 
 
 @pytest.mark.parametrize('inline', [False, True])

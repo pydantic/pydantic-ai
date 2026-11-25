@@ -366,6 +366,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     through a custom `base_url`. A server that serves these names and reports per-chunk deltas instead would have its
     usage under-reported, so turn this off in the model's profile."""
 
+    openai_chat_completion_tokens_omit_reasoning: bool
+    """Whether Chat Completions `usage` leaves reasoning tokens out of `completion_tokens` and counts them only in `total_tokens`. Default: `False`.
+
+    When enabled and `usage` carries no `completion_tokens_details`, the amount by which `total_tokens` exceeds
+    `prompt_tokens + completion_tokens` counts as output and reasoning tokens, in each streamed chunk too.
+
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] enables it for `gemini*` model names, including
+    through a custom `base_url`. A server that serves these names and counts anything else in that gap would have its
+    output tokens over-reported, so turn this off in the model's profile."""
+
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
 

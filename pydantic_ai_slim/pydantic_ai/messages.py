@@ -3756,7 +3756,8 @@ class InstructionDigest:
     """A rewrite-mode instruction block as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] records it.
 
     Only what decides whether the block is unchanged: a later request can keep its window's prefix only if
-    every rewrite-mode block is still the same, in the same place.
+    every rewrite-mode block is still the same, in the same place. On a model that reads dynamic rewrite-mode
+    blocks outside the cached prefix, that applies to the literal ones.
     """
 
     id: SerializedInstructionId = None
@@ -3800,7 +3801,8 @@ class InstructionBaselinePart:
     prefix has to change anyway (a rewritten block changed, a block's policy changed, compaction). Every
     request in the window is sent the same prefix, with each append-mode block at its value here, followed in
     history by the [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s since. An empty
-    `instructions` list ends the window, so earlier changes stop applying.
+    `instructions` list ends the window, so earlier changes stop applying. On a model that reads dynamic
+    rewrite-mode blocks outside the cached prefix, a change to one of those doesn't open a window.
 
     It's never sent to a model: it records what the request's
     [`instructions`][pydantic_ai.messages.ModelRequest.instructions] were made of, so a later request can

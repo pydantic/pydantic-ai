@@ -262,6 +262,19 @@ class ModelProfile(TypedDict, total=False):
     [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
     """
 
+    needs_json_string_tool_returns: bool
+    """Whether a tool's text output is sent as an escaped JSON string field. Default: `False`.
+
+    When `True`, `Model.prepare_messages` sends the content of each successful `ToolReturnPart` whose content is a
+    string as `{"tool_output": "..."}`, with the text JSON-escaped, so its newlines and quotes don't read as plain
+    lines in the tool message. A string that holds JSON is wrapped the same way, so it's escaped a second time, which
+    measured no worse on Qwen3 Next than the JSON as is. Only the outgoing copy changes: the history keeps the tool's
+    output as returned. Lookalike notes are still decided on the output as returned.
+
+    Set for Qwen3 Next, which treated a tool's output as information more reliably in this form than as plain text,
+    on every route measured, at a few tokens per tool result and with the cached prefix unchanged.
+    """
+
     supports_request_scoped_system_prompts: bool
     """Whether the provider's API keeps a request-scoped `SystemPromptPart` in the conversation and stops rendering it itself. Default: `False`.
 
@@ -458,7 +471,7 @@ class ModelProfile(TypedDict, total=False):
     key, by reading it from the profile of the model handling the request: see
     [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does.
 
-    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss. Evidence: in a Terminal-Bench ablation of
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series. Evidence: in a Terminal-Bench ablation of
     `Coder`'s instructions (24 tasks, one trial each, November 2026), GPT-6.1 Terra without its instruction against
     unrequested delegation delegated in all 24 tasks (524 `delegate_task` calls, against none with it), making about 9
     times as many tool calls at about 5.5 times the cost. Claude Sonnet 5.5 didn't delegate with or without it.

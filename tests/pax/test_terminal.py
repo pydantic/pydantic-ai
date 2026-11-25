@@ -479,7 +479,7 @@ async def test_live_editor_interrupts_slow_turn_hooks(
     assert ('Done in ' in output.getvalue()) is (phase == 'end')  # Only a finished turn says it is done.
     if phase == 'start':
         assert 'Interrupted. Type what to do instead.' in output.getvalue()
-        assert 'Press Ctrl-C again' not in output.getvalue()
+        assert 'Press Ctrl+C again' not in output.getvalue()
         assert 'completed' not in output.getvalue()
 
 

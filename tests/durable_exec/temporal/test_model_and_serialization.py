@@ -64,7 +64,9 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelRateLimitError,
     ModelRequestRejectedError,
@@ -1196,6 +1198,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
+        '_output_submitter',  # live view of the workflow's graph state; output can only be submitted from workflow code
         'workspace',  # live facade cannot cross the activity boundary; only a concrete ref is optionally carried
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',
@@ -1900,6 +1903,35 @@ def test_temporal_model_context_window_follows_active_model():
         # An unregistered model ID resolves through profile inference, not the wrapped default's window.
         assert temporal_model.context_window == infer_model_profile('openai:gpt-5').get('context_window')
         assert temporal_model.context_window not in (None, 100)
+
+
+class _OutsidePrefixTestModel(TestModel):
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        return True
+
+
+def test_temporal_model_rewrite_instructions_outside_prefix_follows_active_model():
+    """The instruction window rule comes from the active model, so a run moved off a default that reads dynamic
+    instructions outside the cached prefix keeps the shared rule.
+
+    A raw model string has no model to ask, so it keeps the shared rule, as `Model` does.
+    """
+    temporal_model = TemporalModel(
+        _OutsidePrefixTestModel(model_name='default-model'),
+        activity_name_prefix='test__rewrite_instructions_outside_prefix',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': TestModel(model_name='alt-model')},
+    )
+
+    assert temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('alt'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('openai-responses:gpt-6.2-sol'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
 
 
 def test_temporal_model_model_id_follows_active_model():
@@ -3951,6 +3983,16 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
         ),
         pytest.param(ModelAPIError('gpt-test', 'boom'), 'ModelAPIError', id='base'),
+        pytest.param(
+            ModelEmptyResponseError('gpt-test', 'Streamed response ended without content or tool calls'),
+            'UnexpectedModelBehavior',
+            id='empty-response',
+        ),
+        pytest.param(
+            ModelInvalidResponseError('gpt-test', 'Invalid response', body='<html>Bad gateway</html>'),
+            'UnexpectedModelBehavior',
+            id='invalid-response',
+        ),
         pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
     ],
 )
@@ -3963,6 +4005,7 @@ def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIE
     assert raised.value.type == type_name
     rebuilt = _crossed(error)
     assert type(rebuilt) is type(error)
+    assert str(rebuilt) == str(error)
 
 
 def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():
