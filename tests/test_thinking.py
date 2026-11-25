@@ -3876,7 +3876,7 @@ _CROSS_SCOPE_SUMMARY_CASES = [
         _bedrock_probe('us.openai.gpt-5.6-luna'),
         lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'low'}}),
         False,
-        lambda p: (_bedrock_sent(p) or {}).get('reasoning', {}).get('summary'),
+        lambda p: json.loads(p['body']).get('additionalModelRequestFields', {}).get('reasoning', {}).get('summary'),
         overrides=False,
         marks=_SKIP_WITHOUT_BEDROCK,
     ),
