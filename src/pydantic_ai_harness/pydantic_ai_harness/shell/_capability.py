@@ -9,13 +9,14 @@ from typing import Any
 
 import anyio
 
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._conjoin import RecordsStated, intersection, merged_mapping, union
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness.announce_working_directory import AnnounceWorkingDirectory
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT
 from pydantic_ai_harness.shell._toolset import PERSISTENT_TOOL_NAME, RUN_SCOPED_TOOL_NAMES, ShellToolset
 
@@ -218,6 +219,15 @@ class Shell(RecordsStated, AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail the run at its start when it has no workspace to run commands in."""
         require_workspace(ctx.workspace, 'Shell', ctx.messages)
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        """Bring `AnnounceWorkingDirectory` along; copies from other capabilities merge into one line.
+
+        A deferred one doesn't: naming the directory starts a sandbox the model may never load this capability for.
+        """
+        if self.defer_loading:
+            return self
+        return CombinedCapability([self, AnnounceWorkingDirectory()])
 
     def get_toolset(self) -> ShellToolset[AgentDepsT]:
         """The shell toolset, built once; its `for_run` gives each run a fresh copy."""
