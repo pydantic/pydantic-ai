@@ -136,11 +136,16 @@ def run(*, splash: Splash | None = None) -> None:
         action='store_true',
         help='Install the newest Pax from the updates.channel setting with uv, then exit',
     )
+    parser.add_argument('--version', action='store_true', help='Print the installed Pax version and exit')
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
     parser.add_argument('command', nargs='?', choices=('config', 'plugins', 'sessions', 'update'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = _parse_args(parser)
+    if args.version:
+        # Like argparse's own `version` action, this wins over every other argument.
+        print(_version())
+        return
     _resume_source(args)
     _validate_args(args, parser)
     if args.command == 'sessions':
@@ -343,6 +348,16 @@ def _report_kept_worktree(worktree: 'Worktree | None') -> None:
 def _interrupt_fails(args: argparse.Namespace) -> bool:
     """Whether Ctrl+C ends this launch with status 130: with `--prompt`, `--web`, or `--update`, not in the shell."""
     return args.prompt is not None or args.web or args.update
+
+
+def _version() -> str:
+    """`pax --version`: the command, its installed version, and the commit for a `main` install."""
+    from pydantic_ai_pax.cli.install import command_name
+    from pydantic_ai_pax.cli.self_update import installed
+
+    # `pydantic-clai2` pins `pydantic-ai-pax` exactly, so the version is Pax's under either name.
+    running = installed()
+    return f'{command_name()} {running.version}' + (f' ({running.label})' if running.commit else '')
 
 
 def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:

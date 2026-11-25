@@ -153,7 +153,7 @@ class WorkspaceTools:
             await self.disconnect(workspace_id)
             channel = await workspace_session(self.service, workspace_id, start=start)
             view = SessionView(LocalClient(self.service, channel.session.id))
-            task = asyncio.create_task(view.follow(), name=f'clai2-orchestrator-{workspace_id}')
+            task = asyncio.create_task(view.follow(), name=f'pax-orchestrator-{workspace_id}')
             self.links[workspace_id] = _Link(view=view, task=task, live_id=channel.session.id)
             with anyio.move_on_after(CONNECT_TIMEOUT):
                 await view.ready()
