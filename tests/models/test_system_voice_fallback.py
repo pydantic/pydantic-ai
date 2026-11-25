@@ -576,11 +576,7 @@ def test_the_first_request_renders_the_same_on_every_request():
 @pytest.mark.skipif(not google_available(), reason='google-genai not installed')
 def test_the_announcement_stays_after_an_answered_request_scoped_prompt():
     """A request-scoped prompt stops being sent once answered, but the announcement it brought in stays."""
-    model = GoogleModel(
-        'gemini-3.8-flash',
-        provider=GoogleProvider(api_key='mock-api-key'),
-        settings={'framing_announcement': 'when_needed'},
-    )
+    model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key='mock-api-key'))
     conversation: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('Be brief.'), UserPromptPart('Hi')]),
         ModelResponse(parts=[TextPart('Hello!')]),

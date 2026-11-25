@@ -591,9 +591,9 @@ class OpenAIModelProfile(ModelProfile, total=False):
     lead the input when the chain starts or resends the history, and are left out while it continues: each response's
     history digest records them, so a request with different ones resends the history.
 
-    Set for `gpt-6.2-sol` and `gpt-6.2-astra` on every provider that uses the OpenAI model profile (OpenAI, Azure,
-    Bedrock, Bedrock Mantle, OpenRouter and others), since these models put the top-level `instructions` after
-    `input` and bill them at the uncached rate on every request:
+    Set for `gpt-6.2-sol` and `gpt-6.2-astra` on every Responses API endpoint that serves them (OpenAI, Azure,
+    Bedrock Mantle, ...), since these models put the top-level `instructions` after `input` and bill them at the
+    uncached rate on every request:
     https://developers.openai.com/api/docs/guides/prompt-caching#how-prefix-matching-works.
     """
 

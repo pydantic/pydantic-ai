@@ -386,7 +386,6 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
-    _set_gemini_framing_announcement(profile, is_gemma=is_gemma)
     _set_gemini_file_input(profile, is_gemma=is_gemma, is_gemini_2_5=is_gemini_2_5)
     return profile
 
@@ -402,19 +401,6 @@ def google_cloud_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model served by Vertex AI."""
     profile = google_model_profile(model_name)
     return None if profile is None else _with_google_cloud_media_types(profile)
-
-
-def _set_gemini_framing_announcement(profile: ModelProfile, *, is_gemma: bool) -> None:
-    """Send the announcement of what `<system>` blocks mean from the first request on Gemini.
-
-    Gemini has no mid-conversation system role, so the announcement goes in `system_instruction`, and changing that
-    loses the whole cached prefix, tool definitions included. Sent from the first request, where nothing is cached
-    yet, it keeps `system_instruction` the same for the whole conversation. On runs with nothing for it to explain,
-    Gemini 3.8 Flash and Gemini 4 Argon answered, called tools, kept to the system prompt and read the cache the same
-    with it as without, and never mentioned it. Gemma wasn't measured.
-    """
-    if not is_gemma:
-        profile['default_framing_announcement'] = 'always'
 
 
 def _set_gemini_file_input(profile: ModelProfile, *, is_gemma: bool, is_gemini_2_5: bool) -> None:

@@ -956,7 +956,6 @@ def test_google_gemini_3_pro():
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
-            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -989,7 +988,6 @@ def test_google_gemini_2_5_flash():
             'google_web_search_billed_per_prompt': True,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
-            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -1025,7 +1023,6 @@ def test_google_gemini_2_5_flash_image():
             'google_web_search_billed_per_prompt': True,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
-            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -1085,7 +1082,6 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'google_supports_penalties': False,
             'google_supports_computer_use': False,
             'supports_tool_return_schema': True,
-            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2080,7 +2076,6 @@ def test_openrouter_google_gemini_3_pro():
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
-            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2144,7 +2139,6 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_penalties': False,
             'google_supports_computer_use': True,
             'openai_chat_supports_web_search': True,
-            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2397,7 +2391,6 @@ def test_github_copilot_google_gemini_3_pro():
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
-            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -4356,7 +4349,6 @@ def test_vercel_vertex_gemini():
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
-            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -4592,7 +4584,6 @@ def test_otari_gemini():
             'google_web_search_billed_per_prompt': True,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
-            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
