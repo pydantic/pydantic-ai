@@ -306,8 +306,8 @@ class SandboxPlugin(Plugin):
         """Each sandbox this session made or opened."""
         self._armed_for: str | None = None
         """The conversation whose next `/sandbox PROVIDER` gets a desktop, as `/computer-use` ran before it."""
-        self._minting: asyncio.Task[None] | None = None
-        """The background mint a shown conversation starts, so resuming one does not wait for its desktop to boot."""
+        self._minting: dict[WorkspaceRef, asyncio.Task[None]] = {}
+        """Each sandbox's background mint, so neither a resume nor a turn waits for its desktop to boot."""
 
     def get_capabilities(self) -> Sequence[AbstractCapability[None]]:
         return (
@@ -360,11 +360,10 @@ class SandboxPlugin(Plugin):
             return ''
         return StatusLink(text='watch live', url=sandbox.watch_url)
 
-    async def _mint_watch_link(self) -> None:
+    async def _mint_watch_link(self, sandbox: _Sandbox) -> None:
         """Get the link `watch live` opens when the conversation shown has the desktop on and none is fresh."""
-        sandbox = self.current()
-        provider = sandbox.provider if sandbox is not None else None
-        if sandbox is None or sandbox.deleted or not self._on() or not isinstance(provider, SupportsDesktopUrl):
+        provider = sandbox.provider
+        if sandbox.deleted or not self._on() or not isinstance(provider, SupportsDesktopUrl):
             return
         if not self.full_access():
             # Getting the link starts the desktop, which only `/permissions full` lets the model use.
@@ -388,8 +387,10 @@ class SandboxPlugin(Plugin):
         # it if it is stopped, which a conversation opened only to read must not do.
         if sandbox is None or (reached_only and sandbox.backend is None):
             return
-        if self._minting is None or self._minting.done():
-            self._minting = asyncio.create_task(self._mint_watch_link(), name='pax-watch-live')
+        # One mint per sandbox: another conversation's still running must not stop this one's.
+        running = self._minting.get(sandbox.ref)
+        if running is None or running.done():
+            self._minting[sandbox.ref] = asyncio.create_task(self._mint_watch_link(sandbox), name='pax-watch-live')
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
         del event
@@ -578,9 +579,10 @@ class SandboxPlugin(Plugin):
         return f'Deleted {sandbox.provider.title} sandbox {sandbox.ref.id}. Run /new to start another conversation.'
 
     async def on_session_end(self, event: SessionEnd) -> None:
-        if self._minting is not None:
-            self._minting.cancel()
-            await asyncio.wait([self._minting])
+        if self._minting:
+            for task in self._minting.values():
+                task.cancel()
+            await asyncio.wait(self._minting.values())
         # Only closed: a sandbox is deleted only when the user says so, as its conversation can be resumed.
         for sandbox in list(self._sandboxes.values()):
             with anyio.CancelScope(shield=True):

@@ -548,6 +548,36 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(
     await plugin_of(resumed_loaded).on_session_end(SessionEnd(reason='exit'))
 
 
+async def test_a_link_still_coming_for_one_sandbox_does_not_hold_up_another(
+    checkout: Path, linked: LinkedProvider
+) -> None:
+    loaded = load(checkout)
+    plugin = plugin_of(loaded)
+    shown: list[Transcript] = []
+    for conversation_id in ('a', 'b'):
+        plugin.host.conversation = Transcript(conversation_id=conversation_id)
+        await plugin.computer_use_command(['on'])
+        await plugin.command(['fake'])
+        await anyio.wait_all_tasks_blocked()
+        shown.append(plugin.host.conversation)
+        sandbox_shown = on_screen_sandbox(plugin)
+        sandbox_shown.watch_url = None
+    first, second = shown
+    linked.booted = anyio.Event()
+    for conversation in (first, second):
+        # The first conversation's link is still coming when the second is shown.
+        plugin.host.conversation = conversation
+        await loaded.dispatch(ConversationChanged(conversation_id=conversation.conversation_id, title=None))
+    linked.booted.set()
+    await anyio.wait_all_tasks_blocked()
+    second_link = row(plugin)[1]
+    assert isinstance(second_link, StatusLink) and '/sbx-2/' in second_link.url
+    plugin.host.conversation = first
+    first_link = row(plugin)[1]
+    assert isinstance(first_link, StatusLink) and '/sbx-1/' in first_link.url
+    await plugin.on_session_end(SessionEnd(reason='exit'))
+
+
 async def test_an_expiring_link_is_renewed_before_it_stops_opening(
     checkout: Path, linked: LinkedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
