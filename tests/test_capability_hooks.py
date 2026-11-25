@@ -2858,7 +2858,8 @@ class TestRunSuccessHooks:
             await Agent(TestModel(), capabilities=[Hooks[Any](run_success=absorb)]).run('hello')
         assert log == ['absorbed']
 
-    async def test_an_enclosing_scope_cancelled_during_a_shielded_hook_stops_the_next_one(self):
+    async def test_an_enclosing_scope_cancelled_during_a_hook_stops_the_next_one(self):
+        """The scope catches its own cancellation, whether the hook shielded itself or caught it, and nothing commits."""
         log: list[str] = []
         outer = anyio.CancelScope()
 
@@ -2868,19 +2869,27 @@ class TestRunSuccessHooks:
                 await anyio.lowlevel.checkpoint()
             log.append('shielded')
 
+        async def absorbing_commit(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            outer.cancel()
+            try:
+                await anyio.lowlevel.checkpoint()
+            except asyncio.CancelledError:
+                log.append('absorbed')
+
         async def commit(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
             # Commits without awaiting, so only a checkpoint before it delivers the scope's cancellation.
             log.append('committed')  # pragma: no cover
 
-        agent = Agent(
-            TestModel(), capabilities=[Hooks[Any](run_success=commit), Hooks[Any](run_success=shielded_commit)]
-        )
-        with outer:
-            await agent.run('hello')
-            log.append('returned')  # pragma: no cover
+        for first, logged in ((shielded_commit, 'shielded'), (absorbing_commit, 'absorbed')):
+            log.clear()
+            outer = anyio.CancelScope()
+            agent = Agent(TestModel(), capabilities=[Hooks[Any](run_success=commit), Hooks[Any](run_success=first)])
+            with outer:
+                await agent.run('hello')
+                log.append('returned')  # pragma: no cover
 
-        assert outer.cancelled_caught
-        assert log == ['shielded']
+            assert outer.cancelled_caught
+            assert log == [logged]
 
     async def test_an_agent_run_error_carries_the_runs_conversation(self):
         @dataclass

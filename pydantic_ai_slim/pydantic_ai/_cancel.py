@@ -311,15 +311,16 @@ class RunCancellation:
 async def raise_if_run_cancelled(cancellation: RunCancellation | None) -> None:
     """Re-raise a cancellation of the run that a hook absorbed or shielded itself from, so the run still ends cancelled.
 
-    A first-party request (`cancel()`, a token or the deadline) is read from the run's controller, an external
-    `Task.cancel()` from the task's cancelling count, and a cancelled enclosing `anyio` scope is delivered by a
-    checkpoint, taken only then.
+    A first-party request (`cancel()`, a token or the deadline) is read from the run's controller. A cancelled
+    enclosing `anyio` scope is delivered by a checkpoint, taken only then, so the scope catches its own cancellation
+    (and `anyio.fail_after()` still raises `TimeoutError`). Any other external `Task.cancel()` is read from the task's
+    cancelling count.
     """
     if cancellation is not None and cancellation.cancel_requested:
         raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
-    _utils.raise_if_cancelling()
     if _utils.in_cancelled_anyio_scope():
         await anyio.lowlevel.checkpoint()
+    _utils.raise_if_cancelling()
 
 
 @dataclasses.dataclass
