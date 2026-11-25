@@ -352,7 +352,7 @@ An error raised partway through a response, by the model or around its stream li
 - a capability raises from its [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] hook;
 - under [durable execution](durable_execution/overview.md), the engine cancels the model request: a cancelled Temporal run, a [`request_timeout`](timeouts.md#model-request-deadlines) that Temporal enforces with a workflow timer cancelling the activity, or a cancelled DBOS workflow or Prefect flow. If a fallback then recovers, the next response's start has `replaces`, though the cancelled one never got an end.
 
-  Temporal's default `TRY_CANCEL` cancellation gives a cancelled streaming response no end. With `cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED` in `model_activity_config`, the model-request activity finishes before the workflow moves on, and the response ends as `'interrupted'` with what was streamed so far.
+  A cancelled Temporal streaming response gets no end.
 
 So treat a start with no end as cut short once the run finishes, or once a later start `replaces` it. Under durable execution, an attempt that failed before its first event still gets a `'superseded'` end from the next execution, with no start before it, and an earlier execution that ends after its successor closed it sends a second end for the same origin, so apply the first end of each origin:
 
