@@ -1360,7 +1360,7 @@ async def test_no_content_reaches_telemetry_from_a_lowered_capabilitys_instructi
         received.append(str(messages))
         return ModelResponse(parts=[TextPart(SECRETS['model_text'])])
 
-    lowered = Capability(id='sentinel_lowered_block', instructions=SECRETS['capability_instruction'])
+    lowered = Capability[None](id='sentinel_lowered_block', instructions=SECRETS['capability_instruction'])
     agent = Agent(
         FunctionModel(respond),
         capabilities=[lowered.with_authority('none'), Instrumentation(settings=settings)],
