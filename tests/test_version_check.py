@@ -105,6 +105,7 @@ def test_announced_check_is_made_by_the_next_banner(monkeypatch: pytest.MonkeyPa
             json={
                 'pypi': {
                     'pydantic-ai-slim': {'latest': '2.46.0', 'future-field': 'ignored'},
+                    'pydantic-ai-harness': {'latest': '0.8.0'},
                     # Released together with `pydantic-ai-slim`, but not always installed.
                     'pydantic-ai': {'latest': '99.0.0'},
                     'unknown-package': {'latest': '99.0.0'},
@@ -133,7 +134,7 @@ def test_announced_check_is_made_by_the_next_banner(monkeypatch: pytest.MonkeyPa
         default_headers,
     )
     assert json.loads(cache_file.read_text(encoding='utf-8')) == snapshot(
-        {'checked_at': 2000000000.0, 'latest': {'pydantic-ai': '2.46.0'}}
+        {'checked_at': 2000000000.0, 'latest': {'pydantic-ai': '2.46.0', 'pydantic-ai-harness': '0.8.0'}}
     )
 
 
