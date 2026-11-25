@@ -26,6 +26,13 @@ If you're upgrading across several V2 minor releases at once, these are the chan
 
 Release notes have had a Compatibility Notes section since v2.33.0, so for v2.1.0 through v2.32.2, read each release's notes on GitHub Releases. Later releases not listed below have no compatibility notes.
 
+### [v2.74.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.74.0)
+
+- Add the `computer` tool contract to core: `pydantic_ai.computer_use` and [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]. Adds `ComputerTool` to `NATIVE_TOOLS_REQUIRING_CONFIG`: it needs a `computer` tool to run its calls ([#11006](https://github.com/pydantic/pydantic-ai/pull/11006))
+- Send static instructions as leading `input` messages on GPT-6.2, which never caches top-level `instructions`. Continuing a GPT-6.2 response through an explicit [`openai_previous_response_id='resp_…'`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id] without its `message_history` now inherits that response's static instructions. Pass the `message_history`, or [`profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=False)`][pydantic_ai.profiles.openai.OpenAIModelProfile] ([#14095](https://github.com/pydantic/pydantic-ai/pull/14095))
+- Stop summing Gemini's running usage totals when streaming through [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. Streaming a `gemini*` model through [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] now reports the endpoint's final usage totals instead of their sum, so cost figures drop and [`UsageLimits`][pydantic_ai.usage.UsageLimits] token limits trip later ([#14285](https://github.com/pydantic/pydantic-ai/pull/14285))
+- Under an enforced egress policy (the default), [`PlaywrightBrowser`][pydantic_ai_harness.playwright.PlaywrightBrowser] pages no longer have `RTCPeerConnection`, `WebTransport`, `WebSocketStream` or FedCM, and browsers it launches start with those Blink features off. If your agent needs one of them, open an issue: a parameter that keeps them can be added ([#14363](https://github.com/pydantic/pydantic-ai/pull/14363))
+
 ### [v2.73.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.73.0)
 
 - Warn with [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning] when a request targets a model Anthropic or OpenAI has deprecated ([#14038](https://github.com/pydantic/pydantic-ai/pull/14038))

@@ -256,11 +256,14 @@ session that moves to another folder (`/workspace`, or `/resume` of a session sa
 folder) takes that folder's decision.
 
 Which capabilities change their output for an untrusted folder depends on their support for
-workspace authority. Today `repo_context` marks the instruction files it surfaces as the
-agent works in a subfolder, and the read-only Review specialist keeps the authority for the
-directory it is sent to. `repo_context`'s walk-up files (the `AGENTS.md` it loads at the start),
-Agent Skills, and agent folders do not check it yet, and load as before in both cases. A
-`/sandbox` conversation works in the sandbox's own workspace, which does not take the decision yet.
+workspace authority. Today `repo_context` sends the instruction files it loads at the start (the
+walk-up `AGENTS.md` files) as the repository's data instead of putting them in the instructions,
+and marks the ones it surfaces as the agent works in a subfolder. Agent Skills, your own skill
+folders included, stay out of the skill catalog: the model lists them with `list_skills` and
+reads one with `load_skill`, as tool output. The read-only Review specialist keeps the authority
+for the directory it is sent to. Agent folders do not check it yet, and load as before in both
+cases. A `/sandbox` conversation works in the sandbox's own workspace, which does not take the
+decision yet.
 
 ### Startup
 

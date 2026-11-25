@@ -123,10 +123,9 @@ the folder (or a parent) has a `.env` file, Pax loads it at startup.
 The first time you start Pax in a folder, it asks whether you trust the files in it, and lists
 the instruction files, skills, and agent folders it found there. Answer **Yes** for your own
 projects. **No**, the default, keeps the folder untrusted: the agent still reads, edits, and runs
-code there, and capabilities that check workspace authority treat the folder's files as the
-repository's, not yours (walk-up instruction files, skills, and agent folders still load as before
-until they check authority). Pax remembers the answer for the whole repository, and `/trust` shows
-or changes it. The status row says `trusted` or `untrusted`. See
+code there, and instruction files and skills reach the model as the repository's, not yours
+(agent folders still reach it as yours either way, for now). Pax remembers the answer for the
+whole repository, and `/trust` shows or changes it. The status row says `trusted` or `untrusted`. See
 [folder trust](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#folder-trust)
 in the reference.
 

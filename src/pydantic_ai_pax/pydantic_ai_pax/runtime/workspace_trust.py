@@ -255,12 +255,11 @@ def describe(trust: WorkspaceTrust, directory: Path) -> str:
     files = repository_files(directory)
     if files.trusted:
         lines.append(
-            f'Found here: {_names(files.trusted)} '
-            '(walk-up instruction files, skills and agent folders still load as before until they check workspace authority).'
+            f'Found here: {_names(files.trusted)} (agent folders still reach the model as yours either way, for now).'
         )
     lines.append(
-        'Untrusted, the agent can still read, edit and run code here; '
-        "capabilities that check workspace authority treat the folder's files as the repository's, not yours."
+        'Untrusted, the agent can still read, edit and run code here, '
+        "and instruction files and skills reach the model as the repository's, not yours."
     )
     if files.approved_separately:
         waiting = ', '.join(f'{_names((name,))} ({how})' for name, how in files.approved_separately)

@@ -118,10 +118,9 @@ async def test_trust_shows_what_it_covers(repository: Path) -> None:
         assert await shell.commands.execute_async('/trust') == (
             f'This folder is untrusted, as every folder is until you decide.\n'
             f'{repository}: this repository and its worktrees.\n'
-            'Found here: ../AGENTS.md, skills '
-            '(walk-up instruction files, skills and agent folders still load as before until they check workspace authority).\n'
-            'Untrusted, the agent can still read, edit and run code here; capabilities that check workspace '
-            "authority treat the folder's files as the repository's, not yours.\n"
+            'Found here: ../AGENTS.md, skills (agent folders still reach the model as yours either way, for now).\n'
+            'Untrusted, the agent can still read, edit and run code here, '
+            "and instruction files and skills reach the model as the repository's, not yours.\n"
             'Either way, these still wait for their own approval: ../.clai/settings.json (/project approve, /plugins enable).\n'
             '/trust yes trusts it; /trust no keeps it untrusted.'
         )
