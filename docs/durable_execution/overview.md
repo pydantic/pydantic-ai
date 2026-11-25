@@ -42,6 +42,12 @@ to integrate another engine without importing Pydantic AI internals.
 Harness workspace capabilities such as `Coder`, `Shell`, and `FileSystem` also run inside a durable agent; the
 [workspace guide](../workspace.md#durable-execution) shows how, and what works on each engine.
 
+!!! note "Realtime sessions"
+    A [realtime session](../realtime/overview.md) can't run in workflow code: its live provider
+    connection can't be recorded or replayed, so the engines in Pydantic AI and Pydantic AI Harness
+    refuse it, and its browser-call signaling, with a [`UserError`][pydantic_ai.exceptions.UserError].
+    Open the session outside the workflow; see [Realtime deployment: durable execution](../realtime/deployment.md#durable-execution).
+
 ## Running a tool outside the durable unit
 
 An engine runs each function tool call in a durable unit (an activity, step or task) so a restarted run reuses its recorded result. To run a tool in the workflow code itself instead, set [`durable=False`][pydantic_ai.tools.ToolDefinition.durable] on it, as you would `sequential` or `timeout`: on `@agent.tool`, `Tool(...)`, `@toolset.tool` or a `FunctionToolset` for all its tools. The tool then runs again on every replay, so keep it deterministic: no I/O, clock or randomness of its own. What it does through a [workspace](../workspace.md#durable-execution) call or a durable agent's run is still recorded, unit by unit. Use it for a tool that has to see live run state, or that starts work which should be recorded step by step rather than as one unit:

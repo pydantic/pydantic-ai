@@ -449,6 +449,17 @@ class TestRuntimeToolsets:
         await run_in_task(pgtask_db, body)
         assert calls == {'calls': 0}
 
+    async def test_realtime_session_rejected(self, pgtask_db: PGTaskDatabase) -> None:
+        # Refused before the realtime model is resolved, so the provider is never contacted.
+        agent: Agent[object, str] = Agent(_make_model(), name='a', capabilities=[PGTaskDurability()])
+
+        async def body(attempt: int) -> None:
+            with pytest.raises(UserError, match='Realtime sessions cannot run in pgtask task code'):
+                async with agent.realtime('openai:gpt-realtime').session():
+                    pass  # pragma: no cover
+
+        await run_in_task(pgtask_db, body)
+
     async def test_override_toolsets_rejected(self, pgtask_db: PGTaskDatabase) -> None:
         calls = {'calls': 0}
         agent: Agent[object, str] = Agent(

@@ -2046,11 +2046,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         yield
 
     def _check_realtime_signaling(self) -> None:
-        """Raise if this agent can't issue a provider request for a browser call here and now.
+        """Raise if this agent can't open a realtime session or issue a provider request for a browser call here and now.
 
-        `_resolve_realtime_session` applies the same check, for the signaling that resolves the agent;
-        [`AgentRealtime.hang_up`][pydantic_ai.agent.AgentRealtime.hang_up], which needs no resolution, calls
-        this directly. Durable agents override it to refuse inside a workflow.
+        `_resolve_realtime_session` applies the same check, for sessions and the signaling that resolves the
+        agent; [`AgentRealtime.hang_up`][pydantic_ai.agent.AgentRealtime.hang_up], which needs no resolution,
+        calls this directly. `Agent` defers to its durability capability, and the durable wrapper agents
+        override it, so both refuse in workflow code outside a durable unit.
         """
 
     @asynccontextmanager

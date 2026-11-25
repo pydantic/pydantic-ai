@@ -2196,7 +2196,7 @@ async def test_temporal_agent_realtime_session_in_workflow():
     # A realtime session opens a long-lived, non-deterministic connection, so it can't run inside a
     # workflow; the guard trips before the model is ever connected.
     with patch.object(workflow, 'in_workflow', return_value=True):
-        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+        with pytest.raises(UserError, match='cannot run in Temporal workflow code'):
             async with simple_temporal_agent.realtime(cast('Any', object())).session():
                 pass  # pragma: no cover
 
@@ -2206,11 +2206,11 @@ async def test_temporal_agent_realtime_signaling_in_workflow():
     # helpers reach the agent through `_resolve_realtime_session`, which the wrapper guards too.
     with patch.object(workflow, 'in_workflow', return_value=True):
         realtime = simple_temporal_agent.realtime(cast('Any', object()))
-        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+        with pytest.raises(UserError, match='cannot run in Temporal workflow code'):
             await realtime.answer_webrtc_offer('v=0')
-        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+        with pytest.raises(UserError, match='cannot run in Temporal workflow code'):
             await realtime.create_client_secret()
-        with pytest.raises(UserError, match='cannot be used inside a Temporal workflow'):
+        with pytest.raises(UserError, match='cannot run in Temporal workflow code'):
             await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 

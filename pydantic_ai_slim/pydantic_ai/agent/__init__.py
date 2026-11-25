@@ -5,6 +5,7 @@ import contextvars
 import dataclasses
 import functools
 import inspect
+import sys
 import warnings
 import weakref
 from collections.abc import (
@@ -186,6 +187,7 @@ if TYPE_CHECKING:
     from pydantic_graph import Graph, GraphRunContext
 
     from .. import result as _result
+    from ..durable_exec._base import BaseDurabilityCapability
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
@@ -4153,6 +4155,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return schema
 
+    def _check_realtime_signaling(self) -> None:
+        """Let the agent's durability capability refuse a realtime session or signaling in its container's code.
+
+        `_resolve_realtime_session` calls this first, and `hang_up` calls it directly, so every realtime
+        entry point is checked before any configuration is resolved or the provider is contacted.
+        """
+        # Looked up through `sys.modules` like `RunContext._durability`: without the module, no durability
+        # capability exists.
+        durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
+        durability: BaseDurabilityCapability[Any] | None = (
+            durable_exec.BaseDurabilityCapability.from_agent(self) if durable_exec is not None else None
+        )
+        if durability is not None:
+            durability._check_realtime()  # pyright: ignore[reportPrivateUsage]
+
     @asynccontextmanager
     async def _resolve_realtime_session(  # noqa: C901
         self,
@@ -4182,6 +4199,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         from ..realtime import RealtimeModel, infer_realtime_model
         from ..realtime._utils import session_instructions
 
+        self._check_realtime_signaling()
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
 
