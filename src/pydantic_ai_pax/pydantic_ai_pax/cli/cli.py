@@ -495,6 +495,8 @@ def relaunch_argv(
             argv += ['--port', str(args.port)]
         if args.token_file is not None:
             argv += ['--token-file', str(args.token_file)]
+    if args.minimal:
+        argv.append('--minimal')
     if args.agent is not None:
         argv += ['--agent', args.agent]
     if args.model is not None:

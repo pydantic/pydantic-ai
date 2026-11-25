@@ -785,7 +785,14 @@ async def test_restart_imports_nothing_after_the_install(tmp_path: Path, monkeyp
 
 def _args(**options: object) -> argparse.Namespace:
     defaults: dict[str, object] = dict(
-        agent=None, model=None, request_limit=None, database=None, web=False, port=None, token_file=None
+        agent=None,
+        model=None,
+        request_limit=None,
+        database=None,
+        web=False,
+        port=None,
+        token_file=None,
+        minimal=False,
     )
     return argparse.Namespace(**(defaults | options))
 
@@ -828,6 +835,18 @@ def test_relaunch_argv(tmp_path: Path) -> None:
         str(tmp_path / 'c.db'),
         '--resume',
         'abc',
+    ]
+    # A `--minimal` launch keeps its plugin restriction, in the terminal and with `--web`.
+    assert relaunch_argv(_args(minimal=True), executable='/b/pax', session_id='s') == [
+        '/b/pax',
+        '--minimal',
+        '--resume',
+        's',
+    ]
+    assert relaunch_argv(_args(minimal=True, web=True), executable='/b/pax', session_id=None) == [
+        '/b/pax',
+        '--web',
+        '--minimal',
     ]
 
 

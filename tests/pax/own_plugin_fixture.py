@@ -10,12 +10,14 @@ from pydantic_ai.toolsets import FunctionToolset
 
 def port_scan(host: str) -> str:
     """Scan `host`."""
-    return host  # pragma: no cover -- named at startup, never called
+    # Named at startup, never called.
+    return host  # pragma: no cover
 
 
 def whois(domain: str) -> str:
     """Look `domain` up."""
-    return domain  # pragma: no cover -- named at startup, never called
+    # Named at startup, never called.
+    return domain  # pragma: no cover
 
 
 @dataclass

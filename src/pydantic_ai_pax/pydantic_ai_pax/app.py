@@ -323,7 +323,6 @@ async def chat(
                         use_stock_defaults=use_stock_defaults,
                         transcript=transcript,
                         load_plugins=load_plugins,
-                        only_plugins=only_plugins,
                     )
                 except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
                     with transcript.capture(console):
@@ -450,7 +449,6 @@ def _reload_shell(
     use_stock_defaults: bool,
     transcript: TranscriptBuffer,
     load_plugins: bool,
-    only_plugins: Collection[str] | None,
 ) -> SessionRuntime[DepsT, OutputT]:
     """Reload Pax's modules and rebuild the session Pax started with from `last`, the session shown last."""
     return reload_clai(
@@ -473,7 +471,8 @@ def _reload_shell(
             load_plugins=load_plugins,
             workspace=Path(shell.session.workspace),
             settings_for=shell.context.settings_for,
-            only_plugins=only_plugins,
+            # The launch's limit, with what `/plugins enable` and `/plugins add` allowed since.
+            only_plugins=shell.process.plugins.only,
         )
     )
 

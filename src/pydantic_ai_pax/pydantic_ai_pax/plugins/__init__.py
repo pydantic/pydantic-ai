@@ -1506,7 +1506,11 @@ class LoadedPlugin(Generic[DepsT]):
                 names.extend(name for name in found.tools if name not in names)
 
         def capability(found: AbstractCapability[DepsT]) -> None:
-            declared = found.get_toolset()
+            try:
+                declared = found.get_toolset()
+            except AssertionError:
+                # One that builds its toolset once `for_agent` binds it, such as `Peers` over an in-memory network.
+                return
             # A toolset function builds its toolset per run, so its tools aren't known yet.
             if declared is not None and not callable(declared):
                 declared.apply(toolset)
