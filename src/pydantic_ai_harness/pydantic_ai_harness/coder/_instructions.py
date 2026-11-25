@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 from pydantic_ai.messages import InstructionPart
@@ -138,15 +138,17 @@ def _profile_says(model: AbstractModel, flag: Callable[[ModelProfile], bool]) ->
 def _model_specific(
     name: str, flag: Callable[[ModelProfile], bool], *, flagged: str
 ) -> Callable[[RunContext[AgentDepsT]], InstructionPart]:
-    """A named block whose text depends on the profile of the model handling the request.
+    """A named block, `capability:coder_instructions:<name>`, sent only to models whose profile sets `flag`.
 
-    The block, `capability:coder_instructions:<name>`, is contributed from the first request and appends its changes.
-    So a conversation that moves to a model with a different profile keeps the instructions it started with and is
-    sent the block as a change, or told it was withdrawn.
+    Its text depends only on the model handling the request, so it changes only when a conversation moves to a model
+    on the other side of the flag. It then rewrites the prefix rather than appending the change, so the new model is
+    sent the instructions it would have had from the start. An appended withdrawal left Claude models delegating less
+    than when the rule against it was never sent, and they repeated it to the user; an appended line can't undo what
+    the earlier model already said in history either. The new model is cache-cold anyway, so the rewrite costs little.
     """
 
     def instruction(ctx: RunContext[AgentDepsT]) -> InstructionPart:
-        return InstructionPart(flagged if _profile_says(ctx.model, flag) else '', name=name, on_change='append')
+        return InstructionPart(flagged if _profile_says(ctx.model, flag) else '', name=name)
 
     return instruction
 
@@ -162,8 +164,8 @@ def model_specific_instructions(
     - `handoff`: at `'max'`, `_STRUCTURED_HANDOFF`, for `omits_handoff_evidence`.
     - `runtime_constraints`: at `'max'`, `_RUNTIME_CONSTRAINTS`, for `ignores_stated_runtime_constraints`.
 
-    Below `'max'`, the last three are left out rather than sent empty, so they don't add dynamic parts to an otherwise
-    static instruction list; a block that first appears later in a conversation is still appended.
+    Each rewrites the prefix on a model switch (see `_model_specific`). Below `'max'`, the last three are left out
+    rather than sent empty, so they don't add dynamic parts to an otherwise static instruction list.
     """
     delegation = (
         [
@@ -216,18 +218,3 @@ def coder_instructions(
         _compose(_AUTONOMY[autonomy], context=context, checks=parent_checks, suffix=suffix),
         _compose(_DELEGATED, context=context, checks=delegate_checks, suffix=suffix),
     )
-
-
-def project_instructions(*, unrestricted: bool) -> Callable[[RunContext[AgentDepsT]], Awaitable[str]]:
-    """Name the working directory, so the model neither hunts for the project nor works outside it.
-
-    The workspace keeps its working directory for its lifetime, so the text is the same on every
-    request and does not break prompt caching. `Coder` fails a run without a workspace at its
-    start, so a workspace is always there to ask.
-    """
-    files = 'relative file paths resolve from it' if unrestricted else 'the file tools only accept paths inside it'
-
-    async def instructions(ctx: RunContext[AgentDepsT]) -> str:
-        return f'Your project is `{await ctx.workspace.working_dir()}`. Shell commands start there, and {files}.'
-
-    return instructions

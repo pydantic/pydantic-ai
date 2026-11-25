@@ -430,6 +430,10 @@ class TestCommand:
             "Fake's proxy, outside the sandbox, holds the token until the sandbox is deleted.\n"
             'Your files here stay as they are: ask the agent to push, then pull here. ! commands run in the sandbox too.'
         )
+        # The editor is put away while a command runs, so these lines are what the user watches meanwhile.
+        console = loaded.host.console.file
+        assert isinstance(console, io.StringIO)
+        assert console.getvalue() == 'Starting the sandbox in Fake...\nCopying your checkout into it...\n'
         assert provider.created == [GitHubCredential(login='Ada', token='gho_secret')]
         # The history records the sandbox before any prompt, so every copy of the conversation finds it.
         request, response = loaded.host.conversation.messages
@@ -1415,6 +1419,16 @@ class TestBoxd:
         assert account.secrets == {}
         assert all(machine.status == 'destroyed' for machine in fake.machines.values())
         assert all(client.closed for client in account.clients)
+
+
+def test_a_github_copy_is_cloned_without_file_contents() -> None:
+    """The fake GitHub is a local repository, which ignores `--filter`, so only the script shows the clone is blobless."""
+    [line] = [
+        line
+        for line in clone_script(Snapshot(clone_url='https://github.com/o/r.git')).splitlines()
+        if ' clone ' in line
+    ]
+    assert '--filter=blob:none' in shlex.split(line)
 
 
 @pytest.mark.parametrize('gh_token', [None, 'stand-in'])

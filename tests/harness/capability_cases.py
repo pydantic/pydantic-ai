@@ -40,6 +40,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import (
     Advisor,
+    AnnounceWorkingDirectory,
     ApprovalReviewer,
     AskUser,
     BackgroundTools,
@@ -188,6 +189,12 @@ def _skills(tmp_path: Path) -> list[AbstractCapability[None]]:
     skill.mkdir(parents=True)
     (skill / 'SKILL.md').write_text('---\ndescription: Report the weather.\n---\n\nSay sunny.\n')
     return [Skills(tmp_path / 'skills'), LocalWorkspace(tmp_path)]
+
+
+def _lowered_skills(tmp_path: Path) -> list[AbstractCapability[None]]:
+    # Below `'operator'`, so the skill is held back from the instructions and `list_skills` and `load_skill` offer it.
+    capabilities = _skills(tmp_path)
+    return [capabilities[0], LocalWorkspace(tmp_path, authority='none')]
 
 
 def _read_file_key(call: ToolCallPart) -> str | None:
@@ -359,6 +366,10 @@ def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
 
 
+def _check_working_directory(merged: AnnounceWorkingDirectory[None]) -> None:
+    assert merged.id == 'announce_working_directory'
+
+
 def _check_current_time(merged: CurrentTime[None]) -> None:
     assert (merged.timezone, merged.precision) == ('Asia/Tokyo', 'hour')
 
@@ -403,6 +414,7 @@ CASES: dict[str, CapabilityCase] = {
             _check_skills,
         ),
         build=_skills,
+        calls=Calls((('list_skills', {}), ('load_skill', {'name': 'weather'})), _lowered_skills),
     ),
     'Memory': CapabilityCase(
         Narrows(
@@ -616,6 +628,13 @@ CASES: dict[str, CapabilityCase] = {
             'one fixed text; two would state it twice',
             lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
             _check_benchmark_instructions,
+        )
+    ),
+    'AnnounceWorkingDirectory': CapabilityCase(
+        Combines(
+            'one fixed line; `Shell` and `FileSystem` each bring a copy, which must state it once',
+            lambda: (AnnounceWorkingDirectory[None](), AnnounceWorkingDirectory[None]()),
+            _check_working_directory,
         )
     ),
     'CurrentTime': CapabilityCase(
