@@ -593,7 +593,7 @@ async def test_structured_content_input(allow_model_requests: None, groq_api_key
     )
 
     [request] = sent
-    assert json.loads(request.content)['messages'][1] == snapshot(
+    assert json.loads(request.content)['messages'][-1] == snapshot(
         {
             'role': 'user',
             'content': [
