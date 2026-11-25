@@ -72,7 +72,7 @@ class LogfireSettings(BaseModel):
     """Non-secret telemetry options; a token stays in `LOGFIRE_TOKEN`, Logfire's credential file, or `/keys`."""
 
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True, hide_input_in_errors=True)
-    service_name: str = Field(default='pydantic-clai2', min_length=1)
+    service_name: str = Field(default='pydantic-ai-pax', min_length=1)
     send_to_logfire: Literal[False, 'if-token-present'] = 'if-token-present'
     # Off unless chosen here, so a `LOGFIRE_TOKEN` set for another project never receives prompts or files.
     include_content: bool = False
@@ -365,7 +365,7 @@ _ROWS = (
         key='service_name',
         label='Service name',
         description='The OpenTelemetry service.name that Pax traces are filed under in Logfire.',
-        default='pydantic-clai2',
+        default='pydantic-ai-pax',
     ),
     FieldRow(
         key='include_content',

@@ -986,9 +986,11 @@ completes the login.
 Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-ai-pax/`
 (`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
 that decrypts them is the only entry Pax keeps in the configured Python `keyring`
-backend (service `pydantic-clai2`, account `encryption-key`). Pax reads that entry
+backend (service `pydantic-ai-pax`, account `encryption-key`). Pax reads that entry
 at most once per session, so macOS asks for keychain access at most once, instead of
-once per saved credential. Logins that older versions saved as keyring entries are
+once per saved credential. A key saved under the service's former name,
+`pydantic-clai2`, is copied to `pydantic-ai-pax` the first time Pax reads it; the old
+entry stays, so an older Pax that is still installed can decrypt the same files. Logins that older versions saved as keyring entries are
 moved into encrypted files the first time they are read. Choose an OS-backed credential store: Pax
 uses the configured backend and does not enforce its encryption or storage policy.
 Installing or selecting a plaintext backend can store the key in plaintext. Core owns
@@ -3651,7 +3653,8 @@ which are saved as plaintext.
 its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
-`service_name` (default `pydantic-clai2`), `include_content` (default `false`),
+`service_name` (default `pydantic-ai-pax`; it was `pydantic-clai2`, which settings
+saved before the rename keep), `include_content` (default `false`),
 `include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
 than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Traces carry Pax's
