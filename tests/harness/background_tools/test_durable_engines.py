@@ -344,6 +344,9 @@ class _NoDurability(AbstractCapability[None]):
     """Stands in for an engine where only the error handling is under test."""
 
 
+@pytest.mark.skipif(
+    not (temporal_imports() and aws_lambda_imports()), reason='temporalio or the AWS durable SDK not installed'
+)
 async def test_an_unexpected_error_propagates() -> None:
     """An error that isn't the engine's refusal fails the test instead of becoming the observed outcome; its runs raise before any request, so none to record."""
 

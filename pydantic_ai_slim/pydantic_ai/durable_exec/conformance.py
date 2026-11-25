@@ -332,12 +332,15 @@ class DurableEngineSuite:
 
         async def counts() -> Counter[str]:
             # The stand-ins may count in files, so the count is read off the event loop.
-            return Counter({**await anyio.to_thread.run_sync(count_requests), **_NESTED})
+            counted = await anyio.to_thread.run_sync(count_requests)  # workflow-nondeterminism-ok: test-side only
+            return Counter({**counted, **_NESTED})
 
         agent_name = re.sub(r'\W', '_', name) + '_agent'
         observer = None if observed is None else agent_name
         # A script may write the files its stand-ins read, so it's built off the event loop.
-        built = await anyio.to_thread.run_sync(script.build, directory)
+        built = await anyio.to_thread.run_sync(
+            script.build, directory
+        )  # workflow-nondeterminism-ok: the suite runs in the test, never in workflow code
         try:
             agent = _agent(agent_name, script.made, built, engine.durability(), observer=observer)
         except UserError as error:
