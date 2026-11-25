@@ -111,9 +111,11 @@ from ._instructions import (
     LoadedInstructionValues,
     instruction_window,
     loaded_part_capability_id,
+    lowered_block_id,
     recorded_prefix,
     update_instruction_history,
     update_loaded_instruction_history,
+    update_lowered_instruction_history,
 )
 from ._run_context import (
     AnchoredEvidence,
@@ -168,6 +170,7 @@ from .tools import (
 from .toolsets._deferred_capability_loader import (
     capability_load_window,
     capability_tool_names,
+    resolve_capability_block_instructions,
     resolve_loaded_capability_instructions,
 )
 from .toolsets._instruction_collection import collect_toolset_instructions
@@ -693,6 +696,8 @@ class _StepRecording:
     """The instruction parts currently sent."""
     effort: ThinkingEffort | None
     """The thinking effort currently recorded, as `_record_model_settings_changes` resolves it."""
+    rewrites_outside_prefix: bool
+    """Whether the instructions were recorded for a model that reads dynamic rewrite-mode blocks outside the prefix."""
 
     def record(
         self,
@@ -706,7 +711,11 @@ class _StepRecording:
         `resolved` is ignored when a hook changed the instruction parts (see `parameters`). Afterwards, `sent` holds the
         instruction parts to send.
         """
-        record_instructions = self.parameters is not None and resolved != self.resolved
+        rewrites_outside_prefix = model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+        record_instructions = self.parameters is not None and (resolved, rewrites_outside_prefix) != (
+            self.resolved,
+            self.rewrites_outside_prefix,
+        )
         effort = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
         record_settings = effort != self.effort
         if not record_instructions and not record_settings:
@@ -724,6 +733,7 @@ class _StepRecording:
             for target, instructions in zip([*self.targets, *self.instruction_targets], self.instructions):
                 target.instructions = instructions
             self.resolved = resolved
+            self.rewrites_outside_prefix = rewrites_outside_prefix
             self.sent = self._record_instructions(resolved)
             self.instruction_records = [target.parts[start:] for target, start in zip(self.targets, self.starts)]
         for target, tail in zip(self.targets, tails):
@@ -768,13 +778,15 @@ class _StepRecording:
         prefix_parts, _ = _split_loaded_instruction_parts(
             parameters, self.resolved_loaded_parts, self.loaded_capability_ids
         )
-        sent = update_instruction_history(self.messages, prefix_parts, self.targets)
+        sent = update_instruction_history(
+            self.messages, prefix_parts, self.targets, rewrites_outside_prefix=self.rewrites_outside_prefix
+        )
         for target in self.instruction_targets:
             if sent is None:
                 # As the step left the request when it resolved no instructions.
                 target.instructions = None
             else:
-                _apply_instruction_parts(target, sent)
+                _apply_instruction_parts(target, sent, self.messages)
         return sent
 
 
@@ -1763,6 +1775,31 @@ async def _get_loaded_instructions(
     return resolved
 
 
+async def _get_lowered_instructions(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    run_context: RunContext[DepsT],
+) -> tuple[dict[str, list[_messages.InstructionPart]], dict[str, _messages.Authority]]:
+    """Resolve the instructions of the capabilities below operator authority, each as one block, by the block's id.
+
+    They reach the model through history, as framed data at their authority, rather than in the prefix: like a loaded
+    capability's, they go into `instruction_parts` marked `'via_history'`, and `update_lowered_instruction_history`
+    records their changes. Also returns each block's authority: the lowest of the capabilities stating it.
+    """
+    parts: dict[str, list[_messages.InstructionPart]] = {}
+    authorities: dict[str, _messages.Authority] = {}
+    for source in ctx.deps.root_capability._lowered_instruction_sources():  # pyright: ignore[reportPrivateUsage]
+        capability = source.capability
+        block_id = lowered_block_id(capability)
+        parts.setdefault(block_id, []).extend(
+            await resolve_capability_block_instructions(
+                capability, block_id, ctx.deps.tool_manager.toolset, run_context, own=source.own
+            )
+        )
+        authority = capability._effective_authority  # pyright: ignore[reportPrivateUsage]
+        authorities[block_id] = _messages._lower_authority(authorities.get(block_id, authority), authority)  # pyright: ignore[reportPrivateUsage]
+    return parts, authorities
+
+
 def _split_loaded_instruction_parts(
     params: models.ModelRequestParameters,
     resolved: Sequence[_messages.InstructionPart],
@@ -1798,7 +1835,9 @@ def _split_loaded_instruction_parts(
 
 
 def _apply_instruction_parts(
-    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
+    request: _messages.ModelRequest,
+    instruction_parts: list[_messages.InstructionPart] | None,
+    history: Sequence[_messages.ModelMessage],
 ) -> None:
     """Render the instruction parts being sent onto the request that records them.
 
@@ -1807,10 +1846,32 @@ def _apply_instruction_parts(
     instructions the model never received.
 
     `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
-    fall back to the request's own `instructions` — so it leaves the request alone.
+    fall back to the request's own `instructions` — so it leaves the request alone. The rendered text reuses
+    the string of the latest earlier request in `history` when equal, so requests share one copy.
     """
     if instruction_parts is not None:
-        request.instructions = _messages.InstructionPart.join(instruction_parts)
+        request.instructions = _shared_instructions(_messages.InstructionPart.join(instruction_parts), request, history)
+
+
+def _shared_instructions(
+    instructions: str | None, request: _messages.ModelRequest, history: Sequence[_messages.ModelMessage]
+) -> str | None:
+    """`instructions`, or the equal string the latest earlier request in `history` holds.
+
+    Every request records the instructions it was sent with, and they rarely change between requests, so
+    sharing one string keeps a long conversation from holding a copy per request.
+    """
+    if instructions is None:
+        return None
+    previous = next(
+        (
+            message.instructions
+            for message in reversed(history)
+            if isinstance(message, _messages.ModelRequest) and message is not request and message.instructions
+        ),
+        None,
+    )
+    return previous if previous == instructions else instructions
 
 
 _NativeToolFactoryResult: TypeAlias = tuple[NativeToolFunc[DepsT], AbstractNativeTool | None]
@@ -2675,7 +2736,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
-    """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id."""
+    """The loaded capabilities' instruction parts this request resolved, before the hooks ran, by capability id.
+
+    Also those of the capabilities below operator authority, by the id of their block (`_lowered_authorities`).
+    """
+    _lowered_authorities: dict[str, _messages.Authority] = field(
+        repr=False, init=False, default_factory=dict[str, _messages.Authority]
+    )
+    """The capabilities below operator authority whose instructions this request resolved, by their block's id."""
     _step_instruction_parts: list[_messages.InstructionPart] | None = field(repr=False, init=False, default=None)
     """The instruction parts this request step resolved for its model, before the hooks ran, without the loaded ones."""
     _step_toolset_instruction_parts: list[_messages.InstructionPart] = field(
@@ -3378,7 +3446,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
         self._step_instruction_window = instruction_window(ctx.state.message_history) is not None
         instruction_parts = await self._resolve_step_instructions(ctx, run_context)
-        self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
+        self.request.instructions = _shared_instructions(
+            _messages.InstructionPart.join(instruction_parts) if instruction_parts else None,
+            self.request,
+            ctx.state.message_history,
+        )
         self._step_instruction_parts = instruction_parts
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
@@ -3388,6 +3460,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._resolved_loaded_parts = await _get_loaded_instructions(
             ctx, run_context, LoadedInstructionValues.of(ctx.state.message_history).values
         )
+        # Instructions below operator authority are delivered through history too, so hooks see them as loaded ones.
+        lowered_parts, self._lowered_authorities = await _get_lowered_instructions(ctx, run_context)
+        # A lowered block's key is never a loaded capability's (`lowered_block_id`), so neither replaces the other.
+        assert not lowered_parts.keys() & self._resolved_loaded_parts.keys()
+        self._resolved_loaded_parts |= lowered_parts
         self._native_tool_factories = []
         self._step_loaded_parts = [part for parts in self._resolved_loaded_parts.values() for part in parts]
         model_request_parameters = await _prepare_request_parameters(
@@ -3488,7 +3565,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
-        instruction_parts = _resumed_instruction_parts(ctx.state.message_history, instructions)
+        instruction_parts = _resumed_instruction_parts(
+            ctx.state.message_history,
+            instructions,
+            rewrites_outside_prefix=ctx.deps.model._rewrite_instructions_outside_prefix,  # pyright: ignore[reportPrivateUsage]
+        )
 
         self._native_tool_factories = []
         model_request_parameters = await _prepare_request_parameters(
@@ -3667,7 +3748,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             if instructions_target is not None:
                 _apply_instruction_parts(
-                    instructions_target, request_context.model_request_parameters.instruction_parts
+                    instructions_target,
+                    request_context.model_request_parameters.instruction_parts,
+                    ctx.state.message_history,
                 )
 
         self.last_request_context = original_request_context
@@ -3692,18 +3775,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # prefix.
         # Loaded capabilities' instructions reach the model through history: changes to them are appended
         # after the prefix's, and they leave the parts the model is sent.
-        loaded_capability_ids = LoadedInstructionValues.of(messages).values
+        loaded = LoadedInstructionValues.of(messages).values
         # A hook that added a `load_capability` exchange loaded a capability after the instructions were
         # resolved. Its instructions are resolved now, so they're stated on the request that reveals its tools.
         self._resolved_loaded_parts |= await _get_loaded_instructions(
             ctx,
             run_context,
-            [
-                capability_id
-                for capability_id in loaded_capability_ids
-                if capability_id not in self._resolved_loaded_parts
-            ],
+            [capability_id for capability_id in loaded if capability_id not in self._resolved_loaded_parts],
         )
+        # The blocks delivered through history: the loaded capabilities', then those below operator authority.
+        loaded_capability_ids = [*loaded, *self._lowered_authorities]
         hook_parameters = request_context.model_request_parameters
         resolved_loaded_parts = [part for parts in self._resolved_loaded_parts.values() for part in parts]
         prefix_parts, loaded_parts = _split_loaded_instruction_parts(
@@ -3712,9 +3793,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         recording_targets = _history_recording_targets(ctx, messages)
         instructions_before = {id(target): target.instructions for target in [*recording_targets, self.request]}
         starts = [len(target.parts) for target in recording_targets]
+        # Compared by value, as a hook may return the parts it was given in a new list.
+        hook_kept_parts = hook_parameters.instruction_parts == self._step_request_instruction_parts
+        # Parts a hook changed can't be recorded again for an attempt at another model, so they keep the window rule
+        # every model can read.
+        rewrites_outside_prefix = (
+            hook_kept_parts and request_context.model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+        )
         request_context.model_request_parameters = replace(
             hook_parameters,
-            instruction_parts=update_instruction_history(messages, prefix_parts, recording_targets),
+            instruction_parts=update_instruction_history(
+                messages, prefix_parts, recording_targets, rewrites_outside_prefix=rewrites_outside_prefix
+            ),
             instruction_visibility=None,
         )
         instruction_records = [target.parts[start:] for target, start in zip(recording_targets, starts)]
@@ -3728,6 +3818,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 for capability_id, capability in ctx.deps.capabilities.items()
                 if capability.defer_loading is not True
             },
+            authorities={
+                capability_id: capability._effective_authority  # pyright: ignore[reportPrivateUsage]
+                for capability_id, capability in ctx.deps.capabilities.items()
+            },
+        )
+        update_lowered_instruction_history(
+            messages, loaded_parts, self._lowered_authorities, recording_targets, loaded=loaded
         )
         # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
         # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
@@ -3737,7 +3834,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             else recording_targets
         )
         for target in instruction_targets:
-            _apply_instruction_parts(target, request_context.model_request_parameters.instruction_parts)
+            _apply_instruction_parts(
+                target, request_context.model_request_parameters.instruction_parts, ctx.state.message_history
+            )
         settings_starts = [len(target.parts) for target in recording_targets]
         effort = _record_model_settings_changes(
             ctx, request_context.model, request_context.model_settings, messages, recording_targets
@@ -3748,10 +3847,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             instruction_targets=instruction_targets,
             starts=starts,
             instructions=[instructions_before[id(target)] for target in [*recording_targets, *instruction_targets]],
-            # Compared by value, as a hook may return the parts it was given in a new list.
-            parameters=hook_parameters
-            if hook_parameters.instruction_parts == self._step_request_instruction_parts
-            else None,
+            parameters=hook_parameters if hook_kept_parts else None,
             loaded_parts=self._step_loaded_parts,
             resolved_loaded_parts=resolved_loaded_parts,
             loaded_capability_ids=loaded_capability_ids,
@@ -3760,6 +3856,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             resolved=self._step_instruction_parts,
             sent=request_context.model_request_parameters.instruction_parts,
             effort=effort,
+            rewrites_outside_prefix=rewrites_outside_prefix,
         )
 
     async def _prepare_for_attempt_model(
@@ -5390,7 +5487,7 @@ def _with_outgoing_reveal_state(
 
 
 def _resumed_instruction_parts(
-    history: list[_messages.ModelMessage], instructions: str | None
+    history: list[_messages.ModelMessage], instructions: str | None, *, rewrites_outside_prefix: bool
 ) -> list[_messages.InstructionPart] | None:
     """The instruction parts a suspended turn was sent, for its continuation to send again.
 
@@ -5404,7 +5501,7 @@ def _resumed_instruction_parts(
     source = _get_history_instructions_source(history)
     end = next(index for index, message in enumerate(history) if message is source)
     if (baseline := instruction_window(history[: end + 1])) is not None and (
-        prefix := recorded_prefix(baseline, instructions)
+        prefix := recorded_prefix(baseline, instructions, rewrites_outside_prefix=rewrites_outside_prefix)
     ) is not None:
         return prefix
     return [_messages.InstructionPart(content=instructions)]
