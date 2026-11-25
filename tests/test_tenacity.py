@@ -14,9 +14,9 @@ import httpx
 import httpx2
 import pytest
 
-from .conftest import try_import
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
-READINESS_WAIT_TIMEOUT = 10
+from .conftest import try_import
 
 with try_import() as imports_successful:
     from tenacity import (

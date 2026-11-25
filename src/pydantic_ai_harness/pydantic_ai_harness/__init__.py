@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from .browser_use import BrowserUse
     from .bubblewrap_sandbox import BubblewrappedWorkspace, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
+    from .cdp_browser import CDPBrowser
     from .code_mode import CodeMode
     from .coder import BenchmarkInstructions, Coder
     from .compaction import (
@@ -33,9 +34,12 @@ if TYPE_CHECKING:
         TieredCompaction,
         WarnNearLimits,
     )
+    from .computer_use import ComputerUse
     from .conversation_search import ConversationSearch
+    from .current_time import CurrentTime
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+    from .deny_unanswered import DenyUnanswered
     from .detect_loops import DetectLoops
     from .docker_container import DockerContainer, DockerContainerBackend
 
@@ -45,6 +49,7 @@ if TYPE_CHECKING:
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
     from .exa import ExaAgent, ExaSearch
     from .file_system import READ_ONLY_TOOL_NAMES, FileSystem
+    from .goal import Goal, GoalVerifier
     from .grain import Grain
     from .guardrails import (
         GuardrailError,
@@ -62,11 +67,13 @@ if TYPE_CHECKING:
     from .ipython_code_mode import IPythonCodeMode
     from .keenable import KeenableSearch
     from .kubernetes_sandbox import KubernetesSandbox, KubernetesSandboxBackend
+    from .label_cross_model_history import DEFAULT_CROSS_MODEL_NOTICE, LabelCrossModelHistory
     from .localstack import LocalStack
     from .logfire import ManagedPrompt
     from .macroscope import Macroscope
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
+    from .model_router import ModelChoice, ModelRouter
     from .opensandbox_sandbox import OpenSandbox, OpenSandboxBackend
     from .ordinal import Ordinal
     from .peers import Peers
@@ -82,6 +89,10 @@ if TYPE_CHECKING:
     from .render import RenderWorkflows
     from .render_sandbox import RenderSandbox, RenderSandboxBackend
     from .repo_context import RepoContext
+    from .report_remaining_budget import ReportRemainingBudget
+    from .report_stale_files import ReportStaleFiles
+    from .report_tool_errors import ReportToolErrors
+    from .require_verification import DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS, RequireVerification
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
@@ -94,11 +105,13 @@ if TYPE_CHECKING:
     from .step_persistence import StepPersistence
     from .sub_agents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
+    from .tool_bridge import ToolBridge
     from .tool_budgets import ToolBudgets
     from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
     from .warn_on_cache_busts import WarnOnCacheBusts
+    from .wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, WrapUpAtLimits, wrapped_up_by
     from .youdotcom import YouResearch, YouSearch
 
 __all__ = [
@@ -118,18 +131,25 @@ __all__ = [
     'BubblewrappedWorkspace',
     'BubblewrapWorkspace',
     'CapabilityCreation',
+    'CDPBrowser',
     'ClampOversizedMessages',
     'ClearToolResults',
     'CodeMode',
     'Coder',
     'CompactOnRequest',
+    'ComputerUse',
     'ConversationSearch',
+    'CurrentTime',
+    'DEFAULT_CROSS_MODEL_NOTICE',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
+    'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS',
     'DEFAULT_RESEARCHER_INSTRUCTIONS',
+    'DEFAULT_WRAP_UP_PROMPT',
     'DayAI',
     'DaytonaSandbox',
     'DaytonaSandboxBackend',
     'DeduplicateFileReads',
+    'DenyUnanswered',
     'DetectLoops',
     'DockerContainer',
     'DockerContainerBackend',
@@ -140,6 +160,8 @@ __all__ = [
     'ExaSearch',
     'FallbackCompaction',
     'FileSystem',
+    'Goal',
+    'GoalVerifier',
     'Grain',
     'GuardrailError',
     'GuardrailResult',
@@ -151,6 +173,7 @@ __all__ = [
     'KeenableSearch',
     'KubernetesSandbox',
     'KubernetesSandboxBackend',
+    'LabelCrossModelHistory',
     'LLM_API_KEY_ENV_PATTERNS',
     'LocalStack',
     'MCPReadOnlyNoToolsWarning',
@@ -159,6 +182,8 @@ __all__ = [
     'Memory',
     'ModalSandbox',
     'ModalSandboxBackend',
+    'ModelChoice',
+    'ModelRouter',
     'OpenSandbox',
     'OpenSandboxBackend',
     'Ordinal',
@@ -182,7 +207,11 @@ __all__ = [
     'RenderSandboxBackend',
     'RenderWorkflows',
     'ReportContextUsage',
+    'ReportRemainingBudget',
+    'ReportStaleFiles',
+    'ReportToolErrors',
     'RepoContext',
+    'RequireVerification',
     'Researcher',
     'SSHWorkspace',
     'SSHWorkspaceBackend',
@@ -204,6 +233,7 @@ __all__ = [
     'SummarizingCompaction',
     'SystemReminders',
     'TieredCompaction',
+    'ToolBridge',
     'ToolBudgets',
     'ToolCallJudge',
     'ToolGuardrail',
@@ -211,6 +241,8 @@ __all__ = [
     'TrajectoryJudge',
     'WarnNearLimits',
     'WarnOnCacheBusts',
+    'WrapUpAtLimits',
+    'wrapped_up_by',
     'YouResearch',
     'YouSearch',
 ]
@@ -232,18 +264,25 @@ _LAZY_EXPORTS = {
     'BubblewrappedWorkspace': 'bubblewrap_sandbox',
     'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
+    'CDPBrowser': 'cdp_browser',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
     'CodeMode': 'code_mode',
     'Coder': 'coder',
     'CompactOnRequest': 'compaction',
+    'ComputerUse': 'computer_use',
     'ConversationSearch': 'conversation_search',
+    'CurrentTime': 'current_time',
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
     'DeduplicateFileReads': 'compaction',
+    'DEFAULT_CROSS_MODEL_NOTICE': 'label_cross_model_history',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
+    'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS': 'require_verification',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
+    'DEFAULT_WRAP_UP_PROMPT': 'wrap_up_at_limits',
+    'DenyUnanswered': 'deny_unanswered',
     'DetectLoops': 'detect_loops',
     'DockerContainer': 'docker_container',
     'DockerContainerBackend': 'docker_container',
@@ -254,6 +293,8 @@ _LAZY_EXPORTS = {
     'ExaSearch': 'exa',
     'FallbackCompaction': 'compaction',
     'FileSystem': 'file_system',
+    'Goal': 'goal',
+    'GoalVerifier': 'goal',
     'Grain': 'grain',
     'GuardrailError': 'guardrails',
     'GuardrailResult': 'guardrails',
@@ -264,6 +305,7 @@ _LAZY_EXPORTS = {
     'KeenableSearch': 'keenable',
     'KubernetesSandbox': 'kubernetes_sandbox',
     'KubernetesSandboxBackend': 'kubernetes_sandbox',
+    'LabelCrossModelHistory': 'label_cross_model_history',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'LocalStack': 'localstack',
     'Macroscope': 'macroscope',
@@ -271,6 +313,8 @@ _LAZY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'ModalSandboxBackend': 'modal_sandbox',
+    'ModelChoice': 'model_router',
+    'ModelRouter': 'model_router',
     'OpenSandbox': 'opensandbox_sandbox',
     'OpenSandboxBackend': 'opensandbox_sandbox',
     'Ordinal': 'ordinal',
@@ -295,6 +339,10 @@ _LAZY_EXPORTS = {
     'RenderWorkflows': 'render',
     'RepoContext': 'repo_context',
     'ReportContextUsage': 'compaction',
+    'ReportRemainingBudget': 'report_remaining_budget',
+    'ReportStaleFiles': 'report_stale_files',
+    'ReportToolErrors': 'report_tool_errors',
+    'RequireVerification': 'require_verification',
     'Researcher': 'researcher',
     'Shell': 'shell',
     'Skills': 'skills',
@@ -316,6 +364,7 @@ _LAZY_EXPORTS = {
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
     'TieredCompaction': 'compaction',
+    'ToolBridge': 'tool_bridge',
     'ToolBudgets': 'tool_budgets',
     'ToolCallJudge': 'tool_call_judge',
     'ToolGuardrail': 'guardrails',
@@ -323,6 +372,8 @@ _LAZY_EXPORTS = {
     'TrajectoryJudge': 'trajectory_judge',
     'WarnNearLimits': 'compaction',
     'WarnOnCacheBusts': 'warn_on_cache_busts',
+    'WrapUpAtLimits': 'wrap_up_at_limits',
+    'wrapped_up_by': 'wrap_up_at_limits',
     'YouResearch': 'youdotcom',
     'YouSearch': 'youdotcom',
     # Pre-rename names; the target module's `__getattr__` emits the

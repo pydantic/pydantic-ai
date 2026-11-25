@@ -1,8 +1,9 @@
 """`scripts/durable_exec_contract.py --touched` names the manifest entries a pull request's changed lines touch.
 
-CI labels a pull request `needs-durable-exec-review` and gives CI Review the entries when the set is not empty. The
-classifier reads the pull request through `gh api`; these tests pass the files listing and the sources it would
-fetch, so they are not VCR tests.
+CI labels a pull request `needs-durable-exec-review` and gives CI Review the entries when the set is not empty, and
+`--signed-off` keeps the label off while a reviewer's sign-off marker carries the pull request's current fingerprint.
+The classifier reads the pull request through `gh api`; these tests pass the files listing, the comments, the
+permissions and the sources it would fetch, so they are not VCR tests.
 """
 
 from __future__ import annotations
@@ -229,6 +230,7 @@ def _fake_gh(merge_base: str = MERGE_BASE, extra_files: int = 0) -> _FakeGh:
             ),
             f'repos/{REPO}/contents/{MODELS}?ref={MERGE_BASE}': MODELS_SOURCE,
             f'repos/{REPO}/contents/{MODELS}?ref={HEAD_SHA}': head,
+            f'repos/{REPO}/pulls/42': f'{HEAD_SHA}\n',
         }
     )
 
@@ -314,3 +316,241 @@ def test_touched_fails_when_the_pull_request_cannot_be_classified(
     assert generator.main(['--touched', REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=gh) == 1
     assert capsys.readouterr().err == error
     assert not any(call[0] == '-H' for call in gh.calls)
+
+
+def _signoff_digest(manifest_root: Path, capsys: pytest.CaptureFixture[str]) -> str:
+    assert generator.main(['--fingerprint', REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=_fake_gh()) == 0
+    return capsys.readouterr().out.strip()
+
+
+REQUEST_PATCH = "@@ -45,2 +45,2 @@ class Model:\n     def request(self) -> str:\n-        return 'request'\n+        return 'response'"
+# The same change after merging a base branch that added lines above it and next to it.
+MERGED_REQUEST_PATCH = (
+    '@@ -52,3 +52,3 @@ class BaseModel:\n     def request(self) -> str:\n'
+    "-        return 'request'\n+        return 'response'\n \n"
+)
+
+
+def _fingerprint(*files: ChangedFile) -> str:
+    return generator.fingerprint(files, {MODELS: MANIFEST[MODELS]})
+
+
+@pytest.mark.parametrize(
+    'other',
+    [
+        pytest.param(ChangedFile(MODELS, 'modified', patch=MERGED_REQUEST_PATCH), id='moved-hunk-and-context'),
+        pytest.param(
+            ChangedFile(MODELS, 'modified', patch='diff --git a/x b/x\n--- a/x\n+++ b/x\n' + REQUEST_PATCH),
+            id='file-header',
+        ),
+    ],
+)
+def test_the_fingerprint_ignores_what_merging_the_base_branch_in_moves(other: ChangedFile):
+    """Only the added and removed lines count, so new hunk line numbers and context leave the fingerprint as it was."""
+    assert _fingerprint(other) == _fingerprint(ChangedFile(MODELS, 'modified', patch=REQUEST_PATCH))
+
+
+@pytest.mark.parametrize(
+    'other',
+    [
+        pytest.param(ChangedFile(MODELS, 'modified', patch=REQUEST_PATCH.replace("'response'", "'reply'")), id='added'),
+        pytest.param(
+            ChangedFile(MODELS, 'modified', patch=REQUEST_PATCH.replace("-        return 'request'\n", '')),
+            id='removed',
+        ),
+        pytest.param(ChangedFile(MODELS, 'modified', patch=REQUEST_PATCH + '\n----'), id='removed-dashes'),
+        pytest.param(
+            ChangedFile(f'{CORE}/models/base.py', 'renamed', previous_filename=MODELS, patch=REQUEST_PATCH),
+            id='renamed',
+        ),
+    ],
+)
+def test_the_fingerprint_changes_with_a_changed_line_of_a_touched_core_file(other: ChangedFile):
+    """A different added or removed line, a removed line that reads like a file header, or a rename is a new change."""
+    assert _fingerprint(other) != _fingerprint(ChangedFile(MODELS, 'modified', patch=REQUEST_PATCH))
+
+
+def test_the_fingerprint_ignores_files_without_touched_gating_entries():
+    """A file `touched_entries` does not name, a core file included, is left out, even with no patch."""
+    models = ChangedFile(MODELS, 'modified', patch=REQUEST_PATCH)
+    others = [
+        ChangedFile('README.md', 'modified', patch='@@ -1 +1 @@\n-a\n+b'),
+        ChangedFile(SETTINGS, 'modified', patch='@@ -1 +1 @@\n-DEFAULT = 0\n+DEFAULT = 1'),
+        ChangedFile('docs/big.md', 'modified'),
+    ]
+
+    assert _fingerprint(models, *others) == _fingerprint(models)
+
+
+def test_the_fingerprint_refuses_a_touched_core_file_without_a_patch():
+    """GitHub leaves out the patch of a large diff, and then the changed lines are unknown."""
+    with pytest.raises(ValueError, match='GitHub left out the patch of'):
+        _fingerprint(ChangedFile(MODELS, 'modified'))
+
+
+FINGERPRINT = 'f' * 64
+MARKER = f'<!-- durable-exec-signoff fingerprint={FINGERPRINT} head={HEAD_SHA} -->'
+
+
+@pytest.mark.parametrize(
+    'body, signoff',
+    [
+        pytest.param(f'Durable review done.\n\n{MARKER}\n', (FINGERPRINT, HEAD_SHA), id='own-line'),
+        pytest.param(f'Done.\r\n{MARKER}  \r\n', (FINGERPRINT, HEAD_SHA), id='crlf-and-trailing-spaces'),
+        pytest.param(f'Quoting:\n\n    {MARKER}\n', None, id='indented-code-block'),
+        pytest.param(f'{MARKER.replace("f" * 64, "e" * 64)}\n{MARKER}', (FINGERPRINT, HEAD_SHA), id='last-wins'),
+        pytest.param(f'> {MARKER}', None, id='quoted'),
+        pytest.param(f'> x\u2028{MARKER}', None, id='quoted-after-line-separator'),
+        pytest.param(f'LGTM\x85{MARKER}', None, id='after-next-line'),
+        pytest.param(f'LGTM\r{MARKER}', None, id='after-carriage-return'),
+        pytest.param(f'LGTM {MARKER}', None, id='inline'),
+        pytest.param(MARKER.replace('f' * 64, 'F' * 64), None, id='uppercase-fingerprint'),
+        pytest.param(MARKER.replace('f' * 64, 'f' * 63), None, id='short-fingerprint'),
+        pytest.param(MARKER.replace(HEAD_SHA, HEAD_SHA[:12]), None, id='short-head'),
+        pytest.param(MARKER.replace(' -->', ' x=1 -->'), None, id='extra-field'),
+    ],
+)
+def test_a_signoff_is_a_marker_line_of_its_own(body: str, signoff: tuple[str, str] | None):
+    """Only an exact, well-formed marker line counts, so a quote of someone else's marker does not."""
+    parsed = generator.parse_signoff(body, 'DouweM')
+
+    assert (parsed and (parsed.fingerprint, parsed.head)) == signoff
+
+
+def _comment(comment_id: int, login: str, body: str, user_type: str = 'User') -> dict[str, object]:
+    return {'id': comment_id, 'user': {'login': login, 'type': user_type}, 'body': body}
+
+
+def _signoff_gh(comments: list[dict[str, object]], permissions: dict[str, str]) -> _FakeGh:
+    gh = _fake_gh()
+    gh.responses[f'repos/{REPO}/issues/42/comments?per_page=100'] = json.dumps([comments[:1], comments[1:]])
+    for login, permission in permissions.items():
+        gh.responses[f'repos/{REPO}/collaborators/{login}/permission'] = f'{permission}\n'
+    return gh
+
+
+def _marker(digest: str) -> str:
+    return f'Signed off.\n{generator.signoff_marker(digest, HEAD_SHA)}'
+
+
+def test_signoff_marker_prints_the_marker_for_the_current_fingerprint(
+    manifest_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    digest = _signoff_digest(manifest_root, capsys)
+
+    assert generator.main(['--signoff-marker', REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=_fake_gh()) == 0
+
+    out = capsys.readouterr().out
+    assert out == f'<!-- durable-exec-signoff fingerprint={digest} head={HEAD_SHA} -->\n'
+    assert generator.parse_signoff(out, 'x') == (digest, HEAD_SHA, 'x')
+
+
+def test_signed_off_accepts_the_latest_signoff_by_a_writer(manifest_root: Path, capsys: pytest.CaptureFixture[str]):
+    """The newest marker comment whose author has write access counts; newer ones by others are skipped.
+
+    Each author's permission is read once.
+    """
+    digest = _signoff_digest(manifest_root, capsys)
+    gh = _signoff_gh(
+        [
+            _comment(1, 'maintainer', _marker('0' * 64)),
+            _comment(2, 'DouweM', _marker(digest)),
+            _comment(3, 'author', _marker('1' * 64)),
+            _comment(4, 'github-actions[bot]', _marker('2' * 64), user_type='Bot'),
+            _comment(5, 'author', _marker('3' * 64)),
+            _comment(6, 'DouweM', 'Thanks!'),
+        ],
+        {'author': 'read', 'DouweM': 'admin'},
+    )
+
+    assert generator.main(['--signed-off', REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=gh) == 0
+
+    assert capsys.readouterr().out == (
+        f'The durable-exec sign-off by DouweM at {HEAD_SHA} still covers fingerprint {digest}.\n'
+    )
+    permission_calls = [call[0] for call in gh.calls if '/collaborators/' in call[0]]
+    assert permission_calls == [
+        f'repos/{REPO}/collaborators/author/permission',
+        f'repos/{REPO}/collaborators/DouweM/permission',
+    ]
+
+
+@pytest.mark.parametrize(
+    'comments, permissions',
+    [
+        pytest.param([], {}, id='no-comments'),
+        pytest.param([_comment(1, 'author', 'current')], {'author': 'read'}, id='reader'),
+        pytest.param([_comment(1, 'author', 'current')], {'author': 'triage'}, id='triage'),
+        pytest.param([_comment(1, 'pydanty', 'current', user_type='Bot')], {}, id='bot'),
+        pytest.param([_comment(1, 'evil/../x', 'current')], {}, id='login-outside-the-shape'),
+        pytest.param(
+            [_comment(1, 'DouweM', 'current'), _comment(2, 'DouweM', 'stale')], {'DouweM': 'write'}, id='newer-stale'
+        ),
+    ],
+)
+def test_signed_off_fails_without_a_writers_signoff_on_the_current_fingerprint(
+    manifest_root: Path,
+    capsys: pytest.CaptureFixture[str],
+    comments: list[dict[str, object]],
+    permissions: dict[str, str],
+):
+    """A sign-off by a user without write access, by a bot, or superseded by a newer one on other changes does not count."""
+    digest = _signoff_digest(manifest_root, capsys)
+    bodies = {'current': _marker(digest), 'stale': _marker('0' * 64)}
+    gh = _signoff_gh([{**comment, 'body': bodies[str(comment['body'])]} for comment in comments], permissions)
+
+    assert generator.main(['--signed-off', REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=gh) == 1
+
+    assert capsys.readouterr().err.startswith(f'no sign-off covers fingerprint {digest}; the latest sign-off is ')
+    assert {call[0] for call in gh.calls if '/collaborators/' in call[0]} == {
+        f'repos/{REPO}/collaborators/{login}/permission' for login in permissions
+    }
+
+
+def test_signed_off_fails_when_a_touched_core_file_cannot_be_fingerprinted(
+    manifest_root: Path, capsys: pytest.CaptureFixture[str]
+):
+    """Without the patch of a touched core file no sign-off can cover it, so the label job adds the label."""
+    gh = _fake_gh()
+    pages = json.loads(gh.responses[f'repos/{REPO}/pulls/42/files?per_page=100'])
+    del pages[0][0]['patch']
+    gh.responses[f'repos/{REPO}/pulls/42/files?per_page=100'] = json.dumps(pages)
+
+    assert generator.main(['--signed-off', REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=gh) == 1
+
+    assert capsys.readouterr().err == f"cannot fingerprint: GitHub left out the patch of '{MODELS}'\n"
+    assert not any('/comments' in argument for call in gh.calls for argument in call)
+
+
+@pytest.mark.parametrize('command', ['--fingerprint', '--signoff-marker', '--signed-off'])
+@pytest.mark.parametrize(
+    'live_heads',
+    [
+        pytest.param([MERGE_BASE, HEAD_SHA], id='before-listing'),
+        pytest.param([HEAD_SHA, MERGE_BASE], id='after-listing'),
+    ],
+)
+def test_a_fingerprint_is_only_for_the_named_head(
+    manifest_root: Path, capsys: pytest.CaptureFixture[str], command: str, live_heads: list[str]
+):
+    """The files listing is the live head's, so a live head other than `HEAD_SHA` around the listing fails."""
+    gh = _fake_gh()
+    heads = iter(live_heads)
+    head_read = (f'repos/{REPO}/pulls/42', '--jq', '.head.sha')
+
+    def live(*arguments: str) -> str:
+        if arguments == head_read:
+            gh.calls.append(arguments)
+            return f'{next(heads)}\n'
+        return gh(*arguments)
+
+    assert generator.main([command, REPO, '42', BASE_SHA, HEAD_SHA], root=manifest_root, gh=live) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert captured.err == f'cannot fingerprint: the pull request head is {live_heads}, not {HEAD_SHA}\n'
+    assert gh.calls[1:] == [
+        head_read,
+        ('--paginate', '--slurp', f'repos/{REPO}/pulls/42/files?per_page=100'),
+        head_read,
+    ]

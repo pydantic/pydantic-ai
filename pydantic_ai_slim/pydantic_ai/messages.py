@@ -2031,6 +2031,10 @@ ArgsT_co = TypeVar('ArgsT_co', covariant=True, default=Any)
 ContentT_co = TypeVar('ContentT_co', covariant=True, default=Any)
 """The result shape of a [`ToolKind`][pydantic_ai.messages.ToolKind] and of the typed return parts registered for it."""
 
+MetadataT_co = TypeVar('MetadataT_co', covariant=True, default=Any)
+"""The shape of the `metadata` a [`ToolKind`][pydantic_ai.messages.ToolKind]'s tool returns, and of the typed return
+parts registered for it."""
+
 
 _TOOL_KINDS: dict[str, ToolKind] = {}
 """Registry: kind id → the [`ToolKind`][pydantic_ai.messages.ToolKind] defined with it."""
@@ -2041,7 +2045,7 @@ _CoreContentT = TypeVar('_CoreContentT')
 
 
 @final
-class ToolKind(Generic[ArgsT_co, ContentT_co]):
+class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
     """What a tool is, independent of its name, and the shapes of its arguments and result.
 
     A kind is the one place a tool's typed identity is declared. Give it to a tool with `tool_kind=`, and
@@ -2071,6 +2075,7 @@ class ToolKind(Generic[ArgsT_co, ContentT_co]):
         *,
         args: type[ArgsT_co] | None = None,
         content: type[ContentT_co] | None = None,
+        metadata: type[MetadataT_co] | None = None,
     ) -> None:
         """Define a tool kind.
 
@@ -2082,21 +2087,37 @@ class ToolKind(Generic[ArgsT_co, ContentT_co]):
             content: The shape of the tool's result, typically a `TypedDict`. A tool of this kind must have a
                 return type that fits it, and its successful return parts are only promoted when their content
                 validates against it.
+            metadata: The shape of the `metadata` the tool returns through
+                [`ToolReturn`][pydantic_ai.messages.ToolReturn], typically a `TypedDict`. Typed return parts read it
+                as [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata], which is `None` for
+                metadata that doesn't fit. Such metadata doesn't stop a return part from becoming its typed part.
         """
         if not namespace or not all(namespace.split('.')):
             raise UserError(f"A tool kind needs a namespace, e.g. `ToolKind('my_capability', {name!r})`.")
         if not name:
             raise UserError(f'Tool kind in namespace {namespace!r} has an empty name.')
-        self._define(namespace, name, args, content)
+        self._define(namespace, name, args, content, metadata)
 
-    def _define(self, namespace: str | None, name: str, args: type[Any] | None, content: type[Any] | None) -> None:
+    def _define(
+        self,
+        namespace: str | None,
+        name: str,
+        args: type[Any] | None,
+        content: type[Any] | None,
+        metadata: type[Any] | None = None,
+    ) -> None:
         self._namespace = namespace
         self._name = name
         self._id = f'{namespace}.{name}' if namespace is not None else name
         self._args = args
         self._content = content
+        self._metadata = metadata
         existing = _TOOL_KINDS.get(self._id)
-        if existing is not None and not (_same_shape(existing._args, args) and _same_shape(existing._content, content)):
+        if existing is not None and not (
+            _same_shape(existing._args, args)
+            and _same_shape(existing._content, content)
+            and _same_shape(existing._metadata, metadata)
+        ):
             raise UserError(f'Tool kind {self._id!r} is already defined as {existing!r}.')
         # A Temporal workflow sandbox re-executes application modules; its copy must not displace the host's.
         if existing is None or not _keeps_canonical_registration():
@@ -2127,10 +2148,15 @@ class ToolKind(Generic[ArgsT_co, ContentT_co]):
         """The shape of the tool's result, or `None` if the kind doesn't declare one."""
         return self._content
 
+    @property
+    def metadata(self) -> type[MetadataT_co] | None:
+        """The shape of the `metadata` the tool returns, or `None` if the kind doesn't declare one."""
+        return self._metadata
+
     def __repr__(self) -> str:
         shapes = ''.join(
             f', {label}={_shape_name(shape)}'
-            for label, shape in (('args', self._args), ('content', self._content))
+            for label, shape in (('args', self._args), ('content', self._content), ('metadata', self._metadata))
             if shape is not None
         )
         if self._namespace is None:
@@ -2154,6 +2180,10 @@ class ToolKind(Generic[ArgsT_co, ContentT_co]):
     def _content_adapter(self) -> pydantic.TypeAdapter[Any] | None:
         return pydantic.TypeAdapter(self._content) if self._content is not None else None
 
+    @cached_property
+    def _metadata_adapter(self) -> pydantic.TypeAdapter[Any] | None:
+        return pydantic.TypeAdapter(self._metadata) if self._metadata is not None else None
+
     def _validate_args(self, args: str | Mapping[str, Any] | None) -> ArgsT_co | None:
         """`args` validated against the declared shape (a dictionary without one), or `None` if incomplete or not fitting."""
         return _validate_args(self._args_adapter, args)
@@ -2176,6 +2206,16 @@ class ToolKind(Generic[ArgsT_co, ContentT_co]):
             except pydantic.ValidationError:
                 pass
         return None
+
+    def _validate_metadata(self, metadata: Any) -> MetadataT_co | None:
+        """`metadata` validated against the declared shape (as is without one), or `None` if it doesn't fit."""
+        adapter = self._metadata_adapter
+        if adapter is None:
+            return metadata
+        try:
+            return adapter.validate_python(metadata)
+        except pydantic.ValidationError:
+            return None
 
 
 def _validate_args(adapter: pydantic.TypeAdapter[Any], args: str | Mapping[str, Any] | None) -> Any:
@@ -2302,22 +2342,26 @@ def _check_declared_shape(
 
     Type checkers already catch this through `__init_subclass__`'s signature; this catches it at runtime too.
     """
-    shape = kind.args if payload_field == 'args' else kind.content
+    shapes = {'args': kind.args} if payload_field == 'args' else {'content': kind.content, 'metadata': kind.metadata}
     for orig_base in cls.__dict__.get('__orig_bases__', ()):
         origin = get_origin(orig_base)
         if not (isinstance(origin, type) and issubclass(origin, base)):
             continue
         declared = get_args(orig_base)
-        if len(declared) != 1 or isinstance(declared[0], TypeVar):
+        if origin is not base and len(declared) != 1:
+            # The type arguments of a generic subclass between this class and the base are its own. Exactly one is
+            # read as the payload's shape.
             continue
-        (declared_shape,) = declared
-        if declared_shape is Any if shape is None else _same_shape(declared_shape, shape):
-            continue
-        raise UserError(
-            f'Typed tool part {cls.__qualname__} parameterizes {base.__name__} with '
-            f'{_shape_name(declared_shape)}, but its kind {kind.id!r} declares '
-            f'`{payload_field}={_shape_name(shape) if shape is not None else None}`.'
-        )
+        for (label, shape), declared_shape in zip(shapes.items(), declared):
+            if isinstance(declared_shape, TypeVar) or (
+                declared_shape is Any if shape is None else _same_shape(declared_shape, shape)
+            ):
+                continue
+            raise UserError(
+                f'Typed tool part {cls.__qualname__} parameterizes {base.__name__} with '
+                f'{_shape_name(declared_shape)}, but its kind {kind.id!r} declares '
+                f'`{label}={_shape_name(shape) if shape is not None else None}`.'
+            )
 
 
 def _make_typed_part_dataclass(cls: _ToolPartClass, kind: str) -> None:
@@ -2381,10 +2425,11 @@ def _tool_result_provenance_tags(tool_name: str, tool_call_id: str, file_identif
 
 
 @dataclass(repr=False)
-class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
+class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co, MetadataT_co]):
     """Base class for tool return parts.
 
-    Generic in the shape of [`typed_content`][pydantic_ai.messages.BaseToolReturnPart.typed_content], which a
+    Generic in the shapes of [`typed_content`][pydantic_ai.messages.BaseToolReturnPart.typed_content] and
+    [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata], which a
     [typed tool part](../tools-advanced.md#typed-tool-parts) declares through its kind.
     """
 
@@ -2463,6 +2508,17 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
         if kind is None:
             return cast(ContentT_co, self.content)
         return kind._validate_content(self.content)  # pyright: ignore[reportPrivateUsage]
+
+    @property
+    def typed_metadata(self) -> MetadataT_co | None:
+        """The `metadata` validated against the shape the part's kind declares, or `None` if it doesn't fit.
+
+        On a part with no kind, or one whose kind declares no metadata shape, it returns the metadata unchanged.
+        """
+        kind = self._kind
+        if kind is None:
+            return cast(MetadataT_co, self.metadata)
+        return kind._validate_metadata(self.metadata)  # pyright: ignore[reportPrivateUsage]
 
     def _split_content(self) -> tuple[list[Any], list[MultiModalContent], bool]:
         """Split content into non-file and file parts.
@@ -2727,7 +2783,7 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co]):
 
 
 @dataclass(repr=False)
-class ToolReturnPart(BaseToolReturnPart[ContentT_co]):
+class ToolReturnPart(BaseToolReturnPart[ContentT_co, MetadataT_co]):
     """A tool return message, this encodes the result of running a tool."""
 
     _: KW_ONLY
@@ -2749,7 +2805,7 @@ class ToolReturnPart(BaseToolReturnPart[ContentT_co]):
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def __init_subclass__(cls, *, kind: ToolKind[Any, ContentT_co] | None = None, **kwargs: Any) -> None:
+    def __init_subclass__(cls, *, kind: ToolKind[Any, ContentT_co, MetadataT_co] | None = None, **kwargs: Any) -> None:
         """Register a typed `ToolReturnPart` for `kind`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
         _register_typed_tool_part(cls, ToolReturnPart, _TYPED_RETURN_PARTS, 'content', kind)
@@ -2770,7 +2826,7 @@ class ToolReturnPart(BaseToolReturnPart[ContentT_co]):
 
 
 @dataclass(repr=False)
-class NativeToolReturnPart(BaseToolReturnPart[ContentT_co]):
+class NativeToolReturnPart(BaseToolReturnPart[ContentT_co, MetadataT_co]):
     """A tool return message from a native tool.
 
     For native tools with a stable cross-provider shape (currently `tool_search`), a
@@ -2796,7 +2852,7 @@ class NativeToolReturnPart(BaseToolReturnPart[ContentT_co]):
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def __init_subclass__(cls, *, kind: ToolKind[Any, ContentT_co] | None = None, **kwargs: Any) -> None:
+    def __init_subclass__(cls, *, kind: ToolKind[Any, ContentT_co, MetadataT_co] | None = None, **kwargs: Any) -> None:
         """Register a typed `NativeToolReturnPart` for `kind`: see [Typed tool parts](../tools-advanced.md#typed-tool-parts)."""
         super().__init_subclass__(**kwargs)
         _register_typed_tool_part(cls, NativeToolReturnPart, _TYPED_RETURN_PARTS, 'content', kind)
@@ -3700,7 +3756,8 @@ class InstructionDigest:
     """A rewrite-mode instruction block as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart] records it.
 
     Only what decides whether the block is unchanged: a later request can keep its window's prefix only if
-    every rewrite-mode block is still the same, in the same place.
+    every rewrite-mode block is still the same, in the same place. On a model that reads dynamic rewrite-mode
+    blocks outside the cached prefix, that applies to the literal ones.
     """
 
     id: SerializedInstructionId = None
@@ -3744,7 +3801,8 @@ class InstructionBaselinePart:
     prefix has to change anyway (a rewritten block changed, a block's policy changed, compaction). Every
     request in the window is sent the same prefix, with each append-mode block at its value here, followed in
     history by the [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s since. An empty
-    `instructions` list ends the window, so earlier changes stop applying.
+    `instructions` list ends the window, so earlier changes stop applying. On a model that reads dynamic
+    rewrite-mode blocks outside the cached prefix, a change to one of those doesn't open a window.
 
     It's never sent to a model: it records what the request's
     [`instructions`][pydantic_ai.messages.ModelRequest.instructions] were made of, so a later request can
@@ -4830,7 +4888,8 @@ class WorkspaceSource:
     """
 
     path: str
-    """The path the content was read from."""
+    """The path the content was read from, as the model sees it: the `label` passed to
+    [`from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace], if any."""
 
     authority: Authority
     """The [authority][pydantic_ai.workspaces.Workspace.authority_of] of the file when the content was read.
@@ -4845,15 +4904,21 @@ class WorkspaceSource:
     """Who wrote content from this source, for the lookalike note."""
 
     @classmethod
-    async def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
+    async def from_workspace(cls, workspace: Workspace, path: str, *, label: str | None = None) -> WorkspaceSource:
         """The source for content read from `path` in `workspace`, with the authority of that file.
 
         That's [`workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of]: `'operator'` unless an
         [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] lowers it for the workspace or for the path.
+
+        Args:
+            workspace: The workspace the content was read from.
+            path: The path the content was read from. The authority always comes from this path.
+            label: The path to show the model instead of `path`, such as a file name without the private directory
+                it lives in. It only changes what the model sees, never the authority.
         """
         source = cls.__new__(cls)
         # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
-        object.__setattr__(source, 'path', path)
+        object.__setattr__(source, 'path', path if label is None else label)
         object.__setattr__(source, 'authority', await _workspace_authority(workspace, path))
         object.__setattr__(source, 'source_kind', 'workspace')
         return source
@@ -5834,8 +5899,12 @@ class ModelResponse:
 
     Set by models that continue server-side state, such as
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] with
-    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id],
+    [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id]
+    and [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] with
+    [`anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id],
     so a later request continues from this response only while it and the messages before it are unchanged.
+    With `anthropic_previous_message_id`, it also covers the response's `provider_response_id`, which a continue
+    request names, and its `'thread_fingerprint'`.
     The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to
     the model, so they're left out, and changing them doesn't count as a change. A request's `instructions`
     are left out too: the server doesn't keep them with a response, so each request sends its own.
@@ -6026,8 +6095,22 @@ ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('k
 """Any message sent to or returned by a model."""
 
 
-ModelMessagesTypeAdapter = pydantic.TypeAdapter(
-    list[ModelMessage], config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64')
+def _share_instructions(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Point requests with equal `instructions` at one string.
+
+    Every request records the instructions it was sent with, and they rarely change between requests, so a
+    long history would otherwise hold one copy of them per request.
+    """
+    shared: dict[str, str] = {}
+    for message in messages:
+        if isinstance(message, ModelRequest) and message.instructions is not None:
+            message.instructions = shared.setdefault(message.instructions, message.instructions)
+    return messages
+
+
+ModelMessagesTypeAdapter: pydantic.TypeAdapter[list[ModelMessage]] = pydantic.TypeAdapter(
+    Annotated[list[ModelMessage], pydantic.AfterValidator(_share_instructions)],
+    config=pydantic.ConfigDict(defer_build=True, ser_json_bytes='base64', val_json_bytes='base64'),
 )
 """Pydantic [`TypeAdapter`][pydantic.type_adapter.TypeAdapter] for (de)serializing messages."""
 
@@ -6581,25 +6664,52 @@ def _append_request(clean_messages: list[ModelMessage], message: ModelRequest) -
     ):
         parts = [*last_message.parts, *message.parts]
         parts.sort(key=_tool_results_first_sort_key)
-        metadata: dict[str, Any] | None = None
-        last_namespace = (last_message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-        namespace = (message.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
-        if _utils.is_str_dict(last_namespace) or _utils.is_str_dict(namespace):
-            metadata = {
-                _PYDANTIC_AI_METADATA_KEY: {
-                    **(last_namespace if _utils.is_str_dict(last_namespace) else {}),
-                    **(namespace if _utils.is_str_dict(namespace) else {}),
-                }
-            }
         merged_message = ModelRequest(
             parts=parts,
             instructions=last_message.instructions or message.instructions,
             timestamp=message.timestamp or last_message.timestamp,
-            metadata=metadata,
+            metadata=_merged_reserved_metadata(last_message, message),
         )
         clean_messages[-1] = merged_message
     else:
         clean_messages.append(_move_parts_from_between_tool_results(message))
+
+
+def _merged_reserved_metadata(first: ModelRequest, second: ModelRequest) -> dict[str, Any] | None:
+    """The metadata of the request merging `first` and `second`: their combined reserved namespaces.
+
+    The merged request records a deferred pause only if both did, so content added after a pause, such as a new
+    user message, still continues the run once merged into it.
+    """
+    first_namespace = (first.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    second_namespace = (second.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    if not _utils.is_str_dict(first_namespace) and not _utils.is_str_dict(second_namespace):
+        return None
+    namespace = {
+        **(first_namespace if _utils.is_str_dict(first_namespace) else {}),
+        **(second_namespace if _utils.is_str_dict(second_namespace) else {}),
+    }
+    if not (_is_deferred_pause_record(first) and _is_deferred_pause_record(second)):
+        namespace.pop(_DEFERRED_PAUSE_KEY, None)
+    return {_PYDANTIC_AI_METADATA_KEY: namespace}
+
+
+_DEFERRED_PAUSE_KEY = 'deferred_pause'
+"""Marks a request an agent run wrote when it paused for deferred tool calls, in the reserved namespace.
+
+Set on the request holding the results of the step's other calls and on content recorded at the pause. A run
+resumed with no new prompt or results whose history ends on such requests after a response with unanswered calls
+runs only those calls, so deferred ones pause it again. Any other request after the response, such as a new user
+message or a request whose model call failed, continues the run instead.
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] drops the reserved namespace, so a client can't
+claim a pause.
+"""
+
+
+def _is_deferred_pause_record(request: ModelRequest) -> bool:
+    """Whether `request` was written at a pause for deferred tool calls. See `_DEFERRED_PAUSE_KEY`."""
+    namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    return _utils.is_str_dict(namespace) and namespace.get(_DEFERRED_PAUSE_KEY) is True
 
 
 def _append_response(clean_messages: list[ModelMessage], message: ModelResponse) -> None:
@@ -7066,10 +7176,20 @@ def _without_reserved_metadata(message: ModelMessage, stripped: list[ModelMessag
     metadata = message.metadata
     if metadata is None or _PYDANTIC_AI_METADATA_KEY not in metadata:
         return metadata
-    # History sanitized before carries only `sanitize_messages`' own mark, which it sets again where it applies.
-    if metadata[_PYDANTIC_AI_METADATA_KEY] != {_UNSTATED_LOADS_KEY: True}:
+    # Dropping the framework's own marks loses nothing a client should keep: `sanitize_messages` sets its mark again
+    # where it applies, and a client's history can't hold a run's pause.
+    if not _holds_only_framework_marks(metadata[_PYDANTIC_AI_METADATA_KEY]):
         stripped.append(message)
     return {key: value for key, value in metadata.items() if key != _PYDANTIC_AI_METADATA_KEY} or None
+
+
+def _holds_only_framework_marks(namespace: object) -> bool:
+    """Whether a reserved namespace holds nothing but the marks `sanitize_messages` and paused runs set."""
+    return (
+        _utils.is_str_dict(namespace)
+        and bool(namespace)
+        and all(key in (_UNSTATED_LOADS_KEY, _DEFERRED_PAUSE_KEY) and value is True for key, value in namespace.items())
+    )
 
 
 def _strip_dangling_tail_tool_calls(

@@ -788,7 +788,8 @@ def test_temporal_name_parity_with_live_registered_activities_and_table() -> Non
     ]
     namer = TemporalOperationNamer('compat')
     actual = {namer.invocation_name(operation_id, label=_label(operation_id)).operation_name for operation_id in ids}
-    assert actual == live
+    # The local activity that calls an external-event wait's `ask` is registered alongside the operations.
+    assert actual | {'agent__compat__external_event_ask'} == live
     assert actual == TEMPORAL_ACTIVITY_NAMES
 
 
@@ -832,8 +833,9 @@ def test_temporal_backend_preserves_sdk_visible_activity_definitions() -> None:
         legacy_registrations.extend(toolset_temporal_activities(wrapped))
 
     # Child workflow definitions now share the backend registration stream, while this
-    # compatibility assertion remains specifically about SDK-visible activities.
-    registrations = durability.temporal_activities
+    # compatibility assertion remains specifically about SDK-visible activities. The last one, the
+    # local activity that calls an external-event wait's `ask`, came later and no operation owns it.
+    registrations = durability.temporal_activities[:-1]
     assert registrations == legacy_registrations
 
     def sdk_definition(item: Callable[..., object]) -> tuple[str | None, inspect.Signature]:
@@ -1855,6 +1857,7 @@ async def test_legacy_dynamic_execution_unit_preserves_argument_validation_retry
         call_tool_operation=call_tool,
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-never',
+        units_share_run_context=True,
     )
 
     def model(messages: list[Any], info: AgentInfo) -> ModelResponse:
@@ -1909,6 +1912,7 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
         call_tool_operation=never_called,
         resolve_tool_config=lambda tool, name: {},
         lifecycle='enter-never',
+        units_share_run_context=True,
     )
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     with pytest.raises(UserError, match=r"Tool 'guarded'.*has an `args_validator`"):
@@ -1988,6 +1992,7 @@ async def test_legacy_validation_fallbacks_remain_inline() -> None:
         call_tool_operation=unused_operation,
         resolve_tool_config=lambda tool, name: False,
         lifecycle='enter-never',
+        units_share_run_context=True,
     )
     dynamic_tools = await dynamic.get_tools(ctx)
     dynamic_validator = dynamic_tools['tool'].args_validator_func
@@ -2056,7 +2061,7 @@ async def test_run_resolved_dynamic_toolset_is_entered_once_per_run() -> None:
     """
     counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=False)
 
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     assert resolutions == snapshot(1)
 
 
@@ -2069,7 +2074,7 @@ async def test_per_run_step_dynamic_toolset_still_resolves_per_unit() -> None:
     """
     counts, resolutions = await _run_dynamic_mcp_agent(per_run_step=True)
 
-    assert counts == snapshot({'initialize': 5, 'tools/list': 5, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 5, 'tools/list': 5, 'tools/call': 2})
     assert resolutions == snapshot(5)
 
 
@@ -2100,7 +2105,7 @@ async def test_dynamic_unit_resolves_its_own_toolset_when_the_run_context_cannot
 
     # Each call stands on its own: it built, entered and tore down its own toolset.
     assert resolutions == snapshot(2)
-    assert counts == snapshot({'initialize': 2, 'tools/list': 2, 'tools/call': 1})
+    assert counts == snapshot({'handshake': 2, 'tools/list': 2, 'tools/call': 1})
 
 
 async def test_run_held_toolset_closes_only_what_a_unit_entered() -> None:
@@ -2168,7 +2173,7 @@ async def test_parallel_tool_call_units_share_one_session() -> None:
 
     assert result.output == 'done'
     assert resolutions == snapshot(1)
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
 
 
 async def test_closing_the_wrapper_passes_on_how_it_was_exited() -> None:
@@ -2253,7 +2258,7 @@ async def test_static_mcp_toolset_holds_one_session_for_the_durable_run() -> Non
     """
     counts, _ = await _run_static_mcp_agent(lifecycle='enter-in-durable-unit')
 
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
 
 
 async def test_static_mcp_toolset_is_entered_per_unit_when_the_run_cannot_hold_a_session() -> None:
@@ -2266,7 +2271,7 @@ async def test_static_mcp_toolset_is_entered_per_unit_when_the_run_cannot_hold_a
     """
     counts, _ = await _run_static_mcp_agent(lifecycle='enter-outside-durable')
 
-    assert counts == snapshot({'initialize': 3, 'tools/list': 3, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 3, 'tools/list': 3, 'tools/call': 2})
 
 
 async def test_each_durable_run_holds_its_own_session() -> None:
@@ -2278,7 +2283,7 @@ async def test_each_durable_run_holds_its_own_session() -> None:
     """
     counts, _ = await _run_static_mcp_agent(lifecycle='enter-in-durable-unit', runs=2)
 
-    assert counts == snapshot({'initialize': 2, 'tools/list': 2, 'tools/call': 4})
+    assert counts == snapshot({'handshake': 2, 'tools/list': 2, 'tools/call': 4})
 
 
 async def test_static_mcp_toolset_is_entered_by_the_wrapper_outside_the_durable_context() -> None:
@@ -2293,7 +2298,7 @@ async def test_static_mcp_toolset_is_entered_by_the_wrapper_outside_the_durable_
         lifecycle='enter-in-durable-unit', in_durable_context=False, include_instructions=True
     )
 
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     assert instructions == snapshot(['Be a helpful assistant.'] * 3)
 
 
@@ -2321,7 +2326,7 @@ async def test_mcp_toolset_with_auth_function_connects_each_run_as_its_own_user(
     from fastmcp import FastMCP
     from fastmcp.server.dependencies import get_http_request
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
 
     server: FastMCP[None] = FastMCP('auth_echo')
@@ -2343,7 +2348,7 @@ async def test_mcp_toolset_with_auth_function_connects_each_run_as_its_own_user(
     app = server.http_app(stateless_http=True, json_response=True)
     # Each run of the CI matrix installs one FastMCP generation, so it covers only one of the branches.
     client: httpx.AsyncClient | httpx2.AsyncClient
-    if is_mcp_sdk_v2():
+    if MCP_SDK_V2:
         client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))  # pragma: lax no cover
     else:
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))  # pragma: lax no cover
@@ -2373,7 +2378,7 @@ async def test_instruction_units_ride_the_session_the_run_holds() -> None:
     """
     counts, instructions = await _run_static_mcp_agent(lifecycle='enter-in-durable-unit', include_instructions=True)
 
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     assert instructions == snapshot(['Be a helpful assistant.'] * 3)
 
 

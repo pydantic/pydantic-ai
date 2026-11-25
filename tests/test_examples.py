@@ -10,6 +10,7 @@ import ssl
 import subprocess
 import sys
 import time
+import tomllib
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
@@ -18,7 +19,7 @@ from importlib.util import find_spec
 from inspect import FrameInfo, unwrap
 from pathlib import Path
 from textwrap import indent
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import pytest
@@ -118,10 +119,33 @@ class ExamplesConfig(BaseExamplesConfig):
     known_first_party: list[str] = field(default_factory=list[str])
     known_local_folder: list[str] = field(default_factory=list[str])
 
+    # Docs examples are application code, which runs on asyncio as `examples/` does, so they may use the `asyncio`
+    # primitives that `banned-api` bans in backend-neutral code. The other entries still hold.
+    asyncio_bans: ClassVar[frozenset[str]] = frozenset(
+        {
+            'asyncio.sleep',
+            'asyncio.Event',
+            'asyncio.to_thread',
+            'asyncio.wait_for',
+            'asyncio.timeout',
+            'asyncio.Queue',
+            'asyncio.Semaphore',
+            'asyncio.Condition',
+        }
+    )
+
     def ruff_config(self) -> tuple[str, ...]:
         config = super().ruff_config()
         config = tuple(arg for arg in config if not arg.startswith('--config='))
-        config = (*config, '--config', str(Path(__file__).parent.parent / 'pyproject.toml'))
+        pyproject = Path(__file__).parent.parent / 'pyproject.toml'
+        config = (*config, '--config', str(pyproject))
+        lint = tomllib.loads(pyproject.read_text(encoding='utf-8'))['tool']['ruff']['lint']
+        held = ', '.join(
+            f'{json.dumps(name)} = {{ msg = {json.dumps(ban["msg"])} }}'
+            for name, ban in lint['flake8-tidy-imports']['banned-api'].items()
+            if name not in self.asyncio_bans
+        )
+        config = (*config, '--config', f'lint.flake8-tidy-imports.banned-api = {{ {held} }}')
         if self.known_first_party:  # pragma: no branch
             config = (*config, '--config', f'lint.isort.known-first-party = {self.known_first_party}')
         if self.known_local_folder:
@@ -134,10 +158,15 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'artifact-scanning.md',
         'aws-lambda.md',
         'azure-durable-task.md',
+        'cdp-browser.md',
+        'deny-unanswered.md',
         'detect-loops.md',
         'memory.md',
         'permissions.md',
+        'report-remaining-budget.md',
+        'report-tool-errors.md',
         'tool-budgets.md',
+        'wrap-up-at-limits.md',
     }
 )
 """`docs/harness` pages whose examples run here; the rest are skipped until they are made runnable."""
@@ -259,7 +288,7 @@ def _patch_optional_mcp_modules(mocker: MockerFixture) -> None:
     else:
         mocker.patch('pydantic_ai.mcp.MCPToolset', return_value=MockMCPServer())
     try:
-        mocker.patch('mcp.server.fastmcp.FastMCP')
+        mocker.patch('fastmcp.FastMCP')
     except (ImportError, AttributeError):
         pass
 
@@ -632,6 +661,7 @@ def test_docs_examples(
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
     env.set('CEREBRAS_API_KEY', 'testing')
     env.set('NEBIUS_API_KEY', 'testing')
+    env.set('STAV_API_KEY', 'testing')
     env.set('CRUSOE_API_KEY', 'testing')
     env.set('HEROKU_INFERENCE_KEY', 'testing')
     env.set('FIREWORKS_API_KEY', 'testing')
@@ -649,6 +679,7 @@ def test_docs_examples(
     env.set('MOONSHOTAI_API_KEY', 'testing')
     env.set('META_API_KEY', 'testing')
     env.set('DEEPSEEK_API_KEY', 'testing')
+    env.set('OTARI_API_KEY', 'testing')
     env.set('OVHCLOUD_API_KEY', 'testing')
     env.set('ALIBABA_API_KEY', 'testing')
     env.set('SAMBANOVA_API_KEY', 'testing')
@@ -969,6 +1000,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
+    'Draft the invoice for order ord_8Kq2Zp.': ToolCallPart(tool_name='build_invoice', args={'order_id': 'ord_8Kq2Zp'}),
     'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
         tool_name='load_capability', args={'id': 'refunds'}
     ),
@@ -1003,6 +1035,21 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'square size 10, circle size 20, triangle size 30': ToolCallPart(
         tool_name='final_result_list_2',
         args={'response': [10, 20, 30]},
+    ),
+    '<contract>\nInvoices are payable within 30 days of receipt. Late payments accrue\ninterest at 1.5% per month.\n</contract>': ToolCallPart(
+        tool_name='final_result',
+        args={
+            'facts': [
+                {
+                    'statement': 'Invoices are due 30 days after receipt.',
+                    'quote': 'Invoices are payable within 30 days of receipt.',
+                },
+                {
+                    'statement': 'Late payments accrue 1.5% interest per month.',
+                    'quote': 'Late payments accrue 1.5% monthly interest.',
+                },
+            ]
+        },
     ),
     'get me users who were last active yesterday.': ToolCallPart(
         tool_name='final_result_Success',
@@ -1847,6 +1894,27 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_order_status':
         return ModelResponse(parts=[TextPart('Order 1234 shipped on 2032-01-02.')])
+    elif (
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        and isinstance(m.content, str)
+        and m.content.startswith('These quotes do not appear in the contract:')
+    ):
+        # docs/output.md grounding validator: the retry quotes the contract verbatim, across its line break
+        args = {
+            'facts': [
+                {
+                    'statement': 'Invoices are due 30 days after receipt.',
+                    'quote': 'Invoices are payable within 30 days of receipt.',
+                },
+                {
+                    'statement': 'Late payments accrue 1.5% interest per month.',
+                    'quote': 'Late payments accrue interest at 1.5% per month.',
+                },
+            ]
+        }
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]

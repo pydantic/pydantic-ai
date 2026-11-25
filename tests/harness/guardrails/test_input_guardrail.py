@@ -70,6 +70,7 @@ from pydantic_ai_harness.sub_agents import (
     is_task_report,
 )
 from pydantic_ai_harness.system_reminders import Reminder, SystemReminders
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
 from tests.harness.conftest import IsDatetime
 
@@ -115,8 +116,6 @@ async def _delivered_task_question() -> TaskQuestionPart:
 
 
 _SECRET = 'sk-ant-' + 'A' * 40
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 def _recording_tracer() -> tuple[Tracer, InMemorySpanExporter]:

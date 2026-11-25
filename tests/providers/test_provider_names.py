@@ -38,8 +38,10 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.otari import OtariProvider
     from pydantic_ai.providers.ovhcloud import OVHcloudProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
+    from pydantic_ai.providers.stav import StavProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
     from pydantic_ai.providers.vllm import VLLMProvider
@@ -72,8 +74,10 @@ with try_import() as imports_successful:
         ('vllm', VLLMProvider, 'VLLM_BASE_URL'),
         ('crusoe', CrusoeProvider, 'CRUSOE_API_KEY'),
         ('nebius', NebiusProvider, 'NEBIUS_API_KEY'),
+        ('otari', OtariProvider, 'OTARI_API_KEY'),
         ('ovhcloud', OVHcloudProvider, 'OVHCLOUD_API_KEY'),
         ('snowflake', SnowflakeProvider, 'SNOWFLAKE_ACCOUNT'),
+        ('stav', StavProvider, 'STAV_API_KEY'),
         ('gateway/chat', OpenAIProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/groq', GroqProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
         ('gateway/google', GoogleCloudProvider, 'PYDANTIC_AI_GATEWAY_API_KEY'),
@@ -89,7 +93,9 @@ with try_import() as imports_successful:
         MetaProvider,
         NebiusProvider,
         OpenRouterProvider,
+        OtariProvider,
         OVHcloudProvider,
+        StavProvider,
         TogetherProvider,
         VercelProvider,
     ]
@@ -155,7 +161,9 @@ def test_provider_base_url_replaces_the_default(
         | MetaProvider
         | NebiusProvider
         | OpenRouterProvider
+        | OtariProvider
         | OVHcloudProvider
+        | StavProvider
         | TogetherProvider
         | VercelProvider
     ],

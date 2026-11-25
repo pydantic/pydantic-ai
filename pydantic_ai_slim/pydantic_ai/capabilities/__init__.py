@@ -1,6 +1,7 @@
 from typing import Any, TypeAlias
 
 from pydantic_ai._history_processor import HistoryProcessor
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.native_tools._tool_search import (
     ToolSearchFunc as ToolSearchFunc,
@@ -10,6 +11,7 @@ from pydantic_ai.native_tools._tool_search import (
 )
 from pydantic_ai.output import OutputContext
 
+from ..toolsets._tool_search import keywords_search
 from ._dynamic import CapabilityFunc, DynamicCapability
 from ._on_event import on_event
 from ._tool_search import ToolSearch
@@ -119,6 +121,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 __all__ = [
     'AbstractCapability',
     'AgentCapability',
+    'AgentInstructions',
     'AgentModel',
     'AgentNode',
     'CapabilityDescription',
@@ -168,12 +171,14 @@ __all__ = [
     'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
+    'SourcedInstruction',
     'Thinking',
     'ToolSearch',
     'ToolSearchFunc',
     'ToolSearchLocalStrategy',
     'ToolSearchNativeStrategy',
     'ToolSearchStrategy',
+    'keywords_search',
     'Toolset',
     'UseThreadExecutor',
     'WebFetch',

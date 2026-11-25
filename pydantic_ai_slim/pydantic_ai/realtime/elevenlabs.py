@@ -354,7 +354,7 @@ class ElevenLabsRealtimeConnection(OpenAIRealtimeConnection):
                     # A reconnect replaces the socket, and the clock restarts with it.
                 self._last_sent = loop.time()
                 idle = 0.0
-            await asyncio.sleep(after - idle)
+            await asyncio.sleep(after - idle)  # noqa: TID251  (not converted to anyio yet)
 
     async def _send_event(self, event: dict[str, Any]) -> None:
         await super()._send_event(event)

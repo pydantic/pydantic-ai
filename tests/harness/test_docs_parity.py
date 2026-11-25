@@ -147,6 +147,7 @@ _CAPABILITY_DOC_PAGES = _capability_doc_pages()
 _CAPABILITY_PAGE_META = {
     'advisor.md': ('advisor', 'Advisor'),
     'ask-user.md': ('ask_user', 'Ask User'),
+    'deny-unanswered.md': ('deny_unanswered', 'Deny Unanswered'),
     'aws-lambda.md': ('aws_lambda', 'AWS Lambda Durability'),
     'absurd.md': ('absurd', 'Absurd Durability'),
     'pgtask.md': ('pgtask', 'pgtask Durability'),
@@ -169,6 +170,7 @@ _CAPABILITY_PAGE_META = {
     'kubernetes-sandbox.md': ('kubernetes_sandbox', 'Kubernetes Sandbox'),
     'render-sandbox.md': ('render_sandbox', 'Render Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
+    'model-router.md': ('model_router', 'Model Router'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
@@ -176,24 +178,30 @@ _CAPABILITY_PAGE_META = {
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),
     'bubblewrap-sandbox.md': ('bubblewrap_sandbox', 'Bubblewrapped Workspace'),
     'repo-context.md': ('repo_context', 'Repo Context'),
+    'report-stale-files.md': ('report_stale_files', 'Report Stale Files'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'render-workflows.md': ('render', 'Render Workflows'),
     'researcher.md': ('researcher', 'Researcher'),
     'pydantic-ai-docs.md': ('pydantic_ai_docs', 'Pydantic AI Docs'),
     'exa-search.md': ('exa', 'Exa Search'),
     'playwright.md': ('playwright', 'Playwright Browser'),
+    'computer-use.md': ('computer_use', 'Computer Use'),
     'youdotcom.md': ('youdotcom', 'You.com'),
     'keenable-search.md': ('keenable', 'Keenable Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'browser-use.md': ('browser_use', 'Browser Use'),
+    'cdp-browser.md': ('cdp_browser', 'CDP Browser'),
     'compaction.md': ('compaction', 'Compaction'),
     'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
+    'tool-bridge.md': ('tool_bridge', 'Tool Bridge'),
     'tool-call-judge.md': ('tool_call_judge', 'Tool Call Judge'),
     'approval-reviewer.md': ('approval_reviewer', 'Approval Reviewer'),
     'permissions.md': ('permissions', 'Permissions'),
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
+    'label-cross-model-history.md': ('label_cross_model_history', 'Label Cross Model History'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
+    'current-time.md': ('current_time', 'Current Time'),
     'subagents.md': ('sub_agents', 'Subagents'),
     'peers.md': ('peers', 'Peers'),
     'dynamic-workflow.md': ('dynamic_workflow', 'Dynamic Workflow'),
@@ -201,10 +209,15 @@ _CAPABILITY_PAGE_META = {
     'system-reminders.md': ('system_reminders', 'System Reminders'),
     'detect-loops.md': ('detect_loops', 'Detect Loops'),
     'tool-budgets.md': ('tool_budgets', 'Tool Budgets'),
+    'report-remaining-budget.md': ('report_remaining_budget', 'Report Remaining Budget'),
+    'report-tool-errors.md': ('report_tool_errors', 'Report Tool Errors'),
     'trajectory-judge.md': ('trajectory_judge', 'Trajectory Judge'),
     'refine-output.md': ('refine_output', 'Refine Output'),
+    'require-verification.md': ('require_verification', 'Require Verification'),
+    'wrap-up-at-limits.md': ('wrap_up_at_limits', 'Wrap Up At Limits'),
     'capability-creation.md': ('capability_creation', 'Runtime Capability Creation'),
     'guardrails.md': ('guardrails', 'Input, Output & Tool Guardrails'),
+    'goal.md': ('goal', 'Goal'),
     'github.md': ('github', 'GitHub'),
     'google-workspace.md': ('google_workspace', 'Google Workspace'),
     'prompt-injection-defender.md': ('prompt_injection_defender', 'Prompt Injection Defender'),
@@ -518,6 +531,7 @@ _PROBLEM_TO_SKILL_ROUTE = (
     ('spend ceiling', 'spend limits'),
     ('without making progress', 'loop detection'),
     ('malformed JSON', 'repair malformed tool arguments'),
+    ('the whole run ends', 'report tool exceptions to the model'),
 )
 
 
@@ -558,18 +572,19 @@ def test_problem_to_capability_rows_match_across_surfaces() -> None:
     assert readme == docs
 
 
-_PACKAGES_HEADING = '## Pydantic AI, the Harness, and CLAI'
-_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_clai2/README.md')
+_PACKAGES_HEADING = '## Pydantic AI, the harness SDK, `Coder`, and Pax'
+_PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_ai_pax/README.md')
 
 
 @pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
 def test_package_comparison_matches_across_surfaces(surface: str) -> None:
-    """The Harness docs index and the Harness and CLAI READMEs compare the three packages the same way."""
+    """The Harness docs index and the Harness and Pax READMEs draw the same four-way distinction."""
     canonical = _without_link_targets(_section_table_rows(_PACKAGES_SURFACES[0], _PACKAGES_HEADING))
     assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
         '| [Pydantic AI] (`pydantic-ai`)',
         '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
-        '| [CLAI] (`pydantic-clai2`)',
+        '| [`Coder`]',
+        '| [Pax] (`pydantic-ai-pax`)',
     ]
     assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical
 

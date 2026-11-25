@@ -38,6 +38,7 @@ from .tools import AgentDepsT, DeferredToolRequests
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
+    from .agent.abstract import EventStreamHandler
     from .result import FinalResult
     from .workspaces import Workspace
 
@@ -516,6 +517,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             [_agent_graph.AgentNode[AgentDepsT, Any]],
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
+        events_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Run the post-stream portion of the node lifecycle.
 
@@ -555,6 +557,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         # runner state so agent_run.result correctly reflects whether the run is finished.
         if result is not pre_hook_result:
             self._sync_graph_state(result)
+        await self._deliver_leftover_events(result, events_handler)
 
         _utils.raise_if_cancelling()
         return result
@@ -566,11 +569,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             [_agent_graph.AgentNode[AgentDepsT, Any]],
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
+        events_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Run the complete node lifecycle inside `wrap_node_run`.
 
         The wrapped handler runs `before_node_run`, the step with `on_node_run_error` recovery,
-        and `after_node_run`.
+        and `after_node_run`. When the run ends, events emitted after the node's stream closed go to
+        `events_handler`, the handler `step_fn` streams the node's events to, if any.
         """
         # Bind before `before_node_run` awaits: when the run is driven from a different task than
         # the previous step (manual `next()` from another task), the controller must target this
@@ -617,6 +622,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = drain_pending_messages_at_end(run_context, result)
             if not self._graph_reflects(result):
                 self._sync_graph_state(result)
+            await self._deliver_leftover_events(result, events_handler)
             return result
         finally:
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
@@ -706,6 +712,38 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
             del self
 
+    async def _deliver_leftover_events(
+        self,
+        result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
+        events_handler: EventStreamHandler[AgentDepsT] | None,
+    ) -> None:
+        """When a deferred-tool pause recorded queued content, deliver the events emitted after the last node stream.
+
+        The `EnqueuedMessagesEvent` for the recorded content is one: listeners such as a capability's `@on_event`
+        method see it through the capability chain, as they see a node's events, and so does `events_handler`, the
+        run's stream handler. Without either, the events stay buffered, as a node's events do when nothing streams
+        it. A run that ends any other way, or pauses with nothing queued, leaves the buffer as it always has.
+
+        Listeners see every event before `events_handler` sees the first: `SubAgents` acknowledges a recorded
+        report on its event, so a handler that stops partway must not leave later reports unacknowledged.
+        """
+        if not (
+            isinstance(result, End)
+            and isinstance(result.data.output, DeferredToolRequests)
+            and any(isinstance(event, _messages.EnqueuedMessagesEvent) for event in self.ctx.state.event_stream_buffer)
+        ):
+            return
+        capability = self.ctx.deps.root_capability
+        if events_handler is None and not (capability.has_wrap_run_event_stream or capability.has_on_event):
+            return
+        stream = _agent_graph.leftover_event_stream(self.ctx)
+        try:
+            events = [event async for event in stream]
+        finally:
+            await _utils.aclose_if_supported(stream)
+        if events_handler is not None:
+            await events_handler(_agent_graph.build_run_context(self.ctx), _agent_graph.buffered_events(events))
+
     async def _stream_and_advance(
         self,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -746,11 +784,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def pending_messages(self) -> list[PendingMessage]:
-        """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
+        """Live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
-        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
+        While the run is live, use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
         and [`dequeue`][pydantic_ai.run.AgentRun.dequeue] or [`set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority]
-        to change them.
+        to change them. After a run pauses, it holds what the pause left undelivered, which can be read but
+        no longer changed; see [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run).
         """
         return self._graph_run.state.pending_messages
 
@@ -813,7 +852,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end).
+                    or a redirect if the agent would otherwise end; a run that pauses adds the
+                    content to the history instead, or leaves it queued; see
+                    [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run)).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
 
         Returns:
