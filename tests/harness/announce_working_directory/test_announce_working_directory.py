@@ -15,7 +15,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceUnavailableError
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import AnnounceWorkingDirectory, FileSystem, Shell
 
 
@@ -68,16 +68,14 @@ class TestAnnounceWorkingDirectory:
         )
         assert _lines(model) == []
 
-    async def test_the_line_stays_when_the_workspace_goes_away_mid_run(self, tmp_path: Path) -> None:
-        """The workspace is asked once per run, so a later request keeps the line and the prompt's prefix."""
+    async def test_the_workspace_is_asked_once_per_run(self, tmp_path: Path) -> None:
+        """A later request reuses the line, so a workspace that goes away mid-run can't drop it from the prefix."""
 
-        class GoneAfterFirst(LocalWorkspaceBackend):
+        class Counting(LocalWorkspaceBackend):
             asked = 0
 
             async def working_dir(self) -> str:
                 self.asked += 1
-                if self.asked > 1:
-                    raise WorkspaceUnavailableError('gone')
                 return await super().working_dir()
 
         lines: list[list[str]] = []
@@ -95,7 +93,9 @@ class TestAnnounceWorkingDirectory:
         def probe() -> str:
             return 'ok'
 
-        await agent.run('go', workspace=GoneAfterFirst(tmp_path))
-        await agent.run('again', workspace=GoneAfterFirst(tmp_path))
+        first, second = Counting(tmp_path), Counting(tmp_path)
+        await agent.run('go', workspace=first)
+        await agent.run('again', workspace=second)
         line = f'The working directory is `{tmp_path.resolve()}`.'
         assert lines == [[line], [line], [line]]
+        assert (first.asked, second.asked) == (1, 1)
