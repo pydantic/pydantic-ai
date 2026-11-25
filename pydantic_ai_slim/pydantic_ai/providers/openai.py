@@ -172,6 +172,11 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # GPT-5.1 through GPT-5.5 reject `reasoning_effort='minimal'` on every OpenAI API that serves them
+                # (verified live, 2026-11). Set here rather than in `openai_model_profile` because OpenRouter accepts
+                # it for these models.
+                openai_supports_minimal_reasoning_effort=profile.get('openai_supports_minimal_reasoning_effort', True)
+                and not model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5')),
                 supported_native_tools=supported_native_tools,
                 # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
                 # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
@@ -194,6 +199,11 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # on https://github.com/pydantic/pydantic-ai/pull/14285. Set here rather than in
                 # `openai_model_profile`, which OpenAI-compatible hosts share without this being verified on them.
                 openai_chat_streaming_repeats_usage_totals=model_name.startswith('gemini'),
+                # Gemini's OpenAI-compatible endpoint counts thinking tokens in `total_tokens` but not in
+                # `completion_tokens`: see `test_gemini_usage_counts_thinking_tokens_left_out_of_completion_tokens` and
+                # the live probe on https://github.com/pydantic/pydantic-ai/issues/14291. Set here rather than in
+                # `openai_model_profile` for the same reason as the key above.
+                openai_chat_completion_tokens_omit_reasoning=model_name.startswith('gemini'),
                 # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.

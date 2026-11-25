@@ -241,9 +241,20 @@ CASES = [
     WireCase(
         id='google-gemini-25-disable',
         provider='google',
-        model_name='gemini-2.5-flash',
+        model_name='gemini-2.5-flash-lite',
         thinking=False,
         present={'generationConfig.thinkingConfig.thinking_budget': 0},
+        match_body=True,
+    ),
+    WireCase(
+        id='google-gemini-25-flash-false-min-budget',
+        provider='google',
+        model_name='gemini-2.5-flash',
+        thinking=False,
+        # From 2026-12-01 the Gemini API routes `gemini-2.5-flash` to `gemini-3.5-flash-lite`, which rejects
+        # `thinking_budget=0`, so `thinking=False` sends the minimum budget, as for Gemini 2.5 Pro.
+        present={'generationConfig.thinkingConfig.thinking_budget': 128},
+        match_body=True,
     ),
     WireCase(
         id='google-gemini-25-pro-false-min-budget',

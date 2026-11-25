@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, Any, get_args
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai_harness._warn import warn_argument_ignored
@@ -18,6 +20,7 @@ from pydantic_ai_harness.coder._instructions import (
     BENCHMARK_INSTRUCTIONS,
     Autonomy,
     coder_instructions,
+    delegation_instruction,
 )
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.file_system import FileSystem
@@ -140,23 +143,38 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     the first dynamic part. It contributes no toolset. `id` is set on the instance, not as a class
     default, so two copies are rejected rather than merged. A delegate's text comes from
     `delegation_depth()`, which the delegating run sets before the child run is awaited, and which
-    a recorded delegation sets again on the worker.
+    a recorded delegation sets again on the worker. The rule against unrequested delegation is a block of its own,
+    `delegation`, sent only to models whose profile sets `delegates_unprompted`.
     """
 
     guidance: str
     delegated_guidance: str
+    delegation: SubAgents[AgentDepsT] | None = None
+    """The `SubAgents` capability `Coder` adds, if any, whose tool the rule against unrequested delegation names."""
     delegate: bool = False
 
     def __post_init__(self) -> None:
         self.id = 'coder_instructions'
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        return self.delegated_guidance if self.delegate else self.guidance
+        return [
+            self.delegated_guidance if self.delegate else self.guidance,
+            *([delegation_instruction(self.delegation.tool_name)] if self.delegation is not None else []),
+        ]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        if self.delegation is not None and isinstance(ctx.model, FallbackModel):
+            # Python's default warning filter shows this once per process: it's raised from one line.
+            warnings.warn(_FALLBACK_MODEL_WARNING, UserWarning, stacklevel=1)
         if delegation_depth() <= 1:
             return self
         return replace(self, delegate=True)
+
+
+_FALLBACK_MODEL_WARNING = (
+    "`Coder` can't read model-specific instructions from `FallbackModel`, so no model gets its rule against "
+    "unrequested delegation; use the `ModelFallback` capability so each attempt gets its model's instructions."
+)
 
 
 @dataclass
@@ -282,7 +300,6 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         guidance, delegated_guidance = coder_instructions(
             autonomy=autonomy,
-            delegate_tool=delegation.tool_name if delegation is not None else None,
             extra=instructions,
             repo_files=bundled_repo_context.filenames
             if bundled_repo_context is not None and bundled_repo_context.autoload_instructions
@@ -293,7 +310,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
-            _CoderGuidance[AgentDepsT](guidance, delegated_guidance),
+            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, delegation=delegation),
             _file_system(unrestricted=unrestricted_filesystem, max_image_side=max_image_side),
             Shell[AgentDepsT](
                 denied_commands=[],
