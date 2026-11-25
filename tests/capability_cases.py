@@ -919,6 +919,15 @@ generator (`scripts/durable_exec_support.py`) read them. An engine that doesn't 
 measured elsewhere. Importing a table imports its engine's SDK, through its package.
 """
 
+PENDING_ENGINES: tuple[Engine, ...] = ('prefect', 'aws_lambda', 'absurd', 'pgtask', 'azure_durable_task', 'render')
+"""The engines that don't run `DurableEngineSuite` yet, whose tables list only what is measured elsewhere.
+
+It may only shrink, which `test_every_durability_capability_has_a_suite` pins: a new engine joins with a suite.
+"""
+
+UNTESTED_ISSUE = 12291
+"""Tracks running `DurableEngineSuite` under every engine."""
+
 ID_LESS_TOOLSETS = ('BrowserUse', 'PydanticAIDocs')
 """The cases whose toolset has no id, which Temporal and Prefect refuse."""
 

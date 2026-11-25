@@ -28,6 +28,7 @@ from ..capability_cases import (
     ENGINE_SUPPORT_MODULES,
     ENGINES,
     ID_LESS_TOOLSETS,
+    PENDING_ENGINES,
     SCENARIO_RUNS,
     SCENARIOS,
     Contract,
@@ -61,9 +62,6 @@ SUITES: Mapping[Engine, tuple[str, str]] = {
     'temporal': ('tests/harness/test_durable_temporal_replay.py', 'TestTemporal'),
 }
 """The `DurableEngineSuite` subclass of each engine that runs the suite: its module and class."""
-
-PENDING_ENGINES: tuple[Engine, ...] = ('prefect', 'aws_lambda', 'absurd', 'pgtask', 'azure_durable_task', 'render')
-"""The engines that don't run the suite yet. It may only shrink: a new engine joins with a suite of its own."""
 
 
 def _module_file(module: str) -> Path:
