@@ -435,6 +435,7 @@ Only Pydantic AI can follow a fallback like this, so other clients skip the prov
 - A [`ModelFallback`](capabilities/model-fallback.md) on the agent takes over once the Gateway's chain has failed, rather than on the first hand-back.
 - A streamed request is handed back before any output reaches you, so it's followed too.
 - Direct [`Model.request()`][pydantic_ai.models.Model.request] calls, the candidates of a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] (use [`ModelFallback`](capabilities/model-fallback.md) instead), [batch requests](batch.md), and runs under [durable execution](durable_execution/overview.md) aren't handed back: the Gateway falls back within the request's API format only, as it does for other clients.
+- In a capability's model request hooks, `request_context.model` for a `gateway/` model is a wrapper that adds the fallback headers. It answers for your model (its `profile`, `model_name`, `settings` and so on), and its `.wrapped` attribute is your model itself, for an `isinstance` check.
 - Embedding requests are never handed back: embeddings from different models can't be compared with each other.
 
 ## Troubleshooting

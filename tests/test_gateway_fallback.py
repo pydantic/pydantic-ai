@@ -25,10 +25,11 @@ from pydantic_ai.capabilities._gateway_fallback import GatewayFallback
 from pydantic_ai.durable_exec._utils import reject_serving_wrapper
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelHTTPError, UserError
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import Model, ModelRequestParameters
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.tools import RunContext
 
 from ._inline_snapshot import snapshot
 from .append_only import (
@@ -287,6 +288,42 @@ async def test_leaving_a_handed_back_stream_early_closes_it(allow_model_requests
 
     assert body.closed
     assert [request.path for request in gateway.seen] == ['/proxy/openai/responses', '/proxy/openai/v1/messages']
+
+
+@dataclass
+class SeenModels(AbstractCapability[Any]):
+    """Records the model each attempt's `after_model_request` hook sees."""
+
+    models: list[Model] = field(default_factory=list[Model])
+
+    async def after_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        self.models.append(request_context.model)
+        return response
+
+
+async def test_hooks_see_the_users_model_through_the_fallback_wrapper(allow_model_requests: None):
+    """The wrapper that sends the fallback headers answers for the user's model: hooks that branch on its profile,
+    name or settings see the same values, and `.wrapped` reaches the model itself.
+    """
+    gateway = FakeGateway([('/responses', lambda _: httpx2.Response(200, json=openai_response('Hello')))])
+    model = gateway.openai_model()
+    seen = SeenModels()
+
+    await Agent(model, capabilities=[seen]).run('Hello')
+
+    [hooked] = seen.models
+    assert isinstance(hooked, WrapperModel)
+    assert hooked.wrapped is model
+    assert (hooked.profile, hooked.model_name, hooked.model_id, hooked.system, hooked.settings, hooked.provider) == (
+        model.profile,
+        model.model_name,
+        model.model_id,
+        model.system,
+        model.settings,
+        model.provider,
+    )
 
 
 class PassThroughWrapper(AbstractCapability[Any]):
