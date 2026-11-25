@@ -118,13 +118,20 @@ def test_an_exempt_cell_links_its_issue() -> None:
 
 
 def test_every_scenario_has_a_cell_for_every_engine() -> None:
+    """Every scenario says what every engine does with it.
+
+    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    """
     assert set(SCENARIO_SUPPORT) == set(SCENARIOS)
     for scenario, cells in SCENARIO_SUPPORT.items():
         assert set(cells) == set(ENGINES), scenario
 
 
 def test_every_scenario_names_a_public_capability() -> None:
-    """A scenario is `<capability>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it."""
+    """A scenario is `<capability>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it.
+
+    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    """
     for scenario in SCENARIOS:
         capability, _, name = scenario.partition('.')
         assert capability in PUBLIC and name, scenario
@@ -132,6 +139,10 @@ def test_every_scenario_names_a_public_capability() -> None:
 
 
 def test_every_broken_scenario_cell_has_a_signature() -> None:
-    """A `broken` cell's bug must show as its signature, and a signature no cell uses is stale."""
+    """Every `broken` cell's issue has a signature, and a signature no cell uses is stale: the keys stay in sync.
+
+    The scenario's own tests match the signature against the observed outcome
+    (`tests/harness/background_tools/test_durable_engines.py`). It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    """
     broken = {cell.issue for cells in SCENARIO_SUPPORT.values() for cell in cells.values() if cell.level == 'broken'}
     assert broken == set(BROKEN_SIGNATURES)
