@@ -116,20 +116,11 @@ class Collides:
     tool names make unreachable, and nothing would catch the drift.
 
     Whether these should instead declare a default `id`, so that two merge, is a decision for each
-    capability's owner: merging `FileSystem` would union allow-lists, which widens access. This
-    table records where the question applies rather than answering it silently.
+    capability's owner: a plain merge of an allowlist would union it, which widens access. `Conjoins`
+    is the answer for one that is an access boundary.
     """
 
     reason: str
-    make: (
-        Callable[[Callable[..., AbstractCapability[None]]], tuple[AbstractCapability[None], AbstractCapability[None]]]
-        | None
-    ) = None
-    """Builds two from the discovered class, when two can be built without credentials or a network.
-
-    Takes the class rather than closing over an import: these capabilities live in optional groups,
-    and a module-level import would break the whole file on a lane that installs none of them.
-    """
 
 
 @dataclass
@@ -160,7 +151,27 @@ class Narrows:
     """Builds two that differ, from the discovered class, without credentials or a network."""
 
 
-Policy = Anonymous | Collides | Combines | Narrows | Rejected
+@dataclass
+class Conjoins:
+    """A default `id` and a `combine` that conjoins: the two together allow exactly what both allow.
+
+    The access-boundary case in "Deciding What Two Of It Mean"
+    (`src/pydantic_ai_harness/agent_docs/capability-authoring.md`) for a capability whose restrictions can
+    all hold at once, such as `FileSystem` and `Shell`: allowlists intersect, denylists add up, limits take
+    the smaller value, so adding one only ever narrows. `make` takes the class, like `Collides`.
+    """
+
+    reason: str
+    make: Callable[[Callable[..., AbstractCapability[None]]], tuple[AbstractCapability[None], AbstractCapability[None]]]
+    """Builds two that restrict differently. Each states every field whose default is itself a restriction that
+    the other states, since a field one leaves at its default takes no part in the combination."""
+    # `Any`: each takes its own capability type, which no single parameter type admits.
+    allows: Callable[[Any], frozenset[object]]
+    """What one allows, out of a fixed set of probes: the tools it registers, the paths or commands it lets
+    through, the limits it stays within."""
+
+
+Policy = Anonymous | Collides | Combines | Conjoins | Narrows | Rejected
 
 
 @dataclass(frozen=True)
@@ -688,7 +699,6 @@ _SEPARATE_TOOLSET_ID = (
     'its toolset id is kept apart from the capability id, so durable operation names do not change (#10904): '
     f'{_ISSUES}13968'
 )
-_NO_DEFAULT_ID = f'it declares no default id, but its toolset has a fixed one: {_ISSUES}9233'
 _TOOLSET_WITHOUT_ID = f'its toolset has no id, so a durable engine refuses it: {_ISSUES}9233'
 _USERS_TOOLSET = 'its toolset is one the user built, which keeps the id the user gave it'
 _WRAPPED_TOOLSET = "it wraps another capability, whose toolset keeps that capability's id"
@@ -705,6 +715,7 @@ UNSET_ID = Contract(
             (
                 'CompactOnRequest',
                 'DayAI',
+                'FileSystem',
                 'GitHub',
                 'Linear',
                 'Macroscope',
@@ -716,6 +727,7 @@ UNSET_ID = Contract(
                 'PruneToolResults',
                 'Pylon',
                 'Slack',
+                'Shell',
                 'SmartSearch',
                 'ToolOutputLimits',
             ),
@@ -724,8 +736,6 @@ UNSET_ID = Contract(
         'Planning': Exempt(f'{_UNSET_ID_KEEPS_TOOLSET_ID}; it hardcodes the toolset id (#10904)'),
         'ConversationSearch': Exempt(_SEPARATE_TOOLSET_ID),
         'PlaywrightBrowser': Exempt(_SEPARATE_TOOLSET_ID),
-        'FileSystem': Exempt(_NO_DEFAULT_ID),
-        'Shell': Exempt(_NO_DEFAULT_ID),
         'PydanticAIDocs': Exempt(_TOOLSET_WITHOUT_ID),
         'Peers': Exempt(_NO_DURABLE_TOOLSET_ID),
     },

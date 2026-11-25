@@ -7,11 +7,12 @@ from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs, WrapperCapability
-from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai_harness._conjoin import state_defaults
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import (
@@ -110,41 +111,6 @@ class _ReportExhaustedRetries(AbstractCapability[AgentDepsT]):
         ) from error
 
 
-class _CoderShell(Shell[AgentDepsT]):
-    """`Coder`'s own `Shell`, which refuses another `Shell` on the same agent.
-
-    A `Shell` added beside `Coder` registers `run_command` and its siblings next to `Coder`'s
-    unrestricted `shell` tool rather than narrowing it, so its `allowed_commands` restricts nothing.
-    The tool names differ, so nothing else catches it: this checks the run's capabilities by type.
-    A stopgap until a second `Shell` narrows `Coder`'s instead, tracked in
-    https://github.com/pydantic/pydantic-ai/issues/14515.
-    """
-
-    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        await super().before_run(ctx)
-        extra: list[AbstractCapability[AgentDepsT]] = []
-
-        def collect(candidate: AbstractCapability[AgentDepsT]) -> None:
-            while isinstance(candidate, WrapperCapability):
-                candidate = candidate.wrapped
-            if isinstance(candidate, Shell) and not isinstance(candidate, _CoderShell):
-                extra.append(candidate)
-
-        if ctx.root_capability is not None:  # pragma: no branch
-            ctx.root_capability.apply(collect)
-        if extra:
-            raise UserError(
-                '`Coder` already gives the agent an unrestricted `shell` tool, and a `Shell` beside it adds '
-                "more command tools rather than narrowing `Coder`'s: its `allowed_commands` and "
-                '`denied_commands` do not apply to `shell`. Remove the extra `Shell`, and adjust `Coder` through '
-                'its own parameters (`instructions`, `autonomy`, `sub_agents`); add `Permissions` to require '
-                'approval before commands, or a sandbox workspace such as `BubblewrappedWorkspace` to contain '
-                'them. For a restricted shell, build the agent from `FileSystem` and `Shell` without `Coder`. '
-                'Narrowing `Coder` by adding capabilities is planned in '
-                'https://github.com/pydantic/pydantic-ai/issues/14515.'
-            )
-
-
 MAX_READ_CHARS = 50_000
 """Characters of complete lines per `read_file`, below the output cap."""
 
@@ -222,8 +188,9 @@ def _file_system(*, unrestricted: bool, max_image_side: int | None) -> FileSyste
     )
     if unrestricted:
         # `/` is the filesystem root, or on Windows the working directory's drive.
-        return replace(file_system, root_dir='/', read_only_patterns=[])
-    return file_system
+        file_system = replace(file_system, root_dir='/', read_only_patterns=[])
+    # Its defaults are part of what `Coder` gives, so a `FileSystem` added beside it can't drop them.
+    return state_defaults(file_system)
 
 
 @dataclass(init=False)
@@ -338,12 +305,15 @@ class Coder(CombinedCapability[AgentDepsT]):
             RequireWorkspace[AgentDepsT]('Coder'),
             _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project)),
             _file_system(unrestricted=unrestricted_filesystem, max_image_side=max_image_side),
-            _CoderShell[AgentDepsT](
-                denied_commands=[],
-                default_timeout=MAX_FOREGROUND_WAIT,
-                allow_interactive=True,
-                # No env patterns: the workspace, not the host process, supplies the command environment.
-                tools=['shell'],
+            # Its defaults are part of what `Coder` gives, so a `Shell` added beside it can't drop them.
+            state_defaults(
+                Shell[AgentDepsT](
+                    denied_commands=[],
+                    default_timeout=MAX_FOREGROUND_WAIT,
+                    allow_interactive=True,
+                    # No env patterns: the workspace, not the host process, supplies the command environment.
+                    tools=['shell'],
+                )
             ),
         ]
         if bundled_repo_context is not None:

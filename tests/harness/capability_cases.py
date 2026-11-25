@@ -101,6 +101,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
+from pydantic_ai_harness.file_system import READ_ONLY_TOOL_NAMES
 from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
@@ -124,6 +125,7 @@ from ..capability_cases import (
     CapabilityCase,
     Collides,
     Combines,
+    Conjoins,
     Contract,
     Narrows,
     Rejected,
@@ -259,6 +261,42 @@ def _kubernetes_sandbox() -> KubernetesSandbox:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
     return KubernetesSandbox(warm_pool='python-pool')
+
+
+_PATHS = ('src/app.py', 'src/generated/models.py', 'docs/guide.md', 'secrets/key.txt', 'build/out.bin', 'notes.txt')
+_COMMANDS = ('pytest -q', 'git status', 'ls', 'cat notes.txt', 'echo hi | wc', 'echo hi > out.txt', 'vim notes.txt')
+
+
+def _file_system_allows(file_system: FileSystem[None]) -> frozenset[object]:
+    """The tools, path accesses, and limits `file_system` allows, out of fixed probes."""
+    toolset = file_system._file_system_toolset()  # pyright: ignore[reportPrivateUsage]
+    tools = {name for name in toolset.tools if not file_system.read_only or name in READ_ONLY_TOOL_NAMES}
+    allowed: set[object] = {('tool', name) for name in tools}
+    for path in _PATHS:
+        for write in (False, True):
+            try:
+                toolset._patterns.check(path, write=write)  # pyright: ignore[reportPrivateUsage]
+            except PermissionError:
+                continue
+            allowed.add(('write' if write else 'read', path))
+    allowed |= {('read_lines', n) for n in (100, 500, 2000) if n <= file_system.max_read_lines}
+    allowed |= {('list_results', n) for n in (10, 100, 1000) if n <= file_system.max_list_results}
+    return frozenset(allowed)
+
+
+def _shell_allows(shell: Shell[None]) -> frozenset[object]:
+    """The tools, commands, and limits `shell` allows, out of fixed probes."""
+    toolset = shell.get_toolset()
+    allowed: set[object] = {('tool', name) for name in toolset.tools}
+    for command in _COMMANDS:
+        try:
+            toolset._check_command(command)  # pyright: ignore[reportPrivateUsage]
+        except PermissionError:
+            continue
+        allowed.add(('command', command))
+    allowed |= {('timeout', t) for t in (10.0, 30.0, 120.0, 270.0) if t <= shell.default_timeout}
+    allowed |= {('output_chars', n) for n in (1_000, 10_000, 50_000) if n <= shell.max_output_chars}
+    return frozenset(allowed)
 
 
 def _ipython_code_mode() -> AbstractCapability[None]:
@@ -660,13 +698,6 @@ CASES: dict[str, CapabilityCase] = {
             'other passes that on'
         )
     ),
-    '_CoderShell': CapabilityCase(
-        Collides(
-            "Coder's own `Shell`; its toolset registers the persistent `shell` tool under a fixed name, and it "
-            'refuses any other `Shell` beside it (#14515)',
-            lambda cls: (cls(tools=['shell']), cls(tools=['shell'], default_timeout=20.0)),
-        )
-    ),
     'Coder': CapabilityCase(
         Anonymous('a packaged harness; composing two is composing their members'),
         build=_workspace(Coder),
@@ -862,9 +893,26 @@ CASES: dict[str, CapabilityCase] = {
     ),
     # -- No default `id`, but two never coexist anyway: their tool names collide. --
     'FileSystem': CapabilityCase(
-        Collides(
-            'its toolset registers `read_file` and friends under fixed names',
-            lambda cls: (cls(str(COMBINE_ROOT_A)), cls(str(COMBINE_ROOT_A.parent))),
+        Conjoins(
+            'one `read_file` and friends per id, and its patterns and root are an access boundary, so every '
+            "instance's restrictions apply and adding one only narrows",
+            lambda cls: (
+                cls(
+                    allowed_patterns=['src/**', 'docs/**'],
+                    denied_patterns=['secrets/**'],
+                    read_only_patterns=['docs/**'],
+                    tools=['read_file', 'write_file', 'edit_file', 'list_directory'],
+                    max_read_lines=500,
+                ),
+                cls(
+                    denied_patterns=['build/**'],
+                    read_only_patterns=['src/generated/**'],
+                    tools=['read_file', 'write_file', 'list_directory', 'find_files'],
+                    max_list_results=100,
+                    content_hashes=False,
+                ),
+            ),
+            _file_system_allows,
         ),
         build=_workspace(FileSystem),
         calls=Calls(
@@ -901,9 +949,24 @@ CASES: dict[str, CapabilityCase] = {
         build=lambda _: Peers(network=InMemoryPeerNetwork().join(handle='a')),
     ),
     'Shell': CapabilityCase(
-        Collides(
-            'its toolset registers `run_command` and friends under fixed names',
-            lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
+        Conjoins(
+            'one `run_command` and friends per id, and its command lists are a guardrail, so every '
+            "instance's restrictions apply and adding one only narrows",
+            lambda cls: (
+                cls(
+                    allowed_commands=['pytest', 'git', 'ls', 'echo', 'vim'],
+                    default_timeout=270.0,
+                    tools=['run_command', 'shell'],
+                ),
+                cls(
+                    denied_commands=['git'],
+                    denied_operators=['|'],
+                    default_timeout=120.0,
+                    allow_interactive=True,
+                    tools=['run_command', 'start_command'],
+                ),
+            ),
+            _shell_allows,
         ),
         build=_workspace(Shell),
         calls=Calls((('run_command', {'command': 'echo hi'}),), _workspace(Shell)),

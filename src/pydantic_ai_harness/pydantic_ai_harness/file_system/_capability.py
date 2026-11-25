@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import posixpath
 from collections.abc import Sequence
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field, replace
+from pathlib import Path, PureWindowsPath
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
+from pydantic_ai_harness._conjoin import DefaultInt, DefaultStrs, agreed, intersection, smallest, stated, union
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
-from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness._workspace import require_workspace, workspace_path
 from pydantic_ai_harness.file_system._content import require_pillow
 from pydantic_ai_harness.file_system._toolset import (
     DEFAULT_TOOL_NAMES,
@@ -19,16 +22,21 @@ from pydantic_ai_harness.file_system._toolset import (
     root_spelling,
 )
 
-_DEFAULT_READ_CHARS = 50_000
+_DEFAULT_READ_CHARS = DefaultInt(50_000)
+_DEFAULT_READ_LINES = DefaultInt(2000)
+_DEFAULT_MAX_RESULTS = DefaultInt(1000)
+_DEFAULT_TOOLS: tuple[str, ...] = DefaultStrs(DEFAULT_TOOL_NAMES)
 
-_DEFAULT_READ_ONLY: tuple[str, ...] = (
-    '**/.git',
-    '**/.env',
-    '**/.env.*',
-    '*.pem',
-    '*.key',
-    '**/secrets*',
-    '**/.pydantic-ai-harness/**',
+_DEFAULT_READ_ONLY: tuple[str, ...] = DefaultStrs(
+    (
+        '**/.git',
+        '**/.env',
+        '**/.env.*',
+        '*.pem',
+        '*.key',
+        '**/secrets*',
+        '**/.pydantic-ai-harness/**',
+    )
 )
 
 
@@ -49,6 +57,13 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     bounded at all. Isolation depends on the configured workspace backend;
     `LocalWorkspace` provides none. Walks do not descend into a directory whose
     real path is outside `root_dir`.
+
+    An agent has one `FileSystem` per `id`, `'file_system'` by default. Two that share it, such as a
+    `FileSystem` added beside `Coder()`, are combined so that every restriction either states applies:
+    the innermost `root_dir` wins (`None` counting as the working directory), denied and read-only
+    patterns add up, the smaller limits win, `read_only` from either holds, and only tools both register
+    are kept. A field an instance leaves at its default takes no part, so adding one only ever narrows.
+    Give each its own `id` to keep two apart.
     """
 
     root_dir: str | Path | None = None
@@ -89,7 +104,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     `denied_patterns`, these match regardless of case.
     """
 
-    max_read_lines: int = 2000
+    max_read_lines: int = _DEFAULT_READ_LINES
     """Most lines one `read_file` call returns, and the number it returns when it passes no `limit`."""
 
     max_read_chars: int | None = _DEFAULT_READ_CHARS
@@ -112,13 +127,13 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     without it raises an `ImportError`.
     """
 
-    max_list_results: int = 1000
+    max_list_results: int = _DEFAULT_MAX_RESULTS
     """Maximum number of entries returned by `list_directory`."""
 
-    max_search_results: int = 1000
+    max_search_results: int = _DEFAULT_MAX_RESULTS
     """Maximum number of matches returned by `search_files` and `grep`."""
 
-    max_find_results: int = 1000
+    max_find_results: int = _DEFAULT_MAX_RESULTS
     """Maximum number of matches returned by `find_files` and `list_files`."""
 
     read_only: bool = False
@@ -135,7 +150,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     coding agent, where they only add tokens to every read and write.
     """
 
-    tools: Sequence[str] = DEFAULT_TOOL_NAMES
+    tools: Sequence[str] = _DEFAULT_TOOLS
     """Which tools to register, from `FILE_SYSTEM_TOOL_NAMES`.
 
     The default is every tool that needs only the workspace's filesystem. Name
@@ -154,6 +169,9 @@ class FileSystem(AbstractCapability[AgentDepsT]):
 
     protected_patterns: Sequence[str] | None = field(default=None, kw_only=True)
     """Deprecated: renamed to `read_only_patterns`."""
+
+    id: str | None = field(default='file_system', kw_only=True)
+    """The capability id, `'file_system'` by default. Two `FileSystem`s with one id are combined into one."""
 
     _toolset: FileSystemToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """The one toolset, built on first use; it resolves the boundary per workspace on its first operation there."""
@@ -188,6 +206,45 @@ class FileSystem(AbstractCapability[AgentDepsT]):
         if retries is not None and (not isinstance(retries, int) or isinstance(retries, bool) or retries < 0):
             raise ValueError(f'max_retries must be a non-negative integer, got {self.max_retries!r}')
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Combine `FileSystem`s sharing an id so that every restriction any of them states applies.
+
+        A field an instance leaves at its default takes no part. `root_dir=None` is the working
+        directory, itself a boundary, so it always takes part.
+        """
+        file_systems = [capability for capability in capabilities if isinstance(capability, FileSystem)]
+        assert len(file_systems) == len(capabilities)
+        allowed = [list(fs.allowed_patterns) for fs in file_systems if fs.allowed_patterns]
+        if len({tuple(patterns) for patterns in allowed}) > 1:
+            # Glob lists can't be intersected as text, and `FileSystem` holds one list.
+            raise UserError(
+                'These `FileSystem` capabilities share an id, so both of their `allowed_patterns` lists would '
+                f'have to apply, but one `FileSystem` holds one list: {", ".join(map(repr, allowed))}. State one '
+                'list, or give each `FileSystem` its own `id` to keep them apart.'
+            )
+        read_only_lists = stated(fs.read_only_patterns for fs in file_systems)
+        tool_lists = stated(fs.tools for fs in file_systems)
+        tools = intersection(tool_lists, owner='FileSystem', field='tools', empty_means_all=False)
+        return replace(
+            file_systems[-1],
+            cwd=None,
+            root_dir=_innermost_root([fs.root_dir for fs in file_systems]),
+            allowed_patterns=allowed[0] if allowed else [],
+            denied_patterns=union(fs.denied_patterns for fs in file_systems),
+            read_only_patterns=union(read_only_lists) if read_only_lists else _DEFAULT_READ_ONLY,
+            max_read_lines=smallest([fs.max_read_lines for fs in file_systems], default=_DEFAULT_READ_LINES),
+            max_read_chars=smallest([fs.max_read_chars for fs in file_systems], default=_DEFAULT_READ_CHARS),
+            max_image_side=smallest([fs.max_image_side for fs in file_systems], default=None),
+            max_list_results=smallest([fs.max_list_results for fs in file_systems], default=_DEFAULT_MAX_RESULTS),
+            max_search_results=smallest([fs.max_search_results for fs in file_systems], default=_DEFAULT_MAX_RESULTS),
+            max_find_results=smallest([fs.max_find_results for fs in file_systems], default=_DEFAULT_MAX_RESULTS),
+            read_only=any(fs.read_only for fs in file_systems),
+            content_hashes=all(fs.content_hashes for fs in file_systems),
+            tools=_DEFAULT_TOOLS if tools is None else tools,
+            max_retries=agreed([fs.max_retries for fs in file_systems], owner='FileSystem', field='max_retries'),
+        )
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, without touching it: the boundary waits for the first file operation."""
         require_workspace(ctx.workspace, 'FileSystem', ctx.messages)
@@ -218,3 +275,38 @@ class FileSystem(AbstractCapability[AgentDepsT]):
                 max_image_side=self.max_image_side,
             )
         return self._toolset
+
+
+def _innermost_root(roots: Sequence[str | Path | None]) -> str | Path | None:
+    """The root inside every one of `roots`, `None` being the working directory.
+
+    Every root must contain the working directory, so the roots lie on one line of its ancestors and the
+    innermost is inside all of them. A root spelled relative (`..`) and one spelled absolute can't be
+    compared before the workspace resolves them, so they are refused.
+    """
+    if any(root is None for root in roots):
+        return None
+    spellings = {posixpath.normpath(workspace_path(Path(root))): root for root in roots if root is not None}
+    if '.' in spellings:
+        return spellings['.']
+    # A Windows path such as `C:/repo` is absolute too, as `root_spelling` reads it.
+    absolute = [s for s in spellings if posixpath.isabs(s) or PureWindowsPath(s).drive]
+    if absolute and len(absolute) < len(spellings):
+        raise UserError(
+            'These `FileSystem` capabilities share an id, so every `root_dir` applies, but some are relative and '
+            f'some absolute ({", ".join(map(repr, spellings))}), which can only be compared in the workspace. '
+            'Spell them the same way, or give each `FileSystem` its own `id` to keep them apart.'
+        )
+    # The longest spelling is innermost: the most `..` components is outermost, and so is the shortest
+    # absolute path.
+    if not absolute:
+        return spellings[min(spellings, key=lambda spelling: spelling.count('..'))]
+    innermost = max(absolute, key=len)
+    for spelling in absolute:
+        if posixpath.commonpath([spelling, innermost]) != spelling:
+            raise UserError(
+                'These `FileSystem` capabilities share an id, so every `root_dir` applies, but '
+                f'{spelling!r} and {innermost!r} are not inside one another, so no working directory is inside both. '
+                'Give each `FileSystem` its own `id` to keep them apart.'
+            )
+    return spellings[innermost]

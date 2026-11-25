@@ -10,7 +10,8 @@ from typing import NoReturn
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, PrefixTools, local_workspace
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, local_workspace
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -32,6 +33,7 @@ from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sub_agents import SubAgents, TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 from tests.harness._strict_requests import PROVIDERS, capturing_model, strict_tools
+from tests.harness._tool_calls import call_tools
 
 
 def test_coder_agent_is_model_less_and_composed() -> None:
@@ -125,7 +127,7 @@ def test_coder_members_and_parameters() -> None:
         'RequireWorkspace',
         '_CoderGuidance',
         'FileSystem',
-        '_CoderShell',
+        'Shell',
         'RepoContext',
         'SubAgents',
         'ClearToolResults',
@@ -179,28 +181,62 @@ async def test_no_workspace_fails_the_run_naming_coder() -> None:
     assert '- LocalWorkspace: .' in str(raised.value)
 
 
-@pytest.mark.parametrize('placement', ['after', 'before', 'wrapped', 'run'])
-async def test_a_shell_beside_coder_raises_pointing_at_coder(tmp_path: Path, placement: str) -> None:
-    """A `Shell` beside `Coder` would add `run_command` next to `Coder`'s unrestricted `shell`, narrowing nothing.
+CODER_DEFAULT_TOOLS = ['delegate_task', 'edit_file', 'grep', 'list_files', 'read_file', 'shell', 'write_file']
 
-    https://github.com/pydantic/pydantic-ai/issues/14515
-    """
-    shell = Shell(allowed_commands=['pytest'])
-    beside: dict[str, list[AbstractCapability[None]]] = {
-        'after': [Coder(), shell],
-        'before': [shell, Coder()],
-        'wrapped': [Coder(), PrefixTools(shell, prefix='pytest')],
-        'run': [Coder()],
-    }
-    agent = Agent(TestModel(call_tools=[]), capabilities=beside[placement])
-    with pytest.raises(UserError, match="adds more command tools rather than narrowing `Coder`'s") as raised:
-        await agent.run(
-            'go',
-            workspace=LocalWorkspaceBackend(tmp_path),
-            capabilities=[shell] if placement == 'run' else None,
-        )
-    assert 'its own parameters' in str(raised.value)
-    assert 'https://github.com/pydantic/pydantic-ai/issues/14515' in str(raised.value)
+
+async def _offered_tools(tmp_path: Path, *capabilities: AbstractCapability[None]) -> list[str]:
+    model = TestModel(call_tools=[])
+    await Agent(model, capabilities=[LocalWorkspace(tmp_path), *capabilities]).run('go')
+    return sorted(tool.name for tool in model.last_model_request_parameters.function_tools)
+
+
+async def test_a_shell_beside_coder_restricts_coders_shell(tmp_path: Path) -> None:
+    """https://github.com/pydantic/pydantic-ai/issues/14515: it used to add `run_command` beside an unrestricted `shell`."""
+    assert await _offered_tools(tmp_path, Coder(), Shell(allowed_commands=['pytest'])) == CODER_DEFAULT_TOOLS
+
+    capabilities: list[AbstractCapability[None]] = [LocalWorkspace(tmp_path), Coder(), Shell(allowed_commands=['echo'])]
+    denied, allowed = await call_tools(capabilities, [('shell', {'command': 'ls'}), ('shell', {'command': 'echo hi'})])
+    assert "Command 'ls' is not in the allowed list." in denied
+    assert 'hi' in allowed
+
+
+async def test_a_file_system_beside_coder_restricts_coders_file_tools(tmp_path: Path) -> None:
+    """https://github.com/pydantic/pydantic-ai/issues/14515: it used to fail on the `read_file` name."""
+    assert await _offered_tools(tmp_path, Coder(), FileSystem(allowed_patterns=['src/**'])) == CODER_DEFAULT_TOOLS
+
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src' / 'app.py').write_text('print(1)\n')
+    (tmp_path / 'README.md').write_text('Hello.\n')
+    capabilities: list[AbstractCapability[None]] = [
+        LocalWorkspace(tmp_path),
+        Coder(),
+        FileSystem(allowed_patterns=['src/**']),
+    ]
+    denied, allowed = await call_tools(
+        capabilities, [('read_file', {'path': 'README.md'}), ('read_file', {'path': 'src/app.py'})]
+    )
+    assert 'does not match any allowed pattern' in denied
+    assert 'print(1)' in allowed
+
+
+def test_what_coder_widens_only_through_its_own_parameters() -> None:
+    """`Coder(unrestricted_filesystem=True)` widens its own `FileSystem`; one added beside it can only narrow."""
+    unrestricted = Agent(TestModel(), capabilities=[Coder(unrestricted_filesystem=True), FileSystem(root_dir='/')])
+    [files] = [leaf for leaf in leaf_capabilities(unrestricted.root_capability) if isinstance(leaf, FileSystem)]
+    assert files.root_dir == '/'
+    narrowed = Agent(TestModel(), capabilities=[Coder(), FileSystem(root_dir='/', read_only_patterns=['docs/**'])])
+    [files] = [leaf for leaf in leaf_capabilities(narrowed.root_capability) if isinstance(leaf, FileSystem)]
+    assert files.root_dir is None
+    assert '**/.git' in files.read_only_patterns and 'docs/**' in files.read_only_patterns
+
+
+@pytest.mark.parametrize(
+    ('shell', 'field'),
+    [(Shell(max_file_bytes=1_000_000), 'max_file_bytes'), (Shell(persist_cwd=True), 'persist_cwd')],
+)
+def test_a_shell_option_coders_shell_tool_cannot_apply_raises(shell: Shell[None], field: str) -> None:
+    with pytest.raises(UserError, match=f'does not support `{field}`'):
+        Agent(TestModel(), capabilities=[Coder(), shell])
 
 
 async def test_coder_read_file_returns_a_large_image_as_a_file(tmp_path: Path) -> None:
