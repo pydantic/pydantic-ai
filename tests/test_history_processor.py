@@ -20,8 +20,9 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import HistoryProcessor, ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import HistoryProcessor, Hooks, ProcessHistory, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
@@ -49,6 +50,42 @@ def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
         yield 'hello'
 
     return FunctionModel(capture_model_function, stream_function=capture_model_stream_function)
+
+
+async def test_reinject_system_prompt_resumed_run_with_asap_enqueue_keeps_new_messages() -> None:
+    calls = 0
+
+    def model_function(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args={}, tool_call_id='call-1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    enqueued = False
+
+    def enqueue_asap_once(ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+        nonlocal enqueued
+        if not enqueued:
+            enqueued = True
+            ctx.enqueue('ASAP message', priority='asap')
+        return request_context
+
+    agent = Agent(
+        FunctionModel(model_function),
+        system_prompt='System prompt',
+        capabilities=[ReinjectSystemPrompt(), Hooks(before_model_request=enqueue_asap_once)],
+    )
+
+    def test_tool() -> str:
+        return 'tool result'
+
+    agent.tool_plain(test_tool)
+
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Continue')])])
+
+    assert calls == 2
+    assert result.new_messages() == result.all_messages()[1:]
 
 
 async def test_history_processor_public_type(function_model: FunctionModel) -> None:
