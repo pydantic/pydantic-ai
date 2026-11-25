@@ -577,6 +577,7 @@ async def test_lowered_capability_instructions_are_left_out_with_a_warning() -> 
     """A session has no channel for instructions below operator authority, so it leaves them out and says so once."""
     agent: Agent[None, str] = Agent(
         instructions='Base',
+        deps_type=type(None),
         capabilities=[Capability[None](id='plugin', instructions='Plugin note.').with_authority('none')],
     )
     model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))

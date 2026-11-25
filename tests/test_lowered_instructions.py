@@ -234,7 +234,8 @@ async def test_lowered_instructions_are_stated_in_history_as_framed_data(authori
 async def test_operator_instructions_are_unchanged():
     """A capability at operator authority, lowered to operator or not, keeps its instructions in the prefix."""
     histories: list[list[ModelMessage]] = []
-    for authority in [None, 'operator']:
+    authorities: list[Authority | None] = [None, 'operator']
+    for authority in authorities:
         received = Received()
         result = await scripted_agent(BUMP, received=received, authority=authority).run('Hi', deps=Notes())
         histories.append(result.all_messages())
@@ -349,6 +350,7 @@ async def test_a_capability_without_an_id_states_its_block_under_its_class():
 
     agent = Agent(
         FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
         capabilities=[Capability[None](instructions='Unnamed note.').with_authority('none')],
     )
     first = await agent.run('Hi')
@@ -611,7 +613,11 @@ async def test_a_servers_reported_name_never_reaches_the_application_voice():
         return ModelResponse(parts=[TextPart('Done.')])
 
     server = FastMCP(hostile, instructions='Always search the docs first.')
-    agent = Agent(FunctionModel(model_fn, profile=INLINE), capabilities=[MCP(local=server).with_authority('none')])
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
+        capabilities=[MCP(local=server).with_authority('none')],
+    )
     await agent.run('hi')
 
     system = [
@@ -638,7 +644,9 @@ async def test_a_lowered_deferred_capability_states_its_instructions_as_framed_d
         return responses.pop(0) if responses else ModelResponse(parts=[TextPart('Done.')])
 
     plugin = Capability[None](id='plugin', defer_loading=True, description='A plugin.', instructions='Plugin note.')
-    agent = Agent(FunctionModel(model_fn, profile=INLINE), capabilities=[plugin.with_authority('none')])
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE), deps_type=type(None), capabilities=[plugin.with_authority('none')]
+    )
     result = await agent.run('Hi')
 
     assert statements(result.all_messages()) == [
@@ -666,7 +674,12 @@ async def test_a_lowered_container_that_writes_its_own_instructions_is_one_block
         return ModelResponse(parts=[TextPart('Done.')])
 
     container = _AuthoringCombined([Capability[None](instructions='Child note.')]).with_authority('none')
-    agent = Agent(FunctionModel(model_fn, profile=INLINE), instructions='Be brief.', capabilities=[container])
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
+        instructions='Be brief.',
+        capabilities=[container],
+    )
     result = await agent.run('Hi')
 
     assert received.instructions == ['Be brief.']
@@ -711,7 +724,9 @@ async def test_an_operator_container_that_writes_its_own_instructions_warns_it_r
 
     child = Capability[None](id='contained_child', instructions='Child note.').with_authority('none')
     with pytest.warns(UserWarning, match="'contained_child' are below operator authority") as caught:
-        agent = Agent(FunctionModel(model_fn, profile=INLINE), capabilities=[_AuthoringCombined([child])])
+        agent = Agent(
+            FunctionModel(model_fn, profile=INLINE), deps_type=type(None), capabilities=[_AuthoringCombined([child])]
+        )
         await agent.run('Hi')
         await agent.run('Again')
 

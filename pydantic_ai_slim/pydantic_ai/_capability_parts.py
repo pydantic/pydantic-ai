@@ -109,7 +109,10 @@ def effective_authority(part: ModelRequestPart) -> Authority:
         return _lower_authority(asked, part.source.authority)
     if isinstance(part, InstructionDeltaPart):
         return part.authority
-    return next((authority for kind, authority in _PART_AUTHORITY.items() if isinstance(part, kind)), 'none')
+    for kind, authority in _PART_AUTHORITY.items():
+        if isinstance(part, kind):
+            return authority
+    return 'none'
 
 
 def is_downgraded_request_scoped(part: ModelRequestPart) -> bool:

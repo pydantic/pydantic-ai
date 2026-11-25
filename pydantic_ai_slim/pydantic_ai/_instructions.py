@@ -789,11 +789,13 @@ def update_lowered_instruction_history(
     A block a load in history owns, `loaded`, is left to `update_loaded_instruction_history`, which records it at its
     capability's authority too.
     """
-    authorities = {capability_id: a for capability_id, a in authorities.items() if capability_id not in loaded}
-    current = {
-        loaded_instruction_id(capability_id): (text, authorities[capability_id])
+    owned: dict[str, Authority] = {
+        capability_id: authority for capability_id, authority in authorities.items() if capability_id not in loaded
+    }
+    current: dict[InstructionId, tuple[str, Authority]] = {
+        loaded_instruction_id(capability_id): (text, owned[capability_id])
         for capability_id, text in _loaded_texts(
-            [part for part in parts if loaded_part_capability_id(part) in authorities]
+            [part for part in parts if loaded_part_capability_id(part) in owned]
         ).items()
         if text is not None
     }
