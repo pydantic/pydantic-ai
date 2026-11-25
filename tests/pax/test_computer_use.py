@@ -505,6 +505,7 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(
     assert row(plugin) == ['fake sandbox', watch(0)]
     # A turn does not ask for another while the link is fresh.
     await loaded.dispatch(TurnStart(text='go'))
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin) == ['fake sandbox', watch(0)]
 
     await plugin.computer_use_command(['off'])
@@ -516,6 +517,7 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(
     await resumed_loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
     assert row(resumed) == ['fake sandbox (computer-use)', ''] and len(linked.links) == 1
     await resumed_loaded.dispatch(TurnStart(text='go'))
+    await anyio.wait_all_tasks_blocked()
     assert row(resumed) == ['fake sandbox', watch(1)]
 
     # Shown again once reached, it gets its prompt back at once, and the link shows once the desktop is up.
@@ -526,11 +528,11 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(
     for _ in range(2):  # Shown twice while it runs, it still mints once.
         await resumed_loaded.dispatch(ConversationChanged(conversation_id='resumed', title=None))
     assert row(resumed) == ['fake sandbox (computer-use)', '']
-    async with anyio.create_task_group() as tg:
-        # A prompt sent at once waits for that mint instead of starting another.
-        tg.start_soon(resumed_loaded.dispatch, TurnStart(text='go'))
-        await anyio.wait_all_tasks_blocked()
-        linked.booted.set()
+    # A prompt sent at once starts without waiting for the link, and starts no second mint.
+    await resumed_loaded.dispatch(TurnStart(text='go'))
+    assert row(resumed) == ['fake sandbox (computer-use)', '']
+    linked.booted.set()
+    await anyio.wait_all_tasks_blocked()
     assert row(resumed) == ['fake sandbox', watch(2)]
     assert len(linked.links) == 3, 'one mint at a time'
     await plugin.on_session_end(SessionEnd(reason='exit'))
@@ -553,12 +555,14 @@ async def test_an_expiring_link_is_renewed_before_it_stops_opening(
     assert row(plugin) == ['fake sandbox', watch(0)]
     now[0] += 2 * 60
     await loaded.dispatch(TurnStart(text='go'))
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin) == ['fake sandbox', watch(1)]
 
     # A renewal that fails keeps the link it has while that still opens.
     linked.fail = True
     now[0] += 51 * 60
     await loaded.dispatch(TurnStart(text='go'))
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin) == ['fake sandbox', watch(1)]
     # Past its hour, the row drops the link rather than offer one that no longer opens.
     now[0] += 10 * 60
@@ -588,6 +592,7 @@ async def test_a_link_that_never_expires_is_got_once(
     await plugin.command(['fake'])
     now[0] += 24 * 3600
     await loaded.dispatch(TurnStart(text='go'))
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin) == ['fake sandbox', watch(0)]
     assert len(linked.links) == 1
     await plugin.on_session_end(SessionEnd(reason='exit'))

@@ -381,12 +381,12 @@ class SandboxPlugin(Plugin):
             return
         sandbox.watch_url, sandbox.watch_expires = url, None if seconds is None else minted + seconds
 
-    def _mint_in_background(self) -> None:
-        """Mint without holding up the prompt; the idle row repaints each second, so the link shows once it arrives."""
+    def _mint_in_background(self, *, reached_only: bool = True) -> None:
+        """Mint without holding up the prompt or turn; the row repaints each second, so the link shows once it arrives."""
         sandbox = self.current()
-        # Only for a sandbox this session already reached: reaching one starts it if it is stopped, which a
-        # conversation opened only to read must not do. The next turn or `/computer-use on` gets its link.
-        if sandbox is None or sandbox.backend is None:
+        # Only for a sandbox this session already reached, unless a turn is about to reach it: reaching one starts
+        # it if it is stopped, which a conversation opened only to read must not do.
+        if sandbox is None or (reached_only and sandbox.backend is None):
             return
         if self._minting is None or self._minting.done():
             self._minting = asyncio.create_task(self._mint_watch_link(), name='pax-watch-live')
@@ -397,10 +397,7 @@ class SandboxPlugin(Plugin):
 
     async def on_turn_start(self, event: TurnStart) -> None:
         del event
-        if self._minting is not None and not self._minting.done():
-            # A resume's mint is still running: wait for it rather than ask for a second link.
-            await asyncio.wait([self._minting])
-        await self._mint_watch_link()
+        self._mint_in_background(reached_only=False)
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         return render_computer_event(event)
