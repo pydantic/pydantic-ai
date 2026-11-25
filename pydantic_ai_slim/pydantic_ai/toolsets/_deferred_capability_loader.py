@@ -192,7 +192,9 @@ async def resolve_capability_block_instructions(
 
     toolset.apply(collect)
     for ts in owned:
-        parts.extend(await collect_toolset_instructions(ts.wrapped, ctx))
+        # Attributed to the capability, as `CapabilityOwnedToolset.get_instructions` would: what the toolset enqueues
+        # while resolving them is held to the capability's authority.
+        parts.extend(await collect_toolset_instructions(ts.wrapped, ctx._attributed_to(capability)))  # pyright: ignore[reportPrivateUsage]
 
     source = CapabilityInstructionSource(block_id)
     return [replace(part, id=InstructionId(source, name=part.name)) for part in parts]

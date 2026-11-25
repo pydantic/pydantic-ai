@@ -623,6 +623,7 @@ def update_loaded_instruction_history(
     *,
     history: list[ModelMessage],
     keep_without_parts: Collection[str] = (),
+    authorities: Mapping[str, Authority] | None = None,
 ) -> None:
     """Record changes to loaded capabilities' instructions in history.
 
@@ -643,9 +644,12 @@ def update_loaded_instruction_history(
     A loaded block with no parts at all is withdrawn too, because the capability's instructions resolved to
     nothing or it is no longer configured, unless it's in `keep_without_parts`: a capability that's eager
     again, whose instructions are back in the prefix.
+
+    Each change carries its capability's authority from `authorities`, `'operator'` for one it doesn't list: below
+    `'operator'`, the block is rendered as framed data, as an eager capability's below it is (`LoweredInstructions`).
     """
     changes, restored = _loaded_instruction_changes(
-        messages, _loaded_texts(parts), targets, keep_without_parts=keep_without_parts
+        messages, _loaded_texts(parts), targets, keep_without_parts=keep_without_parts, authorities=authorities or {}
     )
     for index, statements in restored.items():
         _restore_statements(messages, history, index, statements)
@@ -660,6 +664,7 @@ def _loaded_instruction_changes(
     targets: Sequence[ModelRequest],
     *,
     keep_without_parts: Collection[str],
+    authorities: Mapping[str, Authority],
 ) -> tuple[list[InstructionDeltaPart], dict[int, list[InstructionDeltaPart]]]:
     """What `update_loaded_instruction_history` records, given each loaded block's `current` text.
 
@@ -675,7 +680,12 @@ def _loaded_instruction_changes(
             continue
         if (content := current.get(capability_id)) == previous:
             continue
-        change = _instruction_change(loaded_instruction_id(capability_id), previous, content)
+        change = _instruction_change(
+            loaded_instruction_id(capability_id),
+            previous,
+            content,
+            authority=authorities.get(capability_id, 'operator'),
+        )
         if index is not None and not on_target:
             restored.setdefault(index, []).append(change)
         else:
@@ -767,6 +777,8 @@ def update_lowered_instruction_history(
     parts: Sequence[InstructionPart],
     authorities: Mapping[str, Authority],
     targets: Sequence[ModelRequest],
+    *,
+    loaded: Collection[str] = (),
 ) -> None:
     """Record changes to the instructions of capabilities below `'operator'` authority on `targets`.
 
@@ -774,7 +786,10 @@ def update_lowered_instruction_history(
     this request resolved, after the `before_model_request` hooks; parts of other blocks are ignored. A block whose
     joined text or authority differs from what the model last received is stated again, at the authority it has now,
     and one in history that resolved to nothing, or whose capability is no longer lowered or configured, is withdrawn.
+    A block a load in history owns, `loaded`, is left to `update_loaded_instruction_history`, which records it at its
+    capability's authority too.
     """
+    authorities = {capability_id: a for capability_id, a in authorities.items() if capability_id not in loaded}
     current = {
         loaded_instruction_id(capability_id): (text, authorities[capability_id])
         for capability_id, text in _loaded_texts(
@@ -782,7 +797,11 @@ def update_lowered_instruction_history(
         ).items()
         if text is not None
     }
-    recorded = LoweredInstructions.of(messages).values
+    recorded = {
+        instruction_id: value
+        for instruction_id, value in LoweredInstructions.of(messages).values.items()
+        if _loaded_block_capability_id(instruction_id) not in loaded
+    }
     changes = [
         InstructionDeltaPart(id=instruction_id, content=content, authority=authority)
         for instruction_id, (content, authority) in current.items()
@@ -985,9 +1004,14 @@ def _record_baseline(targets: Sequence[ModelRequest], instructions: list[Instruc
 
 
 def _instruction_change(
-    instruction_id: InstructionId, previous: str | None, content: str | None
+    instruction_id: InstructionId, previous: str | None, content: str | None, *, authority: Authority = 'operator'
 ) -> InstructionDeltaPart:
-    """Record a block's change, with the hash of the text it replaces so a model can send it as a diff."""
+    """Record a block's change, with the hash of the text it replaces so a model can send it as a diff.
+
+    A change below `'operator'` is rendered as framed data, never as a diff, so it records no hash.
+    """
+    if authority != 'operator':
+        return InstructionDeltaPart(id=instruction_id, content=content, authority=authority)
     base_hash = _instruction_text_hash(previous) if previous is not None and content is not None else None
     return InstructionDeltaPart(id=instruction_id, content=content, base_hash=base_hash)
 

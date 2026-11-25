@@ -383,9 +383,15 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return instructions
 
     def _lowered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
-        # Composition merges a container's children into the enclosing one, and `with_authority` lowers each of them,
-        # so each child is judged on its own.
-        return [source for capability in self._dispatch for source in capability._lowered_instruction_sources()]
+        # A container whose subclass took `get_instructions` over decides what it says, so below operator authority it's
+        # one block. Otherwise each source is judged on its own: `with_authority` lowers a container's children too.
+        if type(self).get_instructions is not CombinedCapability.get_instructions:
+            return super()._lowered_instruction_sources()
+        return [
+            source
+            for capability in self._ordered_instruction_sources()
+            for source in capability._lowered_instruction_sources()
+        ]
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
         # Collect settings in order, preserving each capability's position in the merge chain.

@@ -293,7 +293,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def _lowered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
         # A wrapper at operator authority passes its wrapped capability's instructions along, so any below it are the
         # wrapped tree's.
-        if self.defer_loading is not True and self._effective_authority == 'operator':
+        # A wrapper that took `get_instructions` over decides what it says instead.
+        if (
+            self.defer_loading is not True
+            and self._effective_authority == 'operator'
+            and type(self).get_instructions is WrapperCapability.get_instructions
+        ):
             return self.wrapped._lowered_instruction_sources()
         return super()._lowered_instruction_sources()
 

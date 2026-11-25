@@ -3661,8 +3661,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 for capability_id, capability in ctx.deps.capabilities.items()
                 if capability.defer_loading is not True
             },
+            authorities={
+                capability_id: capability._effective_authority  # pyright: ignore[reportPrivateUsage]
+                for capability_id, capability in ctx.deps.capabilities.items()
+            },
         )
-        update_lowered_instruction_history(messages, loaded_parts, self._lowered_authorities, recording_targets)
+        update_lowered_instruction_history(
+            messages, loaded_parts, self._lowered_authorities, recording_targets, loaded=loaded
+        )
         # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
         # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
         instruction_targets = (
