@@ -10,12 +10,12 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import ClassVar, Literal, get_args
+from typing import ClassVar
 
 import anyio
 import pytest
@@ -27,7 +27,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai_harness import BackgroundTools
-from tests.capability_cases import ENGINES, Engine, Support
+from tests.capability_cases import BROKEN_SIGNATURES, SCENARIO_SUPPORT, SCENARIOS, Engine, Scenario, Support
 
 from ...conftest import try_import
 
@@ -110,65 +110,12 @@ with try_import() as render_imports:
     from ..render.conftest import RecordingTaskContext, run_agent_in_task
 
 
-Scenario = Literal['BackgroundTools.runs_in_background', 'BackgroundTools.survives_approval_wait']
-SCENARIOS: tuple[Scenario, ...] = get_args(Scenario)
-
-_FOREGROUND = (
-    'the engine runs tool calls sequentially, so the tool runs in the foreground and returns its result inline'
-)
-_SEQUENTIAL_DEFAULT = f"{_FOREGROUND}; `parallel_execution_mode='sequential'` is the default"
-_NO_WAIT = (
-    'a mid-run approval wait raises `UserError` under the engine, so no background task can keep running across it'
-)
-_NO_DURABLE_WAIT = 'the engine has no durable wait for an outside answer, so a mid-run approval wait raises `UserError`'
-_REFUSED = 'does not support waiting for external events yet'
-
-# Kept out of `ENGINE_SUPPORT` in `tests/capability_cases.py`: those cells are D1's bar on a case's `calls`, and these
-# are scenarios of their own. They may move into `capability_cases.py` later.
-SCENARIO_SUPPORT: Mapping[Scenario, Mapping[Engine, Support]] = {
-    'BackgroundTools.runs_in_background': {
-        'temporal': Support('supported'),
-        'dbos': Support('supported'),
-        'prefect': Support('supported'),
-        'aws_lambda': Support('limited', _FOREGROUND),
-        'absurd': Support('limited', _SEQUENTIAL_DEFAULT),
-        'pgtask': Support('limited', _SEQUENTIAL_DEFAULT),
-        'azure_durable_task': Support('supported'),
-        'render': Support('supported'),
-    },
-    'BackgroundTools.survives_approval_wait': {
-        'temporal': Support('broken', _NO_WAIT, issue=14443),
-        'dbos': Support('broken', _NO_WAIT, issue=14443),
-        'prefect': Support('refused', _NO_DURABLE_WAIT, raises=_REFUSED),
-        'aws_lambda': Support('limited', f'{_FOREGROUND}, so no call is in flight across the wait'),
-        'absurd': Support('refused', _NO_DURABLE_WAIT, raises=_REFUSED),
-        'pgtask': Support('refused', _NO_DURABLE_WAIT, raises=_REFUSED),
-        'azure_durable_task': Support('refused', _NO_DURABLE_WAIT, raises=_REFUSED),
-        'render': Support('refused', _NO_DURABLE_WAIT, raises=_REFUSED),
-    },
-}
-"""What each engine does with `BackgroundTools` in each scenario.
-
-- `runs_in_background`: a tool marked `background` replies that it is running in the background, and its result
-  arrives later as a follow-up message.
-- `survives_approval_wait`: while that call is still running, the model calls a tool that needs approval, which a
-  `HandleDeferredToolCalls` handler that takes a resume token answers mid-run. The call keeps running across the
-  wait, without the run suspending, and its result arrives.
-"""
-
 BACKGROUND = 'background result'
 """What the model says when the result arrived as a follow-up message: the bar of every scenario."""
 FOREGROUND = 'inline result'
 """What the model says when the call returned its result inline, as a normal tool return."""
 
 RESULT = 'research result'
-
-BROKEN_SIGNATURES: Mapping[int, str] = {14443: _REFUSED}
-"""How each issue of a `broken` cell shows today, as a regex its observed outcome must match.
-
-`Support` only lets a `refused` cell name what the engine raises, so a broken cell's signature lives here: once the
-issue is fixed the outcome changes, and the cell fails.
-"""
 
 
 @dataclass
@@ -351,12 +298,6 @@ def test_an_untested_cell_skips(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys.modules[__name__], 'SCENARIO_SUPPORT', cells)
     with pytest.raises(pytest.skip.Exception, match='#12291: no harness'):
         _cell('BackgroundTools.runs_in_background', 'render')
-
-
-def test_every_scenario_has_a_cell_for_every_engine() -> None:
-    for scenario in SCENARIOS:
-        assert set(SCENARIO_SUPPORT[scenario]) == set(ENGINES), scenario
-    assert set(SCENARIO_SUPPORT) == set(SCENARIOS)
 
 
 @pytest.fixture(scope='module')
