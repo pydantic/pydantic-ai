@@ -232,13 +232,16 @@ class InFlightWork(Generic[T]):
             self._finish('succeeded', value=_utils.Some(task.result()))
 
 
-_current_work: ContextVar[InFlightWork[Any] | None] = ContextVar('_current_in_flight_work', default=None)
-"""The started work the current task runs, inherited by the tasks that work starts."""
+_current_work: ContextVar[tuple[list[InFlightWork[Any]], ...]] = ContextVar('_current_in_flight_work', default=())
+"""The started work the current task runs, outermost first, inherited by the tasks that work starts.
+
+Each entry holds the handle once `start()` has it, which under an eager task factory is only after the task
+first ran.
+"""
 
 
 async def _call(fn: Callable[[], Awaitable[T]], started: list[InFlightWork[Any]]) -> T:
-    # `start()` adds the handle before the task first runs.
-    _current_work.set(started[0])
+    _current_work.set((*_current_work.get(), started))
     return await fn()
 
 
@@ -610,8 +613,9 @@ class InFlightRegistry:
         """
         # Work that reaches the wait itself, from its own task or one it started, like a call it makes that needs
         # approval, is neither cancelled nor waited for: it would wait for itself.
-        own = _current_work.get()
-        cancelling = [work for work in self._live.values() if work.on_end == 'cancel' and work is not own]
+        # That includes the work that started it and waits for it in turn.
+        own = {work for started in _current_work.get() for work in started}
+        cancelling = [work for work in self._live.values() if work.on_end == 'cancel' and work not in own]
         # As at teardown, a failing `cancel` callback mustn't keep the rest of the work running.
         errors: list[Exception] = []
         for work in cancelling:
@@ -624,7 +628,7 @@ class InFlightRegistry:
         if errors:
             raise errors[0]
         yield
-        while any(work is not own for work in self._draining()):
+        while any(work not in own for work in self._draining()):
             await self._changed.wait()
 
     async def _close_on_exit(self, exc_type: type[BaseException] | None, *_: object) -> None:

@@ -7,6 +7,7 @@ which no provider takes part in.
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -918,6 +919,63 @@ async def test_work_that_reaches_a_durable_wait_doesnt_wait_for_itself():
         ['a'],
         ['b'],
     ]
+
+
+async def test_work_waiting_for_work_that_reaches_a_durable_wait_isnt_waited_for_either():
+    """Work that started the work that asks for an approval, and waits for it in turn, doesn't hold the wait either."""
+    handles: dict[str, InFlightWork[DeferredToolResults | None]] = {}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[HandleDeferredToolCalls(_approve_all, timeout=timedelta(minutes=1))],
+    )
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        tool_manager = ctx.tool_manager
+        assert tool_manager is not None
+        requests = DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete', args={}, tool_call_id='call')])
+
+        async def ask_for_approval() -> DeferredToolResults | None:
+            return await tool_manager.resolve_deferred_tool_calls(requests)
+
+        async def start_and_wait() -> DeferredToolResults | None:
+            return await ctx.in_flight.start(ask_for_approval, kind='test', name='inner', id='inner').result()
+
+        handles['outer'] = ctx.in_flight.start(start_and_wait, kind='test', name='outer', id='outer')
+        return 'started'
+
+    with no_leaked_tasks(), external_event_scope(_EngineWaiter()):
+        await agent.run('go')
+
+    results = await handles['outer'].result()
+    assert results is not None
+    assert list(results.approvals) == ['call']
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason='`asyncio.eager_task_factory` is new in Python 3.12')
+async def test_started_work_runs_under_an_eager_task_factory():
+    """An eager task factory runs the work's coroutine before `start()` returns, which then tracks it as usual."""
+    loop = asyncio.get_running_loop()
+    previous = loop.get_task_factory()
+    # Looked up by name, as the type checker targets Python 3.11.
+    loop.set_task_factory(vars(asyncio)['eager_task_factory'])
+    try:
+        registry = InFlightRegistry([])
+
+        async def work() -> str:
+            return 'done'
+
+        handle = registry.start(work, kind='test', name='work', id='work')
+        assert await handle.result() == 'done'
+    finally:
+        loop.set_task_factory(previous)
+    assert registry.live() == ()
 
 
 async def test_a_durable_wait_outside_a_run_has_no_work_to_apply():
