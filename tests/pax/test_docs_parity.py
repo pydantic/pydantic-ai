@@ -30,16 +30,6 @@ def _code_blocks(text: str) -> list[str]:
     return [m.group(1).strip() for m in FENCE.finditer(text)]
 
 
-def test_both_surfaces_have_the_same_number_of_code_blocks() -> None:
-    """A fence added to one surface and not the other is drift, whatever its language."""
-    page = _code_blocks(PAGE.read_text(encoding='utf-8'))
-    readme = _code_blocks(README.read_text(encoding='utf-8'))
-    assert len(page) == len(readme), (
-        f'{len(page)} code blocks on the page, {len(readme)} in the README. They are two surfaces '
-        'of one story and nothing regenerates them, so a block added to one belongs in the other.'
-    )
-
-
 def test_code_blocks_match() -> None:
     """Commands a reader copies must be identical on both surfaces.
 
@@ -51,8 +41,9 @@ def test_code_blocks_match() -> None:
     page = _code_blocks(resolve_model_aliases(PAGE.read_text(encoding='utf-8')))
     readme = _code_blocks(README.read_text(encoding='utf-8'))
     assert page == readme, (
-        'the Pax page and the Pax README disagree on a code block. They are two surfaces of one '
-        'story and no longer generated from each other, so edit both.'
+        f'the Pax page and the Pax README disagree on a code block ({len(page)} on the page, '
+        f'{len(readme)} in the README). They are two surfaces of one story and no longer '
+        'generated from each other, so edit both.'
     )
 
 
