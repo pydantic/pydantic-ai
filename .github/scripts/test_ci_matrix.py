@@ -390,6 +390,18 @@ def test_durable_exec_runs_each_suite_in_its_own_leg(event_name: str):
     }
 
 
+def test_durable_exec_suite_selects_its_tests():
+    """Each `suite` leg runs its own pytest selection, so neither leg passes without running its tests."""
+    (step,) = [
+        step for step in map(_mapping, _list(_job('test-durable-exec')['steps'])) if step.get('name') == 'run tests'
+    ]
+    assert _mapping(step['env'])['SUITE'] == '${{ matrix.suite }}'
+    script = '\n'.join(line for line in str(step['run']).splitlines() if not line.lstrip().startswith('#'))
+    harness, durable = script.split('if [[ "$SUITE" == "harness-temporal" ]]; then\n', 1)[1].split('\nelif ', 1)
+    assert '-m temporal' in harness and 'tests/durable_exec' not in harness
+    assert 'tests/durable_exec' in durable and '-m temporal' not in durable
+
+
 # Steps that add coverage, or report to the author of the pull request.
 PULL_REQUEST_STEP_COMMANDS = ('coverage run', 'shard_durations.py report')
 
