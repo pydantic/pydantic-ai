@@ -257,8 +257,10 @@ class ModelProfile(TypedDict, total=False):
     without the announcement even on requests with nothing for it to explain: Sonnet 4.6 kept to the system prompt's
     task against a conflicting user request in 30 of 48 runs with it and 22 of 96 without, and followed an
     application's own reminder tags in a user turn in 24 of 24 with it and 0 of 48 without; gpt-oss kept to the
-    system prompt's task in 44 of 48 with it and 69 of 96 without. Other models measured did as well or better
-    without it on those requests. See
+    system prompt's task in 44 of 48 with it and 69 of 96 without. Also set to `'always'` for Gemini, which did the
+    same with it as without on those requests, because the announcement goes in `system_instruction` and a change
+    there mid-conversation loses Gemini's whole cached prefix; sent from the first request, it never changes. Other
+    models measured did as well or better without it on those requests. See
     [When the announcement is sent](../message-history.md#when-the-announcement-is-sent).
     """
 

@@ -80,6 +80,7 @@ with try_import() as bedrock_imports:
         _BedrockJsonSchemaTransformerWithoutContains,  # pyright: ignore[reportPrivateUsage]
         _BedrockMiniMaxJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 
 with try_import() as cohere_imports:
     from pydantic_ai.providers.cohere import CohereProvider
@@ -733,6 +734,31 @@ def test_openrouter_gpt_6_2(model_name: str):
     assert profile.get('supports_mid_conversation_effort') is not model_name.endswith('-pro')
 
 
+@pytest.mark.skipif(not openai_imports() or not bedrock_imports(), reason='openai or bedrock not installed')
+@pytest.mark.parametrize(
+    ('provider', 'model_name', 'expected'),
+    [
+        ('azure', 'gpt-6.2-sol', True),
+        ('azure', 'gpt-6.2-astra', True),
+        ('azure', 'gpt-6.1-sol', False),
+        ('bedrock-mantle', 'openai.gpt-6.2-sol', True),
+        ('bedrock-mantle', 'openai.gpt-5.6-sol', False),
+        ('openrouter', 'openai/gpt-6.2-sol', True),
+        ('openrouter', 'openai/gpt-6.1-sol', False),
+    ],
+)
+def test_gpt_6_2_stable_instructions_as_input_beyond_openai(provider: str, model_name: str, expected: bool):
+    """GPT-6.2 puts the top-level `instructions` after `input` wherever it's served, so the flag is the model's."""
+    provider_class = {
+        'azure': AzureProvider,
+        'bedrock-mantle': BedrockMantleProvider,
+        'openrouter': OpenRouterProvider,
+    }[provider]
+    profile = provider_class.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('openai_responses_stable_instructions_as_input', False) is expected
+
+
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
 def test_openai_gpt_5_6_reasoning_mode(model_name: str):
@@ -930,6 +956,7 @@ def test_google_gemini_3_pro():
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
+            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -962,6 +989,7 @@ def test_google_gemini_2_5_flash():
             'google_web_search_billed_per_prompt': True,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
+            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -997,6 +1025,7 @@ def test_google_gemini_2_5_flash_image():
             'google_web_search_billed_per_prompt': True,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
+            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -1056,6 +1085,7 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'google_supports_penalties': False,
             'google_supports_computer_use': False,
             'supports_tool_return_schema': True,
+            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2050,6 +2080,7 @@ def test_openrouter_google_gemini_3_pro():
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
+            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2113,6 +2144,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_penalties': False,
             'google_supports_computer_use': True,
             'openai_chat_supports_web_search': True,
+            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -2365,6 +2397,7 @@ def test_github_copilot_google_gemini_3_pro():
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
+            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -4323,6 +4356,7 @@ def test_vercel_vertex_gemini():
             'google_web_search_billed_per_prompt': False,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
+            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',
@@ -4558,6 +4592,7 @@ def test_otari_gemini():
             'google_web_search_billed_per_prompt': True,
             'google_supports_penalties': True,
             'google_supports_computer_use': False,
+            'default_framing_announcement': 'always',
             'supported_image_media_types': frozenset(
                 {
                     'image/avif',

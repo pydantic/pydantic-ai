@@ -264,7 +264,7 @@ Some models don't do well on every measure with any rendering. We tried the alte
 
 All numbers are live measurements of Pydantic AI on the provider's API, as runs that did the right thing out of the runs made. They come from fixed test scenarios, so read them as comparisons between renderings on one model, not as rates you'll see in your application. The current rendering marks blocks `<system verified>`. A number marked † was measured before that, with `seal="pydantic-ai"` as the marker.
 
-**The announcement on every request, or only when first needed.** On models without a mid-conversation system role, the announcement can go out on every request (`framing_announcement='always'`), or from the first request whose conversation has a `<system>` block, a note or another frame on the user channel (`'when_needed'`). From that request on, the two send the same request. Before it, `'when_needed'` sends what `'never'` sends, so they differ only on requests with nothing for the announcement to explain. Most models measured did as well or better on those without it; Claude Sonnet 4.6 and gpt-oss did worse, so their profiles default to `'always'` ([`default_framing_announcement`][pydantic_ai.profiles.ModelProfile.default_framing_announcement]) and the rest to `'when_needed'`.
+**The announcement on every request, or only when first needed.** On models without a mid-conversation system role, the announcement can go out on every request (`framing_announcement='always'`), or from the first request whose conversation has a `<system>` block, a note or another frame on the user channel (`'when_needed'`). From that request on, the two send the same request. Before it, `'when_needed'` sends what `'never'` sends, so they differ only on requests with nothing for the announcement to explain. Most models measured did as well or better on those without it; Claude Sonnet 4.6 and gpt-oss did worse, so their profiles default to `'always'` ([`default_framing_announcement`][pydantic_ai.profiles.ModelProfile.default_framing_announcement]). Gemini did the same with it as without, and defaults to `'always'` too, for its cache: the announcement goes in `system_instruction`, and changing that mid-conversation loses Gemini's whole cached prefix. The rest default to `'when_needed'`.
 
 | Model | Measure, on a request with nothing to explain | Announcement on every request | Only when first needed |
 |---|---|---|---|
@@ -357,7 +357,7 @@ The [`framing_announcement`][pydantic_ai.settings.ModelSettings.framing_announce
 | Value | Without a mid-conversation system role | With one |
 |---|---|---|
 | `'when_needed'` (default on most models) | At the start of the system prompt, ahead of your system prompt and instructions, from the first request with a `<system>` block, a note or another frame on the user channel, such as retry feedback or a compaction summary | A system message in the first request with a frame or a note |
-| `'always'` (default on Claude Sonnet 4.6 and gpt-oss) | At the start of the system prompt, on every request from the first | The same as `'when_needed'` |
+| `'always'` (default on Claude Sonnet 4.6, gpt-oss and Gemini) | At the start of the system prompt, on every request from the first | The same as `'when_needed'` |
 | `'never'` | Not sent | Not sent |
 
 The announcement is about 120 words on a model without a mid-conversation system role, about 185 on the ones that get `<system verified>` blocks, and about 60 as a system message. With `'when_needed'`, a conversation that never has anything to explain doesn't pay for it. Whether it's needed is decided from the history alone, so once it's in, it stays in the same place on every later request: the cached prefix changes once, at that request, and is stable again from there, as long as the history keeps what needed it. `'always'` sends it from the first request, so the prefix never changes for it, at the cost of sending it in every conversation.
@@ -367,7 +367,7 @@ Use `'always'` in an [AG-UI](ui/ag-ui.md) or [Vercel AI](ui/vercel-ai.md) app: t
 ```python {title="framing_announcement.py"}
 from pydantic_ai import Agent
 
-agent = Agent('{{ google:medium }}', model_settings={'framing_announcement': 'always'})
+agent = Agent('{{ xai:medium }}', model_settings={'framing_announcement': 'always'})
 ```
 
 `'never'` leaves the lookalike notes in place: they only appear next to text that resembles one of the application's frames, so they cost nothing in a conversation without any. Without the announcement, though, the model isn't told what the notes or the application's `<system>` blocks mean, and it may not follow a `<system>` block it has no explanation for. With it turned off, Claude Sonnet 4.6 and Grok 4.7 followed none of 24 instruction changes (all 24 with it), and Claude Sonnet 5.5, Claude Haiku 5.5 and Gemini 4 Argon couldn't say who had asked for a change (0 of 24, against 24 of 24). Turn it off only if your application doesn't change instructions mid-conversation and you've checked your model without it.

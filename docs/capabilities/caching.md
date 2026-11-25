@@ -1,5 +1,5 @@
 ---
-description: "Prompt caching in Pydantic AI: why to add the Caching capability to your agents, how each provider caches, what caching costs, what invalidates a cache, and how to check that it works."
+description: "Prompt caching in Pydantic AI: why to add the Caching capability to your agents, how each provider caches, including instructions, what caching costs, what invalidates a cache, and how to check that it works."
 ---
 
 # Caching
@@ -146,6 +146,32 @@ See [Google context caching](../models/google.md#context-caching-google_cached_c
 ### Other providers
 
 Other providers that cache prompts, such as DeepSeek and xAI, do so implicitly. Some take a hint that keeps related requests on the same cache: xAI's [cache sticky routing](../models/xai.md#cache-sticky-routing) metadata, Mistral's [`mistral_prompt_cache_key`][pydantic_ai.models.mistral.MistralModelSettings.mistral_prompt_cache_key], and the [prompt cache identity](../models/openai-codex.md#prompt-caching) the OpenAI Codex model derives from the conversation.
+
+## How providers cache instructions
+
+[Instructions](../agent.md#instructions) and [system prompts](../agent.md#system-prompts) sit near the start of every request, so where a provider puts them decides what changing them costs. Pydantic AI sends three kinds:
+
+- Static instructions and system prompts, which stay the same for the whole conversation.
+- Instructions with [`on_change='append'`](../agent.md#appending-instruction-changes): their first value goes with the static ones, and each change is appended to the history as a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts).
+- Dynamic instructions that rewrite the prefix when they change.
+
+A mid-conversation system prompt comes after the conversation so far, so on most providers it keeps the whole cached prefix. A rewrite costs what the table below says: on most providers, everything after the tool definitions, and on several the tool definitions too.
+
+| Provider | Where instructions and system prompts go | What a rewrite invalidates | Mid-conversation system prompts | What Pydantic AI does by default |
+|---|---|---|---|---|
+| OpenAI Responses, GPT-6.2 | Leading `input` messages are cached with the conversation. The top-level `instructions` field is read after the conversation and never cached | A change to the leading messages: everything, tool definitions included. A change to the top-level field: nothing | Developer messages in place, which keep the cached prefix | Static and append-mode instructions go in leading `input` messages, instructions that rewrite in the top-level field (see [OpenAI prompt caching](../models/openai.md#prompt-caching)) |
+| OpenAI Responses, earlier models | The top-level `instructions` field, cached together with the tool definitions as one block in front of the conversation | Everything, tool definitions included, unless a breakpoint after the static instructions keeps them and the tool definitions (GPT-5.6 and later) | Developer messages in place, which keep the cached prefix | The top-level field. With [`Caching()`](#unified-caching-settings) on GPT-5.6 and later, a breakpoint after the static instructions |
+| OpenAI Chat Completions, any model | Leading system or developer messages, cached together with the tool definitions | As on Responses before GPT-6.2: Chat Completions has no field that's read after the conversation | System or developer messages in place, which keep the cached prefix | One system message per instruction part, after the system prompts. With `Caching()` on GPT-5.6 and later, a breakpoint after the static instructions |
+| Azure OpenAI and Bedrock Mantle (GPT models) | As OpenAI for the same model and API | As OpenAI | As OpenAI | As OpenAI, including leading `input` messages on GPT-6.2 |
+| Anthropic | The top-level `system`, after the tool definitions | The system prompt and the conversation. The tool definitions stay cached | Native system messages in place on the models that support them, `<system>` blocks in a user turn on the others. Either keeps the cached prefix | One system block per instruction part, after the system prompts. With `Caching()`, breakpoints after the tool definitions, the static instructions and the append-mode instructions |
+| Bedrock Converse (Claude) | As Anthropic: the tool definitions, then `system` | As Anthropic: the tool definitions stay cached | `<system>` blocks in a user turn, which keep the cached prefix | As Anthropic, with cache points in place of breakpoints |
+| Gemini | `system_instruction` and the tool definitions, cached together in front of the conversation | Everything, tool definitions included | `<system>` blocks in a user turn, which keep the cached prefix, explained by an [announcement](../message-history.md#when-the-announcement-is-sent) in `system_instruction` | The announcement goes in `system_instruction` from the first request, so it doesn't change it mid-conversation |
+| OpenRouter | As the upstream provider. The opening system message is also part of what [provider sticky routing](https://openrouter.ai/docs/guides/best-practices/prompt-caching#provider-sticky-routing) keys on, so changing it can move the conversation to another provider, whose cache is empty | As the upstream provider, or everything when the conversation moves | Native system messages on OpenAI models and the Claude models that support them, `<system>` blocks on the others | With `Caching()`, breakpoints on Anthropic and Gemini models (see [OpenRouter](#openrouter)) |
+| Groq | On gpt-oss, the models Groq caches, the instructions and tool definitions form one leading developer message | Everything, tool definitions included | System messages, which Groq moves in front of the conversation, so the conversation is read again | System messages after the system prompts |
+| xAI | System messages and the tool definitions, in front of the conversation. Requests reach the same cache only with [sticky routing](../models/xai.md#cache-sticky-routing) | Everything, tool definitions included | `<system>` blocks in a user turn, which keep the cached prefix | System messages. Sticky routing takes a conversation ID you set on the provider |
+| gpt-oss on other hosts | The harmony format puts the instructions and tool definitions in one leading developer message | Everything, tool definitions included | System messages where the host takes them mid-conversation, `<system>` blocks elsewhere | System messages. Where `<system>` blocks are used, the announcement goes out from the first request, as on Gemini |
+
+So use `on_change='append'` for instructions that change during a conversation: outside Anthropic and Bedrock, a rewrite costs the tool definitions too, unless a breakpoint after the static instructions keeps them. GPT-6.2's top-level `instructions` field is the one place where rewriting costs less than appending, since it sits after the conversation and is never cached anyway.
 
 ## Cost
 
