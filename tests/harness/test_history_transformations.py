@@ -361,7 +361,6 @@ _BUILDS = 'builds the parts a run appends, which C1 checks on every route, rathe
 _FOREIGN = "builds a history from another protocol's or library's messages: there's no Pydantic AI history to compare"
 _NOT_SENT = 'its output is compared or indexed, never sent to a model'
 _DURABLE = 'a durable round trip, which D1 covers per case'
-_RUN_LEVEL = 'run-level: registered by `c4_transforms_runlevel.py` (cross-replay) as `{}`'
 _PENDING = "PENDING: rewrites history the model later sees, and isn't a `Transform` yet"
 
 TRANSFORM_EXEMPT: dict[str, str] = {
@@ -408,13 +407,11 @@ TRANSFORM_EXEMPT: dict[str, str] = {
             'pydantic_ai.messages.post_compaction_window',
             'pydantic_ai.messages._post_compaction_window_for_response',
             'pydantic_ai.models.Model._restore_response_scoped_tool_call_ids',
-            'pydantic_ai.models.Model._trim_before_compaction',
             'pydantic_ai.models.Model.prepare_messages',
             'pydantic_ai.models.Model._repair_dangling_translated_tool_search_calls',
             'pydantic_ai.models.Model._translate_legacy_tool_reveals',
             'pydantic_ai.models.Model._announce_in_standing_prompt',
             'pydantic_ai.models._convert_speech_parts',
-            'pydantic_ai.models._trim_messages_before_compaction',
             'pydantic_ai.models._drop_superseded_request_scoped_prompts',
             'pydantic_ai.models._without_answered_parts',
             'pydantic_ai.models._drop_request_scoped_prompts_no_user_message_clears',
@@ -492,28 +489,6 @@ TRANSFORM_EXEMPT: dict[str, str] = {
             'pydantic_ai_harness.step_persistence._helpers.fork_run',
         ],
         _DURABLE,
-    ),
-    'pydantic_ai.models.fallback._rewind_messages': _RUN_LEVEL.format('model_fallback_switch'),
-    'pydantic_ai.capabilities.process_history._run_history_processor': _RUN_LEVEL.format('history_processor'),
-    **dict.fromkeys(
-        [
-            'pydantic_ai_harness.compaction._summarizing_compaction.without_legacy_summaries',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction.compact',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._kept_user_messages',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._insert_receipt',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._compact_if_smaller',
-            'pydantic_ai_harness.compaction._summary.without_summaries',
-        ],
-        _RUN_LEVEL.format('summarizing'),
-    ),
-    **dict.fromkeys(
-        [
-            'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction.compact',
-            'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._prepend_receipt',
-            'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._without_receipts',
-            'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._dropped_messages',
-        ],
-        _RUN_LEVEL.format('sliding_window'),
     ),
     **dict.fromkeys(
         [
