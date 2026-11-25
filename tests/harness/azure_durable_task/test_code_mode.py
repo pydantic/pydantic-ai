@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any
@@ -22,7 +21,14 @@ with try_import() as imports_successful:
     from pydantic_ai_harness import CodeMode
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
 
-    from .worker import InMemoryWorker, agent_orchestrator, completed, registered_agent, schedule_agent
+    from .worker import (
+        InMemoryWorker,
+        agent_orchestrator,
+        completed,
+        portal_threads,
+        registered_agent,
+        schedule_agent,
+    )
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask or pydantic-monty not installed')
 
@@ -117,12 +123,11 @@ def _park_on_sleep(worker: InMemoryWorker, calls: list[tuple[int, int]]) -> tupl
 def test_run_code_replays_nested_calls_from_history(durable_worker: InMemoryWorker, pools: _Pools) -> None:
     """Monty's wakeup is bridged into the orchestrator loop, and a new worker resumes without repeating a call."""
     calls: list[tuple[int, int]] = []
-    threads = threading.active_count()
     instance_id, replacement = _park_on_sleep(durable_worker, calls)
     # Each dispatch replays the snippet in a Monty worker of its own, then closes it and its portal thread.
     assert pools.opened > 1
     assert pools.closed == pools.opened
-    assert threading.active_count() == threads
+    assert portal_threads() == []
 
     agent = _make_agent(calls)
     replacement.add_orchestrator(agent_orchestrator(agent, deps=None))
@@ -135,13 +140,12 @@ def test_run_code_replays_nested_calls_from_history(durable_worker: InMemoryWork
         'code_mode__model.request',
     ]
     assert pools.closed == pools.opened
-    assert threading.active_count() == threads
+    assert portal_threads() == []
 
 
 def test_changed_snippet_fails_replay_with_nondeterminism_error(durable_worker: InMemoryWorker, pools: _Pools) -> None:
     """A snippet whose host answer changes on replay fails the orchestration instead of hanging or diverging."""
     calls: list[tuple[int, int]] = []
-    threads = threading.active_count()
     instance_id, replacement = _park_on_sleep(durable_worker, calls)
 
     # The recorded history continues with the gathered activities; the replayed snippet now starts a timer.
@@ -154,4 +158,4 @@ def test_changed_snippet_fails_replay_with_nondeterminism_error(durable_worker: 
     assert sorted(calls) == [(1, 2), (3, 4)]
     assert replacement.activity_calls == []
     assert pools.closed == pools.opened
-    assert threading.active_count() == threads
+    assert portal_threads() == []
