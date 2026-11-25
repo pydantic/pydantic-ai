@@ -1135,8 +1135,7 @@ def test_structured_dict_oneof_beside_type():
                 'type': 'object',
                 'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}, 'c': {'type': 'string'}},
                 'required': ['a'],
-                # `{'a': 0}` satisfies exactly one branch, so `StructuredDict` accepts it.
-                'oneOf': [{'required': ['a']}, {'required': ['b', 'c']}],
+                'oneOf': [{'required': ['b']}, {'required': ['c']}],
             }
         ),
     )

@@ -3006,7 +3006,8 @@ def test_output_type_structured_dict_validates_against_schema():
             },
             'required': ['verdict'],
             'additionalProperties': False,
-        }
+        },
+        validate=True,
     )
     retry_messages: list[str] = []
 
@@ -3034,11 +3035,28 @@ def test_output_type_structured_dict_validates_against_schema():
 
 def test_output_type_structured_dict_does_not_convert_values():
     """`StructuredDict` returns the JSON the model sent, so a string where the schema wants an integer is an error."""
-    Count = StructuredDict({'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count']})
+    Count = StructuredDict(
+        {'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count']}, validate=True
+    )
     agent = Agent(TestModel(custom_output_args={'count': '42'}), output_type=Count, retries=0)
 
     with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
         agent.run_sync('Count')
+
+
+def test_output_type_structured_dict_is_not_validated_by_default():
+    """Without `validate=True`, `StructuredDict` accepts any object, as it always has."""
+    Count = StructuredDict({'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count']})
+    agent = Agent(TestModel(custom_output_args={'total': 'many'}), output_type=Count)
+
+    assert agent.run_sync('Count').output == snapshot({'total': 'many'})
+
+
+def test_structured_dict_validate_requires_jsonschema(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setitem(sys.modules, 'jsonschema.validators', None)
+
+    with pytest.raises(UserError, match=r'requires the `jsonschema` package'):
+        StructuredDict({'type': 'object'}, validate=True)
 
 
 def test_output_type_structured_dict_nested():

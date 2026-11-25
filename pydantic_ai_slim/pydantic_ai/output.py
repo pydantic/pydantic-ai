@@ -399,18 +399,25 @@ class TextOutput(Generic[OutputDataT]):
 
 
 def StructuredDict(
-    json_schema: JsonSchemaValue, name: str | None = None, description: str | None = None
+    json_schema: JsonSchemaValue,
+    name: str | None = None,
+    description: str | None = None,
+    *,
+    validate: bool = False,
 ) -> type[JsonSchemaValue]:
     """Returns a `dict[str, Any]` subclass with a JSON schema attached that will be used for structured output.
 
-    The model's output is validated against the JSON schema, so a missing required field, a value outside an `enum`
-    or a property that `additionalProperties: false` forbids is sent back to the model to fix, like any other output
-    validation error. Values are not converted: `"42"` where the schema asks for an integer is an error, not `42`.
+    By default the model's output isn't validated against the JSON schema. With `validate=True`, a missing required
+    field, a value outside an `enum` or a property that `additionalProperties: false` forbids is sent back to the model
+    to fix, like any other output validation error.
 
     Args:
         json_schema: A JSON schema of type `object` defining the structure of the dictionary content.
         name: Optional name of the structured output. If not provided, the `title` field of the JSON schema will be used if it's present.
         description: Optional description of the structured output. If not provided, the `description` field of the JSON schema will be used if it's present.
+        validate: Whether to validate the output against the JSON schema. Values are not converted: `"42"` where the
+            schema asks for an integer is an error, not `42`. Requires the `jsonschema` package, installed with
+            `pip install "pydantic-ai-slim[jsonschema]"`.
 
     Example:
     ```python {title="structured_dict.py"}
@@ -448,7 +455,7 @@ def StructuredDict(
     if description:
         json_schema['description'] = description
 
-    validate_json_schema = _json_schema_validator(json_schema)
+    validate_json_schema = _json_schema_validator(json_schema) if validate else None
 
     class _StructuredDict(JsonSchemaValue):
         __is_model_like__ = True
@@ -457,13 +464,13 @@ def StructuredDict(
         def __get_pydantic_core_schema__(
             cls, source_type: Any, handler: GetCoreSchemaHandler
         ) -> core_schema.CoreSchema:
-            return core_schema.no_info_after_validator_function(
-                validate_json_schema,
-                core_schema.dict_schema(
-                    keys_schema=core_schema.str_schema(),
-                    values_schema=core_schema.any_schema(),
-                ),
+            dict_schema = core_schema.dict_schema(
+                keys_schema=core_schema.str_schema(),
+                values_schema=core_schema.any_schema(),
             )
+            if validate_json_schema is None:
+                return dict_schema
+            return core_schema.no_info_after_validator_function(validate_json_schema, dict_schema)
 
         @classmethod
         def __get_pydantic_json_schema__(
@@ -476,7 +483,13 @@ def StructuredDict(
 
 def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Build a function that checks a value against `json_schema` and raises a validation error listing what's wrong."""
-    from jsonschema.validators import validator_for
+    try:
+        from jsonschema.validators import validator_for
+    except ImportError as e:
+        raise exceptions.UserError(
+            '`StructuredDict(validate=True)` requires the `jsonschema` package. '
+            'Install it with `pip install "pydantic-ai-slim[jsonschema]"`.'
+        ) from e
 
     validator = validator_for(json_schema)(json_schema)
 

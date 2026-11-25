@@ -156,7 +156,10 @@ When loading a spec file without a Python `deps_type`, `deps_schema` provides a 
 
 ### `output_schema`
 
-When provided (and no `output_type` keyword argument is passed to `from_spec`), `output_schema` defines the structure the model should produce as its final output. Under the hood, it creates a [`StructuredDict`][pydantic_ai.output.StructuredDict] output type: the JSON Schema is sent to the model API so the model knows what structure to produce, the response is [validated against it](output.md#structured-dict), with mismatches sent back to the model to fix, and it's returned as a `dict[str, Any]`.
+When provided (and no `output_type` keyword argument is passed to `from_spec`), `output_schema` defines the structure the model should produce as its final output. Under the hood, it creates a [`StructuredDict`][pydantic_ai.output.StructuredDict] output type: the JSON Schema is sent to the model API so the model knows what structure to produce, and the response is returned as a `dict[str, Any]`.
+
+!!! note
+    The model's response is not validated against the schema's `properties` or `required` fields — it is accepted as a plain dict. The schema serves as an instruction to the model, not a runtime validation constraint.
 
 ```yaml {title="agent_with_schema.yaml" test="skip"}
 model: {{ anthropic:large }}
