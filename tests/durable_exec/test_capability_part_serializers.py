@@ -126,8 +126,6 @@ async def _history(directory: Path) -> list[ModelMessage]:
 
 async def _temporal(tp: Any, value: Any) -> Any:
     """What Temporal's payload converter hands back, decoded with the hint a workflow or activity declares."""
-    if not temporal_installed():
-        pytest.skip('temporalio is not installed')
     converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
     [loaded] = await converter.decode(await converter.encode([value]), [tp])
     return loaded
@@ -138,15 +136,11 @@ async def _json_codec(tp: Any, value: Any) -> Any:
 
 
 async def _dbos(tp: Any, value: Any) -> Any:
-    if not dbos_installed():
-        pytest.skip('dbos is not installed')
     serializer = DefaultSerializer()
     return serializer.deserialize(serializer.serialize(value))
 
 
 async def _prefect(tp: Any, value: Any) -> Any:
-    if not prefect_installed():
-        pytest.skip('prefect is not installed')
     serializer = get_default_result_serializer()
     return serializer.loads(serializer.dumps(value))
 
@@ -163,6 +157,20 @@ SERIALIZERS: dict[str, Callable[[Any, Any], Awaitable[Any]]] = {
     'pickle': _pickle,
 }
 """Each engine's own serializer, given the type hint the boundary declares and the value it carries."""
+
+_INSTALLED: dict[str, Callable[[], bool]] = {
+    'temporal': temporal_installed,
+    'dbos': dbos_installed,
+    'prefect': prefect_installed,
+}
+
+
+def _serializer_marks(serializer: str) -> list[pytest.MarkDecorator]:
+    installed = _INSTALLED.get(serializer, lambda: True)
+    return [pytest.mark.skipif(not installed(), reason=f'{serializer} is not installed')]
+
+
+SERIALIZER_PARAMS = [pytest.param(serializer, marks=_serializer_marks(serializer)) for serializer in SERIALIZERS]
 
 
 def _capability_parts(messages: list[ModelMessage]) -> list[CapabilityPart]:
@@ -182,7 +190,7 @@ def _what_the_model_hears(messages: list[ModelMessage]) -> list[tuple[type, obje
     ]
 
 
-@pytest.mark.parametrize('serializer', SERIALIZERS)
+@pytest.mark.parametrize('serializer', SERIALIZER_PARAMS)
 async def test_history_round_trips_with_its_capability_parts(serializer: str, tmp_path: Path) -> None:
     """As a workflow argument or a stored step result: a `list[ModelMessage]`."""
     history = await _history(tmp_path)
@@ -191,7 +199,7 @@ async def test_history_round_trips_with_its_capability_parts(serializer: str, tm
     assert loaded == history
 
 
-@pytest.mark.parametrize('serializer', SERIALIZERS)
+@pytest.mark.parametrize('serializer', SERIALIZER_PARAMS)
 async def test_enqueued_parts_round_trip_in_their_event(serializer: str, tmp_path: Path) -> None:
     """As an activity result: the event that delivers parts a tool enqueued, typed as `AgentStreamEvent`."""
     history = await _history(tmp_path)
@@ -232,9 +240,15 @@ _INSTRUCTION_ID_UNTYPED = (
             serializer,
             source,
             id=f'{serializer}-{type(source).__name__}',
-            marks=[pytest.mark.xfail(strict=True, raises=AssertionError, reason=_INSTRUCTION_ID_UNTYPED)]
-            if serializer == 'temporal' and isinstance(source, CapabilityInstructionSource | RunInstructionSource)
-            else [],
+            marks=[
+                *_serializer_marks(serializer),
+                *(
+                    [pytest.mark.xfail(strict=True, raises=AssertionError, reason=_INSTRUCTION_ID_UNTYPED)]
+                    if serializer == 'temporal'
+                    and isinstance(source, CapabilityInstructionSource | RunInstructionSource)
+                    else []
+                ),
+            ],
         )
         for serializer in SERIALIZERS
         for source in (
