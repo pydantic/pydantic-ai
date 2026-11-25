@@ -798,6 +798,7 @@ async def test_a_durable_wait_cancels_cancel_work_and_returns_once_drain_work_ha
     seen: list[list[str]] = []
     handles: dict[str, InFlightWork[None] | InFlightWork[bool]] = {}
     states_when_asked: dict[str, InFlightWorkState] = {}
+    states_when_approved: dict[str, InFlightWorkState] = {}
     asked = asyncio.Event()
 
     def on_asked() -> None:
@@ -812,8 +813,12 @@ async def test_a_durable_wait_cancels_cancel_work_and_returns_once_drain_work_ha
     @agent.tool
     async def start(ctx: RunContext) -> str:
         async def report() -> None:
-            # Still running when the approver answers, so the wait has to wait for it.
+            # Still running when the approver answers, and for a few turns of the event loop after that, so the
+            # approved call would run first if the wait didn't wait for it.
             await asked.wait()
+            await anyio.lowlevel.checkpoint()
+            await anyio.lowlevel.checkpoint()
+            await anyio.lowlevel.checkpoint()
             ctx.enqueue('background result')
 
         handles['cancel'] = ctx.in_flight.start(
@@ -823,7 +828,8 @@ async def test_a_durable_wait_cancels_cancel_work_and_returns_once_drain_work_ha
         return 'started'
 
     @agent.tool_plain(requires_approval=True)
-    def delete() -> str:
+    async def delete() -> str:
+        states_when_approved.update({name: work.state for name, work in handles.items()})
         return 'deleted'
 
     with no_leaked_tasks(), external_event_scope(_EngineWaiter(on_asked=on_asked)):
@@ -831,6 +837,7 @@ async def test_a_durable_wait_cancels_cancel_work_and_returns_once_drain_work_ha
 
     assert result.output == 'done'
     assert states_when_asked == {'cancel': 'cancelled', 'drain': 'running'}
+    assert states_when_approved == {'cancel': 'cancelled', 'drain': 'succeeded'}
     # The result the drain work queued reached the request that followed the wait, with the approved call's return.
     assert seen == [['go'], ['go'], ['go', 'background result']]
 
@@ -868,6 +875,40 @@ async def test_a_failing_cancel_callback_at_a_durable_wait_fails_the_run_without
     assert waiter.asked == 0
     assert handles['job'].state == 'cancelled'
     assert handles['task'].state == 'cancelled'
+
+
+async def test_work_that_reaches_a_durable_wait_doesnt_wait_for_itself():
+    """Work that asks for an approval itself reaches the durable wait, which doesn't wait for that work to finish."""
+    handles: dict[str, InFlightWork[DeferredToolResults | None]] = {}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[HandleDeferredToolCalls(_approve_all, timeout=timedelta(minutes=1))],
+    )
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        tool_manager = ctx.tool_manager
+        assert tool_manager is not None
+        requests = DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete', args={}, tool_call_id='call')])
+
+        async def ask_for_approval() -> DeferredToolResults | None:
+            return await tool_manager.resolve_deferred_tool_calls(requests)
+
+        handles['work'] = ctx.in_flight.start(ask_for_approval, kind='test', name='work', id='work')
+        return 'started'
+
+    with no_leaked_tasks(), external_event_scope(_EngineWaiter()):
+        await agent.run('go')
+
+    results = await handles['work'].result()
+    assert results is not None
+    assert list(results.approvals) == ['call']
 
 
 async def test_a_durable_wait_outside_a_run_has_no_work_to_apply():

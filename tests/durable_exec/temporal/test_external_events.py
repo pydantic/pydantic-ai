@@ -179,11 +179,6 @@ def _logged_delete_then_report(messages: list[ModelMessage], info: AgentInfo) ->
     return _delete_then_report(messages, info)
 
 
-def _approve_and_record(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
-    _current().tokens.append(token)
-    return requests.build_results(approvals={call.tool_call_id: True for call in requests.approvals})
-
-
 @dataclass
 class _StartsWork(AbstractCapability[None]):
     """Starts in-flight work from `before_run`, in workflow code: a `'cancel'` piece and a `'drain'` piece."""
@@ -197,16 +192,19 @@ class _StartsWork(AbstractCapability[None]):
             finally:
                 log.append('cancel work stopped')
 
-        async def reports_after_the_approver_was_asked() -> None:
-            await workflow.wait_condition(lambda: bool(_current().tokens))
+        async def reports_once_the_wait_began() -> None:
+            # Workflow state, so a replay reaches it at the same point: the wait cancels this work as it begins.
+            await workflow.wait_condition(lambda: cancel_work.state == 'cancelled')
             # A durable timer, which the time-skipping server only fires once the workflow has nothing else to do:
             # a run that went on past the wait would reach its next model request first.
             await workflow.sleep(timedelta(hours=1))
             log.append('drain work finished')
             ctx.enqueue('background result')
 
-        ctx.in_flight.start(never_finishes, kind='test', name='never finishes', id='cancel-work', on_end='cancel')
-        ctx.in_flight.start(reports_after_the_approver_was_asked, kind='test', name='reports', id='drain-work')
+        cancel_work = ctx.in_flight.start(
+            never_finishes, kind='test', name='never finishes', id='cancel-work', on_end='cancel'
+        )
+        ctx.in_flight.start(reports_once_the_wait_began, kind='test', name='reports', id='drain-work')
 
 
 _in_flight_approvals_agent = Agent(
@@ -216,7 +214,7 @@ _in_flight_approvals_agent = Agent(
     capabilities=[
         _StartsWork(),
         TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
-        HandleDeferredToolCalls[None](_approve_and_record, timeout=timedelta(minutes=5)),
+        HandleDeferredToolCalls[None](_approve_all, timeout=timedelta(minutes=5)),
     ],
 )
 _in_flight_approvals_agent.tool_plain(name='delete', requires_approval=True)(_delete)
@@ -233,6 +231,39 @@ class InFlightApprovalsWorkflow:
             for part in message.parts
             if isinstance(part, UserPromptPart) and part.content != prompt
         ]
+
+
+def _waits_for_the_background_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    texts = [part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)]
+    return ModelResponse(parts=[TextPart('got it' if 'background result' in texts else 'waiting')])
+
+
+@dataclass
+class _StartsDrainWork(AbstractCapability[None]):
+    """Starts `'drain'` work in workflow code that queues its result after the run's first model request."""
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        async def report_later() -> None:
+            # Fired by the time-skipping server once the model request's activity has completed.
+            await workflow.sleep(timedelta(hours=1))
+            ctx.enqueue('background result')
+
+        ctx.in_flight.start(report_later, kind='test', name='reports later', id='drain-work')
+
+
+_in_flight_end_agent = Agent(
+    FunctionModel(_waits_for_the_background_result),
+    name='temporal_in_flight_end',
+    deps_type=type(None),
+    capabilities=[_StartsDrainWork(), TemporalDurability[None](activity_config=ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InFlightEndWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _in_flight_end_agent.run(prompt)).output
 
 
 @pytest.fixture(scope='module')
@@ -439,6 +470,23 @@ async def test_the_wait_cancels_cancel_work_and_returns_once_drain_work_has_fini
 
     await Replayer(
         workflows=[InFlightApprovalsWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(await handle.fetch_history())
+
+
+async def test_the_run_waits_to_end_for_drain_work_started_in_workflow_code(temporal_env: WorkflowEnvironment) -> None:
+    """The model ends the run before the work queued its result: the run waits, then gives the model a turn on it."""
+    client = temporal_env.client
+    task_queue = f'in-flight-end-{uuid.uuid4()}'
+    async with _worker(client, task_queue, InFlightEndWorkflow, _in_flight_end_agent):
+        handle = await client.start_workflow(
+            InFlightEndWorkflow.run, args=['go'], id=f'in-flight-end-{uuid.uuid4()}', task_queue=task_queue
+        )
+        assert await handle.result() == 'got it'
+
+    await Replayer(
+        workflows=[InFlightEndWorkflow],
         workflow_runner=UnsandboxedWorkflowRunner(),
         data_converter=pydantic_data_converter,
     ).replay_workflow(await handle.fetch_history())

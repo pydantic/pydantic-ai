@@ -544,7 +544,7 @@ class EnqueueGuard(list[PendingMessage]):
 
     def in_flight_error(self) -> UserError:
         """The error for `ctx.in_flight` inside the durable unit."""
-        # No advice to move it to workflow-level code, where `ctx.in_flight` isn't supported yet either.
+        # No advice to move it to workflow-level code: some engines, like AWS Lambda, refuse it there too.
         return self._error('`ctx.in_flight`', 'work it started or registered would be lost')
 
     def _error(self, usage: str, consequence: str, advice: str | None = None) -> UserError:

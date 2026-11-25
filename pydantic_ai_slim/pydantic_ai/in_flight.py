@@ -598,9 +598,13 @@ class InFlightRegistry:
         The engine keeps the run's tasks running while it waits, so `'drain'` work goes on alongside the wait,
         and the run continues once both have finished. A wait that raises, like one that timed out or one the
         engine refuses, raises straight away, and the run's end rule then handles the work as it would after any
-        other step.
+        other step. Unlike the wait to end the run, this wait emits no events and opens no span.
         """
-        cancelling = [work for work in self._live.values() if work.on_end == 'cancel']
+        # Work that reaches the wait itself, like a call it makes that needs approval, is neither cancelled nor
+        # waited for: it would wait for itself.
+        current = asyncio.current_task()
+        own = {work for work in self._live.values() if work._task is current}  # pyright: ignore[reportPrivateUsage]
+        cancelling = [work for work in self._live.values() if work.on_end == 'cancel' and work not in own]
         # As at teardown, a failing `cancel` callback mustn't keep the rest of the work running.
         errors: list[Exception] = []
         for work in cancelling:
@@ -613,7 +617,7 @@ class InFlightRegistry:
         if errors:
             raise errors[0]
         yield
-        while self._draining():
+        while any(work not in own for work in self._draining()):
             await self._changed.wait()
 
     async def _close_on_exit(self, exc_type: type[BaseException] | None, *_: object) -> None:

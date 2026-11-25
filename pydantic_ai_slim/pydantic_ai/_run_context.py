@@ -1400,8 +1400,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
             UserError: If this `RunContext` isn't backed by a running agent in this process (e.g. the synthetic
                 context from `Agent.system_prompt_parts`, or a realtime session), it runs inside a durable
                 execution unit, where work it starts would be lost on replay, or the run is durable and executes
-                tool calls sequentially, as AWS Lambda durable functions always do and Absurd and pgtask do by
-                default: their engines record units in the order they ran, so units can't run alongside the run.
+                tool calls sequentially, as AWS Lambda durable functions always do, Absurd and pgtask do by default,
+                and DBOS does with a workspace attached: work running alongside the run could start durable units in
+                an order a replay doesn't reproduce.
         """
         queue = self.pending_messages
         if isinstance(queue, EnqueueGuard):
@@ -1412,9 +1413,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
             if _parallel_execution_mode_ctx_var.get() == 'sequential':
                 raise UserError(
                     f'`ctx.in_flight` is not supported in this {durability.engine_name} run, which executes tool calls '
-                    f'sequentially: {durability.engine_name} records its {durability.durable_unit_plural} in the order '
-                    'they run, so work that runs alongside the run could not be replayed. Run the work in the tool '
-                    'call itself instead.'
+                    f'sequentially: work running alongside the run could start {durability.durable_unit_plural} in an '
+                    'order a replay does not reproduce. Run the work in the tool call itself instead.'
                 )
         # Read via `__dict__`, like `_cancellation` in `cancel`: the registry never crosses a durable boundary.
         registry: InFlightRegistry | None = self.__dict__.get('_in_flight')

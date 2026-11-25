@@ -163,7 +163,7 @@ class TestDurableRun:
 
         assert errors == snapshot(
             [
-                '`ctx.in_flight` is not supported in this AWS Lambda run, which executes tool calls sequentially: AWS Lambda records its steps in the order they run, so work that runs alongside the run could not be replayed. Run the work in the tool call itself instead.'
+                '`ctx.in_flight` is not supported in this AWS Lambda run, which executes tool calls sequentially: work running alongside the run could start steps in an order a replay does not reproduce. Run the work in the tool call itself instead.'
             ]
         )
 
