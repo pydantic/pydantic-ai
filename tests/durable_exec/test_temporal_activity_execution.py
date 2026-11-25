@@ -89,6 +89,29 @@ async def test_handle_that_ends_cancelled(anyio_backend: str) -> None:
     assert handle.cancelled()
 
 
+class _CompletingActivityHandle(asyncio.Future[Any]):
+    """Like an activity handle under `WAIT_CANCELLATION_COMPLETED` whose activity returns a result for the cancel."""
+
+    def cancel(self, msg: Any | None = None) -> bool:
+        self.get_loop().call_soon(self.set_result, 'partial')
+        return False
+
+
+async def test_result_of_activity_completed_after_cancel_is_handed_over(anyio_backend: str) -> None:
+    """An activity that completes after the cancel hands its result over with the cancellation, which still raises."""
+    received: list[tuple[asyncio.CancelledError, Any]] = []
+    task = asyncio.create_task(
+        _await_with_single_cancel(
+            _CompletingActivityHandle(), on_cancelled_result=lambda error, result: received.append((error, result))
+        )
+    )
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert [(type(error), result) for error, result in received] == [(asyncio.CancelledError, 'partial')]
+
+
 async def test_result_and_error_pass_through(anyio_backend: str) -> None:
     loop = asyncio.get_running_loop()
     succeeded: asyncio.Future[int] = loop.create_future()

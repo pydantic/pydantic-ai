@@ -670,6 +670,12 @@ class MyAgentWorkflow(PydanticAIWorkflow):
 
 An external actor then cancels the run by signalling the workflow: `await handle.signal(MyAgentWorkflow.cancel)`. A signal that arrives before the run starts cancels it as soon as it does. A cancelled token stays cancelled, so a workflow that runs the agent more than once (e.g. once per chat turn) should create a fresh token before each run.
 
+#### What a cancelled stream keeps
+
+A run cancelled while its model request activity streams keeps what the stream produced, as it does outside durable execution: [`RunCancelled.all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages] (or [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] when the workflow itself was cancelled) ends with that partial [`ModelResponse`][pydantic_ai.messages.ModelResponse], with `state='interrupted'`. That includes the text your frontend already received through [Workflow Streams](#streaming-events-to-a-frontend-with-workflow-streams).
+
+To hand that partial over, the activity returns it when the cancellation reaches it, and the streamed model request activity uses Temporal's `ActivityCancellationType.WAIT_CANCELLATION_COMPLETED` by default, so the workflow waits for that result before the run raises. A cancellation reaches the activity with its next heartbeat, so the run takes up to about half the activity's `heartbeat_timeout` to stop (15 seconds with the default of 30 seconds). A shorter `heartbeat_timeout` makes cancelling faster. To stop without waiting, and without the partial, set `cancellation_type=ActivityCancellationType.TRY_CANCEL` in `model_activity_config`. An activity stopped by a worker shutting down, rather than by a cancellation, still fails and is retried.
+
 ### Run Timeouts
 
 A run's [`timeout=`](../timeouts.md#bounding-a-whole-run) works inside a workflow. Its deadline is computed from `workflow.now()` and enforced with a workflow timer, so a replayed workflow computes the same deadline and fires the same timer. When it fires, the in-flight activity is cancelled according to its `cancellation_type`, and the run raises [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut] in workflow code. Like `RunCancelled`, an uncaught `RunTimedOut` fails the workflow as a typed application error, so catch it inside the workflow if you need [`all_messages()`][pydantic_ai.exceptions.RunCancelled.all_messages].

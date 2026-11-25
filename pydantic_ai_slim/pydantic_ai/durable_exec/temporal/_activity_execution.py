@@ -28,7 +28,7 @@ The handle's own error is read before re-raising, so asyncio doesn't log it as n
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import anyio
@@ -36,10 +36,25 @@ from temporalio import workflow
 from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 from typing_extensions import Unpack
 
+CancelledResultHandler = Callable[[asyncio.CancelledError, Any], None]
+"""Receives the cancellation and the result of an activity that completed after it was cancelled."""
 
-async def execute_activity(activity: Any, *, args: Sequence[Any], **config: Unpack[ActivityConfig]) -> Any:
-    """Drop-in replacement for `workflow.execute_activity()` — see the module docstring for why."""
-    return await _await_with_single_cancel(workflow.start_activity(activity, args=args, **config))
+
+async def execute_activity(
+    activity: Any,
+    *,
+    args: Sequence[Any],
+    on_cancelled_result: CancelledResultHandler | None = None,
+    **config: Unpack[ActivityConfig],
+) -> Any:
+    """Drop-in replacement for `workflow.execute_activity()` — see the module docstring for why.
+
+    An activity that completes after the cancellation was sent, which `WAIT_CANCELLATION_COMPLETED` waits for, has
+    its result passed to `on_cancelled_result` with the cancellation, which is then still raised.
+    """
+    return await _await_with_single_cancel(
+        workflow.start_activity(activity, args=args, **config), on_cancelled_result=on_cancelled_result
+    )
 
 
 async def execute_child_workflow(
@@ -50,10 +65,12 @@ async def execute_child_workflow(
     return await _await_with_single_cancel(handle)
 
 
-async def _await_with_single_cancel(handle: asyncio.Future[Any]) -> Any:
+async def _await_with_single_cancel(
+    handle: asyncio.Future[Any], *, on_cancelled_result: CancelledResultHandler | None = None
+) -> Any:
     try:
         await asyncio.wait([handle])
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as cancellation:
         # The cancellation hit this task because `asyncio.wait` kept the Temporal handle alive.
         # Delegate exactly one cancellation to Temporal, then wait for its configured
         # cancellation behavior without anyio redelivering cancellation on every loop turn.
@@ -63,8 +80,9 @@ async def _await_with_single_cancel(handle: asyncio.Future[Any]) -> Any:
             with anyio.CancelScope(shield=True):
                 await asyncio.wait([handle])
         # Mark the handle's error (the cancelled activity's `ActivityError`) as retrieved,
-        # or asyncio logs it when the handle is garbage collected.
-        if not handle.cancelled():
-            handle.exception()
+        # or asyncio logs it when the handle is garbage collected. An activity that completed
+        # instead hands its result over with the cancellation, which is still raised.
+        if not handle.cancelled() and handle.exception() is None and on_cancelled_result is not None:
+            on_cancelled_result(cancellation, handle.result())
         raise
     return handle.result()

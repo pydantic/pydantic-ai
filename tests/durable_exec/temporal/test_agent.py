@@ -820,7 +820,9 @@ class PartialCancellationWorkflow:
         self._token.cancel()
 
 
-async def _run_partial_cancellation_workflow(client: Client, *, by_signal: bool) -> list[ModelMessage]:
+async def _run_partial_cancellation_workflow(
+    client: Client, *, by_signal: bool
+) -> tuple[list[ModelMessage], WorkflowHistory]:
     global _partial_cancellation_activity_started
 
     _partial_cancellation_activity_started = asyncio.Event()
@@ -841,32 +843,68 @@ async def _run_partial_cancellation_workflow(client: Client, *, by_signal: bool)
         await _partial_cancellation_activity_started.wait()
         if by_signal:
             await handle.signal(PartialCancellationWorkflow.cancel)
-            return ModelMessagesTypeAdapter.validate_json(await handle.result())
-        await handle.cancel()
-        with pytest.raises(WorkflowFailureError) as exc_info:
-            await handle.result()
-        assert isinstance(exc_info.value.__cause__, TemporalCancelledError)
-        return list(_partial_cancellation_messages)
+            messages = ModelMessagesTypeAdapter.validate_json(await handle.result())
+        else:
+            await handle.cancel()
+            with pytest.raises(WorkflowFailureError) as exc_info:
+                await handle.result()
+            assert isinstance(exc_info.value.__cause__, TemporalCancelledError)
+            messages = list(_partial_cancellation_messages)
+        return messages, await handle.fetch_history()
+
+
+async def _replay_partial_cancellation(history: WorkflowHistory) -> None:
+    await Replayer(
+        workflows=[PartialCancellationWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        plugins=[PydanticAIPlugin()],
+    ).replay_workflow(history)
 
 
 async def test_temporal_run_cancelled_by_signal_keeps_streamed_partial_response(client: Client) -> None:
     """A run cancelled while its model activity streams keeps what was streamed, as an `'interrupted'` response."""
-    messages = await _run_partial_cancellation_workflow(client, by_signal=True)
+    messages, history = await _run_partial_cancellation_workflow(client, by_signal=True)
 
     response = messages[-1]
     assert isinstance(response, ModelResponse)
     assert response.parts == [TextPart(content='The partial reply')]
     assert response.state == 'interrupted'
+    await _replay_partial_cancellation(history)
 
 
 async def test_temporal_workflow_cancel_keeps_streamed_partial_response(client: Client) -> None:
     """Cancelling the workflow keeps what the run's model activity streamed, and the workflow still ends cancelled."""
-    messages = await _run_partial_cancellation_workflow(client, by_signal=False)
+    messages, history = await _run_partial_cancellation_workflow(client, by_signal=False)
 
     response = messages[-1]
     assert isinstance(response, ModelResponse)
     assert response.parts == [TextPart(content='The partial reply')]
     assert response.state == 'interrupted'
+    await _replay_partial_cancellation(history)
+
+
+async def test_temporal_stream_cancellation_replays_history_recorded_without_the_partial(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A history recorded before a cancelled stream's activity handed over its partial replays as it was recorded.
+
+    Without the patch marker, the activity's cancellation resolves straight away (`TRY_CANCEL`), so the run
+    records an empty interrupted response.
+    """
+    patched = workflow.patched
+
+    def without_stream_cancel_partial(patch_id: str) -> bool:
+        return False if patch_id == 'pydantic_ai:stream_cancel_partial' else patched(patch_id)
+
+    monkeypatch.setattr(workflow, 'patched', without_stream_cancel_partial)
+    messages, history = await _run_partial_cancellation_workflow(client, by_signal=True)
+    monkeypatch.undo()
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == []
+    assert response.state == 'interrupted'
+    await _replay_partial_cancellation(history)
 
 
 async def _migration_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:

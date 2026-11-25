@@ -27,6 +27,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models._request_timeout import RequestDeadline
+from pydantic_ai.models._streamed_before_failing import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -149,26 +150,6 @@ class CountTokensResult:
     usage: RequestUsage | None = None
     framework_metadata: dict[str, Any] = field(default_factory=dict[str, Any])
     error: tuple[Literal['NotImplementedError', 'UserError'], str] | None = None
-
-
-_STREAMED_BEFORE_FAILING = '_pydantic_ai_streamed_before_failing'
-
-
-def mark_streamed_before_failing(error: BaseException, response: ModelResponse) -> None:
-    """Mark `error` as having ended a model stream in a durable unit after it produced output, with that output.
-
-    The unit consumes the stream, delivering its events to any in-boundary event handler, before the run sees any
-    of it. A failure partway through therefore reaches the run before the stream it opened, where it would read as
-    a failure to open one: something to retry or fall back from, with no response to count the usage of. The mark
-    lets the run treat it as the failure of a stream that had started, as it does outside durable execution.
-    """
-    setattr(error, _STREAMED_BEFORE_FAILING, response)
-
-
-def streamed_before_failing(error: BaseException) -> ModelResponse | None:
-    """What a durable unit's model stream produced before `error` ended it, if `mark_streamed_before_failing` marked it."""
-    response = getattr(error, _STREAMED_BEFORE_FAILING, None)
-    return response if isinstance(response, ModelResponse) else None
 
 
 def _completed_stream(

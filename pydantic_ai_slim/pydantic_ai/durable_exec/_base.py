@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import uuid
 from abc import abstractmethod
@@ -1995,10 +1996,22 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 with suppress(Exception):
                     response = streamed.get()
             await self._withdraw_unreturned_response(params, response)
-            if produced_output and response is not None and isinstance(error, Exception):
-                # Its events may already have reached an event handler in the unit, so the run mustn't retry or fall
-                # back from it as from a stream that failed to open, and should count the usage of what it produced.
-                mark_streamed_before_failing(error, response)
+            if produced_output and response is not None:
+                if isinstance(error, Exception):
+                    # Its events may already have reached an event handler in the unit, so the run mustn't retry or
+                    # fall back from it as from a stream that failed to open, and should count the usage of what it
+                    # produced.
+                    mark_streamed_before_failing(error, response)
+                elif (
+                    isinstance(error, asyncio.CancelledError)
+                    and response.parts
+                    and self._returns_cancelled_stream_output()
+                ):
+                    # The run was cancelled, and waits for this result to record what the stream produced, as a
+                    # stream cancelled outside durable execution is recorded.
+                    response = replace(response, state='interrupted')
+                    self._stamp_response(response, params.messages)
+                    return response
             raise
         self._stamp_response(response, params.messages)
         return response
@@ -2056,6 +2069,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             if key not in before or before[key] != value
         }
         return CountTokensResult(usage=usage, framework_metadata=updates)
+
+    def _returns_cancelled_stream_output(self) -> bool:
+        """Whether a model stream unit cancelled after it produced output returns that output, rather than failing.
+
+        An engine answers `True` only for a cancellation the run requested, whose unit result the run waits for, and
+        not for one that ends the unit to be retried, such as a worker shutting down. The unit then returns what the
+        stream produced as an `'interrupted'` response.
+        """
+        return False
 
     def _counts_tokens_in_durable_unit(self) -> bool:
         """Whether a count ahead of a request runs in its own durable unit, rather than where the run runs.
