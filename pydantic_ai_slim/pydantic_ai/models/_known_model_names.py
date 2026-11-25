@@ -120,6 +120,7 @@ KnownModelName = TypeAliasType(
         'gateway/bedrock:global.openai.gpt-6-luna',
         'gateway/bedrock:global.openai.gpt-6.1-sol',
         'gateway/bedrock:global.openai.gpt-6.1-terra',
+        'gateway/bedrock:global.openai.gpt-6.2-sol',
         'gateway/bedrock:global.xai.grok-4.7',
         'gateway/bedrock:google.gemma-3-27b-it',
         'gateway/bedrock:minimax.minimax-m2.5',
