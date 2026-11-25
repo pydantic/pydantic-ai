@@ -283,7 +283,9 @@ async def test_prompt_frame_stays_visible_during_tools(
             top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             bottom = max(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             assert bottom - top == 2
-            assert bottom == len(frame) - 2
+            # The input hint takes the spare row between the box and the footer.
+            assert bottom == len(frame) - 3
+            assert frame[bottom + 1].startswith('Keyboard setup: /input')
             pipe.send_text('\x12')
             await searched.wait()
             top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
@@ -296,7 +298,7 @@ async def test_prompt_frame_stays_visible_during_tools(
             assert bottom - top == 8
             assert any('display.thinking' in row for row in frame[top + 1 : bottom])
             assert all('display.thinking' not in row for row in frame[bottom + 1 :])
-            assert bottom == len(frame) - 2
+            assert bottom == len(frame) - 3
             pipe.send_text('\x15\x1b[200~first line\nsecond line\x1b[201~')
             await pasted.wait()
             top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
