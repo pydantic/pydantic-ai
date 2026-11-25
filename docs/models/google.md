@@ -213,7 +213,7 @@ The pydantic/pydantic-ai repo is a Python agent framework for building Generativ
 exposes additional native tools, such as Google Maps and Vertex retrieval, that have no shared Pydantic AI tool type.
 Each entry is a tool dictionary in the Interactions SDK's shape. Google Maps needs only its type:
 
-```python {title="google_interactions_maps.py" test="skip" gateway_toggle="skip"}
+```python {title="google_interactions_maps.py" gateway_toggle="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google_interactions import GoogleInteractionsModelSettings
 
@@ -223,6 +223,7 @@ settings = GoogleInteractionsModelSettings(
 agent = Agent('google-interactions:{{ google:medium.name }}', model_settings=settings)
 result = agent.run_sync('Use Google Maps to find the address of the Eiffel Tower.')
 print(result.output)
+#> The Eiffel Tower is at Av. Gustave Eiffel, 75007 Paris, France.
 ```
 
 The Maps lookup appears in the response as a `google_maps`
