@@ -82,6 +82,11 @@ async def test_remapped_composer_and_hints_use_effective_bindings() -> None:
         live.keyboard_labels = lambda: 'mac'
         pipe.send_text('one\rtwo\nthree\x13')
         assert await live.read() == 'one\ntwo\nthree'
+        # Newline keeps naming Ctrl+J, which every terminal sends.
+        hint = 'Ctrl+S: send | F4 Delivery | Ctrl+J newline | /input'
+        assert live.input_hint() == hint
+        assert live.key_label('steer') == 'Option+S'
+        assert hint in Text.from_ansi('\n'.join(live.frame())).plain
         live.steer = steered = Steered()
         live.feed('paste', 'steering')
         live.feed('alt-s')
