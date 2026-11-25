@@ -180,13 +180,15 @@ class Shell(RecordsStated, AbstractCapability[AgentDepsT]):
         smaller timeout and output, log and file limits win; `allow_interactive` needs every instance to
         allow it; `env` and `secret_env` add up, and one name given two values raises.
 
-        Only the fields an instance was constructed with take part, so a `Shell(allowed_commands=['pytest'])`
-        added beside `Coder()` keeps `Coder`'s timeout, while `Shell(default_timeout=30.0)` lowers it. A copy
-        made with `dataclasses.replace()` counts every field as passed.
+        A list that adds up counts as each instance applies it, defaults included, so `Shell()` beside
+        `Shell(denied_commands=['git'])` still denies `rm`. An allowlist, the tools and the limits count only
+        when an instance was constructed with them, so a `Shell(allowed_commands=['pytest'])` added beside
+        `Coder()` keeps `Coder`'s timeout, while `Shell(default_timeout=30.0)` lowers it. A copy made with
+        `dataclasses.replace()` counts every field as passed.
         """
         shells = [capability for capability in capabilities if isinstance(capability, Shell)]
         assert len(shells) == len(capabilities)
-        allowed, denied = _combined_commands(shells, cls._stated_values(shells, 'denied_commands'))
+        allowed, denied = _combined_commands(shells)
         tools = intersection(cls._stated_values(shells, 'tools'), owner='Shell', field='tools', empty_means_all=False)
         merged = replace(
             shells[-1],
@@ -255,18 +257,17 @@ class Shell(RecordsStated, AbstractCapability[AgentDepsT]):
         )
 
 
-def _combined_commands(
-    shells: Sequence[Shell[Any]], denied_lists: list[Sequence[str]]
-) -> tuple[list[str] | None, list[str]]:
-    """The allowlist and denylist of `shells` combined: allowlists intersect, the stated `denied_lists` add up.
+def _combined_commands(shells: Sequence[Shell[Any]]) -> tuple[list[str] | None, list[str]]:
+    """The allowlist and denylist of `shells` combined: allowlists intersect, every denylist adds up.
 
-    `ShellToolset` takes an allowlist or a denylist, so with an allowlist a stated denied command leaves it
-    instead; the built-in denylist gives way to an allowlist, as it does in one `Shell`.
+    Each `Shell`'s denylist counts as it applies, the built-in one included (an allowlist empties it, as in one
+    `Shell`). `ShellToolset` takes an allowlist or a denylist, so with an allowlist a denied command leaves it
+    instead.
     """
     allowed = intersection([shell.allowed_commands for shell in shells], owner='Shell', field='allowed_commands')
-    denied = union(denied_lists)
+    denied = union(shell.denied_commands for shell in shells)
     if allowed is None:
-        return None, denied if denied_lists else list(_DEFAULT_DENIED_COMMANDS)
+        return None, denied
     allowed = [command for command in allowed if command not in denied]
     if not allowed:
         raise UserError(

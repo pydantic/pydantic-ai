@@ -205,15 +205,18 @@ class FileSystem(RecordsStated, AbstractCapability[AgentDepsT]):
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Combine `FileSystem`s sharing an id so that every restriction any of them states applies.
 
-        The innermost `root_dir` wins, `None` (the working directory) included; denied and read-only
-        patterns add up; the smaller limits win; `read_only` from any holds, `content_hashes` needs all;
-        only tools every instance registers are kept; `max_retries` must agree. Two different
-        `allowed_patterns` lists raise, since one `FileSystem` holds one list, and so do roots that can't
-        be compared before the workspace resolves them.
+        Denied and read-only patterns add up; the smaller limits win; `read_only` from any holds,
+        `content_hashes` needs all; only tools every instance registers are kept; `max_retries` must agree.
+        `root_dir`: `/` gives way to any other root, and among the working directory (`None`, `.`) and `..`
+        chains the innermost wins. Two different `allowed_patterns` lists raise, since one `FileSystem` holds
+        one list, and so do roots only the workspace can compare (two different absolute ones, or an absolute
+        one beside a relative one) and patterns written for a root other than the combined one.
 
-        Only the fields an instance was constructed with take part, so a `FileSystem(allowed_patterns=[...])`
-        added beside `Coder()` keeps `Coder`'s limits and tools. A copy made with `dataclasses.replace()`
-        counts every field as passed.
+        Patterns that add up count as each instance applies them, defaults included, so `FileSystem()` beside
+        `FileSystem(read_only_patterns=['docs/**'])` still protects `.git` and `.env`. The allowlist, the tools
+        and the limits count only when an instance was constructed with them, so a
+        `FileSystem(allowed_patterns=[...])` added beside `Coder()` keeps `Coder`'s limits and tools. A copy made
+        with `dataclasses.replace()` counts every field as passed.
         """
         file_systems = [capability for capability in capabilities if isinstance(capability, FileSystem)]
         assert len(file_systems) == len(capabilities)
@@ -225,11 +228,11 @@ class FileSystem(RecordsStated, AbstractCapability[AgentDepsT]):
                 f'have to apply, but one `FileSystem` holds one list: {", ".join(map(repr, allowed))}. State one '
                 'list, or give each `FileSystem` its own `id` to keep them apart.'
             )
-        read_only_lists = cls._stated_values(file_systems, 'read_only_patterns')
         tools = intersection(
             cls._stated_values(file_systems, 'tools'), owner='FileSystem', field='tools', empty_means_all=False
         )
         root_dir = _innermost_root([fs.root_dir for fs in file_systems])
+        # The default read-only patterns match at any depth, so only stated ones are tied to their root.
         patterned = [
             fs.root_dir
             for fs in file_systems
@@ -242,7 +245,7 @@ class FileSystem(RecordsStated, AbstractCapability[AgentDepsT]):
             root_dir=root_dir,
             allowed_patterns=allowed[0] if allowed else [],
             denied_patterns=union(fs.denied_patterns for fs in file_systems),
-            read_only_patterns=union(read_only_lists) if read_only_lists else _DEFAULT_READ_ONLY,
+            read_only_patterns=union(fs.read_only_patterns for fs in file_systems),
             max_read_lines=cls._smallest(file_systems, 'max_read_lines'),
             max_read_chars=cls._smallest(file_systems, 'max_read_chars'),
             max_image_side=cls._smallest(file_systems, 'max_image_side'),

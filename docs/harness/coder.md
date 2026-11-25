@@ -178,8 +178,9 @@ Then the plumbing, which the agent never calls directly:
 Every tool comes from `FileSystem`, `Shell`, or `SubAgents`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,
 or allowlist commands. A `FileSystem` or `Shell` added beside `Coder()` combines with `Coder`'s own, and only
-narrows it: `Shell(allowed_commands=['pytest'])` restricts `Coder`'s `shell` tool to `pytest`, and a field it leaves
-unset keeps `Coder`'s value. To widen what `Coder` reaches, use its own parameters, such as `unrestricted_filesystem`.
+narrows it: `Shell(allowed_commands=['pytest'])` restricts `Coder`'s `shell` tool to `pytest`. Its denylists add to
+`Coder`'s, defaults included, and an allowlist, tool list or limit it leaves unset keeps `Coder`'s value. To widen what
+`Coder` reaches, use its own parameters, such as `unrestricted_filesystem`.
 
 ## Tools
 

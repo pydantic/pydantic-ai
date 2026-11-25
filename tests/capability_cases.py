@@ -163,8 +163,9 @@ class Conjoins:
 
     reason: str
     make: Callable[[Callable[..., AbstractCapability[None]]], tuple[AbstractCapability[None], AbstractCapability[None]]]
-    """Builds two that restrict differently. Each states every field whose default is itself a restriction that
-    the other states, since a field one leaves at its default takes no part in the combination."""
+    """Builds two that restrict differently. A list that adds up counts with its default, but an allowlist, tool
+    list or limit counts only when stated, so where one states such a field whose default restricts, the other
+    states it too."""
     # `Any`: each takes its own capability type, which no single parameter type admits.
     allows: Callable[[Any], frozenset[object]]
     """What one allows, out of a fixed set of probes: the tools it registers, the paths or commands it lets

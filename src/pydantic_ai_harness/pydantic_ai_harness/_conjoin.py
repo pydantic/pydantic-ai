@@ -4,12 +4,12 @@
 restrictions must all hold, whatever order they were listed in: an allowlist intersects, a denylist
 unions, a limit takes the smaller value.
 
-Only what an instance *states* takes part, so that `Shell(allowed_commands=['pytest'])` beside `Coder()`
-narrows the commands without also cutting `Coder`'s timeout to `Shell`'s default. A field is stated when
-the constructor was passed it, whatever its value, as `RecordsStated` records. A default of `None`, `[]`,
-`False` or `True` that is also the identity of the field's conjunction (no limit, nothing denied) needs no
-such test; the few that are not (`root_dir=None`, `allow_interactive=False`) conjoin as the value they mean,
-which can only narrow.
+A list that adds up (denied commands, read-only patterns) counts as each instance applies it, defaults
+included, since adding to it can only narrow. An allowlist, the tools and the limits count only when an
+instance *states* them, so that `Shell(allowed_commands=['pytest'])` beside `Coder()` narrows the commands
+without also cutting `Coder`'s timeout to `Shell`'s default. A field is stated when the constructor was passed
+it, whatever its value, as `RecordsStated` records. The few defaults that restrict but take no marker
+(`root_dir=None`, `allow_interactive=False`) conjoin as the value they mean, which can only narrow.
 """
 
 from __future__ import annotations

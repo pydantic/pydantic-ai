@@ -82,8 +82,19 @@ def test_a_field_assigned_after_construction_is_stated() -> None:
     file_system.read_only_patterns = ['private/**']
     merged = _file_system(_coders(FileSystem, Coder(unrestricted_filesystem=True)), file_system)
     assert list(merged.read_only_patterns) == ['private/**']
-    # What `Shell` resolves in its own `__post_init__`, the built-in denylist, still isn't stated.
-    assert list(_shell(Shell(), Shell(denied_commands=['git'])).denied_commands) == ['git']
+
+
+def test_a_file_system_left_at_its_default_keeps_its_read_only_protection() -> None:
+    """Lists that add up count as each instance applies them, defaults included."""
+    merged = _file_system(FileSystem(), FileSystem(read_only_patterns=['docs/**']))
+    assert {'**/.git', '**/.env', 'docs/**'} <= set(merged.read_only_patterns)
+
+
+def test_a_shell_left_at_its_default_keeps_its_denylist() -> None:
+    merged = _shell(Shell(), Shell(denied_commands=['git']))
+    assert {'rm', 'dd', 'git'} <= set(merged.denied_commands)
+    # With an allowlist, a default denylist takes its commands out of it instead.
+    assert list(_shell(Shell(), Shell(allowed_commands=['rm', 'ls'])).allowed_commands) == ['ls']
 
 
 def test_the_deprecated_read_only_name_is_stated_as_the_new_one() -> None:
@@ -199,8 +210,8 @@ def test_file_system_fields_conjoin() -> None:
         ['read_file'],
     )
     plain = _file_system(FileSystem(), FileSystem())
-    assert (plain.read_only_patterns, plain.tools, plain.max_list_results) == (
-        FileSystem().read_only_patterns,
+    assert (list(plain.read_only_patterns), plain.tools, plain.max_list_results) == (
+        list(FileSystem().read_only_patterns),
         FileSystem().tools,
         1000,
     )

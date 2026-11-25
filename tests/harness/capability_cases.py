@@ -270,8 +270,25 @@ def _kubernetes_sandbox() -> KubernetesSandbox:
     return KubernetesSandbox(warm_pool='python-pool')
 
 
-_PATHS = ('src/app.py', 'src/generated/models.py', 'docs/guide.md', 'secrets/key.txt', 'build/out.bin', 'notes.txt')
-_COMMANDS = ('pytest -q', 'git status', 'ls', 'cat notes.txt', 'echo hi | wc', 'echo hi > out.txt', 'vim notes.txt')
+_PATHS = (
+    'src/app.py',
+    'src/generated/models.py',
+    'docs/guide.md',
+    'secrets/key.txt',
+    'build/out.bin',
+    'notes.txt',
+    '.env',
+)
+_COMMANDS = (
+    'pytest -q',
+    'git status',
+    'ls',
+    'cat notes.txt',
+    'echo hi | wc',
+    'echo hi > out.txt',
+    'vim notes.txt',
+    'rm -rf build',
+)
 
 
 def _file_system_allows(file_system: FileSystem[None]) -> frozenset[object]:
@@ -917,15 +934,15 @@ CASES: dict[str, CapabilityCase] = {
             "instance's restrictions apply and adding one only narrows",
             lambda cls: (
                 cls(
-                    allowed_patterns=['src/**', 'docs/**'],
+                    allowed_patterns=['src/**', 'docs/**', '.env'],
                     denied_patterns=['secrets/**'],
                     read_only_patterns=['docs/**'],
                     tools=['read_file', 'write_file', 'edit_file', 'list_directory'],
                     max_read_lines=500,
                 ),
+                # Leaves `read_only_patterns` at its default, which still protects `.env`.
                 cls(
                     denied_patterns=['build/**'],
-                    read_only_patterns=['src/generated/**'],
                     tools=['read_file', 'write_file', 'list_directory', 'find_files'],
                     max_list_results=100,
                     content_hashes=False,
@@ -973,12 +990,12 @@ CASES: dict[str, CapabilityCase] = {
             "instance's restrictions apply and adding one only narrows",
             lambda cls: (
                 cls(
-                    allowed_commands=['pytest', 'git', 'ls', 'echo', 'vim'],
+                    allowed_commands=['pytest', 'git', 'ls', 'echo', 'vim', 'rm'],
                     default_timeout=270.0,
                     tools=['run_command', 'shell'],
                 ),
+                # Leaves `denied_commands` at its default, which still denies `rm`.
                 cls(
-                    denied_commands=['git'],
                     denied_operators=['|'],
                     default_timeout=120.0,
                     allow_interactive=True,
