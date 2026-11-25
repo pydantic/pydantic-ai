@@ -69,6 +69,7 @@ from pydantic_ai.capabilities import (
     ModelFallback,
     SetToolMetadata,
     ToolSearch,
+    WrapModelRequestHandler,
     WrapperCapability,
     durable_operation,
 )
@@ -950,6 +951,40 @@ async def test_dbos_agent_iter_in_workflow_fires_event_stream_handler(
         and isinstance((event := attributes.get('event')), str)
     ]
     assert exported_event_messages != []
+
+
+async def _short_circuit_model_request(
+    ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('from the hook')])
+
+
+async def test_dbos_agent_dispatches_no_response_boundaries(dbos: DBOS) -> None:
+    """The deprecated wrapper agent hands its handler no response start or end, so a run recorded before they existed replays.
+
+    A `wrap_model_request` hook that skips the model replays its response's events in the workflow, and the
+    wrapper calls the handler once per event.
+    """
+    handled: list[list[str]] = []
+
+    async def record_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        handled.append([event.event_kind async for event in stream])
+
+    dbos_agent = DBOSAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            TestModel(),
+            name='dbos_short_circuit_agent',
+            capabilities=[Hooks(model_request=_short_circuit_model_request)],
+        ),
+        event_stream_handler=record_events,
+    )
+
+    @DBOS.workflow()
+    async def run_short_circuit() -> str:
+        return (await dbos_agent.run('hello')).output
+
+    assert await run_short_circuit() == 'from the hook'
+    assert handled == snapshot([['part_start'], ['final_result'], ['part_end']])
 
 
 async def test_dbos_agent_event_stream_handler_property_outside_workflow(dbos: DBOS) -> None:

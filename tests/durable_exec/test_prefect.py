@@ -82,6 +82,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     SelectModel,
     Toolset,
+    WrapModelRequestHandler,
     WrapperCapability,
     durable_operation,
 )
@@ -1177,6 +1178,40 @@ async def test_prefect_agent_iter_in_flow_fires_event_stream_handler(
         if (attributes := span.get('attributes')) and attributes.get('logfire.msg') == 'runtime_event'
     ]
     assert exported_messages != []
+
+
+async def _short_circuit_model_request(
+    ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('from the hook')])
+
+
+async def test_prefect_agent_dispatches_no_response_boundaries() -> None:
+    """The deprecated wrapper agent hands its handler no response start or end, so a run recorded before they existed replays.
+
+    A `wrap_model_request` hook that skips the model replays its response's events in the flow, and the
+    wrapper runs one handler task per event.
+    """
+    handled: list[list[str]] = []
+
+    async def record_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        handled.append([event.event_kind async for event in stream])
+
+    prefect_agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            TestModel(),
+            name='prefect_short_circuit_agent',
+            capabilities=[Hooks(model_request=_short_circuit_model_request)],
+        ),
+        event_stream_handler=record_events,
+    )
+
+    @flow(name='test_prefect_agent_dispatches_no_response_boundaries')
+    async def run_short_circuit() -> str:
+        return (await prefect_agent.run('hello')).output
+
+    assert await run_short_circuit() == 'from the hook'
+    assert handled == snapshot([['part_start'], ['final_result'], ['part_end']])
 
 
 async def test_event_stream_handler_property_outside_flow() -> None:
