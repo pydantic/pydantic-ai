@@ -30,7 +30,8 @@ import anyio
 from anyio import to_thread
 
 from pydantic_ai.computer_use import ComputerResult, ComputerToolAction
-from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
 from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import ActionMarker, action_markers, format_actions
 
 if TYPE_CHECKING:
@@ -47,6 +48,9 @@ ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 HEADER = 'x-pax-desktop-token'
 MAX_FRAMES = 30
 """Maximum screenshots kept in memory per desktop sandbox."""
+
+_PAGE = Path(__file__).with_name('viewer.html')
+"""The viewer page, with `__TITLE__`, `__NONCE__`, and `__CONFIG__` for `_viewer_html` to fill in."""
 _SUBSCRIBER_QUEUE_SIZE = 16
 _logger = logging.getLogger(__name__)
 
@@ -197,243 +201,19 @@ class _ViewerGuard:
         return secrets.compare_digest(token.encode(), self.token.encode())
 
 
-def _viewer_html(*, session: DesktopSession, token: str, nonce: str) -> str:
-    """Self-contained live desktop viewer page for `session`."""
-    title = escape(f'{session.title} desktop · {session.ref.id}')
+def _viewer_html(page: str, *, session: DesktopSession, token: str, nonce: str) -> str:
+    """`viewer.html` (`page`) for `session`, with its title, script nonce, and starting state filled in."""
     config = json.dumps(
         {
             'key': session.key,
             'token': token,
+            'header': HEADER,
+            'maxFrames': MAX_FRAMES,
             'frames': [frame.meta() for frame in session.frames],
         }
     ).replace('</', '<\\/')
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title}</title>
-<style nonce="{nonce}">
-:root {{
-  --bg: #0f1117; --panel: #171a23; --border: #262b38; --text: #e6e9f0;
-  --muted: #8b93a7; --accent: #e92063; --error: #f87171; --ok: #34d399;
-}}
-* {{ box-sizing: border-box; }}
-html, body {{ margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, sans-serif; }}
-body {{ display: flex; flex-direction: column; overflow: hidden; }}
-header {{
-  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-  background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap;
-}}
-.dot {{ width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex: none; }}
-.title {{ font-weight: 600; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
-.btn {{
-  background: #232837; color: var(--text); border: 1px solid var(--border); border-radius: 6px;
-  padding: 4px 10px; font: inherit; cursor: pointer;
-}}
-.btn:hover {{ background: #2c3347; }}
-.btn.active {{ border-color: var(--accent); color: #fff; }}
-.btn:disabled {{ opacity: 0.5; cursor: wait; }}
-.stage {{
-  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
-  padding: 12px; position: relative; overflow: hidden;
-}}
-.canvas {{ position: relative; max-width: 100%; max-height: 100%; display: none; line-height: 0; }}
-.canvas.visible {{ display: inline-block; }}
-.canvas img {{ max-width: 100%; max-height: calc(100vh - 148px); display: block; border-radius: 6px; border: 1px solid var(--border); }}
-.overlay {{ position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }}
-.empty {{ color: var(--muted); text-align: center; max-width: 360px; }}
-.bar {{
-  display: flex; align-items: center; gap: 10px; padding: 6px 12px;
-  background: var(--panel); border-top: 1px solid var(--border); font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px; color: var(--muted);
-}}
-.bar .summary {{ color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }}
-.bar .error {{ color: var(--error); }}
-.strip {{
-  display: flex; gap: 6px; padding: 6px 12px; background: var(--bg);
-  border-top: 1px solid var(--border); overflow-x: auto; min-height: 54px; align-items: center;
-}}
-.thumb {{
-  flex: none; padding: 2px; border: 2px solid transparent; border-radius: 4px; background: var(--panel); cursor: pointer;
-}}
-.thumb.selected {{ border-color: var(--accent); }}
-.thumb img {{ height: 38px; display: block; border-radius: 2px; }}
-</style>
-</head>
-<body>
-<header>
-  <span class="dot" id="status-dot" title="Connected"></span>
-  <span class="title">{title}</span>
-  <button id="refresh-btn" class="btn" type="button">Refresh</button>
-  <button id="auto-btn" class="btn" type="button" aria-pressed="false">Auto: off</button>
-  <button id="follow-btn" class="btn active" type="button" aria-pressed="true">Live</button>
-</header>
-<main class="stage">
-  <div id="empty" class="empty">Waiting for the first screenshot. Click <strong>Refresh</strong> to capture the current screen now.</div>
-  <div id="canvas" class="canvas">
-    <img id="screen" alt="Desktop screen">
-    <svg id="overlay" class="overlay"></svg>
-  </div>
-</main>
-<div class="bar">
-  <span id="step-label">No frames</span>
-  <span id="summary" class="summary"></span>
-  <span id="error" class="error"></span>
-</div>
-<div id="strip" class="strip"></div>
-<script nonce="{nonce}">
-const CFG = {config};
-const frames = [...CFG.frames];
-let selectedSeq = frames.length ? frames[frames.length - 1].seq : null;
-let followLive = true;
-let autoTimer = null;
-
-const emptyEl = document.getElementById('empty');
-const canvasEl = document.getElementById('canvas');
-const imgEl = document.getElementById('screen');
-const svgEl = document.getElementById('overlay');
-const stepEl = document.getElementById('step-label');
-const summaryEl = document.getElementById('summary');
-const errorEl = document.getElementById('error');
-const stripEl = document.getElementById('strip');
-const refreshBtn = document.getElementById('refresh-btn');
-const autoBtn = document.getElementById('auto-btn');
-const followBtn = document.getElementById('follow-btn');
-
-const qs = (extra = '') => '?token=' + encodeURIComponent(CFG.token) + '&sandbox=' + encodeURIComponent(CFG.key) + extra;
-const frameUrl = (seq) => '/frames/' + seq + '.png' + qs();
-
-function drawMarkers(frame) {{
-  svgEl.replaceChildren();
-  const w = imgEl.naturalWidth || 0;
-  const h = imgEl.naturalHeight || 0;
-  if (!w || !h || !frame || !frame.markers || !frame.markers.length) return;
-  svgEl.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-  const NS = 'http://www.w3.org/2000/svg';
-  for (const m of frame.markers) {{
-    if (m.kind === 'drag' && m.points.length >= 2) {{
-      const poly = document.createElementNS(NS, 'polyline');
-      poly.setAttribute('points', m.points.map((p) => p[0] + ',' + p[1]).join(' '));
-      poly.setAttribute('fill', 'none');
-      poly.setAttribute('stroke', '#e92063');
-      poly.setAttribute('stroke-width', '3');
-      poly.setAttribute('stroke-dasharray', '6 4');
-      svgEl.appendChild(poly);
-    }}
-    for (const [x, y] of m.points) {{
-      const c = document.createElementNS(NS, 'circle');
-      c.setAttribute('cx', String(x));
-      c.setAttribute('cy', String(y));
-      c.setAttribute('r', m.kind === 'move' ? '7' : '11');
-      c.setAttribute('fill', m.kind === 'move' ? 'rgba(52,211,153,0.25)' : 'rgba(233,32,99,0.25)');
-      c.setAttribute('stroke', m.kind === 'move' ? '#34d399' : '#e92063');
-      c.setAttribute('stroke-width', '2.5');
-      svgEl.appendChild(c);
-    }}
-  }}
-}}
-
-function render() {{
-  followBtn.classList.toggle('active', followLive);
-  followBtn.setAttribute('aria-pressed', String(followLive));
-  const current = frames.find((f) => f.seq === selectedSeq) || frames[frames.length - 1] || null;
-  if (!current) {{
-    emptyEl.style.display = 'block';
-    canvasEl.classList.remove('visible');
-    stepEl.textContent = 'No frames';
-    summaryEl.textContent = '';
-    errorEl.textContent = '';
-    stripEl.replaceChildren();
-    return;
-  }}
-  selectedSeq = current.seq;
-  emptyEl.style.display = 'none';
-  canvasEl.classList.add('visible');
-  const nextSrc = frameUrl(current.seq);
-  if (imgEl.getAttribute('src') !== nextSrc) {{
-    imgEl.onload = () => drawMarkers(current);
-    imgEl.src = nextSrc;
-  }} else {{
-    drawMarkers(current);
-  }}
-  stepEl.textContent = '#' + current.seq;
-  summaryEl.textContent = current.summary || '';
-  errorEl.textContent = current.error || '';
-
-  stripEl.replaceChildren();
-  for (const f of frames) {{
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'thumb' + (f.seq === current.seq ? ' selected' : '');
-    btn.title = '#' + f.seq + ' ' + (f.summary || '');
-    btn.onclick = () => {{ followLive = f.seq === frames[frames.length - 1].seq; selectedSeq = f.seq; render(); }};
-    const ti = document.createElement('img');
-    ti.src = frameUrl(f.seq);
-    ti.alt = '#' + f.seq;
-    btn.appendChild(ti);
-    stripEl.appendChild(btn);
-  }}
-}}
-
-function addFrame(meta) {{
-  if (frames.some((f) => f.seq === meta.seq)) return;
-  frames.push(meta);
-  if (frames.length > {MAX_FRAMES}) frames.shift();
-  if (followLive || selectedSeq === null) selectedSeq = meta.seq;
-  render();
-}}
-
-async function capture() {{
-  refreshBtn.disabled = true;
-  try {{
-    const res = await fetch('/api/capture?sandbox=' + encodeURIComponent(CFG.key), {{
-      method: 'POST',
-      headers: {{ '{HEADER}': CFG.token }},
-    }});
-    if (res.ok) {{
-      const meta = await res.json();
-      addFrame(meta);
-    }} else {{
-      errorEl.textContent = await res.text();
-    }}
-  }} catch (err) {{
-    errorEl.textContent = String(err);
-  }} finally {{
-    refreshBtn.disabled = false;
-  }}
-}}
-
-refreshBtn.onclick = capture;
-followBtn.onclick = () => {{
-  followLive = true;
-  if (frames.length) selectedSeq = frames[frames.length - 1].seq;
-  render();
-}};
-autoBtn.onclick = () => {{
-  if (autoTimer) {{
-    clearInterval(autoTimer);
-    autoTimer = null;
-    autoBtn.textContent = 'Auto: off';
-    autoBtn.classList.remove('active');
-    autoBtn.setAttribute('aria-pressed', 'false');
-  }} else {{
-    autoBtn.textContent = 'Auto: 2s';
-    autoBtn.classList.add('active');
-    autoBtn.setAttribute('aria-pressed', 'true');
-    capture();
-    autoTimer = setInterval(capture, 2000);
-  }}
-}};
-const source = new EventSource('/events' + qs());
-source.onmessage = (event) => {{
-  try {{ addFrame(JSON.parse(event.data)); }} catch {{}}
-}};
-render();
-</script>
-</body>
-</html>
-"""
+    title = escape(f'{session.title} desktop · {session.ref.id}')
+    return page.replace('__TITLE__', title).replace('__NONCE__', nonce).replace('__CONFIG__', config)
 
 
 async def _event_stream(session: DesktopSession) -> AsyncIterator[str]:
@@ -465,7 +245,8 @@ def create_viewer_app(viewer: DesktopViewer, *, token: str, hosts: frozenset[str
     async def index(sandbox: str = Query(...)) -> HTMLResponse:
         session = _get_session(sandbox)
         nonce = secrets.token_urlsafe(16)
-        html = _viewer_html(session=session, token=token, nonce=nonce)
+        page = await to_thread.run_sync(_PAGE.read_text, 'utf-8')
+        html = _viewer_html(page, session=session, token=token, nonce=nonce)
         return HTMLResponse(
             html,
             headers={
@@ -506,7 +287,7 @@ def create_viewer_app(viewer: DesktopViewer, *, token: str, hosts: frozenset[str
         session = _get_session(sandbox)
         try:
             item = await session.capture_live()
-        except Exception as exc:
+        except (UserError, WorkspaceError) as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return JSONResponse(item.meta())
 

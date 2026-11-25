@@ -2276,7 +2276,8 @@ can be asked in, such as `pax -p` or a web session with questions turned off, us
 harness default text, and answers questions from `AskUser` with "No one is available to answer in this run", so
 the run finishes. A session with the terminal picker or the web UI's approval cards does not deny these. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`pax --agent`), which gets `/permissions`
-per run rather than bound to the agent. The model is told to do the work itself instead.
+per run rather than bound to the agent. The model is told to do the work itself instead. The same goes for a
+[`computer`](#computer-use-computer-use) call that would click or type: outside `full` the model can only look.
 
 ### Compacting the conversation
 
@@ -3242,10 +3243,12 @@ not in the web UI.
   desktop.
 - **In a running sandbox**: `boxd`, `daytona`, `local smol`, `render`, `sprites` and `kubernetes`
   add a desktop to the sandbox you have. `e2b`, `modal`, `local boxlite` and `opensandbox` can only
-  give a desktop to a new sandbox: Pax replaces the sandbox if no turn has run in it yet, and
-  otherwise asks you to run `/new`, `/computer-use`, then `/sandbox PROVIDER`.
+  give a desktop to a new sandbox: Pax replaces the sandbox if nothing has run in it yet (no turn and
+  no `!` line), and otherwise asks you to run `/new`, `/computer-use`, then `/sandbox PROVIDER`.
 - **Turning it off**: `/computer-use off` removes the `computer` tool from the next turn. The sandbox
   keeps running until `/sandbox delete`.
+- **Permissions**: outside `/permissions full`, the model can only look at the desktop (screenshots and
+  zoom). A call that would click or type does not run, and the model is told `/permissions full` allows it.
 - `local smol` needs `smolmachines` for a desktop (`pydantic-ai-pax[local]`, on macOS Apple silicon
   or Linux), so not on Windows. With a `gh` login, `opensandbox` allows `deb.debian.org` and
   `security.debian.org` while it installs the desktop, before your GitHub token reaches its proxy.

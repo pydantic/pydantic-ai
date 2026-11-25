@@ -48,8 +48,8 @@ from pydantic_ai_harness.computer_use import ActionsPerformedEvent, SupportsDisp
 from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import (
     COMPUTER_USE,
     DesktopComputerUse,
-    computer_use_ever_on,
     computer_use_on,
+    computer_use_state,
     history_frames,
     render_computer_event,
 )
@@ -58,12 +58,13 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, 
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend, Snapshot, seed, snapshot
 from pydantic_ai_pax.builtin_plugins.sandbox.viewer import DesktopSession, DesktopViewer, sandbox_key
 from pydantic_ai_pax.commands import Command
+from pydantic_ai_pax.config import PERMISSIONS_SETTING
 from pydantic_ai_pax.config.api_keys import load_keys
 from pydantic_ai_pax.gh_cli import gh_token, gh_user
 from pydantic_ai_pax.models.profiles import KEY_NAME
 from pydantic_ai_pax.plugins import NoSettings, PanelView, Plugin, PluginHost, SessionEnd, SidePanel
 from pydantic_ai_pax.plugins.keys import choose_key
-from pydantic_ai_pax.runtime.imported_history import imported_context
+from pydantic_ai_pax.runtime.imported_history import imported_context, imported_kind
 from pydantic_ai_pax.runtime.session import ConversationWorkspace, ShellLineWorkspace
 from pydantic_ai_pax.ui.browser import open_browser
 from pydantic_ai_pax.ui.menus.dialogs import RUNNERS, TerminalDialogs
@@ -142,7 +143,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
     def _instructions(self, ctx: RunContext[None]) -> str:
         if (ref := _owned(ctx.workspace.ref)) is None:
             return ''
-        provider = self.plugin.sandbox(ref).provider
+        provider = self.plugin.sandbox(ref, ctx.messages).provider
         desktop = (
             ' The sandbox also has a desktop, which you see and control with the `computer` tool.'
             if computer_use_on(ctx.messages)
@@ -201,7 +202,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         saved = (await to_thread.run_sync(load_keys)).get(key.name)
         if saved is None:  # Deleted in `/keys` since the picker showed it.
             return f'The user did not give {name}.'
-        self.plugin.sandbox(ref).env[name] = saved.get_secret_value()
+        self.plugin.sandbox(ref, ctx.messages).env[name] = saved.get_secret_value()
         return (
             f'{name} is set for every command started from now on, until Pax restarts; ask again if a command '
             'then finds it missing. Restart a server started before it.'
@@ -209,30 +210,33 @@ class _ConversationSandbox(ConversationWorkspace[None]):
 
     def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         conversation = self.plugin.host.conversation
+        messages = ctx.messages
         if ref is None and ctx.conversation_id == conversation.conversation_id:
             # A run of the conversation on screen without its history, such as a Monty cell or a task prompt.
-            ref = history_sandbox(conversation.messages)
-        return None if (ref := _owned(ref)) is None else self._workspace(ref)
+            messages = conversation.messages
+            ref = history_sandbox(messages)
+        return None if (ref := _owned(ref)) is None else self._workspace(ref, messages)
 
     async def after_model_request(
         self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
     ) -> ModelResponse:
-        """Carry `/computer-use on` to each new response, so the latest one always says whether it is on."""
+        """Carry `COMPUTER_USE` to each new response, so the latest one always says whether it is on."""
         del request_context
-        if _owned(ctx.workspace.ref) is None or not computer_use_on(ctx.messages):
+        if _owned(ctx.workspace.ref) is None or (state := computer_use_state(ctx.messages)) is None:
             return response
-        return replace(response, metadata={**(response.metadata or {}), COMPUTER_USE: True})
+        return replace(response, metadata={**(response.metadata or {}), COMPUTER_USE: state})
 
     def shell_line_workspace(self, messages: Sequence[ModelMessage]) -> ShellLineWorkspace | None:
         if (ref := history_sandbox(messages)) is None:
             return None
         return ShellLineWorkspace(
-            workspace=self._workspace(ref), name=f'the {self.plugin.sandbox(ref).provider.title} sandbox'
+            workspace=self._workspace(ref, messages),
+            name=f'the {self.plugin.sandbox(ref, messages).provider.title} sandbox',
         )
 
-    def _workspace(self, ref: WorkspaceRef) -> WorkspaceBackend:
+    def _workspace(self, ref: WorkspaceRef, messages: Sequence[ModelMessage]) -> WorkspaceBackend:
         """The sandbox `ref` names, with the variables `request_env` gave it; agent runs and `!` lines both use it."""
-        sandbox = self.plugin.sandbox(ref)
+        sandbox = self.plugin.sandbox(ref, messages)
         # The provider's backend stays unwrapped on `_Sandbox`, as `provider.close` keys its clients by it.
         return _EnvWorkspace(Workspace(sandbox.open()), env=sandbox.env, ref=sandbox.ref)
 
@@ -279,7 +283,12 @@ class SandboxPlugin(Plugin):
         """The conversation whose next `/sandbox PROVIDER` gets a desktop, as `/computer-use` ran before it."""
 
     def get_capabilities(self) -> Sequence[AbstractCapability[None]]:
-        return (_ConversationSandbox(self), DesktopComputerUse(on_frame=self._record_frame))
+        return (
+            _ConversationSandbox(self),
+            DesktopComputerUse(
+                on_frame=self._record_frame, full_access=lambda: self.host.setting(PERMISSIONS_SETTING) == 'full'
+            ),
+        )
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -328,19 +337,20 @@ class SandboxPlugin(Plugin):
             live_url = self._viewer.try_url(sandbox.ref)
         return render_computer_event(event, live_url=live_url)
 
-    def sandbox(self, ref: WorkspaceRef) -> _Sandbox:
-        """The sandbox `ref` names, which a `/sandbox` provider owns."""
+    def sandbox(self, ref: WorkspaceRef, messages: Sequence[ModelMessage]) -> _Sandbox:
+        """The sandbox `ref` names, which a `/sandbox` provider owns; `messages`, a history naming it, says if it has a desktop."""
         if (sandbox := self._sandboxes.get(ref)) is None:
             provider = _owner(ref)
             assert provider is not None
-            desktop = computer_use_on(self.host.conversation.messages)
+            desktop = computer_use_state(messages) is not None
             sandbox = self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, desktop=desktop)
         return sandbox
 
     def current(self) -> _Sandbox | None:
         """The sandbox the conversation on screen runs in; `None` when it runs on this machine."""
-        ref = history_sandbox(self.host.conversation.messages)
-        return None if ref is None else self.sandbox(ref)
+        messages = self.host.conversation.messages
+        ref = history_sandbox(messages)
+        return None if ref is None else self.sandbox(ref, messages)
 
     def _on(self) -> bool:
         """Whether computer use is on in the conversation on screen."""
@@ -364,8 +374,8 @@ class SandboxPlugin(Plugin):
     def _record_frame(
         self, ref: WorkspaceRef, png: bytes, actions: Sequence[ComputerToolAction], result: ComputerResult | None
     ) -> None:
-        if _owned(ref) is not None:
-            self._viewer_session(self.sandbox(ref)).record(png, actions=actions, result=result)
+        if (sandbox := self._sandboxes.get(ref)) is not None:  # The run opened it.
+            self._viewer_session(sandbox).record(png, actions=actions, result=result)
 
     def complete(self, args: list[str]) -> Iterable[str]:
         words = [name.split() for name in PROVIDERS]
@@ -430,7 +440,7 @@ class SandboxPlugin(Plugin):
             return f'Computer use is off. {sandbox.provider.title} sandbox {sandbox.ref.id} keeps running.'
         if (missing := sandbox.provider.missing(desktop=True)) is not None:
             raise ValueError(missing)
-        if sandbox.provider.desktop_at_create and not computer_use_ever_on(self.host.conversation.messages):
+        if sandbox.provider.desktop_at_create and computer_use_state(self.host.conversation.messages) is None:
             return await self._restart_with_desktop(sandbox)
         if not sandbox.desktop:
             await sandbox.close()  # The next `open` attaches the desktop too.
@@ -444,7 +454,9 @@ class SandboxPlugin(Plugin):
         That is safe only while the conversation holds just the `/sandbox` exchange: a turn or a `!` line after it
         may have made files there.
         """
-        if len(self.host.conversation.messages) > 2:
+        messages = self.host.conversation.messages
+        first = messages[0] if len(messages) == 2 else None
+        if not isinstance(first, ModelRequest) or [imported_kind(part) for part in first.parts] != ['sandbox']:
             raise ValueError(
                 f'{sandbox.provider.title} gives a desktop only to a new sandbox, and this conversation has '
                 f'already worked in this one. Run /new, /computer-use, then /sandbox {sandbox.provider.name}.'

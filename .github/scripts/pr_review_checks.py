@@ -90,7 +90,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/ui/.*'
             r'|src/pydantic_ai_pax/(web-ui/.*|pydantic_ai_pax/builtin_plugins/web/.*|pydantic_ai_pax/cli/web\.py'
-            r'|pydantic_ai_pax/builtin_plugins/sandbox/viewer\.py'
+            r'|pydantic_ai_pax/builtin_plugins/sandbox/viewer\.(py|html)'
             r'|pydantic_ai_pax/runtime/live_registry\.py'
             r'|clai2_web_README\.md|scripts/check_web_assets\.py)'
             r'|docs/(ui/.*|input\.md|web\.md|harness/clai2\.md)'

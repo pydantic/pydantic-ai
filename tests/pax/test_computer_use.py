@@ -5,16 +5,13 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import struct
-import zlib
 from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import dataclass, field
-from importlib.util import find_spec
 from pathlib import Path
 
 import anyio
 import httpx
 import pytest
+from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import (
@@ -25,6 +22,7 @@ from pydantic_ai import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
 )
 from pydantic_ai.computer_use import (
     Click,
@@ -48,20 +46,15 @@ from pydantic_ai.computer_use import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
 from pydantic_ai_harness.computer_use import (
     ActionsPerformedEvent,
-    Display,
-    DisplayAction,
-    SupportsCursorPosition,
-    SupportsDisplay,
-    SupportsZoom,
-    UnsupportedActionError,
 )
 from pydantic_ai_pax import Session
 from pydantic_ai_pax.builtin_plugins import sandbox
 from pydantic_ai_pax.builtin_plugins.sandbox import SandboxPlugin, history_sandbox
 from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import (
+    COMPUTER_USE,
     ActionMarker,
     action_markers,
     format_action,
@@ -70,16 +63,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import (
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.providers import (
     GitHubCredential,
-    boxd as boxd_provider,
-    e2b as e2b_provider,
-    kubernetes as kubernetes_provider,
-    local as local_provider,
-    modal as modal_provider,
-    opensandbox as opensandbox_provider,
-    render as render_provider,
-    sprites as sprites_provider,
 )
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV
 from pydantic_ai_pax.builtin_plugins.sandbox.viewer import (
     HEADER,
     MAX_FRAMES,
@@ -90,200 +74,39 @@ from pydantic_ai_pax.builtin_plugins.sandbox.viewer import (
     create_viewer_app,
     sandbox_key,
 )
-from pydantic_ai_pax.plugins import LoadedPlugin, PluginHost, SessionEnd, Transcript, load_plugin
-from tests.pax.test_sandbox import git
+from pydantic_ai_pax.config import PERMISSIONS_SETTING
+from pydantic_ai_pax.plugins import SessionEnd, Transcript
 
+# `checkout`, `isolated_git_config`, `provider`, and `upstream` are fixtures shared with `/sandbox`'s tests.
+from tests.pax.test_sandbox import (
+    PNG_A,
+    PNG_B,
+    FakeDisplay,
+    FakeProvider,
+    checkout,
+    isolated_git_config,
+    load,
+    on_screen,
+    plugin_of,
+    provider,
+    upstream,
+)
 
-def make_png(width: int = 8, height: int = 6, color: tuple[int, int, int] = (20, 40, 80)) -> bytes:
-    """Minimal valid RGB PNG of the given dimensions, without Pillow."""
-    raw = b''.join(b'\x00' + bytes(color) * width for _ in range(height))
-
-    def chunk(kind: bytes, data: bytes) -> bytes:
-        body = kind + data
-        return struct.pack('>I', len(data)) + body + struct.pack('>I', zlib.crc32(body) & 0xFFFFFFFF)
-
-    return (
-        b'\x89PNG\r\n\x1a\n'
-        + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
-        + chunk(b'IDAT', zlib.compress(raw))
-        + chunk(b'IEND', b'')
-    )
-
-
-PNG_A = make_png(1280, 800, (10, 20, 30))
-PNG_B = make_png(1280, 800, (40, 50, 60))
-
-
-class FakeDisplay:
-    """In-memory `Display` implementing zoom and cursor position for desktop sandbox tests."""
-
-    def __init__(self, *, png: bytes = PNG_A, size: tuple[int, int] = (1280, 800)) -> None:
-        self.png = png
-        self.size = size
-        self.actions: list[DisplayAction] = []
-        self.fail_screenshot: Exception | None = None
-
-    async def display_size(self) -> tuple[int, int]:
-        return self.size
-
-    async def screenshot(self) -> bytes:
-        if self.fail_screenshot is not None:
-            raise self.fail_screenshot
-        return self.png
-
-    async def act(self, action: DisplayAction) -> None:
-        self.actions.append(action)
-
-    async def zoom(self, region: Region) -> bytes:
-        del region
-        return self.png
-
-    async def cursor_position(self) -> Point:
-        return Point(x=100, y=200)
-
-
-class FakeDesktopBackend(LocalWorkspaceBackend):
-    """Local folder workspace with an optional `Display`."""
-
-    def __init__(self, ref: WorkspaceRef, directory: Path, *, env: Mapping[str, str], display: Display | None) -> None:
-        super().__init__(directory, env=env)
-        self._sandbox_ref = ref
-        self._display = display
-
-    @property
-    def ref(self) -> WorkspaceRef:
-        return self._sandbox_ref
-
-    @property
-    def display(self) -> Display | None:
-        return self._display
-
-
-@dataclass
-class FakeDesktopProvider:
-    """Fake sandbox provider supporting both plain and desktop sandboxes."""
-
-    root: Path
-    upstream: Path
-    name: str = 'fake'
-    title: str = 'Fake'
-    working_dir: str = '/home/user/workspace'
-    token_in_sandbox: bool = False
-    desktop_at_create: bool = False
-    requirement: str | None = None
-    display: FakeDisplay = field(default_factory=FakeDisplay)
-    created: list[tuple[GitHubCredential | None, bool]] = field(
-        default_factory=list[tuple[GitHubCredential | None, bool]]
-    )
-    reopened: list[tuple[WorkspaceRef, bool]] = field(default_factory=list[tuple[WorkspaceRef, bool]])
-    deleted: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
-    closed: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
-
-    def missing(self, *, desktop: bool = False) -> str | None:
-        del desktop
-        return self.requirement
-
-    async def create(
-        self, *, github: GitHubCredential | None, desktop: bool = False
-    ) -> tuple[WorkspaceRef, FakeDesktopBackend]:
-        self.created.append((github, desktop))
-        env = {**SANDBOX_ENV, 'GH_TOKEN': 'stand-in'} if github is not None else SANDBOX_ENV
-        ref = WorkspaceRef(provider=self.name, id=f'sbx-{len(self.created)}')
-        folder = anyio.Path(self.root / ref.id)
-        await folder.mkdir(exist_ok=True)
-        await anyio.Path(self.root / f'{ref.id}.gitconfig').write_text(
-            f'[url "{self.upstream.parent}/"]\n\tinsteadOf = https://github.com/owner/\n', encoding='utf-8'
-        )
-        return ref, self._backend(ref, env, desktop=desktop)
-
-    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> FakeDesktopBackend:
-        self.reopened.append((ref, desktop))
-        return self._backend(ref, {}, desktop=desktop)
-
-    async def delete(self, ref: WorkspaceRef) -> None:
-        self.deleted.append(ref)
-
-    async def close(self, backend: FakeDesktopBackend) -> None:
-        self.closed.append(backend.ref)
-
-    def _backend(self, ref: WorkspaceRef, env: Mapping[str, str], *, desktop: bool) -> FakeDesktopBackend:
-        git_env = {'GIT_CONFIG_GLOBAL': str(self.root / f'{ref.id}.gitconfig'), 'GIT_CONFIG_NOSYSTEM': '1'}
-        return FakeDesktopBackend(
-            ref, self.root / ref.id, env={**env, **git_env}, display=self.display if desktop else None
-        )
-
-
-def _not_installed(name: str) -> None:
-    del name
-    return None
-
-
-def _gh_token(hostname: str) -> str:
-    del hostname
-    return 'gho_secret'
-
-
-def _gh_user(hostname: str) -> str:
-    del hostname
-    return 'Ada'
-
-
-@pytest.fixture(autouse=True)
-def isolated_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    config = tmp_path / 'global.gitconfig'
-    config.touch()
-    monkeypatch.setenv('GIT_CONFIG_GLOBAL', str(config))
-    monkeypatch.setenv('GIT_CONFIG_NOSYSTEM', '1')
-    monkeypatch.delenv('GIT_CONFIG_COUNT', raising=False)
-    monkeypatch.delenv('GIT_CONFIG_PARAMETERS', raising=False)
+__all__ = ('checkout', 'isolated_git_config', 'provider', 'upstream')
 
 
 @pytest.fixture
-def checkout(tmp_path: Path) -> tuple[Path, Path]:
-    seedling = tmp_path / 'seedling'
-    seedling.mkdir()
-    git(seedling, 'init', '--quiet', '--initial-branch=main')
-    (seedling / 'README.md').write_text('hello\n', encoding='utf-8')
-    git(seedling, 'add', '.')
-    git(seedling, '-c', 'user.name=Up', '-c', 'user.email=up@example.com', 'commit', '--quiet', '-m', 'Initial')
-    bare = tmp_path / 'github' / 'repo.git'
-    git(tmp_path, 'clone', '--quiet', '--bare', str(seedling), str(bare))
-    work = tmp_path / 'checkout'
-    git(tmp_path, 'clone', '--quiet', str(bare), str(work))
-    git(work, 'remote', 'set-url', 'origin', 'git@github.com:owner/repo.git')
-    git(work, 'config', 'user.name', 'Ada')
-    git(work, 'config', 'user.email', 'ada@example.com')
-    return work, bare
+def display(provider: FakeProvider) -> FakeDisplay:
+    """The screen of the fake provider's desktop sandboxes."""
+    provider.display = screen = FakeDisplay()
+    return screen
 
 
-@pytest.fixture
-def desktop_provider(
-    tmp_path: Path, checkout: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
-) -> FakeDesktopProvider:
-    _, bare = checkout
-    sandboxes = tmp_path / 'sandboxes'
-    sandboxes.mkdir()
-    fake = FakeDesktopProvider(sandboxes, bare)
-    monkeypatch.setattr(sandbox, 'PROVIDERS', {fake.name: fake})
-    monkeypatch.setattr(sandbox, 'gh_token', _gh_token)
-    monkeypatch.setattr(sandbox, 'gh_user', _gh_user)
-    return fake
-
-
-def load(directory: Path, conversation: Transcript | None = None, *, terminal: bool = False) -> LoadedPlugin[None]:
-    host = PluginHost[None](
-        name='sandbox',
-        console=Console(file=io.StringIO(), force_terminal=terminal, width=120),
-        settings={},
-        conversation=conversation or Transcript(),
-        workspace=lambda: directory,
-    )
-    return load_plugin(SandboxPlugin, host)
-
-
-def plugin_of(loaded: LoadedPlugin[None]) -> SandboxPlugin:
-    assert isinstance(loaded.plugin, SandboxPlugin)
-    return loaded.plugin
+def on_screen_sandbox(plugin: SandboxPlugin):
+    """The sandbox of the conversation `plugin` shows."""
+    sandbox = plugin.current()
+    assert sandbox is not None
+    return sandbox
 
 
 def render_plain(renderable: object) -> str:
@@ -385,9 +208,9 @@ def test_action_formatting_markers_and_rendering() -> None:
     reason='Toggles /computer-use off and back on mid-conversation, intentionally changing offered tools and instructions.'
 )
 async def test_computer_use_end_to_end_toggle_and_resume(
-    checkout: tuple[Path, Path], desktop_provider: FakeDesktopProvider, monkeypatch: pytest.MonkeyPatch
+    checkout: Path, provider: FakeProvider, display: FakeDisplay, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    work, _ = checkout
+    work = checkout
     loaded = load(work)
     plugin = plugin_of(loaded)
     monkeypatch.setattr(plugin._viewer, 'ensure_started', lambda: 43219)  # pyright: ignore[reportPrivateUsage]
@@ -419,7 +242,8 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     started = await plugin.command(['fake'])
     assert 'Fake sandbox sbx-1' in started
     assert 'Computer use is on' in started
-    assert desktop_provider.created == [(GitHubCredential(login='Ada', token='gho_secret'), True)]
+    assert provider.created == [GitHubCredential(login='Ada', token='gho_secret')]
+    assert provider.created_desktop == [True]
     assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox (computer-use)']
     ref = history_sandbox(session.messages)
     assert ref is not None
@@ -430,7 +254,7 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     assert 'computer' in seen_tools[-1]
     assert result.response.workspace_ref == ref
     assert result.response.metadata == {'clai2_computer_use': True}
-    assert desktop_provider.display.actions == [Click(x=120, y=240), TypeText(text='hi')]
+    assert display.actions == [Click(x=120, y=240), TypeText(text='hi')]
     [first_req] = [m for m in result.new_messages() if isinstance(m, ModelRequest)][:1]
     assert 'also has a desktop' in (first_req.instructions or '')
 
@@ -465,13 +289,14 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     resumed_off_session.replace_messages(list(compacted_messages))
     await resumed_off_session.prompt('still without desktop after compaction and restart')
     assert 'computer' not in seen_tools[-1]
-    assert resumed_off.sandbox(ref).desktop is False
+    # The sandbox keeps its desktop, though the model gets no `computer` tool while it is off.
+    assert on_screen_sandbox(resumed_off).desktop is True
     await resumed_off.on_session_end(SessionEnd(reason='exit'))
 
     # Toggling `/computer-use` back on re-enables immediately without recreating the sandbox.
     re_enabled = await plugin.computer_use_command([])
     assert 'Computer use is on' in re_enabled
-    assert len(desktop_provider.created) == 1
+    assert len(provider.created) == 1
     await session.prompt('back with desktop')
     assert 'computer' in seen_tools[-1]
 
@@ -490,7 +315,9 @@ async def test_computer_use_end_to_end_toggle_and_resume(
 
     captured_frames: list[bytes] = []
     observer = _ObservedComputerUse(
-        AbstractCapability[None](), on_frame=lambda _r, data, _a, _res: captured_frames.append(data)
+        AbstractCapability[None](),
+        on_frame=lambda _r, data, _a, _res: captured_frames.append(data),
+        full_access=lambda: True,
     )
     dummy_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
     await observer.on_event(
@@ -507,29 +334,31 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     # Resuming in a fresh plugin instance reopens with `desktop=True` and seeds the viewer from saved history.
     resumed_loaded = load(work, Transcript(messages=session.messages))
     resumed = plugin_of(resumed_loaded)
-    resumed_session = resumed._viewer_session(resumed.sandbox(ref))  # pyright: ignore[reportPrivateUsage]
+    resumed_session = resumed._viewer_session(on_screen_sandbox(resumed))  # pyright: ignore[reportPrivateUsage]
     assert len(resumed_session.frames) == 1
     assert resumed_session.frames[0].png == PNG_A
-    assert await resumed.sandbox(ref).screenshot() == PNG_A
-    assert desktop_provider.reopened == [(ref, False), (ref, True)]
+    assert await on_screen_sandbox(resumed).screenshot() == PNG_A
+    assert provider.reopened == [ref, ref] and provider.reopened_desktop == [True, True]
 
     # Viewer session for a sandbox not in the active transcript skips seeding from unrelated history.
     unrelated = plugin_of(load(work, Transcript(messages=[])))
-    assert unrelated._viewer_session(unrelated.sandbox(ref)).frames == []  # pyright: ignore[reportPrivateUsage]
+    assert unrelated._viewer_session(unrelated.sandbox(ref, session.messages)).frames == []  # pyright: ignore[reportPrivateUsage]
+    # The history naming the sandbox, not the one on screen, says it has a desktop.
+    assert unrelated.sandbox(ref, session.messages).desktop is True
 
     # `/sandbox delete` is the single delete command; it removes the viewer session and closes cleanly.
     deleted = await plugin.command(['delete'])
     assert 'Deleted Fake sandbox sbx-1' in deleted
-    assert desktop_provider.deleted == [ref]
+    assert provider.deleted == [ref]
     assert plugin._viewer.get(viewer_key) is None  # pyright: ignore[reportPrivateUsage]
     await plugin.on_session_end(SessionEnd(reason='exit'))
     await resumed.on_session_end(SessionEnd(reason='exit'))
 
 
 async def test_computer_use_toggle_upgrade_and_errors(
-    checkout: tuple[Path, Path], desktop_provider: FakeDesktopProvider
+    checkout: Path, provider: FakeProvider, display: FakeDisplay
 ) -> None:
-    work, _ = checkout
+    work = checkout
     plugin = plugin_of(load(work))
     computer_use = next(command for command in plugin.get_commands() if command.name == 'computer-use')
     assert computer_use.complete is not None
@@ -555,10 +384,10 @@ async def test_computer_use_toggle_upgrade_and_errors(
     # Retroactive attach (`desktop_at_create=False`): works immediately even after user turns have run, and survives resume.
     await plugin.command(['fake'])
     # A provider missing what a desktop needs says so.
-    desktop_provider.requirement = 'Fake needs a display package.'
+    provider.requirement = 'Fake needs a display package.'
     with pytest.raises(ValueError, match='Fake needs a display package'):
         await plugin.computer_use_command(['on'])
-    desktop_provider.requirement = None
+    provider.requirement = None
     await plugin.host.conversation.commit_messages(
         [*plugin.host.conversation.messages, ModelRequest.user_text_prompt('ran a turn')]
     )
@@ -567,11 +396,11 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert 'Computer use is on' in enabled
     assert 'already on' in await plugin.computer_use_command(['on'])
     assert 'computer use on' in await plugin.command([])
-    assert await plugin.sandbox(WorkspaceRef(provider='fake', id='sbx-1')).screenshot() == PNG_A
+    assert await on_screen_sandbox(plugin).screenshot() == PNG_A
     retro_resumed = plugin_of(load(work, Transcript(messages=plugin.host.conversation.messages)))
     assert [segment() for segment in retro_resumed.get_status_segments()] == ['fake sandbox (computer-use)']
-    assert await retro_resumed.sandbox(WorkspaceRef(provider='fake', id='sbx-1')).screenshot() == PNG_A
-    assert desktop_provider.reopened[-1] == (WorkspaceRef(provider='fake', id='sbx-1'), True)
+    assert await on_screen_sandbox(retro_resumed).screenshot() == PNG_A
+    assert provider.reopened[-1] == WorkspaceRef(provider='fake', id='sbx-1') and provider.reopened_desktop[-1]
 
     # A deleted sandbox refuses `/computer-use` and `/computer-use view`.
     await plugin.command(['delete'])
@@ -581,19 +410,26 @@ async def test_computer_use_toggle_upgrade_and_errors(
         await plugin.computer_use_command(['view'])
 
     # `desktop_at_create=True` on an UNUSED sandbox automatically restarts it with `desktop=True` (no `/new` needed).
-    desktop_provider.desktop_at_create = True
+    provider.desktop_at_create = True
     upgrade_plugin = plugin_of(load(work))
     await upgrade_plugin.command(['fake'])
     assert history_sandbox(upgrade_plugin.host.conversation.messages) == WorkspaceRef(provider='fake', id='sbx-2')
     upgraded = await upgrade_plugin.computer_use_command([])
     assert 'now runs in Fake sandbox sbx-3' in upgraded and 'Computer use is on' in upgraded
-    assert desktop_provider.created[-1][1] is True
+    assert provider.created_desktop[-1] is True
     assert history_sandbox(upgrade_plugin.host.conversation.messages) == WorkspaceRef(provider='fake', id='sbx-3')
-    assert desktop_provider.deleted[-1] == WorkspaceRef(provider='fake', id='sbx-2')
-    # Off and on again keeps the sandbox: it already has its desktop.
+    assert provider.deleted[-1] == WorkspaceRef(provider='fake', id='sbx-2')
+    # Off and on again keeps the sandbox: it already has its desktop, also once compaction dropped the markers.
     await upgrade_plugin.computer_use_command(['off'])
+    upgraded_ref = WorkspaceRef(provider='fake', id='sbx-3')
+    await upgrade_plugin.host.conversation.commit_messages(
+        [
+            ModelRequest.user_text_prompt('A summary of the earlier work.'),
+            ModelResponse(parts=[TextPart('done')], workspace_ref=upgraded_ref, metadata={COMPUTER_USE: False}),
+        ]
+    )
     assert 'Computer use is on' in await upgrade_plugin.computer_use_command(['on'])
-    assert len(desktop_provider.created) == 3
+    assert len(provider.created) == 3
 
     # A `!` line counts as work in the sandbox too, so it is never replaced after one.
     shell_plugin = plugin_of(load(work))
@@ -608,10 +444,10 @@ async def test_computer_use_toggle_upgrade_and_errors(
     used_plugin = plugin_of(load(work))
     await used_plugin.command(['fake'])
     used_ref = WorkspaceRef(provider='fake', id='sbx-5')
+    # Two messages, as compaction can leave, but not the `/sandbox` exchange.
     await used_plugin.host.conversation.commit_messages(
         [
-            *used_plugin.host.conversation.messages,
-            ModelRequest.user_text_prompt('prior work'),
+            ModelRequest.user_text_prompt('A summary of the earlier work.'),
             ModelResponse(parts=[TextPart('done')], workspace_ref=used_ref),
         ]
     )
@@ -620,13 +456,51 @@ async def test_computer_use_toggle_upgrade_and_errors(
     with pytest.raises(ValueError, match='Computer use is not on here'):
         await used_plugin.computer_use_command(['view'])
     with pytest.raises(UserError, match='has no desktop'):
-        await used_plugin.sandbox(used_ref).screenshot()
+        await on_screen_sandbox(used_plugin).screenshot()
+
+
+async def test_outside_full_permissions_the_model_only_looks(
+    checkout: Path, provider: FakeProvider, display: FakeDisplay
+) -> None:
+    settings: dict[str, JsonValue] = {PERMISSIONS_SETTING: 'read-only'}
+    loaded = load(checkout, settings=settings)
+    plugin = plugin_of(loaded)
+    planned: list[dict[str, JsonValue]] = []
+    outcomes: list[str] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        del info
+        last = messages[-1].parts[-1]
+        if isinstance(last, ToolReturnPart):
+            outcomes.append(str(last.content))
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(name='computer', json_args=json.dumps({'actions': planned}), tool_call_id='cu')}
+
+    session = on_screen(loaded, checkout, model=FunctionModel(stream_function=respond))
+    await plugin.computer_use_command(['on'])
+    await plugin.command(['fake'])
+
+    planned[:] = [{'type': 'click', 'x': 1, 'y': 2}]
+    await session.prompt('click it')
+    assert display.actions == []
+    assert '/permissions full lets it click and type' in outcomes[-1]
+
+    planned[:] = [{'type': 'screenshot'}]
+    await session.prompt('look')
+    assert '/permissions full' not in outcomes[-1]
+
+    settings[PERMISSIONS_SETTING] = 'full'
+    planned[:] = [{'type': 'click', 'x': 1, 'y': 2}]
+    await session.prompt('click it now')
+    assert display.actions == [Click(x=1, y=2)]
+    await plugin.on_session_end(SessionEnd(reason='exit'))
 
 
 async def test_view_and_side_panel(
-    checkout: tuple[Path, Path], desktop_provider: FakeDesktopProvider, monkeypatch: pytest.MonkeyPatch
+    checkout: Path, provider: FakeProvider, display: FakeDisplay, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    work, _ = checkout
+    work = checkout
     opened: list[str] = []
     browser_opens = True
 
@@ -662,7 +536,7 @@ async def test_view_and_side_panel(
     assert not await page.exists()
 
     # Headless view does not call open_browser and tolerates failed initial capture.
-    desktop_provider.display.fail_screenshot = WorkspaceError('display starting')
+    display.fail_screenshot = WorkspaceError('display starting')
     headless = plugin_of(load(work, terminal=False))
     monkeypatch.setattr(headless._viewer, 'ensure_started', lambda: 43211)  # pyright: ignore[reportPrivateUsage]
     await headless.computer_use_command(['on'])
@@ -672,7 +546,7 @@ async def test_view_and_side_panel(
     assert len(opened) == 2
 
     # Once a frame exists, `/computer-use view` reuses existing frames without triggering a live capture.
-    desktop_provider.display.fail_screenshot = None
+    display.fail_screenshot = None
     headless_ref = history_sandbox(headless.host.conversation.messages)
     assert headless_ref is not None
     headless._record_frame(headless_ref, PNG_A, (), None)  # pyright: ignore[reportPrivateUsage]
@@ -829,200 +703,3 @@ async def test_viewer_guard_and_server_lifecycle(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(web_server.WebServer, 'serve', staticmethod(fail_serve))
     assert DesktopViewer().try_url(ref) is None
-
-
-# ---------------------------------------------------------------------------
-# Provider desktop=True wiring
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.skipif(find_spec('opensandbox') is None, reason='opensandbox not installed')
-async def test_opensandbox_desktop_bootstraps_before_github_vault(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
-
-    events: list[str] = []
-
-    class _FakeVault:
-        async def create(self, **kwargs: object) -> None:
-            del kwargs
-            events.append('vault_create')
-
-    class _FakeSbx:
-        id = 'osb-1'
-        credential_vault = _FakeVault()
-
-        async def patch_egress_rules(self, rules: list[object]) -> None:
-            events.append(f'patch:{len(rules)}')
-
-        async def delete_egress_rules(self, targets: list[str]) -> None:
-            events.append(f'delete:{",".join(targets)}')
-
-    class _FakeDisplay:
-        async def display_size(self) -> tuple[int, int]:
-            events.append('display_size')
-            return (1280, 800)
-
-    fake_sbx = _FakeSbx()
-    fake_display = _FakeDisplay()
-
-    async def fake_get_sandbox(self: OpenSandboxBackend) -> _FakeSbx:
-        del self
-        return fake_sbx
-
-    async def fake_give_login(backend: object, github: GitHubCredential) -> None:
-        del backend, github
-        events.append('give_github_login')
-
-    monkeypatch.setenv(opensandbox_provider.DOMAIN_NAME, 'localhost:8080')
-    monkeypatch.setattr(OpenSandboxBackend, 'get_sandbox', fake_get_sandbox)
-    monkeypatch.setattr(OpenSandboxBackend, 'display', property(lambda self: fake_display))
-    monkeypatch.setattr(opensandbox_provider, 'give_github_login', fake_give_login)
-
-    prov = opensandbox_provider.OpenSandboxProvider()
-    ref, backend = await prov.create(github=GitHubCredential(login='Ada', token='gho_x'), desktop=True)
-    assert ref == WorkspaceRef(provider='opensandbox', id='osb-1')
-    assert events == [
-        'patch:2',
-        'display_size',
-        'delete:deb.debian.org,security.debian.org',
-        'vault_create',
-        'give_github_login',
-    ]
-    await prov.close(backend)
-
-
-async def test_smol_missing_and_reached_display(monkeypatch: pytest.MonkeyPatch) -> None:
-    smol_p = local_provider.SmolProvider()
-    monkeypatch.setattr(local_provider, 'find_spec', _not_installed)
-    monkeypatch.setattr(local_provider.sys, 'platform', 'win32')
-    assert 'no Windows build' in (smol_p.missing(desktop=True) or '')
-    monkeypatch.setattr(local_provider.sys, 'platform', 'linux')
-    assert 'needs smolmachines' in (smol_p.missing(desktop=True) or '')
-
-    fake_display = FakeDisplay()
-    inner_backend = FakeDesktopBackend(
-        WorkspaceRef(provider='smol', id='vm-1'), Path('.'), env={}, display=fake_display
-    )
-    reached = local_provider._Reached(inner_backend)  # pyright: ignore[reportPrivateUsage]
-    display = reached.display
-    assert display is not None and display is reached.display
-    assert isinstance(display, SupportsZoom) and isinstance(display, SupportsCursorPosition)
-    assert reached.reached is False
-    assert await display.display_size() == (1280, 800)
-    assert reached.reached is True
-    assert await display.screenshot() == PNG_A
-    await display.act(Click(x=1, y=2))
-    assert await display.zoom(Region(left=0, top=0, right=10, bottom=10)) == PNG_A
-    assert await display.cursor_position() == Point(x=100, y=200)
-
-    class _MinimalDisplay:
-        async def display_size(self) -> tuple[int, int]:
-            raise WorkspaceUnavailableError('gone')
-
-        async def screenshot(self) -> bytes:
-            return PNG_A
-
-        async def act(self, action: DisplayAction) -> None:
-            del action
-
-    min_backend = FakeDesktopBackend(
-        WorkspaceRef(provider='smol', id='vm-2'), Path('.'), env={}, display=_MinimalDisplay()
-    )
-    min_reached = local_provider._Reached(min_backend)  # pyright: ignore[reportPrivateUsage]
-    min_display = min_reached.display
-    assert min_display is not None
-    assert isinstance(min_display, SupportsZoom) and isinstance(min_display, SupportsCursorPosition)
-    with pytest.raises(WorkspaceUnavailableError):
-        await min_display.display_size()
-    assert min_reached.reached is False
-    with pytest.raises(UnsupportedActionError):
-        await min_display.zoom(Region(left=0, top=0, right=10, bottom=10))
-    with pytest.raises(UnsupportedActionError):
-        await min_display.cursor_position()
-
-
-@pytest.mark.parametrize(
-    ('prov', 'ref_prov', 'ref_id'),
-    [
-        pytest.param(
-            boxd_provider.BoxdProvider(),
-            'boxd',
-            'm1',
-            id='boxd',
-            marks=pytest.mark.skipif(find_spec('boxd') is None, reason='boxd not installed'),
-        ),
-        pytest.param(
-            e2b_provider.E2BProvider(),
-            'e2b',
-            'e1',
-            id='e2b',
-            marks=pytest.mark.skipif(find_spec('e2b') is None, reason='e2b not installed'),
-        ),
-        pytest.param(
-            opensandbox_provider.OpenSandboxProvider(),
-            'opensandbox',
-            'o1',
-            id='opensandbox',
-            marks=pytest.mark.skipif(find_spec('opensandbox') is None, reason='opensandbox not installed'),
-        ),
-        pytest.param(
-            modal_provider.ModalProvider(),
-            'modal',
-            'mod1',
-            id='modal',
-            marks=pytest.mark.skipif(find_spec('modal') is None, reason='modal not installed'),
-        ),
-        pytest.param(
-            render_provider.RenderProvider(),
-            'render',
-            'r1',
-            id='render',
-            marks=pytest.mark.skipif(find_spec('render') is None, reason='render not installed'),
-        ),
-        pytest.param(
-            sprites_provider.SpritesProvider(),
-            'sprites',
-            'sp1',
-            id='sprites',
-            marks=pytest.mark.skipif(find_spec('sprites') is None, reason='sprites not installed'),
-        ),
-        pytest.param(
-            kubernetes_provider.KubernetesProvider(),
-            'kubernetes',
-            'default/k1',
-            id='kubernetes',
-            marks=pytest.mark.skipif(
-                find_spec('k8s_agent_sandbox') is None or find_spec('grpc') is None,
-                reason='k8s_agent_sandbox not installed',
-            ),
-        ),
-        pytest.param(
-            local_provider.SmolProvider(),
-            'local-smol',
-            f'pydantic-ai-{"0" * 32}',
-            id='local-smol',
-            marks=pytest.mark.skipif(find_spec('smol') is None, reason='smol not installed'),
-        ),
-        pytest.param(
-            local_provider.BoxLiteProvider(),
-            'local-boxlite',
-            f'pydantic-ai-{"0" * 32}',
-            id='local-boxlite',
-            marks=pytest.mark.skipif(find_spec('boxlite') is None, reason='boxlite not installed'),
-        ),
-    ],
-)
-async def test_provider_reopen_desktop_wiring(
-    prov: sandbox.SandboxProvider, ref_prov: str, ref_id: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(boxd_provider.KEY_NAME, 'boxd-key')
-    monkeypatch.setenv(e2b_provider.KEY_NAME, 'e2b-key')
-    monkeypatch.setenv(opensandbox_provider.DOMAIN_NAME, 'localhost:8080')
-    monkeypatch.setenv(render_provider.KEY_NAME, 'r-key')
-    monkeypatch.setenv(render_provider.WORKSPACE_KEY_NAME, 'tea-1')
-    monkeypatch.setenv(sprites_provider.KEY_NAME, 's-key')
-    backend = await anyio.to_thread.run_sync(
-        lambda: prov.reopen(WorkspaceRef(provider=ref_prov, id=ref_id), desktop=True)
-    )
-    assert isinstance(backend, SupportsDisplay) and backend.display is not None, prov.name
-    await prov.close(backend)

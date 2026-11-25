@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Literal, assert_never
+from typing import Any, Literal, assert_never
 
 from rich.console import RenderableType
 from rich.text import Text
@@ -15,6 +15,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.computer_use import (
+    COMPUTER_KIND,
     Click,
     ComputerCallPart,
     ComputerResult,
@@ -33,7 +34,9 @@ from pydantic_ai.computer_use import (
     Wait,
     Zoom,
 )
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.exceptions import SkipToolExecution
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, SupportsDisplay
 from pydantic_ai_pax.ui.rendering import theme
@@ -43,25 +46,27 @@ _TYPE_PREVIEW_CHARS = 40
 """Maximum characters of a `type_text` action shown in a one-line summary."""
 
 COMPUTER_USE = 'clai2_computer_use'
-"""`ModelResponse.metadata` key, `True` while `/computer-use` is on; Pax's own, never sent to a model.
+"""`ModelResponse.metadata` key of a sandbox with a desktop: `True` while `/computer-use` is on, `False` once off.
 
-`/sandbox` and `/computer-use` save it on the response they record, and every later response in the sandbox
-carries it on, so the latest response says whether computer use is on, even after compaction.
+Pax's own, never sent to a model. `/sandbox` and `/computer-use` save it on the response they record, and every
+later response in the sandbox carries it on, so the latest response says both, even after compaction.
 """
+
+
+def computer_use_state(messages: Sequence[ModelMessage]) -> bool | None:
+    """`COMPUTER_USE` on the history's latest response: `None` when its sandbox has no desktop."""
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    state = None if response is None else (response.metadata or {}).get(COMPUTER_USE)
+    return state if isinstance(state, bool) else None
 
 
 def computer_use_on(messages: Sequence[ModelMessage]) -> bool:
     """Whether `/computer-use` is on, according to the history's latest response."""
-    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
-    return response is not None and (response.metadata or {}).get(COMPUTER_USE) is True
+    return computer_use_state(messages) is True
 
 
-def computer_use_ever_on(messages: Sequence[ModelMessage]) -> bool:
-    """Whether `/computer-use` was on at any point in the history, so its sandbox was given a desktop."""
-    return any(
-        isinstance(message, ModelResponse) and (message.metadata or {}).get(COMPUTER_USE) is True
-        for message in messages
-    )
+_LOOKS = (Screenshot, Zoom, CursorPosition, Wait)
+"""The actions that only look at the screen, which run whatever `/permissions` is."""
 
 
 FrameCallback = Callable[[WorkspaceRef, bytes, Sequence[ComputerToolAction], ComputerResult | None], None]
@@ -214,9 +219,25 @@ class _ObservedComputerUse(WrapperCapability[None]):
     """Wraps harness `ComputerUse` to hand each screenshot, with the actions that led to it, to `on_frame`."""
 
     on_frame: FrameCallback = field(repr=False)
+    full_access: Callable[[], bool] = field(repr=False)
     _calls: dict[str, Sequence[ComputerToolAction]] = field(
         default_factory=dict[str, Sequence[ComputerToolAction]], init=False, repr=False
     )
+
+    async def before_tool_execute(
+        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Refuse a click or keystroke outside `/permissions full`: harness `Permissions` checks commands, not these."""
+        args = await super().before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
+        if tool_def.tool_kind != COMPUTER_KIND.id or self.full_access():
+            return args
+        actions: Sequence[object] = args.get('actions') or ()
+        if all(isinstance(action, _LOOKS) for action in actions):
+            return args
+        raise SkipToolExecution(
+            'The computer tool only looks at the screen unless /permissions is full, so this call did not act. '
+            'Tell the user; /permissions full lets it click and type.'
+        )
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         if isinstance(event, FunctionToolCallEvent) and isinstance(event.part, ComputerCallPart):
@@ -236,10 +257,14 @@ class DesktopComputerUse(AbstractCapability[None]):
     """
 
     on_frame: FrameCallback = field(repr=False)
+    full_access: Callable[[], bool] = field(repr=False)
+    """Whether `/permissions` is `full`, read on each call."""
     _computer_use: ComputerUse[None] = field(default_factory=ComputerUse[None], init=False, repr=False)
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
         backend = ctx.workspace.backend
         if computer_use_on(ctx.messages) and isinstance(backend, SupportsDisplay) and backend.display is not None:
-            return _ObservedComputerUse(await self._computer_use.for_run(ctx), on_frame=self.on_frame)
+            return _ObservedComputerUse(
+                await self._computer_use.for_run(ctx), on_frame=self.on_frame, full_access=self.full_access
+            )
         return AbstractCapability[None]()
