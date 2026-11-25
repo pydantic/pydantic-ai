@@ -15,7 +15,29 @@ model you choose: any Pydantic AI model works, and a [decision model](../models/
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls smart_search with a plain-English query. SmartSearch lists the files in the workspace with rg --files, chunks them into snippets, shortlists up to 128 snippets with BM25, and sends each one to the judge model you chose. Snippets whose relevance reaches the threshold come back to the model as a SmartSearchResult with file, line range and a short excerpt, plus coverage figures and warnings.](../img/harness/smart-search.svg)
+```mermaid
+flowchart TB
+    accTitle: Smart Search: find code by what it does
+    accDescr: The model sends a smart_search query to the SmartSearch capability, which lists files under the directory with rg --files in the run workspace, LocalWorkspace or a sandbox. It chunks them into snippets, shortlists 128 by default with BM25, and sends the judge model one request per snippet. Snippets at or above the relevance threshold return to the model as a SmartSearchResult.
+    model(["model"])
+    subgraph search["SmartSearch()"]
+        files["List files<br/>under directory"]:::capability
+        chunk["Chunk<br/>files into snippets"]:::capability
+        shortlist["Shortlist with BM25<br/>128 by default"]:::capability
+        judge["Judge<br/>relevance &gt;= threshold"]:::capability
+    end
+    workspace["run workspace<br/>LocalWorkspace<br/>or a sandbox"]:::external
+    judgemodel(["judge model<br/>one request per snippet"])
+    model -->|"smart_search query"| files
+    files <-->|"rg --files"| workspace
+    files --> chunk
+    chunk --> shortlist
+    shortlist --> judge
+    judge <--> judgemodel
+    judge -->|"SmartSearchResult"| model
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## The problem
 
@@ -57,6 +79,7 @@ without a workspace fails at its start.
 | `concurrency` | `8` | Snippets judged at once. |
 | `cache_index` | `False` | Keep each searched directory's index in memory between searches; see [Large codebases](#large-codebases). |
 | `guidance` | `None` | Discovery instructions added whenever the tool is offered: `None` for the default, which has the model reach for `smart_search` before exploratory text search, `''` for none. |
+| `id` | `'smart_search'` | Stable identity, under which durable execution records each search's judgments; see [Two of them](#two-of-them). |
 
 ## Tool
 
@@ -152,6 +175,15 @@ next turn. The shortlist's best-ranked snippets are judged first, and a warning 
 Under the default `request_limit` of 50, a run's first search judges 24 snippets. Raise the limit for full
 128-snippet searches, for example with `agent.run(..., usage_limits=UsageLimits(request_limit=500))`. When no
 request is left to spend, the search fails and the model is told to use regular search.
+
+## Two of them
+
+`SmartSearch` declares the default `id` `'smart_search'`, under which durable execution records each search's
+judgments. Two `SmartSearch`s on one agent that share it become one when they agree, and the agent raises a
+`UserError` when it's built if they differ, since a merge could send the source to a judge neither chose. To keep
+two, give each its own `id` and wrap them in [PrefixTools](../capabilities/prefix-tools.md), since both register `smart_search`.
+
+Earlier releases declared no default `id`, so two always failed on the tool name when the run started.
 
 ## Telemetry
 

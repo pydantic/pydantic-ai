@@ -2,22 +2,33 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 import pytest
 
 import pydantic_ai.models
-import pydantic_ai_harness.planning  # pyright: ignore[reportUnusedImport] # noqa: F401
 from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage
+from tests.conftest import try_import
 
-# `Planning` registers its `plan_reminder` framing tag when its module is first imported, and the
-# harness imports it lazily. A registration after any test has escaped framing text emits a
-# `UserWarning`, which fails the test that first imports `Planning`. Pytest imports this conftest
-# during collection, before any test runs, so the import above registers the tag first.
+with try_import() as openai_imports_successful:
+    from openai.types import responses
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
+    from tests.models.mock_openai import MockOpenAIResponses, response_message
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
@@ -40,12 +51,15 @@ else:
     from dirty_equals import IsDatetime, IsInstance, IsNow, IsPartialDict, IsStr
 
 __all__ = (
+    'CountingModel',
     'IsDatetime',
     'IsInstance',
     'IsNow',
     'IsPartialDict',
     'IsStr',
     'agent_run_names',
+    'openai_imports_successful',
+    'openai_without_token_counting',
 )
 
 # Temporal markers live in `tests/harness/_temporal.py`: modules defining workflows must not import
@@ -53,6 +67,39 @@ __all__ = (
 
 # Prevent accidental real model requests during tests.
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Capture the harness's INFO lifecycle lines, such as which sandbox it created, in a live tier's failure report.
+
+    Only the harness logger is raised: raising the root logger with `--log-level=INFO` would also capture SDK lines
+    such as httpx's request URLs, which a failure prints into public CI output.
+    """
+    if str(config.getoption('markexpr')).endswith('_live'):
+        logging.getLogger('pydantic_ai_harness').setLevel(logging.INFO)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Fail collection when a `temporal` test lives in a module `test-durable-exec` wouldn't select.
+
+    That job only runs harness modules mentioning Temporal, and every other job deselects `temporal` tests, so such a
+    test would otherwise silently never run.
+    """
+    for module in {item.path for item in items if item.get_closest_marker('temporal')}:
+        # `test-durable-exec` selects `test_*.py` files that mention Temporal; pytest also collects `*_test.py`.
+        if not module.name.startswith('test_') or 'temporal' not in module.read_text().lower():  # pragma: no cover
+            raise pytest.UsageError(
+                f'{module} has `temporal` tests but `test-durable-exec` only runs `test_*.py` modules that mention '
+                'Temporal.'
+            )
+
+
+@pytest.fixture(scope='session', autouse=True)
+def pixeltable_home(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Keep Pixeltable's catalog out of `~/.pixeltable`; it reads the variable once per process."""
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv('PIXELTABLE_HOME', str(tmp_path_factory.mktemp('pixeltable')))
+        yield
 
 
 @pytest.fixture(scope='session')
@@ -102,6 +149,64 @@ def instrument_all_agents() -> Iterator[None]:
         yield
     finally:
         Agent.instrument_all(False)
+
+
+@dataclass(init=False)
+class CountingModel(WrapperModel):
+    """Wraps a model that has no `count_tokens` (like `TestModel`) to report `input_tokens` for every request.
+
+    A run with `UsageLimits(count_tokens_before_request=True)` on the wrapped model alone fails with
+    `NotImplementedError`.
+    """
+
+    input_tokens: int
+
+    def __init__(self, wrapped: Model, *, input_tokens: int = 10) -> None:
+        super().__init__(wrapped)
+        self.input_tokens = input_tokens
+
+    @property
+    def provider(self) -> None:
+        return None
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        return RequestUsage(input_tokens=self.input_tokens)
+
+
+def openai_without_token_counting(provider: Literal['openai-codex', 'openai-chatgpt'], text: str) -> Model:
+    """A model on `provider`, which can't count tokens, whose mock client streams `text` as every response.
+
+    Neither provider serves `responses/input_tokens`. The mock client keeps every request, and the token refresh
+    a real client would make, in the process.
+    """
+    response = response_message([])
+    client = MockOpenAIResponses.create_mock_stream(
+        [
+            responses.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0),
+            responses.ResponseTextDeltaEvent(
+                type='response.output_text.delta',
+                delta=text,
+                item_id='msg_1',
+                output_index=0,
+                content_index=0,
+                logprobs=[],
+                sequence_number=1,
+            ),
+            responses.ResponseCompletedEvent(
+                response=response.model_copy(update={'status': 'completed'}),
+                type='response.completed',
+                sequence_number=2,
+            ),
+        ]
+    )
+    if provider == 'openai-codex':
+        return OpenAICodexModel('gpt-5.5', provider=OpenAICodexProvider(openai_client=client))
+    return OpenAIResponsesModel('gpt-5.5', provider=OpenAIChatGPTProvider(openai_client=client))
 
 
 def agent_run_names(capfire: CaptureLogfire) -> list[str]:

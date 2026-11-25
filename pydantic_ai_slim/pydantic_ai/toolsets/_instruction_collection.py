@@ -90,18 +90,6 @@ def make_contribution(
     return InstructionContribution(source=source, source_id=source_id, parts=(resolved_part,))
 
 
-def framework_appended_toolset_sources(toolset: AbstractToolset[AgentDepsT]) -> set[ToolsetInstructionSource]:
-    """The instruction sources of the toolsets under `toolset` whose blocks append by the framework's choice."""
-    sources: set[ToolsetInstructionSource] = set()
-
-    def visit(leaf: AbstractToolset[AgentDepsT]) -> None:
-        if leaf._appends_instructions_by_default and leaf.id is not None:  # pyright: ignore[reportPrivateUsage]
-            sources.add(ToolsetInstructionSource(leaf.id))
-
-    toolset.apply(visit)
-    return sources
-
-
 async def collect_toolset_instructions(
     toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]
 ) -> list[InstructionPart]:
@@ -122,6 +110,22 @@ def flatten_instruction_contributions(
     Separate from the collection itself so a toolset that has already gathered its children can
     apply the rule without re-entering the walk that produced them.
     """
+    sources_by_key = _sources_by_key(contributions)
+    parts: list[InstructionPart] = []
+    for contribution in contributions:
+        source_id = contribution.source_id
+        if source_id is None or len(sources_by_key[source_id]) == 1 or not _has_derived_id(contribution.source):
+            parts.extend(contribution.parts)
+            continue
+        _warn_derived_id_collision(source_id)
+        parts.extend(_unkeyed_rewrites(contribution, source_id))
+    return parts
+
+
+def _sources_by_key(
+    contributions: list[InstructionContribution[AgentDepsT]],
+) -> dict[ToolsetInstructionSource, set[int]]:
+    """The toolsets contributing under each key, by identity; a `UserError` if two given `id`s claim one key."""
     explicit_owners: dict[ToolsetInstructionSource, AbstractToolset[AgentDepsT]] = {}
     sources_by_key: dict[ToolsetInstructionSource, set[int]] = {}
     for contribution in contributions:
@@ -136,25 +140,22 @@ def flatten_instruction_contributions(
                 f'instructions, so {str(source_id)!r} would address parts from each. '
                 'Toolset `id`s must be unique among all toolsets registered with the same agent.'
             )
-    parts: list[InstructionPart] = []
-    for contribution in contributions:
-        source_id = contribution.source_id
-        if source_id is None or len(sources_by_key[source_id]) == 1 or not _has_derived_id(contribution.source):
-            parts.extend(contribution.parts)
-            continue
-        _warn_derived_id_collision(source_id)
-        # Rewriting, an empty block says nothing, so it's dropped like any other empty rewrite-mode part.
-        replacements = [
-            replace(part, id=None, on_change='rewrite') for part in contribution.parts if part.content.strip()
-        ]
-        parts.extend(replacements)
-        # Flattened inside an authoring container's `get_instructions`, the replacements are still the child's
-        # parts, not text the container wrote, so they stay attributed to the child.
-        if (relays := RELAYS.get()) is not None and relays.covers(contribution.source):
-            relays.parts.update(
-                (id(part), RelayedPart(contribution.source, source_id, part, replace(part))) for part in replacements
-            )
-    return parts
+    return sources_by_key
+
+
+def _unkeyed_rewrites(
+    contribution: InstructionContribution[AgentDepsT], source_id: ToolsetInstructionSource
+) -> list[InstructionPart]:
+    """A derived-`id` source's parts, unkeyed and rewriting, for a key another source shares."""
+    # Rewriting, an empty block says nothing, so it's dropped like any other empty rewrite-mode part.
+    replacements = [replace(part, id=None, on_change='rewrite') for part in contribution.parts if part.content.strip()]
+    # Flattened inside an authoring container's `get_instructions`, the replacements are still the child's
+    # parts, not text the container wrote, so they stay attributed to the child.
+    if (relays := RELAYS.get()) is not None and relays.covers(contribution.source):
+        relays.parts.update(
+            (id(part), RelayedPart(contribution.source, source_id, part, replace(part))) for part in replacements
+        )
+    return replacements
 
 
 def _has_derived_id(toolset: AbstractToolset[AgentDepsT]) -> bool:

@@ -65,6 +65,7 @@ def test_legacy_keys_reach_resolution_through_model_profile_argument():
         ('openai_supports_forced_tool_choice_with_thinking', 'supports_forced_tool_choice_with_thinking'),
         ('openrouter_supports_forced_tool_choice_with_thinking', 'supports_forced_tool_choice_with_thinking'),
         ('openai_reasoning_enabled_by_default', 'thinking_enabled_by_default'),
+        ('openai_responses_tool_call_ids_are_response_scoped', 'tool_call_ids_are_response_scoped'),
     ],
 )
 def test_legacy_provider_keys_translate_to_model_profile_keys(legacy_key: str, key: str):
@@ -75,6 +76,15 @@ def test_legacy_provider_keys_translate_to_model_profile_keys(legacy_key: str, k
         model = TestModel(profile={legacy_key: False})  # pyright: ignore[reportArgumentType]
         assert model.profile.get(key) is False
         assert legacy_key not in model.profile
+
+
+def test_legacy_response_scoped_tool_call_ids_key_still_enables_the_flag():
+    """The deprecated `OpenAIModelProfile` spelling still turns qualification on, not only its `False` default."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match='`openai_responses_tool_call_ids_are_response_scoped` is deprecated'
+    ):
+        model = TestModel(profile={'openai_responses_tool_call_ids_are_response_scoped': True})  # pyright: ignore[reportArgumentType]
+        assert model.profile.get('tool_call_ids_are_response_scoped') is True
 
 
 def test_two_legacy_spellings_of_a_capability_must_both_allow_it():

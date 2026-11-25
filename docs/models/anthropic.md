@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-slim[anthropic]"
 
 To use [Anthropic](https://anthropic.com) through their API, go to [console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys) to generate an API key.
 
-`AnthropicModelName` contains a list of available Anthropic models.
+`AnthropicModelName` lists the latest Anthropic models for autocomplete. Any other model id the API accepts works too.
 
 ## Environment variable
 
@@ -50,6 +50,10 @@ agent = Agent(model)
     Anthropic's [Claude Opus migration guide](https://platform.claude.com/docs/en/about-claude/models/migration-guide) recommends removing `temperature`, `top_p`, and `top_k` from Opus 4.7, 4.8, 5, and 5.5 requests. Pydantic AI drops those keys automatically for `claude-opus-4-7`, `claude-opus-4-8`, `claude-opus-5`, `claude-opus-5-5`, `claude-sonnet-5`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-fable-5` and `claude-mythos-5`, including `extra_body` overrides.
 
     The same guide also recommends re-evaluating `max_tokens` and any token-count assumptions when migrating from Opus 4.6, since Opus 4.7 introduced updated tokenization (carried into 4.8). If you rely on `count_tokens()` or `count_tokens_before_request`, verify your thresholds against the new model.
+
+## Sampling settings
+
+The Claude models that aren't covered by the migration note above take `temperature`, `top_p` and `top_k`, with two limits Pydantic AI applies silently instead of sending a request Anthropic rejects: while the model thinks, `temperature` other than `1`, `top_p` below `0.95` and `top_k` are dropped, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`.
 
 ## `provider` argument
 
@@ -92,6 +96,10 @@ client construction.
 
 The `AsyncAnthropic` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, so a request can reach the network up to three times before your code sees an error. Pass `max_retries=0` when you construct the client yourself (for example as `anthropic_client=`) to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client, including for an `AsyncAnthropicBedrock` or `AsyncAnthropicVertex` client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for when this layer fires.
 
+## Image input {#image-input}
+
+Claude reads JPEG, PNG, GIF and WebP images, and an `image/jpg` file is sent as `image/jpeg`, the spelling the API accepts. An image of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance). `AnthropicModel` also takes PDF and plain-text documents, and no audio or video.
+
 ## Model settings
 
 You can customize model behavior using [`AnthropicModelSettings`][pydantic_ai.models.anthropic.AnthropicModelSettings]:
@@ -109,7 +117,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-Anthropic requires [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which thinking counts toward. When you don't set it, Pydantic AI sends the model's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5 and Claude Haiku 5.5, and streams the request behind the scenes, since a response that long can take more than 10 minutes. A [`timeout`][pydantic_ai.settings.ModelSettings.timeout] then limits the wait between streamed chunks rather than the whole response. A model whose maximum isn't known gets 16384, and models older than Claude Sonnet 4.5 get 4096, since they reject a request whose input plus `max_tokens` exceeds the context window. Models are recognized by name, so set `max_tokens` yourself if you reach one through a Bedrock ARN or a custom deployment name.
+Anthropic requires [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which thinking counts toward. When you don't set it, Pydantic AI sends the model's maximum output, like 64,000 on Claude Sonnet 4.5 or 128,000 on Claude Opus 5 and Claude Haiku 5.5, and streams the request behind the scenes, since a response that long can take more than 10 minutes. A [`timeout`][pydantic_ai.settings.ModelSettings.timeout] then limits the wait between streamed chunks rather than the whole response. A model whose maximum isn't known gets 16384, and models older than Claude Sonnet 4.5 get 4096, since they reject a request whose input plus `max_tokens` exceeds the context window. A `max_tokens` you set above a known maximum is lowered to it, since Anthropic rejects it, so the same setting works across models; a beta that raises the maximum, like `output-300k-2026-03-24` for Message Batches, leaves it alone. Models are recognized by name, so set `max_tokens` yourself if you reach one through a Bedrock ARN or a custom deployment name.
 
 ### Service tier
 
@@ -382,8 +390,6 @@ When you use `anthropic_cache_instructions` with both static and dynamic [instru
 This means your stable, static instructions are cached efficiently, while dynamic instructions (which may change between requests) remain outside the cache boundary, so a change doesn't invalidate the cached static instructions. It does invalidate the cached conversation after them, so for instructions that change mid-conversation, use [`on_change='append'`](../agent.md#appending-instruction-changes), which appends each change to the history instead; [keep untrusted text out of instructions](../agent.md#untrusted-instruction-text).
 
 ```python {test="skip"}
-from datetime import date
-
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModelSettings
 
@@ -399,7 +405,7 @@ agent = Agent(
 
 @agent.instructions
 def dynamic_context(ctx: RunContext[str]) -> str:  # (3)!
-    return f"Customer name: {ctx.deps}. Today's date: {date.today()}."
+    return f'Customer name: {ctx.deps}.'
 
 
 result = agent.run_sync('What is your return policy?', deps='Alice')
@@ -408,7 +414,7 @@ print(result.output)
 
 1. Static instructions are cached across requests.
 2. Enables smart cache placement at the static/dynamic boundary.
-3. Dynamic instructions change per-request and are not cached.
+3. Dynamic instructions are evaluated for each request and sit after the cache point, so a different customer doesn't invalidate the cached static instructions.
 
 ### Fine-Grained Control with CachePoint
 
@@ -576,6 +582,55 @@ print(f'Cache read tokens: {usage.cache_read_tokens}')
 - Excess `CachePoint` markers in messages are removed from oldest to newest when the limit is exceeded
 - This ensures critical caching (instructions/tools) is maintained while still benefiting from message-level caching
 
+## Message threads (Beta)
+
+In a long conversation, every request normally sends the whole history again. With Anthropic's [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads), Anthropic keeps the conversation and each request sends only what's new, which keeps time to first token low as the conversation grows. Set [`AnthropicModelSettings.anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id] to `'auto'` to use them:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    instructions='Instructions...',
+    model_settings=AnthropicModelSettings(anthropic_previous_message_id='auto'),
+)
+
+result1 = agent.run_sync('Your question')  # creates a thread
+result2 = agent.run_sync('Follow-up question', message_history=result1.all_messages())  # sends only the new prompt
+```
+
+The thread is found from the message history, so nothing else needs to be kept. A request continues the thread of the most recent response: it sends only the messages after that response, and leaves out the instructions and tools, which the thread keeps.
+
+A request sends the full history in a new thread instead when:
+
+- Its instructions, tools, thinking, betas or other request-level settings differ from the thread's, which can't change. That includes the first request whose new messages need a beta the thread was created without, like the Files API beta for an [`UploadedFile`][pydantic_ai.messages.UploadedFile].
+- The most recent response, or the history before it, changed since it was sent (a history processor trimmed or redacted it, say), so the change isn't lost.
+- The most recent response is a refusal, which Anthropic might already hold, or wasn't received in full.
+- Another model wrote the most recent response, through a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or Anthropic's [server-side fallback](https://platform.claude.com/docs/en/build-with-claude/refusals-and-fallback#server-side-fallback): the thread doesn't store it.
+- It resumes a turn paused with `pause_turn`, which sends the paused turn back.
+- Its new messages open with a [`CachePoint`][pydantic_ai.messages.CachePoint]: it marks the end of the previous response, which a continue request can't send again.
+- Anthropic can no longer continue the thread, say because it expired 5 minutes after its last use: the continue request fails and is sent again in a new thread.
+
+A request is sent without a thread when:
+
+- It uses something threads don't support, such as context management (see below).
+- Anthropic can't continue the thread of the most recent response, which itself replayed the conversation in a new thread: Anthropic may be unable to store the conversation, say a very large one.
+- Its `extra_body` sets `messages`, which replaces the history the thread is built from.
+- It's a [`compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] request, which samples no reply.
+
+Threads are available on the Claude API, Claude Platform on AWS, Claude on Google Cloud (Anthropic managed) and Microsoft Foundry. On Bedrock and Vertex AI, `anthropic_previous_message_id` is ignored with a `UserWarning`. [`anthropic_supports_message_threads`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_supports_message_threads] in the model's `profile` controls this.
+
+Each response sent in a thread records `'thread_fingerprint'` in its [`provider_details`][pydantic_ai.messages.ModelResponse.provider_details] and a digest of its ID, that fingerprint, its parts and the history it was created from as [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], which is how the next request knows it can continue. Keep both when you store the message history; a response without them starts a new thread. If the history comes from a client, pass a `history_digest_key` (see below) or leave threads off, as described under [Loading untrusted history](../message-history.md#loading-untrusted-history). A response that replayed the conversation in a new thread also records `'thread_replayed': True`. When Anthropic rejects a thread because the request uses something threads don't support, or can't continue the thread of a replayed response, Pydantic AI warns and sends the request again without one, and the response records `'thread_unsupported': True` beside its `'thread_fingerprint'`. The next request with the same fixed fields is then sent without a thread straight away, and changing one of them tries a thread again.
+
+!!! warning "Redacting stored history"
+    The digest and the fingerprint are plain SHA-256 hashes by default, so anyone holding the stored history can use them to test guesses at content redacted from that history after it was sent, such as a PIN or an account number. If you redact history after the fact, pass a secret as the `history_digest_key` argument to [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel] to make both HMACs. Every model continuing the same conversations needs the same key; a response recorded with a different key, or none, starts a new thread.
+
+    Anthropic still holds the unredacted thread until it expires. The redacted history is what gets sent from then on, in a new thread.
+
+!!! warning "Data retention"
+    Threads aren't eligible for Zero Data Retention: Anthropic holds the conversation, system prompt and tools in memory for up to an hour after the thread's last use.
+
 ## Carried-over thinking
 
 A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ride Anthropic's native reasoning channel — most often because its signature didn't survive your storage round trip — is sent as text in a `user` message of its own ahead of the assistant turn it came from, wrapped in an `<assistant_thinking>` tag. That is why a request can carry a `user` turn you never wrote. See [the thinking page](../capabilities/thinking.md#carried-over-thinking) for why the assistant turn is the wrong place for it, and for the opt-out.
@@ -600,7 +655,7 @@ Message Batches aren't available through Bedrock, Vertex AI or Microsoft Foundry
 [Pydantic AI Gateway](../gateway.md): use `AnthropicProvider` with a Claude API key instead. They need an API key or
 auth token on the client. They don't support streaming, `anthropic_speed` or `max_tokens=0` cache pre-warming.
 Configure transport timeouts and custom headers on the Anthropic client: per-request `timeout` and
-`extra_headers` are unsupported. Retrieving a batch needs the endpoint and beta flags that submitted it, but not the same API key: any key the workspace accepts works.
+`extra_headers` are unsupported. A batch always sends Pydantic AI's user-agent, so one in `extra_headers` is ignored, in any spelling. Retrieving a batch needs the endpoint and beta flags that submitted it, but not the same API key: any key the workspace accepts works.
 
 ## Mid-conversation system messages
 
@@ -631,7 +686,9 @@ See [mid-conversation system prompts](../message-history.md#mid-conversation-sys
 !!! note "Placement"
     Anthropic requires a system message to sit between a user turn and the model's reply, so Pydantic AI nudges the position when a history doesn't already satisfy that: an instruction arriving with no user content alongside it gets a minimal `.` user message to follow, and one that would land ahead of another user turn moves to just before the reply it governs. Neither changes which turn the instruction applies to — only where it sits on the wire.
 
-    Claude Haiku 5.5 can read a system message that comes right after a tool result as part of the tool output and ignore it, as [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results) warn. That's where a loaded [on-demand capability](../capabilities/on-demand.md)'s instructions and an instruction change during a tool loop land, so on Haiku 5.5 Pydantic AI ends those tool results with a short text block saying they end there and the system message comes from the application. The profile flag is [`anthropic_distrusts_system_after_tool_result`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_distrusts_system_after_tool_result].
+    Claude Sonnet 5.5 and Claude Haiku 5.5 accept the native entry, but Pydantic AI sends them the sealed `<system>` rendering instead (see [mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts)). Haiku 5.5 followed it as well or better in every case measured: instruction changes, changes next to text that looks like one, and request-scoped prompts. Sonnet 5.5 credited the native entry to the user when asked who said what, and with the sealed rendering it attributed the application's instructions correctly and followed steering after a tool result more reliably. To use the native entry anyway, pass `profile={'supports_inline_system_prompts': True, 'needs_sealed_system_blocks': False}`.
+
+    With the native entry, Claude Haiku 5.5 can read a system message that comes right after a tool result as part of the tool output and ignore it, as [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#placement-after-tool-results) warn. That's where a loaded [on-demand capability](../capabilities/on-demand.md)'s instructions and an instruction change during a tool loop land, so there Pydantic AI ends those tool results with a short text block saying they end there and the system message comes from the application. The profile flag is [`anthropic_distrusts_system_after_tool_result`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_distrusts_system_after_tool_result].
 
 ### Refusals on repeated prompts
 
@@ -641,9 +698,9 @@ Claude's `reasoning_extraction` classifier can refuse a conversation that repeat
 
 A [request-scoped](../message-history.md#request-scoped-system-prompts) `SystemPromptPart` (`scope='request'`) is sent as a [turn-scoped system message](https://platform.claude.com/docs/en/build-with-claude/mid-conversation-system-messages#turn-scoped-system-messages): a `{'role': 'system'}` entry with `clear_at: 'next_user_message'`, which the API stops rendering once a later user turn exists, including one that only carries tool results. Pydantic AI sends every one of them with every request, current or not, and adds the `mid-conversation-system-clear-at-2026-08-21` beta header for you.
 
-That matters most on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking), such as Claude Opus 5.5, Sonnet 5.5 and Fable 5.1: they tie each thinking block to the exact conversation it was produced in, so deleting an earlier reminder from a later request invalidates every thinking block after it, while a cleared one left in place doesn't. A cleared entry costs no input tokens and is never part of a cache key, so `anthropic_cache_messages` and `anthropic_cache` put their breakpoints on the content before it.
+That matters most on models with [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking), such as Claude Opus 5.5, Sonnet 5.5 and Fable 5.1 and 5.2: they tie each thinking block to the exact conversation it was produced in, so deleting an earlier reminder from a later request invalidates every thinking block after it, while a cleared one left in place doesn't. A cleared entry costs no input tokens and is never part of a cache key, so `anthropic_cache_messages` and `anthropic_cache` put their breakpoints on the content before it.
 
-Support follows mid-conversation system messages, on the same models and transports. Elsewhere, including on models that don't take the `system` role, a request-scoped prompt is sent as `<system>`-tagged user text with its own request only, and the cache breakpoint goes before it. To opt out of the beta on a model that has it, for example if your account doesn't have access, turn the profile flag off; request-scoped prompts are then sent only while they're current:
+Support follows mid-conversation system messages, on the same transports and models, plus Claude Sonnet 5.5 and Haiku 5.5: their lasting system messages are sealed `<system>` blocks, and a request-scoped prompt is the same sealed block inside the `clear_at` entry. Elsewhere, including on models that don't take the `system` role, a request-scoped prompt is sent as `<system>`-tagged user text with its own request only, and the cache breakpoint goes before it. To opt out of the beta on a model that has it, for example if your account doesn't have access, turn the profile flag off; request-scoped prompts are then sent only while they're current:
 
 ```python {title="request_scoped_opt_out.py"}
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -657,7 +714,7 @@ model = AnthropicModel(
 
 ## Fast mode
 
-Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6**, **Claude Opus 4.7**, **Claude Opus 4.8**, **Claude Opus 5**, and **Claude Opus 5.5**. It is a research preview. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On unsupported models, `anthropic_speed='fast'` is ignored with a `UserWarning`. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
+Fast mode provides higher output tokens per second and is currently supported on **Claude Opus 4.6**, **Claude Opus 4.7**, **Claude Opus 4.8**, **Claude Opus 5**, **Claude Opus 5.5**, **Claude Fable 5.2**, and **Claude Mythos 5.2**. Anthropic lists it as generally available on Claude Fable 5.2, Mythos 5.2 and Opus 5.5, and as a research preview on Claude Opus 4.8 and 5. Set [`anthropic_speed`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_speed] to `'fast'` to enable it; Pydantic AI automatically adds the required `fast-mode-2026-02-01` beta. On unsupported models, `anthropic_speed='fast'` is ignored with a `UserWarning`. For pricing, rate limits, and the latest list of supported models, see the [Anthropic fast mode docs](https://platform.claude.com/docs/en/build-with-claude/fast-mode).
 
 ```python
 from pydantic_ai import Agent
@@ -670,15 +727,39 @@ agent = Agent(
 ...
 ```
 
+Responses that ran in fast mode carry `provider_details['speed'] == 'fast'`, so [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], `usage.cost` and [usage limits](../agent.md#usage-limits) use fast mode prices from [`genai-prices`](https://github.com/pydantic/genai-prices).
+
 !!! note "Prompt cache interaction"
     Switching between `'fast'` and `'standard'` invalidates the prompt cache. Requests at different speeds do not share cached prefixes, so pick one speed per cache-sensitive conversation.
 
 !!! note "Bedrock, Vertex, and Foundry"
     Fast mode is only available on the direct Anthropic API. Bedrock, Vertex, and Foundry clients do not support the `speed` parameter, so `anthropic_speed='fast'` is ignored with a `UserWarning` on those clients.
 
+## Data residency
+
+To control where model inference runs, set [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]: `'us'` keeps inference on US-based infrastructure, and `'global'` lets it run in any available geography. When it's unset, the workspace's default inference geo applies. US-only inference is priced at 1.1x the standard rate, which [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost], `usage.cost` and [usage limits](../agent.md#usage-limits) don't include yet. The setting is sent on the Claude API, Claude Platform on AWS and Claude on Google Cloud (Anthropic managed), including in [Message Batches](#batch-api). See the [Anthropic data residency docs](https://platform.claude.com/docs/en/manage-claude/data-residency) for supported models, pricing and workspace-level restrictions.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    model_settings=AnthropicModelSettings(anthropic_inference_geo='us'),
+)
+...
+```
+
+When the setting is used, where the request ran is reported in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] under `'inference_geo'`.
+
+Models that don't support data residency (Claude Opus 4.5, Sonnet 4.5, Haiku 4.5 and older) reject the setting with a 400 error, which Pydantic AI raises rather than dropping the setting.
+
+!!! note "Bedrock, Vertex AI, and Foundry"
+    On Bedrock and Vertex AI, the endpoint or inference profile decides the inference region, and on Foundry the deployment type does, so `anthropic_inference_geo` is ignored with a `UserWarning` on those clients.
+
 ## Forced tool choice
 
-Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled. [Adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) accepts forcing, but Claude answers a forced tool choice without thinking. Anthropic documents **Claude Fable 5.1**, **Claude Mythos 5.1**, **Claude Opus 5.5**, and **Claude Sonnet 5.5** as rejecting a forced tool choice unconditionally, even without thinking, and Pydantic AI marks those with [`supports_forced_tool_choice=False`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice].
+Most Anthropic models let you force a tool call via [`tool_choice='required'`][pydantic_ai.settings.ModelSettings.tool_choice] (or a list of tool names), except while [extended thinking](../capabilities/thinking.md#anthropic) is enabled. [Adaptive thinking](../capabilities/thinking.md#adaptive-thinking-effort) accepts forcing, but Claude answers a forced tool choice without thinking. Anthropic documents **Claude Fable 5.1** and **5.2**, **Claude Mythos 5.1** and **5.2**, **Claude Opus 5.5**, and **Claude Sonnet 5.5** as rejecting a forced tool choice unconditionally, even without thinking, and Pydantic AI marks those with [`supports_forced_tool_choice=False`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice].
 
 On a model that doesn't support forcing, or while extended thinking is enabled:
 
@@ -715,16 +796,16 @@ To stay within the limits, simplify the schema following [Anthropic's tips](http
 
 ## Thinking block binding
 
-**Claude Fable 5.1**, **Claude Opus 5.5**, **Claude Sonnet 5.5**, and **Claude Haiku 5.5** bind each thinking block to the conversation prefix that produced it. Anthropic [documents a 400](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting) (`The block is bound to a different conversation`) when replaying history after `system`, `tools`, or earlier `messages` change. Two ordinary Pydantic AI features change the prefix:
+**Claude Fable 5.1** and **5.2**, **Claude Mythos 5.2**, **Claude Opus 5.5**, **Claude Sonnet 5.5**, and **Claude Haiku 5.5** bind each thinking block to the conversation prefix that produced it. Anthropic [documents a 400](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting) (`The block is bound to a different conversation`) when replaying history after `system`, `tools`, or earlier `messages` change. Two ordinary Pydantic AI features change the prefix:
 
 - a [dynamic instructions](../agent.md#instructions) function whose text differs between runs, unless it uses [`on_change='append'`](../agent.md#appending-instruction-changes), and
 - a [filtered toolset](../toolsets.md#filtering-tools) that advertises a new tool mid-conversation, unless the tool uses [deferred loading](../toolsets.md#deferred-loading).
 
 Both are the same instability that [costs you a provider's prompt cache](../capabilities/caching.md#what-invalidates-a-cache): a request prefix that changes between turns. The thinking block turns it into a 400 you can see; the cache turns it into a bill you can't — every request after the change re-sends the whole conversation at uncached rates, silently. Where the prefix can be held stable, that is worth more than handling the rejection.
 
-Anthropic enforces the check for accounts created on or after 31 August 2026. For an older account it records the mismatch but returns the error only if the request sets `thinking.block_binding.prefix_mismatch_behavior`.
+Claude Fable 5.2 and Claude Mythos 5.2 enforce the check on every account. On the other models, Anthropic enforces it for accounts created on or after 31 August 2026; for an older account it records the mismatch but returns the error only if the request sets `thinking.block_binding.prefix_mismatch_behavior`.
 
-**Pydantic AI sets nothing by default**, so an older account keeps replaying its reasoning untouched. Where the check is enforced, the rejected request is retried once with `prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the run continues, and a [`AnthropicStaleThinkingBlockWarning`][pydantic_ai.models.anthropic.AnthropicStaleThinkingBlockWarning] explains what happened. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Models marked [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks] are the only ones that retry. A request whose thinking type isn't `adaptive`, such as `anthropic_thinking={'type': 'between_tools'}`, is not retried, because Anthropic accepts `block_binding` only alongside adaptive thinking: keep that conversation's prefix stable instead.
+**Pydantic AI sets nothing by default**, so an older account keeps replaying its reasoning untouched on those models. Where the check is enforced, the rejected request is retried once with `prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the run continues, and a [`AnthropicStaleThinkingBlockWarning`][pydantic_ai.models.anthropic.AnthropicStaleThinkingBlockWarning] explains what happened. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Models marked [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks] are the only ones that retry. A request whose thinking type isn't `adaptive`, such as `anthropic_thinking={'type': 'between_tools'}`, is not retried, because Anthropic accepts `block_binding` only alongside adaptive thinking: keep that conversation's prefix stable instead.
 
 Anthropic applies the drop to one request only. Its response records the transformation, so Pydantic AI uses that response history to keep sending `drop_block` for the rest of the affected conversation. This avoids another rejected request on every later turn without storing mutable state on the model or changing an unrelated conversation. The same behavior applies to [`count_tokens()`][pydantic_ai.models.Model.count_tokens]: token counting retries the first matching rejection once, and later counts carrying the recovery history send the drop immediately. A recovery seen only while counting applies only to later counts, because counting omits MCP servers, and on Bedrock, Vertex AI and Foundry server-side tools too (see [Token counting](#token-counting)), and can therefore have a different prefix from inference. An explicit `block_binding` still wins for both counting and inference.
 
@@ -893,11 +974,42 @@ agent = Agent(
 
 The response's usage, and so its cost, stays the sum of the passes either way.
 
+## Computer use
+
+To let Claude use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+the Claude API and on Amazon Bedrock (the `AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle` clients), it sends
+each Claude model the computer use tool it was trained on, as a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]:
+
+| Models | Tool |
+|---|---|
+| Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` |
+| Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` |
+| Claude Haiku 4.5 | `computer_20250124` |
+
+Claude models not in the table, every model on Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any
+model with `ComputerUse(native=False)` get a regular function tool named `computer` instead.
+
+Keep the screen within the model's [image size limit](https://platform.claude.com/docs/en/build-with-claude/vision#evaluate-image-size).
+`computer_toolset_20260801` refuses a screenshot over 2576 pixels on its longer side or over 4784 image tokens (one
+token per 28x28 pixels), and the request fails with a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The older tools, and the function tool, shrink a larger
+screenshot without saying so, so Claude's clicks miss.
+
+To send Anthropic's tool to a model or client that isn't listed, add `ComputerTool` to the profile's
+[`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces the model's own
+list, and choose the tool with
+[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version]
+(default `computer_20250124`).
+
 ## Web Tool Callers
 
-On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions. By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment. Results the model reads in the sandbox aren't added to its context, so they come back without [citations](../citations.md).
+On models that support dynamic filtering, [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] are sent as Anthropic's `20260209` versions, or as the `20260318` versions when you use [web tool settings](#web-tool-settings). By default, Anthropic lets the model call these from a server-side code execution sandbox, where it can filter results before they reach the context window. The sandbox is provided even when [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] isn't enabled, so an agent that also has its own shell or code tool has two places to run code, and the sandbox has none of the agent's files, credentials, or environment.
 
-Set [`AnthropicModelSettings.anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to `['direct']` to have the model always call both web tools itself, with no sandbox. This turns off dynamic filtering, so the model reads every result in full, and makes the tools eligible for Zero Data Retention ([Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers)). A value you set is sent on whichever web tool version the model uses.
+Results the model reads in the sandbox aren't added to its context, so they come back without [citations](../citations.md). When you ask for citations, with the [`Citations`][pydantic_ai.capabilities.Citations] capability and text output, or with [`provider_settings={'anthropic': {'enable_citations': True}}`][pydantic_ai.native_tools.AnthropicWebFetchToolSettings.enable_citations] for web fetch, Pydantic AI sends the cited tools with `allowed_callers=['direct']` on the Anthropic API (the `AsyncAnthropic` client), so the model calls them itself and their results are cited. This turns off dynamic filtering for those tools, so the model reads every result in full. Claude Platform on AWS and Microsoft Foundry keep Anthropic's default, since they haven't been verified to accept `allowed_callers` with citations: set [`anthropic_calls_cited_web_tools_directly`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_calls_cited_web_tools_directly] in the model's `profile` to route them there too.
+
+A request that already needs code execution keeps Anthropic's default, so its web results come back uncited: one with an [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] you set, Skills included, and one in a user turn that has already used code execution, where direct calls would leave the request without it. Anthropic rejects that container on a request without code execution, and the turn's code execution calls can still be running. The callers are decided for each user turn, so every request in a turn sends the same ones. A conversation whose earlier turns used the sandbox switches to direct calls at its next user prompt, and the sandbox's container and files don't carry over.
+
+Set [`AnthropicModelSettings.anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to `['direct']` to have the model call both web tools itself, with no sandbox, whether or not you ask for citations. This turns off dynamic filtering and makes the tools eligible for Zero Data Retention ([Anthropic docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#zdr-and-allowed-callers)). A value you set is sent on whichever web tool version the model uses, and takes precedence over the citations default.
 
 ```py {title="anthropic_web_tools_allowed_callers.py"}
 from pydantic_ai import Agent, WebSearchTool
@@ -910,6 +1022,53 @@ agent = Agent(
     model_settings=AnthropicModelSettings(anthropic_web_tools_allowed_callers=['direct']),
 )
 ```
+
+## Web Tool Settings
+
+Anthropic's newer web tool versions have a few settings that are not shared by other providers. Pass
+the matching typed settings to each native tool:
+
+```python {title="anthropic_web_tool_options.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.native_tools import (
+    AnthropicWebFetchToolSettings,
+    AnthropicWebSearchToolSettings,
+    WebFetchTool,
+    WebSearchTool,
+)
+
+agent = Agent(
+    '{{ anthropic:medium }}',
+    capabilities=[
+        NativeTool(
+            WebSearchTool(
+                provider_settings={
+                    'anthropic': AnthropicWebSearchToolSettings(
+                        response_inclusion='excluded'
+                    )
+                }
+            )
+        ),
+        NativeTool(
+            WebFetchTool(
+                provider_settings={
+                    'anthropic': AnthropicWebFetchToolSettings(
+                        use_cache=False,
+                        response_inclusion='excluded',
+                    )
+                }
+            )
+        ),
+    ],
+)
+```
+
+Setting `use_cache`, even to its default value, selects Anthropic's `web_fetch_20260318` tool version. `response_inclusion` selects `web_search_20260318` or `web_fetch_20260318` when code execution may call the tool: on models with dynamic filtering, or when [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] names a code execution caller. Otherwise the tool is called directly, where `response_inclusion` has no effect, so it doesn't change the version. Without these options, Pydantic AI keeps choosing the version from the model and client, as described above. `response_inclusion` defaults to `'full'`, and `use_cache` defaults to `True`: turning the cache off fetches the page fresh, which adds latency.
+
+On a model without dynamic filtering, `web_fetch_20260318` is sent with `allowed_callers=['direct']`, so it doesn't bring code execution with it; set [`anthropic_web_tools_allowed_callers`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_web_tools_allowed_callers] to override that. `response_inclusion` only affects results consumed by code execution, so it has no effect on direct calls, including when [citations](#web-tool-callers) route the tools to them. Results from a code execution call that paused before completing are also returned in full.
+
+Pydantic AI sends these versions to every client that offers the web tool, and the provider's API decides whether to accept them. Vertex AI has no dynamic filtering, so `response_inclusion` on `WebSearchTool` keeps `web_search_20250305` there. The Bedrock clients and web fetch on Vertex raise a `UserError` as described above. Anthropic documents only the older web tool versions on Microsoft Foundry deployments hosted on Azure, so Foundry's API may reject these settings there.
 
 ## Code Execution Tool Version
 
@@ -931,8 +1090,8 @@ Pydantic AI raises a [`UserError`][pydantic_ai.exceptions.UserError] if you expl
 
 ### Code Execution Containers
 
-When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history on requests that have code execution: [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool], or [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] where code execution may call them: on Anthropic's `20260209` versions ([web search tool versions](../native-tools.md#web-search-tool)) by default, and on any version when [`anthropic_web_tools_allowed_callers`](#web-tool-callers) names a code execution caller. The Anthropic API rejects a container on any other request, such as one with no tools, so Pydantic AI doesn't send it there. Tools you pass in `extra_body['tools']` aren't read, so a request that carries them still sends the container. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
+When you continue a run from message history, Pydantic AI automatically reuses the Anthropic code execution container recorded in that history on requests that have code execution: [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool], or [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] or [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool] where code execution may call them: on Anthropic's `20260209` and `20260318` versions ([web search tool versions](../native-tools.md#web-search-tool)) by default, unless [citations route them to direct calls](#web-tool-callers), which only happens on the Anthropic API, and on any version when [`anthropic_web_tools_allowed_callers`](#web-tool-callers) names a code execution caller. The Anthropic API rejects a container on any other request, such as one with no tools, so Pydantic AI doesn't send it there. Tools you pass in `extra_body['tools']` aren't read, so a request that carries them still sends the container. Anthropic containers expire after 30 days, and a request that refers to an expired container returns an error.
 
-If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic returns HTTP 500 for a history-derived container, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
+If a request uploads files through [`CodeExecutionTool`][pydantic_ai.native_tools.CodeExecutionTool] and Anthropic answers a history-derived container with an HTTP 404 `not_found_error` saying the container wasn't found, or with an HTTP 500, Pydantic AI retries once without the rejected container ID so Anthropic can create a fresh container and receive the uploads. Other errors are raised without this retry. The fresh container does not contain state or files from the expired container.
 
 Set [`anthropic_container`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_container] explicitly when container continuity is required. An explicitly configured container is never replaced automatically; Anthropic's original error is raised instead.

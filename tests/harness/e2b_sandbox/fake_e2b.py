@@ -28,12 +28,12 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Literal, Protocol
+from typing import IO, TYPE_CHECKING, Any, Literal, Protocol
 
 import anyio
 import anyio.lowlevel
 import e2b
-from e2b import CommandExitException, CommandResult, FileType, WriteInfo
+from e2b import CommandExitException, CommandResult, FileType, SandboxNetworkOpts, WriteInfo
 from e2b.exceptions import (
     AuthenticationException,
     FileNotFoundException,
@@ -84,6 +84,7 @@ class FakeCreateCall:
     secure: bool
     allow_internet_access: bool
     lifecycle: dict[str, str] | None
+    network: SandboxNetworkOpts | None = None
 
 
 @dataclass(frozen=True)
@@ -671,12 +672,19 @@ class FakeSandbox:
             raise self._control.is_running_error
         return self._control.sandbox_is_running and not self.killed
 
+    async def set_timeout(self, timeout: int) -> None:
+        await anyio.lowlevel.checkpoint()
+        if self._control.set_timeout_error is not None:
+            raise self._control.set_timeout_error
+        self._control.set_timeout_calls.append((self.sandbox_id, timeout))
+
 
 class FakeAsyncSandboxFactory:
     """Mirrors the `AsyncSandbox.create` / `AsyncSandbox.connect` class methods."""
 
-    def __init__(self, control: FakeE2B) -> None:
+    def __init__(self, control: FakeE2B, client: str | None = None) -> None:
         self._control = control
+        self._client = client
 
     async def create(
         self,
@@ -686,9 +694,11 @@ class FakeAsyncSandboxFactory:
         secure: bool = True,
         allow_internet_access: bool = True,
         lifecycle: dict[str, str] | None = None,
+        network: SandboxNetworkOpts | None = None,
     ) -> FakeSandbox:
+        self._control.clients.append(self._client)
         self._control.create_calls.append(
-            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle)
+            FakeCreateCall(template, timeout, envs, secure, allow_internet_access, lifecycle, network)
         )
         if self._control.create_hangs:
             await anyio.sleep_forever()
@@ -702,6 +712,7 @@ class FakeAsyncSandboxFactory:
         return sandbox
 
     async def kill(self, id: str) -> bool:
+        self._control.clients.append(self._client)
         if self._control.kill_error is not None:
             raise self._control.kill_error
         existing = next((sandbox for sandbox in self._control.sandboxes if sandbox.sandbox_id == id), None)
@@ -709,6 +720,7 @@ class FakeAsyncSandboxFactory:
 
     async def connect(self, id: str, timeout: int | None = None) -> FakeSandbox:
         self._control.connect_calls.append((id, timeout))
+        self._control.clients.append(self._client)
         await anyio.lowlevel.checkpoint()
         if self._control.connect_error is not None:
             raise self._control.connect_error
@@ -728,6 +740,8 @@ class FakeE2B:
     responder: Responder = _echo_responder
     sandboxes: list[FakeSandbox] = field(default_factory=list[FakeSandbox])
     create_calls: list[FakeCreateCall] = field(default_factory=list[FakeCreateCall])
+    clients: list[str | None] = field(default_factory=list[str | None])
+    """Which `client()` made each `create`, `connect` and `kill`, in order; `None` is the top-level `e2b.AsyncSandbox`."""
     connect_calls: list[tuple[str, int | None]] = field(default_factory=list[tuple[str, 'int | None']])
     create_error: Exception | None = None
     create_hangs: bool = False
@@ -744,6 +758,8 @@ class FakeE2B:
     read_error: Exception | None = None
     is_running_error: Exception | None = None
     sandbox_is_running: bool = True
+    set_timeout_calls: list[tuple[str, int]] = field(default_factory=list[tuple[str, int]])
+    set_timeout_error: Exception | None = None
     # When set, sandboxes run commands and file operations on the host under this directory.
     host_root: Path | None = None
 
@@ -760,6 +776,10 @@ class FakeE2B:
         sandbox = FakeSandbox(self, sandbox_id, envs)
         self.sandboxes.append(sandbox)
         return sandbox
+
+    def client(self, name: str) -> Any:
+        """Mirrors `e2b.E2B`: its `AsyncSandbox` behaves like the top-level one, on this client's account."""
+        return types.SimpleNamespace(AsyncSandbox=FakeAsyncSandboxFactory(self, name))
 
     def _build_module(self) -> types.ModuleType:
         module = types.ModuleType('e2b')

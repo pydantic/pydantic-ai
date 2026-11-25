@@ -58,6 +58,8 @@ class ReasoningCase:
 
     efforts: tuple[str, ...] | None = None
     """The `reasoning.effort` values the model accepts, where they're pinned."""
+    chat_function_tools_require_reasoning_off: bool = False
+    """Chat Completions rejects function tools while reasoning is on (verified live, 2026-11)."""
 
 
 # The `enabled_by_default` and `can_be_disabled` cells were verified against the live Responses API
@@ -199,8 +201,8 @@ REASONING_CASES = [
         supports_max_reasoning_effort=True,
         supports_context=True,
     ),
-    # gpt-6-astra and gpt-6.1-sol: reason by default with no `effort='none'`; carry over
-    # `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
+    # gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra: reason by default with no `effort='none'`;
+    # carry over `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
     ReasoningCase(
         model='gpt-6-astra',
         enabled_by_default=True,
@@ -209,6 +211,7 @@ REASONING_CASES = [
         supports_max_reasoning_effort=True,
         supports_context=True,
         efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-6.1-sol',
@@ -218,6 +221,27 @@ REASONING_CASES = [
         supports_max_reasoning_effort=True,
         supports_context=True,
         efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.2-sol',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-6.2-astra',
+        enabled_by_default=True,
+        supports_mode=True,
+        supports_minimal_reasoning_effort=False,
+        supports_max_reasoning_effort=True,
+        supports_context=True,
+        efforts=('low', 'medium', 'high', 'xhigh', 'max'),
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-6-sol',
@@ -227,6 +251,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-6-luna',
@@ -236,6 +261,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-6.1-terra',
@@ -245,6 +271,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     # no reasoning
     ReasoningCase(model='gpt-5-chat'),
@@ -281,12 +308,36 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
     assert profile.get('openai_reasoning_efforts') == (None if case.efforts is None else frozenset(case.efforts))
 
+    # OpenAI-only, verified live on the GPT-6 families; gateways reuse the shared profile unverified.
+    assert profile.get('openai_chat_function_tools_require_reasoning_off', False) is False
+    assert (
+        provider_profile.get('openai_chat_function_tools_require_reasoning_off', False)
+        is case.chat_function_tools_require_reasoning_off
+    )
+
 
 def test_openai_compatible_endpoints_fall_back_from_max_effort():
     """`max` is verified only on OpenAI's own Responses API, so an endpoint reusing the OpenAI profile sends `xhigh`."""
     profile = AzureProvider.model_profile('gpt-5.6-sol')
     assert isinstance(profile, dict)
     assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
+
+
+@pytest.mark.parametrize(
+    'key', ['openai_chat_streaming_repeats_usage_totals', 'openai_chat_completion_tokens_omit_reasoning']
+)
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [('gemini-3.1-flash-lite', True), ('google/gemini-3.1-flash-lite', False), ('gpt-5-mini', False)],
+)
+def test_gemini_usage_flags_only_on_openai_provider_gemini_names(key: str, model_name: str, expected: bool):
+    """The shared profile stays off, as the hosts that reuse it aren't verified to report usage the way Gemini does."""
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get(key, False) is expected
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get(key, False) is False
 
 
 class TestEncryptedReasoningContent:
@@ -404,3 +455,77 @@ def test_json_schema_transformer_removes_unsupported_regex_lookarounds():
             'additionalProperties': False,
         }
     )
+
+
+class _Address(BaseModel):
+    street: str
+    city: str
+
+
+class _Person(BaseModel):
+    name: str
+    home: _Address
+    work: _Address | None
+
+
+class _OrgUnit(BaseModel):
+    name: str
+    subunits: list[_OrgUnit]
+
+
+def test_gpt_oss_schema_transformer_inlines_defs():
+    """gpt-oss schemas have their `$defs` inlined, and are otherwise transformed as for any OpenAI model.
+
+    gpt-oss doesn't see a tool schema's `$defs` on any host, so it guesses the shape of each field that refers to
+    one. This is a unit test because the strictness the transformer infers, and the recursive definition it has to
+    keep, never reach a recording: `test_groq.py::test_gpt_oss_tool_output_inlines_defs` covers the request.
+    """
+    transformer = openai_model_profile('gpt-oss-120b').get('json_schema_transformer')
+    assert transformer is not None and transformer is not OpenAIJsonSchemaTransformer
+    assert openai_model_profile('gpt-5.5').get('json_schema_transformer') is OpenAIJsonSchemaTransformer
+
+    for strict in (None, True):
+        inlined = transformer(_Person.model_json_schema(), strict=strict)
+        reference = OpenAIJsonSchemaTransformer(_Person.model_json_schema(), strict=strict)
+        assert inlined.walk() == snapshot(
+            {
+                'properties': {
+                    'name': {'type': 'string'},
+                    'home': {
+                        'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                        'required': ['street', 'city'],
+                        'type': 'object',
+                        'additionalProperties': False,
+                    },
+                    'work': {
+                        'anyOf': [
+                            {
+                                'properties': {'street': {'type': 'string'}, 'city': {'type': 'string'}},
+                                'required': ['street', 'city'],
+                                'type': 'object',
+                                'additionalProperties': False,
+                            },
+                            {'type': 'null'},
+                        ]
+                    },
+                },
+                'required': ['name', 'home', 'work'],
+                'type': 'object',
+                'additionalProperties': False,
+            }
+        )
+        reference.walk()
+        assert inlined.is_strict_compatible is reference.is_strict_compatible is True
+
+    # A recursive definition can't be inlined, so it stays under `$defs`, as without inlining.
+    recursive = _OrgUnit.model_json_schema()
+    assert transformer(recursive).walk() == OpenAIJsonSchemaTransformer(recursive).walk()
+
+    # The inliner doesn't walk under a `type` list, so a schema with a `$ref` there keeps its `$defs` rather than
+    # sending a `$ref` to a definition that was dropped.
+    nullable_object: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'x': {'type': ['object', 'null'], 'properties': {'v': {'$ref': '#/$defs/Value'}}}},
+        '$defs': {'Value': {'type': 'object', 'properties': {'a': {'type': 'string'}}}},
+    }
+    assert transformer(nullable_object).walk() == OpenAIJsonSchemaTransformer(nullable_object).walk()

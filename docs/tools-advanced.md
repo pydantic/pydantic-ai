@@ -74,14 +74,14 @@ Whether a file can travel inside the tool result depends on the model **and** th
 
 - **Inside the tool result**, where the API and the media type both allow it: Anthropic and OpenAI Responses for images and documents, Gemini 3 for the types listed in its [`GoogleModelProfile`][pydantic_ai.profiles.google.GoogleModelProfile]'s `google_supported_mime_types_in_tool_returns`, and Bedrock for the media kinds a model family supports.
 - **On the user channel** — the same channel the person talking to your agent uploads on — for everything else: OpenAI Chat Completions, Groq, Mistral, xAI, Hugging Face and Gemini 2.5 and earlier accept only text in a tool result, and Gemini 3 and Bedrock fall back here for a media type they can't carry (audio and video on Gemini 3, or a kind outside a Bedrock family's set).
-- **As a note in its place**, where the model can't read that kind of file at all, as its [profile](models/overview.md#inspecting-a-models-profile)'s file-input flags say. For example: documents other than text on Chat Completions providers without file input, such as Azure and vLLM, audio and video on Anthropic, OpenAI Responses, Mistral and xAI, video on OpenAI Chat Completions, audio on OpenAI's models without `audio` in their name, audio on Bedrock and video on Bedrock outside Nova, anything but images on Groq and Hugging Face, and any file on Cohere, as well as documents other than PDF and plain text on Anthropic, and other than PDF and text formats on Mistral.
+- **As a note in its place**, where the model can't read that kind of file at all, or that media type, as its [profile](models/overview.md#inspecting-a-models-profile)'s file-input flags say. For example: an image in a format outside JPEG, PNG, GIF and WebP on Claude and OpenAI models, such as HEIC, a GIF on xAI, audio other than WAV and MP3 on OpenAI Chat Completions, documents other than text on Chat Completions providers without file input, such as Azure and vLLM, audio and video on Anthropic, OpenAI Responses, Mistral and xAI, video on OpenAI Chat Completions, audio on OpenAI's models without `audio` in their name, audio on Bedrock and video on Bedrock outside Nova, anything but images on Groq and Hugging Face, and any file on Cohere, as well as documents other than PDF and plain text on Anthropic, and other than PDF and text formats on Mistral.
 
 To keep the model from reading a tool's output as something the user attached, a file taking the user channel is framed with the call it came from:
 
 ```text
-<tool_result tool_name="get_photo" tool_call_id="call_9cQx" file_id="d9a13f">
+<pyai:tool_result tool_name="get_photo" tool_call_id="call_9cQx" file_id="d9a13f">
 [the image]
-</tool_result>
+</pyai:tool_result>
 ```
 
 The tool result itself carries `See file d9a13f.` in place of the file, and each file gets its own tags, so the model can match every file to the call that produced it even when several tools return media in the same step. A failed Gemini tool return is the one exception: its result is Gemini's native `error` string, which takes no file references, so there the tags alone carry the attribution. Realtime sessions frame tool-produced files the same way. This mirrors how a mid-conversation [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] is framed as `<system>...</system>` for a model whose API has no place to put one.
@@ -249,7 +249,7 @@ A `prepare` method can be registered via the `prepare` kwarg to any of the tool 
 The `prepare` method has type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc]. It receives [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]. It can return that definition unchanged, return a modified copy built with [`dataclasses.replace`][dataclasses.replace], or return `None` to omit the tool for that step.
 
 !!! warning "Modify the definition you're given, don't build a new one"
-    A [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] carries more than a name and a parameters schema: `description`, `strict`, `sequential`, `kind`, `metadata`, `timeout`, `defer_loading`, and `toolset_id` all arrive pre-filled. Constructing a fresh one inside a `prepare` function silently resets every field you don't pass back to its default, so modify the definition you were handed or copy it with [`dataclasses.replace`][dataclasses.replace] instead.
+    A [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] carries more than a name and a parameters schema: `description`, `strict`, `sequential`, `kind`, `metadata`, `timeout`, `durable`, `defer_loading`, and `toolset_id` all arrive pre-filled. Constructing a fresh one inside a `prepare` function silently resets every field you don't pass back to its default, so modify the definition you were handed or copy it with [`dataclasses.replace`][dataclasses.replace] instead.
 
     `kind` is the field that bites: it is how [`requires_approval=True`](deferred-tools.md#human-in-the-loop-tool-approval) reaches the agent run. A definition that loses it describes a tool that runs immediately, without pausing for approval. If you'd rather not depend on every `prepare` function preserving it, [`ApprovalRequiredToolset`](toolsets.md#requiring-tool-approval) enforces approval when the tool is called, independently of how its definition was prepared.
 
@@ -350,26 +350,28 @@ The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
 To modify output tools, you can set a `prepare_output_tools` function instead.
 
-Here's an example that makes all tools strict if the model is an OpenAI model:
+Here's an example that makes all tools strict if the model's [profile](models/overview.md#inspecting-a-models-profile) says it supports JSON schema output, with [`supports_json_schema_output`][pydantic_ai.profiles.ModelProfile.supports_json_schema_output]. That flag describes native structured output, not strict tool definitions; it stands in here because there's no provider-agnostic strict-tools flag:
 
 ```python {title="agent_prepare_tools_customize.py" noqa="I001"}
 from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import PrepareTools
+from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 
 
-async def turn_on_strict_if_openai(
+async def turn_on_strict_if_supported(
     ctx: RunContext, tool_defs: list[ToolDefinition]
 ) -> list[ToolDefinition]:
-    if ctx.model.system == 'openai':
+    if isinstance(ctx.model, Model) and ctx.model.profile.get('supports_json_schema_output', False):
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
 
 
 test_model = TestModel()
-agent = Agent(test_model, capabilities=[PrepareTools(turn_on_strict_if_openai)])
+agent = Agent(test_model, capabilities=[PrepareTools(turn_on_strict_if_supported)])
 
 
 @agent.tool_plain
@@ -381,11 +383,10 @@ agent.run_sync('testing...')
 assert test_model.last_model_request_parameters is not None
 assert test_model.last_model_request_parameters.function_tools[0].strict is None
 
-# Set the system attribute of the test_model to 'openai'
-test_model._system = 'openai'
-
-agent.run_sync('testing with openai...')
-assert test_model.last_model_request_parameters.function_tools[0].strict
+structured_model = TestModel(profile=ModelProfile(supports_json_schema_output=True))
+agent.run_sync('testing with JSON schema output...', model=structured_model)
+assert structured_model.last_model_request_parameters is not None
+assert structured_model.last_model_request_parameters.function_tools[0].strict
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -558,7 +559,7 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking accepts forcing but answers without thinking |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and 5.2, and Mythos 5.1 and 5.2; adaptive thinking accepts forcing but answers without thinking |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. Converse has no `'none'` mode, so `'none'` drops the tools. Once the history has a tool call, Converse requires them, so they stay: Claude gets its native `'none'`, while other models aren't prevented from calling them ([#10435](https://github.com/pydantic/pydantic-ai/issues/10435)). See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
@@ -569,9 +570,9 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 With adaptive thinking, Claude answers a forced tool choice with only the tool call and no thinking, so Pydantic AI
 only sends one you asked for explicitly: forcing it inferred itself falls back to `'auto'` while the request thinks.
 
-The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — follow the OpenAI row unless the model profile restricts forcing. Ollama ignores `tool_choice`, and OpenRouter has [separate rules for Anthropic models](models/openrouter.md#forced-tool-choice).
+The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — follow the OpenAI row unless the model profile restricts forcing. Ollama ignores `tool_choice`, and OpenRouter has [separate rules for Anthropic models and Qwen3.8 Flash](models/openrouter.md#forced-tool-choice).
 
-Whether a model can be forced to call a tool is a property of the model, set on its [profile](models/overview.md) by [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] and [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking], so it applies on every provider that serves the model: Claude Opus 5.5 rejects forcing on OpenRouter just as it does on the Anthropic API. Where forcing isn't available, an explicit `'required'` or list of tools raises a [`UserError`][pydantic_ai.exceptions.UserError], while forcing that Pydantic AI inferred itself, for example from an [output tool](output.md#tool-output), falls back to `'auto'`. On OpenRouter, explicitly requested thinking on an Anthropic model makes forcing unavailable, since OpenRouter would otherwise silently drop the reasoning. Thinking enabled by default alone does not add that restriction; the model's own forcing limits still apply.
+Whether a model can be forced to call a tool is a property of the model, set on its [profile](models/overview.md) by [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] and [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking], so it applies on every provider that serves the model: Claude Opus 5.5 rejects forcing on OpenRouter just as it does on the Anthropic API. Where forcing isn't available, an explicit `'required'` or list of tools raises a [`UserError`][pydantic_ai.exceptions.UserError], while forcing that Pydantic AI inferred itself, for example from an [output tool](output.md#tool-output), falls back to `'auto'`. On OpenRouter, explicitly requested thinking on an Anthropic model makes forcing unavailable, since OpenRouter would otherwise silently drop the reasoning. Thinking enabled by default alone does not add that restriction; the model's own forcing limits still apply. On OpenRouter routes other than Anthropic's that return a 400 for forcing while the model reasons, such as Qwen3.8 Flash, the error is a [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError], which [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] falls back on.
 
 ### Prompt caching implications {#tool-choice-caching}
 
@@ -668,7 +669,7 @@ Rule of thumb: raise `ModelRetry` when you want the model to try again with corr
 
 You can also raise `ModelRetry` or `ToolFailed` from tool validation and execution hooks. This is useful for converting third-party exceptions without repeating `try`/`except` in every tool; see [Error hooks](hooks.md#error-hooks) and [Tool execution hooks](hooks.md#tool-execution-hooks).
 
-`ToolFailed` is handled for function tools, their `args_validator`, and tool validation or execution hooks. [Output functions](output.md#output-functions) and [output validators](output.md#output-validator-functions) use `ModelRetry` when the model should try again; there, `ToolFailed` is an ordinary exception that aborts the run unless an output-process error hook recovers from it.
+`ToolFailed` is handled for function tools, their `args_validator`, and tool validation or execution hooks. A tool that [Code Mode](harness/code-mode.md) calls from a snippet reports an uncaught `ToolFailed` the same way, as a failed `run_code` result. [Output functions](output.md#output-functions) and [output validators](output.md#output-validator-functions) use `ModelRetry` when the model should try again; there, `ToolFailed` is an ordinary exception that aborts the run unless an output-process error hook recovers from it.
 
 ### Tool Timeout
 
@@ -739,7 +740,7 @@ def add_numbers(ctx: RunContext[int], x: int, y: int) -> int:
 result = agent.run_sync('add 5 and 3', deps=100)
 assert isinstance(result.output, DeferredToolRequests)
 # The validated args are ready for the user to approve
-print(result.output.approvals[0].args)
+print(result.output.validated_args[result.output.approvals[0].tool_call_id])
 #> {'x': 0, 'y': 0}
 ```
 
@@ -906,7 +907,25 @@ Reach for it when:
 
 Skip it when you have a small, hot toolset where every tool is used most turns — deferring everything would just add a discovery round-trip for no benefit. As a rule of thumb, keep your handful of most-used tools eagerly loaded; defer the long tail.
 
-To opt in, set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all.
+To opt in, choose which tools are searchable in one place with [`ToolSearch(tools=...)`][pydantic_ai.capabilities.ToolSearch.tools], which takes `'all'`, a list of tool names, a metadata dict, or a callable (see [`ToolSelector`][pydantic_ai.tools.ToolSelector]):
+
+```python {title="tool_search_select.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ToolSearch
+
+# Every tool is searchable.
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(tools='all')])
+
+# Only these tools are searchable; the rest stay visible.
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(tools=['crm_lookup', 'crm_update'])])
+
+# Tools whose metadata contains `{'searchable': True}` are searchable.
+agent = Agent('{{ anthropic:medium }}', capabilities=[ToolSearch(tools={'searchable': True})])
+```
+
+Output tools and the framework's own `search_tools` and `load_capability` tools are never made searchable. A bare `ToolSearch()` defers nothing: it only configures how search runs.
+
+You can also set `defer_loading=True` on individual [`Tool`][pydantic_ai.tools.Tool] / [`@agent.tool`][pydantic_ai.agent.Agent.tool] / [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] registrations, or use [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] on a whole toolset (including [`MCPToolset`][pydantic_ai.mcp.MCPToolset]) — pass a list of tool names to hide specific ones, or `None` to hide all. These add up: a tool is deferred if any of them selects it.
 
 Once deferred tools exist, search is handled by the auto-injected [`ToolSearch`][pydantic_ai.capabilities.ToolSearch] capability:
 
@@ -1006,7 +1025,7 @@ To force the local `keywords` algorithm on a provider that natively supports too
     A turn can run on one provider and the next on another (e.g. via [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] or by switching `model=` between runs). Discovered-tool state is preserved across the switch:
 
     * Local-shape `search_tools` history rendered onto a native-supporting provider (Anthropic, OpenAI) is promoted to the provider's native tool-search wire so the discovered tools' schemas get unlocked from `defer_loading=True` without forcing the model to re-search.
-    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. A provider's own native history retains its exact replay shape. The exception is the legacy [`AsyncAnthropicBedrock` client](models/anthropic.md#aws-bedrock), where recorded `bm25` calls replay as `regex` unless the run uses `ToolSearch(strategy='bm25')`.
+    * Native-shape `tool_search` history rendered onto another provider — whether or not the target has its own native tool search — is translated to the provider-agnostic `search_tools` exchange first, then rendered in the target's supported shape. Where the model's profile sets [`rejects_unpaired_tool_calls`][pydantic_ai.profiles.ModelProfile.rejects_unpaired_tool_calls], the translation pairs the calls with their results: a result whose ID names no earlier call, as in history OpenAI recorded with an output item's ID, is matched to the oldest call in its response still waiting for one, and a call whose result never arrived, as when Anthropic ends a response on a client tool call, gets the synthesized interrupted result described in [Making histories provider-valid](message-history.md#making-histories-provider-valid). The OpenAI provider and the Claude API's own Anthropic client set it, directly or through the [Pydantic AI Gateway](gateway.md); other endpoints get the history as translated, and one that rejects an unpaired tool call opts in with `profile={'rejects_unpaired_tool_calls': True}`. A provider's own native history retains its exact replay shape. The exception is the legacy [`AsyncAnthropicBedrock` client](models/anthropic.md#aws-bedrock), where recorded `bm25` calls replay as `regex` unless the run uses `ToolSearch(strategy='bm25')`.
 
 #### Tool-availability history portability
 
@@ -1157,6 +1176,8 @@ Any part whose kind has a typed part is promoted as soon as its [`ModelResponse`
 
 A tool declares its kind with the `tool_kind` argument of [`Tool`][pydantic_ai.tools.Tool] and the tool decorators, or by setting [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind], for example in a toolset's `get_tools` or a [`prepare`](#tool-prepare) function. Either takes the `ToolKind` or its id. When a run collects its tools, it raises [`UserError`][pydantic_ai.exceptions.UserError] for a kind that isn't defined, so the module defining it must be imported; a stored `ToolDefinition` with such a kind (for example in durable execution history) still loads. It also raises `UserError` when the tool's parameters don't fit the kind's `args`, or its return type doesn't fit the kind's `content`: every field the shape requires must be a required field of the tool's, and where both give a field a JSON type, those types must overlap. A return type that can't be compared field by field, such as a union, is accepted. This is a sanity check rather than full JSON Schema comparison.
 
+A kind can also declare, with `metadata=`, the shape of the `metadata` its tool returns through [`ToolReturn`][pydantic_ai.messages.ToolReturn]. Metadata stays in the message history for your code and is never sent to the model. The typed return part then takes both shapes, as in `ToolReturnPart[LookupResult, LookupMetadata]`. Its [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata] returns the validated metadata, or `None` if the metadata doesn't fit the shape. A result whose content fits is still promoted when its metadata is missing.
+
 A typed subclass may only add properties; adding a field of its own raises `UserError` when the class is defined. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't define (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is defined.
 
 ### Superseding a tool by kind {#unless-tool-kind}
@@ -1222,6 +1243,8 @@ print(result.output)
 The decision is made when the run step's tools are collected, after any [`prepare_tools`](#prepare-tools) function, so a tool left out is neither sent to the model nor callable, and `tool_name_for_kind` doesn't return it. A tool hidden by [deferred loading](#tool-search) counts as present: the answer, and instructions built from it, stay the same when that tool is revealed, which keeps the prompt cacheable. A tool is only left out in favor of a tool that stays, so if a third tool supersedes the general one, the capability's tool comes back. When tools would each be left out in favor of the other, the one of them listed first in the step's tools stays and every tool whose kind it names steps aside. Some cycles can't meet every rule at once (A unless B, B unless C, C unless A). A tool is still never left out unless a tool it names stays, so in such a cycle a tool can stay beside one whose kind it names; the result is the same for the same tools in the same order. Unlike `tool_kind`, `unless_tool_kind` doesn't need the kind to be defined: only ids are compared, so a capability can step aside for another package's tool by its kind id without importing that package, and a kind no tool has means there is nothing to step aside for.
 
 When several tools have the kind, `tool_name_for_kind` returns the first in the order of [`RunContext.tools`][pydantic_ai.tools.RunContext.tools], which is the order the step's toolsets list them in, and which you can iterate to see them all. Instruction functions, model request hooks and tools see the current step's tools, including a tool running in a Temporal activity, which answers from a snapshot of the step's tools taken when the activity was dispatched. A toolset's `get_tools` and `prepare_tools` functions run while those are still being collected, so there it answers from the previous step.
+
+A model adapter sometimes needs the tools of a kind that the model can call on the current request. [`ModelRequestParameters.available_tool_names_for_kind`][pydantic_ai.models.ModelRequestParameters.available_tool_names_for_kind] returns their names. It leaves out a tool with `defer_loading=True` until the message history reveals it.
 
 ## See Also
 

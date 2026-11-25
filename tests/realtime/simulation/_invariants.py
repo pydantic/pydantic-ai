@@ -533,11 +533,19 @@ class Checker:
             return False
         truth = self.sim.truth
         # A call the client never saw, or one from a response that was cancelled or failed, leads nowhere; nor
-        # does one the provider cancelled. Any other has to be answered, and its answer spoken.
+        # does one the provider cancelled, or gave up on in a response the client had seen start by `by`. Any other
+        # has to be answered, and its answer spoken.
         calls = [
             call
             for call in map(truth.tool_calls.__getitem__, response.tool_calls)
-            if call.read and response.status == 'completed' and not call.cancelled_by_server
+            if call.read
+            and response.status == 'completed'
+            and not call.cancelled_by_server
+            and not (
+                call.abandoned_by is not None
+                and (started := truth.responses[call.abandoned_by].started_read) is not None
+                and started <= by
+            )
         ]
         outputs = [truth.input(call.call_id) for call in calls]
         return all(

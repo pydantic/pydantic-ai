@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import daytona
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -25,6 +27,7 @@ from .._tool_calls import call_tools
 from .fake_daytona import FakeDaytona
 
 pytestmark = pytest.mark.anyio(backends=['asyncio'])
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 def test_capability_repr_hides_command_environment() -> None:
@@ -41,6 +44,7 @@ async def test_capability_is_lazy_and_forwards_options(fake_daytona: FakeDaytona
         auto_stop_interval=0,
         working_dir='/work',
         env={'A': 'b'},
+        secrets={'GH_TOKEN': 'github-token'},
         allow_internet_access=False,
     )
     backend = capability.get_workspace(_ctx(), ref=None)
@@ -52,8 +56,9 @@ async def test_capability_is_lazy_and_forwards_options(fake_daytona: FakeDaytona
         params.snapshot,
         params.auto_stop_interval,
         params.env_vars,
+        params.secrets,
         params.network_block_all,
-    ) == ('python', 0, {'A': 'b'}, True)
+    ) == ('python', 0, {'A': 'b'}, {'GH_TOKEN': 'github-token'}, True)
 
 
 @pytest.mark.parametrize(
@@ -63,6 +68,14 @@ async def test_capability_is_lazy_and_forwards_options(fake_daytona: FakeDaytona
         ({'auto_stop_interval': -1}, 'auto_stop_interval must be an integer of at least 0'),
         ({'auto_stop_interval': 1.5}, 'auto_stop_interval must be an integer of at least 0'),
         ({'defer_loading': True, 'id': 'sandbox'}, 'does not support `defer_loading=True`'),
+        ({'secrets': ['GH_TOKEN']}, r'^`secrets` maps environment variable names to Secret names'),
+        ({'secrets': 'GH_TOKEN'}, r'^`secrets` maps environment variable names to Secret names'),
+        ({'secrets': {'GH_TOKEN': 1}}, r'^`secrets` maps environment variable names to Secret names'),
+        ({'secrets': {1: 'github-token'}}, r'^`secrets` maps environment variable names to Secret names'),
+        (
+            {'secrets': {'GH_TOKEN': 'github-token'}, 'env': {'GH_TOKEN': 'x'}},
+            r'^GH_TOKEN cannot be in both `env` and `secrets`\.$',
+        ),
     ],
 )
 def test_invalid_settings_fail_at_construction(settings: dict[str, Any], message: str) -> None:
@@ -277,6 +290,19 @@ async def test_trio_is_refused_before_any_daytona_call(fake_daytona: FakeDaytona
     assert fake_daytona.opened_clients == 0
 
 
+async def test_the_default_client_is_built_off_the_event_loop(
+    fake_daytona: FakeDaytona, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The real constructor checks for dotenv files, which the autouse blocking-call detector rejects on the event loop.
+    def client() -> Any:
+        os.stat('.')
+        return fake_daytona.client()
+
+    monkeypatch.setattr(daytona, 'AsyncDaytona', client)
+    await DaytonaSandbox[None]().destroy(WorkspaceRef(provider='daytona', id='target'))
+    assert fake_daytona.opened_clients == 1
+
+
 @pytest.mark.parametrize('supplied', ['client', 'workspace'])
 async def test_run_leaves_a_supplied_client_or_workspace_open(fake_daytona: FakeDaytona, supplied: str) -> None:
     capability = DaytonaSandbox[None](client=daytona.AsyncDaytona()) if supplied == 'client' else DaytonaSandbox[None]()
@@ -308,6 +334,7 @@ async def test_a_child_run_leaves_the_parent_runs_client_open(fake_daytona: Fake
     assert fake_daytona.closed_clients == 1
 
 
+@posix_only
 async def test_coder_works_in_the_sandbox(fake_daytona: FakeDaytona, tmp_path: Path) -> None:
     fake_daytona.host_root = tmp_path.resolve()
     results = await call_tools(
@@ -319,3 +346,36 @@ async def test_coder_works_in_the_sandbox(fake_daytona: FakeDaytona, tmp_path: P
     )
     assert 'hi from the sandbox' in results[1]
     assert (tmp_path / 'hello.py').read_text() == "print('hi from the sandbox')\n"
+
+
+def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
+    definitions = AgentSpec.model_json_schema_with_capabilities([DaytonaSandbox])['$defs']
+    assert sorted(definitions['spec_params_DaytonaSandbox']['properties']) == [
+        'allow_internet_access',
+        'authority',
+        'auto_stop_interval',
+        'defer_loading',
+        'description',
+        'desktop',
+        'env',
+        'id',
+        'path_authority',
+        'secrets',
+        'snapshot',
+        'working_dir',
+    ]
+
+
+def test_from_spec_forwards_the_spec_fields() -> None:
+    spec_fields: dict[str, Any] = {
+        'id': 'sandbox',
+        'description': 'a sandbox',
+        'working_dir': '/work',
+        'env': {'FOO': 'bar'},
+        'secrets': {'GH_TOKEN': 'github-token'},
+        'snapshot': 'base',
+        'auto_stop_interval': 30,
+        'allow_internet_access': False,
+        'desktop': (1280, 800),
+    }
+    assert DaytonaSandbox[None].from_spec(**spec_fields) == DaytonaSandbox[None](**spec_fields)

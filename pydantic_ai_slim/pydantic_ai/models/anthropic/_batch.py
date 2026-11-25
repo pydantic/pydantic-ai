@@ -41,6 +41,7 @@ from .._batch_codec import (
 )
 from ..batch import Batch, BatchRequest, BatchResult, BatchStatus, EncodedBatchRequest
 from ._errors import ERROR_TYPE_STATUS_CODES, api_error
+from ._native_tools import open_turn_has_code_execution
 
 if TYPE_CHECKING:
     from . import AnthropicModel, AnthropicModelSettings
@@ -81,8 +82,9 @@ async def batch_encode(model: AnthropicModel, request: BatchRequest) -> EncodedB
     if settings.get('anthropic_speed') is not None:
         raise UserError('Anthropic Message Batches do not support `anthropic_speed`.')
     prepared = await model._prepare_messages_create(request.messages, settings, model_request_parameters)  # pyright: ignore[reportPrivateUsage]
-    if set(prepared.extra_headers) != {'User-Agent'}:
-        # A batch is created with one set of headers, so per-request ones can't be honored.
+    # A batch is created with one set of headers, so per-request ones can't be honored. It always sends our
+    # `User-Agent`, so a caller's user-agent, in any spelling, is ignored rather than refused.
+    if any(name.lower() != 'user-agent' for name in prepared.extra_headers):
         raise UserError('Anthropic Message Batches do not support per-request `extra_headers`; set them on the client.')
 
     params = model._messages_create_params(  # pyright: ignore[reportPrivateUsage]
@@ -173,7 +175,10 @@ def batch_decode(model: AnthropicModel, result: BatchResult, request: BatchReque
         message = BetaMessageBatchSucceededResult.model_validate_json(result.body).message
         prepared_settings, model_request_parameters = prepare_decode(model, request)
         response = model._process_response(  # pyright: ignore[reportPrivateUsage]
-            message, model_request_parameters, cast('AnthropicModelSettings', prepared_settings or {})
+            message,
+            model_request_parameters,
+            cast('AnthropicModelSettings', prepared_settings or {}),
+            code_execution_in_open_turn=open_turn_has_code_execution(request.messages, model.system),
         )
         return batch_priced(response)
     if result.status == 'errored':

@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "139"
+      - "143"
       content-type:
       - application/json
       host:
@@ -25,14 +25,17 @@ interactions:
         - role: user
           content: "Reply with exactly: OK"
         reasoning:
-          effort: low
+          effort: minimal
   response:
     status: 200
     headers:
       access-control-allow-origin:
       - "*"
       access-control-expose-headers:
-      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      - >-
+        X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
       connection:
       - keep-alive
       content-type:
@@ -48,11 +51,11 @@ interactions:
     body:
       type: json
       content:
-        id: gen-1793032229-Dx3mvN9HDQxYewWz2GbW
+        id: gen-1794001743-oSo9MifKAzQWX7emIov6
         object: chat.completion
-        created: 1793032229
+        created: 1794001743
         model: openai/gpt-oss-120b
-        provider: AkashML
+        provider: Crusoe
         system_fingerprint: null
         service_tier: null
         choices:
@@ -64,29 +67,29 @@ interactions:
             role: assistant
             content: OK
             refusal: null
-            reasoning: The user wants reply with exactly "OK". No extra text.
+            reasoning: We need to output exactly "OK".
             reasoning_details:
             - type: reasoning.text
-              text: The user wants reply with exactly "OK". No extra text.
+              text: We need to output exactly "OK".
               format: unknown
               index: 0
         usage:
           prompt_tokens: 72
-          completion_tokens: 24
-          total_tokens: 96
-          cost: 6.648e-6
+          completion_tokens: 19
+          total_tokens: 91
+          cost: 8.35e-6
           is_byok: false
           prompt_tokens_details:
-            cached_tokens: 64
+            cached_tokens: 48
             cache_write_tokens: 0
             audio_tokens: 0
             video_tokens: 0
           cost_details:
-            upstream_inference_cost: 6.648e-6
-            upstream_inference_prompt_cost: 2.16e-6
-            upstream_inference_completions_cost: 4.488e-6
+            upstream_inference_cost: 8.35e-6
+            upstream_inference_prompt_cost: 3.6e-6
+            upstream_inference_completions_cost: 4.75e-6
           completion_tokens_details:
-            reasoning_tokens: 0
+            reasoning_tokens: 8
             image_tokens: 0
             audio_tokens: 0
-  recorded_at: 2026-10-26T16:30:30.465554+00:00
+  recorded_at: 2026-11-06T21:49:04.289763+00:00

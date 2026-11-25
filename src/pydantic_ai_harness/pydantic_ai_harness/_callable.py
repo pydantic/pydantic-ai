@@ -36,7 +36,11 @@ def takes_context(func: Callable[..., object], *, parameters: Sequence[inspect.P
             return False
     elif positional[1].default is inspect.Parameter.empty:
         return True
-    annotation = _resolve(func, positional[0].annotation)
+    return _annotation_takes_context(_resolve(func, positional[0].annotation))
+
+
+def _annotation_takes_context(annotation: object) -> bool | None:
+    """Whether a first-parameter annotation selects `(ctx, value)`, or `None` when it cannot tell."""
     while get_origin(annotation) is Annotated:
         annotation = get_args(annotation)[0]
     either = annotation is inspect.Parameter.empty or annotation is Any or annotation is object

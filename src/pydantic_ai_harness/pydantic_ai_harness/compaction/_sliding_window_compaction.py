@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_capability_loads
+from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -29,6 +29,7 @@ from pydantic_ai_harness.compaction._shared import (
     find_token_cutoff,
     prepend_first_user_message,
     record_compaction_reclaim,
+    require_trigger,
     resolve_token_trigger,
     validate_token_trigger,
 )
@@ -104,7 +105,8 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     """Optional tokenizer for accurate token counting.
 
     A callable that returns the token count for a given string.
-    When `None`, uses a ~4 characters-per-token heuristic.
+    When `None`, uses the built-in text estimate, which counts dense text such as non-ASCII
+    scripts, base64 and compact JSON higher than prose.
     """
 
     preserve_first_user_message: bool = True
@@ -115,8 +117,8 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     preserve_loaded_capabilities: bool = field(default=True, kw_only=True)
     """When `True`, a deferred capability loaded in the dropped messages stays loaded.
 
-    Core counts a capability as loaded while its `load_capability` exchange is in the history, so
-    dropping the exchange would unload it. Each such load is recorded again ahead of the kept
+    Core counts a capability as loaded while the record of its load is in the history, so dropping
+    the record would unload it. Each such load is recorded again ahead of the kept
     messages instead, and the capability's tools and current instructions are sent again. When
     `False`, those capabilities are unloaded, and a note names them so the model can load the ones
     it still needs.
@@ -125,14 +127,9 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
     receipts: bool = False
     """When `True`, prepend a deterministic compaction receipt recording how much history
     was dropped, with a transcript handle when a `TranscriptHandleProvider` capability is attached.
-
-    Opt-in for now: the receipt text is content, so defaulting it on is deferred to the
-    benchmark eval-rig pass.  The mechanism itself is structural.
     """
 
     def __post_init__(self) -> None:
-        if self.max_messages is None and self.max_tokens is None and self.max_fraction is None:
-            raise ValueError('At least one of max_messages, max_tokens, or max_fraction must be set.')
         if self.max_messages is not None and self.max_messages < 1:
             raise ValueError('max_messages must be positive.')
         validate_token_trigger(self.max_tokens, self.max_fraction, self.fallback_context_window, self.context_window)
@@ -164,23 +161,33 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
         protected_tail = len(messages) - cutoff if self.keep_tokens else 0
         trimmed = reinject_pinned(messages, trimmed, protected_tail=protected_tail)
         if self.receipts:
-            if protected_tail:
-                trimmed = [*self._without_receipts(trimmed[:-protected_tail]), *trimmed[-protected_tail:]]
-            else:
-                trimmed = self._without_receipts(trimmed)
-            dropped = self._dropped_messages(messages, trimmed)
-            trimmed = [self._receipt_message(dropped, ctx), *trimmed]
+            trimmed = self._prepend_receipt(messages, trimmed, protected_tail, ctx)
         kept = messages[cutoff:]
         kept_from = next(
             (index for index, message in enumerate(trimmed) if any(message is k for k in kept)), len(trimmed) - 1
         )
-        return keep_capability_loads(
+        return keep_loaded_state(
             messages,
             trimmed,
             kept_from=kept_from,
             deferred_ids=deferred_capability_ids(ctx),
             preserve=self.preserve_loaded_capabilities,
         )
+
+    def _prepend_receipt(
+        self,
+        messages: list[ModelMessage],
+        trimmed: list[ModelMessage],
+        protected_tail: int,
+        ctx: RunContext[AgentDepsT],
+    ) -> list[ModelMessage]:
+        """*trimmed* without earlier receipts outside the protected tail, led by a receipt for what it dropped."""
+        if protected_tail:
+            trimmed = [*self._without_receipts(trimmed[:-protected_tail]), *trimmed[-protected_tail:]]
+        else:
+            trimmed = self._without_receipts(trimmed)
+        dropped = self._dropped_messages(messages, trimmed)
+        return [self._receipt_message(dropped, ctx), *trimmed]
 
     @staticmethod
     def _without_receipts(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -235,6 +242,10 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
             has_summary=False,
         )
         return ModelRequest(parts=[make_receipt_part(text)])
+
+    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Reject a registration without a trigger."""
+        require_trigger('SlidingWindowCompaction', self.max_messages, self.max_tokens, self.max_fraction)
 
     async def before_model_request(
         self,

@@ -9,7 +9,7 @@ Mock transports use `localhost` base URLs, which VCR ignores.
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -34,11 +34,11 @@ from pydantic_ai import (
     ModelUnavailableError,
 )
 from pydantic_ai.capabilities import ModelFallback
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models import Model
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from ..conftest import try_import
+from ..conftest import gave_up_on, retrying_client, try_import
 
 with try_import() as imports_successful:
     import grpc
@@ -56,7 +56,6 @@ with try_import() as imports_successful:
     from huggingface_hub import AsyncInferenceClient
     from huggingface_hub.errors import HfHubHTTPError
     from openai import AsyncOpenAI
-    from tenacity import retry_if_exception_type, stop_after_attempt, wait_none
 
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.cohere import CohereModel
@@ -64,21 +63,24 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.models.mistral import MistralModel
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.ollama import OllamaModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.models.zai import ZaiModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
+    from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
     from pydantic_ai.providers.mistral import MistralProvider
+    from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.providers.zai import ZaiProvider
-    from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
 
     from .mock_xai import MockXai, get_grok_text_chunk
     from .test_bedrock import _bedrock_model_with_error  # pyright: ignore[reportPrivateUsage]
@@ -124,6 +126,16 @@ def _openai(handler: Handler) -> Model:
     return OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
 
 
+def _openai_responses(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(openai_client=client))
+
+
 def _openrouter(handler: Handler) -> Model:
     client = AsyncOpenAI(
         api_key='test',
@@ -152,6 +164,16 @@ def _zai(handler: Handler) -> Model:
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     return ZaiModel('glm-5.2', provider=ZaiProvider(openai_client=client))
+
+
+def _moonshotai(handler: Handler) -> Model:
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return OpenAIChatModel('kimi-k2.5', provider=MoonshotAIProvider(openai_client=client))
 
 
 def _anthropic_bedrock(handler: Handler) -> Model:
@@ -212,6 +234,14 @@ def _cohere(handler: Handler) -> Model:
     return CohereModel('command-r7b-12-2024', provider=CohereProvider(cohere_client=client))
 
 
+def _ollama(handler: Handler) -> Model:
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    return OllamaModel(
+        'gpt-oss:20b-cloud',
+        provider=OllamaProvider(base_url='http://localhost/v1', api_key='test', http_client=http_client),
+    )
+
+
 def _json(status_code: int, body: Any, headers: dict[str, str] | None = None) -> Handler:
     def handler(request: Any) -> Any:
         response_class = httpx.Response if isinstance(request, httpx.Request) else httpx2.Response
@@ -250,13 +280,35 @@ def _raise(kind: Literal['connect', 'timeout', 'pool']) -> Handler:
     return handler
 
 
+class _ErrorBodyBreakingOff(httpx2.AsyncByteStream):
+    def __init__(self, kind: Literal['protocol', 'timeout']) -> None:
+        self.kind = kind
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield b'{"error": {"mess'
+        raise (httpx2.RemoteProtocolError if self.kind == 'protocol' else httpx2.ReadTimeout)('failed')
+
+
+def _error_body_breaking_off(kind: Literal['protocol', 'timeout']) -> Handler:
+    """A 503 whose body breaks off after its first chunk, as when a proxy cuts the connection.
+
+    For a streamed request, `openai` reads an error status's body outside the code that wraps transport errors in
+    `APIConnectionError`, so the raw `httpx2` error reaches the model.
+    """
+
+    def handler(request: Any) -> Any:
+        return httpx2.Response(503, headers={'content-type': 'application/json'}, stream=_ErrorBodyBreakingOff(kind))
+
+    return handler
+
+
 def _gave_up(
     status_code: int, headers: dict[str, str] | None = None, *, content: bytes | None = None, read: bool = True
 ) -> Handler:
     """What a retrying transport raises once its `validate_response` rejected the last attempt's status.
 
-    With `read=False`, the response's body was never read, as when the transport closes a response from the network
-    that its `validate_response` rejected.
+    With `read=False`, the response's body was never read, as when the transport failed to read the body of a response
+    from the network that its `validate_response` rejected.
     """
 
     def handler(request: Any) -> Any:
@@ -306,6 +358,68 @@ _ANTHROPIC_MESSAGE_START: tuple[str, dict[str, Any]] = (
     },
 )
 
+_GEMINI_FREE_TIER_RATE_LIMIT: dict[str, Any] = {
+    'error': {
+        'code': 429,
+        'message': 'You exceeded your current quota, please check your plan and billing details. For more information '
+        'on this error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: '
+        'https://ai.dev/rate-limit. \n* Quota exceeded for metric: '
+        'generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 5, model: gemini-3.8-flash, '
+        'description: Generate content requests per minute limit exceeded on Free Tier. See '
+        'https://aistudio.google.com/docs/rate-limits.\nPlease retry in 14.306944957s.',
+        'status': 'RESOURCE_EXHAUSTED',
+        'details': [
+            {
+                '@type': 'type.googleapis.com/google.rpc.Help',
+                'links': [
+                    {
+                        'description': 'Learn more about Gemini API quotas',
+                        'url': 'https://aistudio.google.com/docs/rate-limits',
+                    }
+                ],
+            },
+            {
+                '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                'violations': [
+                    {
+                        'description': 'Generate content requests per minute limit exceeded on Free Tier. See '
+                        'https://aistudio.google.com/docs/rate-limits.',
+                        'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+                        'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier',
+                        'quotaDimensions': {'model': 'gemini-3.8-flash', 'location': 'global'},
+                        'quotaValue': '5',
+                    }
+                ],
+            },
+            {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'},
+        ],
+    }
+}
+"""Gemini's 429 for the free tier's per-minute request quota, as a real response reported it in
+https://github.com/pydantic/pydantic-ai/issues/12063#issuecomment-6769986854: no `Retry-After` header, and the wait
+only in the body's `google.rpc.RetryInfo`."""
+
+
+def _google_retry_info_body(retry_delay: object) -> dict[str, Any]:
+    """A Gemini 429 whose only wait is the `RetryInfo` detail's `retryDelay`, which a protobuf `Duration` spells."""
+    return {
+        'error': {
+            'code': 429,
+            'message': 'Resource has been exhausted',
+            'status': 'RESOURCE_EXHAUSTED',
+            'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': retry_delay}],
+        }
+    }
+
+
+_UPSTREAM_OVERFLOW = "Input length (100000) exceeds the model's maximum context length (8192)."
+
+
+def _openrouter_metadata_raw_error(raw: str) -> dict[str, object]:
+    """An OpenRouter 400 that forwards the upstream provider's error in `metadata.raw`."""
+    return {'error': {'code': 400, 'message': 'Provider returned error', 'metadata': {'raw': raw}}}
+
+
 CASES = [
     Case(
         id='openai-rate-limit',
@@ -339,6 +453,13 @@ CASES = [
         handler=_json(503, {'error': {'message': 'The engine is currently overloaded', 'type': 'server_error'}}),
         categories=_OVERLOADED,
         attrs={'status_code': 503, 'provider_error_code': None, 'provider_error_type': 'server_error'},
+    ),
+    Case(
+        id='openai-provider-timeout',
+        model=_openai,
+        handler=_json(408, {'error': {'message': 'Request timed out', 'type': 'timeout'}}),
+        categories={ModelHTTPError, ModelConnectionError, ModelTimeoutError},
+        attrs={'status_code': 408, 'provider_error_type': 'timeout', 'phase': None},
     ),
     Case(
         id='openai-context-window',
@@ -446,6 +567,38 @@ CASES = [
         stream=True,
     ),
     Case(
+        id='openai-stream-error-body-broken-off',
+        model=_openai,
+        handler=_error_body_breaking_off('protocol'),
+        categories={ModelConnectionError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-error-body-timeout',
+        model=_openai,
+        handler=_error_body_breaking_off('timeout'),
+        categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-responses-stream-error-body-broken-off',
+        model=_openai_responses,
+        handler=_error_body_breaking_off('protocol'),
+        categories={ModelConnectionError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
+        id='openai-responses-stream-error-body-timeout',
+        model=_openai_responses,
+        handler=_error_body_breaking_off('timeout'),
+        categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read', 'message': 'failed'},
+        stream=True,
+    ),
+    Case(
         id='openrouter-http-context-window',
         model=_openrouter,
         handler=_json(
@@ -460,6 +613,38 @@ CASES = [
         ),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    # OpenRouter forwards the upstream provider's overflow in `metadata.raw`, as JSON or plain text, behind a generic
+    # message.
+    Case(
+        id='openrouter-http-metadata-raw-context-window-json',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-json-stream',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-plain',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW)),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-plain-stream',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW)),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        stream=True,
     ),
     Case(
         id='openrouter-body-rate-limit',
@@ -476,6 +661,14 @@ CASES = [
             200,
             {'error': {'code': 400, 'message': "This endpoint's maximum context length is 128000 tokens."}},
         ),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        has_cause=False,
+    ),
+    Case(
+        id='openrouter-body-metadata-raw-context-window',
+        model=_openrouter,
+        handler=_json(200, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         has_cause=False,
@@ -511,6 +704,46 @@ CASES = [
         handler=_json(429, {'error': {'code': '1302', 'message': 'Rate limit reached for requests'}}),
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'status_code': 429, 'provider_error_code': '1302'},
+    ),
+    Case(
+        # Moonshot's body for an exhausted balance, from https://forum.moonshot.ai/t/429-insufficient-balance/244.
+        id='moonshotai-exceeded-current-quota',
+        model=_moonshotai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'message': 'Your account org-xxx <ak-xxx> is suspended due to insufficient balance, please '
+                    'recharge your account or check your plan and billing details',
+                    'type': 'exceeded_current_quota_error',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_type': 'exceeded_current_quota_error'},
+    ),
+    Case(
+        id='moonshotai-rate-limit',
+        model=_moonshotai,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'message': 'Your account org-xxx <ak-xxx> request reached organization max RPM: 200',
+                    'type': 'rate_limit_reached_error',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_type': 'rate_limit_reached_error'},
+    ),
+    Case(
+        # The type means something only from Moonshot, like Z.ai's numeric codes.
+        id='openai-moonshot-quota-type-rate-limit',
+        model=_openai,
+        handler=_json(429, {'error': {'message': 'Too many requests', 'type': 'exceeded_current_quota_error'}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_type': 'exceeded_current_quota_error'},
     ),
     Case(
         id='openai-numeric-code-rate-limit',
@@ -677,6 +910,22 @@ CASES = [
         attrs={'phase': 'read'},
     ),
     Case(
+        # Groq's flex service tier is out of capacity.
+        id='groq-flex-capacity',
+        model=_groq,
+        handler=_json(498, {'error': {'message': 'Flex tier capacity exceeded.', 'type': 'invalid_request_error'}}),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 498},
+    ),
+    Case(
+        # Groq's remote MCP dependency failure is not a model failure.
+        id='groq-mcp-dependency',
+        model=_groq,
+        handler=_json(424, {'error': {'message': 'Remote MCP server failed.', 'type': 'invalid_request_error'}}),
+        categories={ModelHTTPError},
+        attrs={'status_code': 424},
+    ),
+    Case(
         id='google-rate-limit',
         model=_google,
         handler=_json(
@@ -684,6 +933,203 @@ CASES = [
         ),
         categories={ModelHTTPError, ModelRateLimitError},
         attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
+    ),
+    Case(
+        # Gemini's body when the daily quota is used up, from https://github.com/google-gemini/gemini-cli/issues/8437:
+        # it lists the per-minute quotas too, but the daily one won't reset until midnight Pacific time.
+        id='google-daily-quota',
+        model=_google,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': 429,
+                    'message': 'You exceeded your current quota, please check your plan and billing details. For more '
+                    'information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.',
+                    'status': 'RESOURCE_EXHAUSTED',
+                    'details': [
+                        {
+                            '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                            'violations': [
+                                {
+                                    'quotaMetric': 'generativelanguage.googleapis.com/'
+                                    'generate_content_free_tier_input_token_count',
+                                    'quotaId': 'GenerateContentInputTokensPerModelPerMinute-FreeTier',
+                                    'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'},
+                                },
+                                {
+                                    'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+                                    'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier',
+                                    'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'},
+                                },
+                                {
+                                    'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests',
+                                    'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier',
+                                    'quotaDimensions': {'model': 'gemini-2.5-flash', 'location': 'global'},
+                                },
+                            ],
+                        },
+                        {
+                            '@type': 'type.googleapis.com/google.rpc.Help',
+                            'links': [
+                                {
+                                    'description': 'Learn more about Gemini API quotas',
+                                    'url': 'https://ai.google.dev/gemini-api/docs/rate-limits',
+                                }
+                            ],
+                        },
+                        {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '55s'},
+                    ],
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED', 'retry_after': 55.0},
+    ),
+    Case(
+        # Only per-minute quotas exceeded: a rate limit, which waiting fixes.
+        id='google-per-minute-quota',
+        model=_google,
+        handler=_json(
+            429,
+            {
+                'error': {
+                    'code': 429,
+                    'message': 'You exceeded your current quota, please check your plan and billing details. For more '
+                    'information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.',
+                    'status': 'RESOURCE_EXHAUSTED',
+                    'details': [
+                        {
+                            '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                            'violations': [
+                                {
+                                    'quotaMetric': 'generativelanguage.googleapis.com/generate_content_paid_tier_requests',
+                                    'quotaId': 'GenerateRequestsPerMinutePerProjectPerModel',
+                                    'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'},
+                                    'quotaValue': '1000',
+                                }
+                            ],
+                        },
+                        {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '12s'},
+                    ],
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED', 'retry_after': 12.0},
+    ),
+    Case(
+        # A real free-tier 429: no `Retry-After` header, the wait only in the body's `google.rpc.RetryInfo`.
+        id='google-retry-info',
+        model=_google,
+        handler=_json(429, _GEMINI_FREE_TIER_RATE_LIMIT),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED', 'retry_after': 14.0},
+    ),
+    Case(
+        # A response that carries `Retry-After` keeps it, and the body's `RetryInfo` is only the fallback.
+        id='google-retry-info-after-header',
+        model=_google,
+        handler=_json(429, _GEMINI_FREE_TIER_RATE_LIMIT, headers={'retry-after': '7'}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 7.0},
+    ),
+    Case(
+        # An error chunk in a stream arrives with the open 200 stream's own headers, so only the body has the wait.
+        id='google-stream-retry-info',
+        model=_google,
+        handler=_sse_data(_GEMINI_FREE_TIER_RATE_LIMIT),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'in_stream': True, 'retry_after': 14.0},
+        stream=True,
+    ),
+    Case(
+        # A `RetryInfo` that names no parsable protobuf `Duration` says nothing, and must not fail the mapping.
+        id='google-retry-info-unparsable',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('soon')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # A `Duration` that ends in `s` but holds no number before it is unparsable too.
+        id='google-retry-info-non-numeric',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('invalids')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # A protobuf `Duration` may carry a fraction of a second.
+        id='google-retry-info-fractional-seconds',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('0.5s')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': 0.5},
+    ),
+    Case(
+        # Up to nine fractional digits, as a protobuf `Duration` allows.
+        id='google-retry-info-nanoseconds',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('1.000340012s')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': 1.000340012},
+    ),
+    Case(
+        # A negative wait is meaningless, so it's dropped rather than reported.
+        id='google-retry-info-negative',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('-3s')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        id='google-retry-info-infinite',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('infs')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # A `Duration` always ends in `s`; a bare number is not one.
+        id='google-retry-info-no-second-suffix',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('14')),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        id='google-retry-info-not-a-string',
+        model=_google,
+        handler=_json(429, _google_retry_info_body(14)),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': None},
+    ),
+    Case(
+        # `retry-after-ms` and `Retry-After` outrank the body: only the fallback reads `RetryInfo`.
+        id='google-retry-info-after-ms-header',
+        model=_google,
+        handler=_json(429, _google_retry_info_body('14s'), headers={'retry-after-ms': '7000'}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'retry_after': 7.0},
+    ),
+    Case(
+        # From https://github.com/ChatGPTNextWeb/NextChat/issues/5255.
+        id='google-billing-not-enabled',
+        model=_google,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'code': 400,
+                    'message': 'Gemini API free tier is not available in your country. Please enable billing on your '
+                    'project in Google AI Studio.',
+                    'status': 'FAILED_PRECONDITION',
+                }
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_code': 'FAILED_PRECONDITION'},
     ),
     Case(
         id='google-overloaded',
@@ -739,6 +1185,64 @@ CASES = [
         },
     ),
     Case(
+        id='mistral-context-window-prompt-too-long',
+        model=_mistral,
+        handler=_json(
+            400,
+            {
+                'object': 'error',
+                'message': 'Prompt 142251 > 131072 maximum context length',
+                'type': 'invalid_request_prompt_too_long',
+                'param': None,
+                'code': '3059',
+                'raw_status_code': 400,
+            },
+        ),
+        categories=_CONTEXT_WINDOW,
+        attrs={
+            'status_code': 400,
+            'provider_error_code': '3059',
+            'provider_error_type': 'invalid_request_prompt_too_long',
+        },
+    ),
+    Case(
+        id='mistral-invalid-args',
+        model=_mistral,
+        handler=_json(
+            400,
+            {
+                'object': 'error',
+                'message': 'reasoning_effort none is not supported for this model, supported values: '
+                "[<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]",
+                'type': 'invalid_request_invalid_args',
+                'param': None,
+                'code': '3051',
+                'raw_status_code': 400,
+            },
+        ),
+        categories=_REJECTED,
+        attrs={
+            'status_code': 400,
+            'provider_error_code': '3051',
+            'provider_error_type': 'invalid_request_invalid_args',
+        },
+    ),
+    Case(
+        id='mistral-invalid-args-structured-message',
+        model=_mistral,
+        handler=_json(
+            422,
+            {
+                'object': 'error',
+                'message': {'detail': [{'type': 'missing', 'loc': ['body', 'messages'], 'msg': 'Field required'}]},
+                'type': 'invalid_request_invalid_args',
+                'code': '3051',
+            },
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 422, 'provider_error_code': '3051'},
+    ),
+    Case(
         id='mistral-rate-limit',
         model=_mistral,
         handler=_json(429, {'object': 'error', 'message': 'Requests rate limit exceeded', 'type': 'rate_limited'}),
@@ -765,6 +1269,23 @@ CASES = [
         ),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400},
+    ),
+    Case(
+        id='ollama-cloud-context-window',
+        model=_ollama,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'message': 'prompt too long; exceeded max context length by 668997 tokens (ref: …)',
+                    'type': 'invalid_request_error',
+                    'param': None,
+                    'code': None,
+                }
+            },
+        ),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': None, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
         id='openai-unavailable',
@@ -987,6 +1508,114 @@ CASES = [
         attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
     ),
     Case(
+        id='anthropic-spend-cap',
+        model=_anthropic,
+        # The tier spend cap is a `rate_limit_error` without `retry-after` that lasts until the next month, as
+        # https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap documents it.
+        handler=_json(
+            429,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'rate_limit_error',
+                    'message': 'You have reached your API usage limits: your organization has crossed its monthly API '
+                    "usage threshold, set based on your organization's API tier. You will regain access on 2026-09-01 "
+                    'at 00:00 UTC.',
+                    'details': {'error_code': 'enforced_spend_limit_reached'},
+                },
+                'request_id': 'req_018EeWyXxfu5pfWkrYcMdjWG',
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={
+            'status_code': 429,
+            'provider_error_type': 'rate_limit_error',
+            'provider_error_code': None,
+            'retry_after': None,
+        },
+    ),
+    Case(
+        id='anthropic-stream-spend-cap',
+        model=_anthropic,
+        handler=_sse(
+            _ANTHROPIC_MESSAGE_START,
+            (
+                'error',
+                {
+                    'type': 'error',
+                    'error': {
+                        'type': 'rate_limit_error',
+                        'message': 'You have reached your API usage limits.',
+                        'details': {'error_code': 'enforced_spend_limit_reached'},
+                    },
+                },
+            ),
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 429, 'in_stream': True, 'provider_error_type': 'rate_limit_error', 'retry_after': None},
+        stream=True,
+    ),
+    Case(
+        id='anthropic-ramp-limit',
+        model=_anthropic,
+        # Also a `rate_limit_error` with a `details.error_code`, but one that waiting lifts.
+        handler=_json(
+            429,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'rate_limit_error',
+                    'message': 'Ramp limit exceeded',
+                    'details': {'error_code': 'ramp_limit_exceeded'},
+                },
+            },
+            headers={'retry-after': '5'},
+        ),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={
+            'status_code': 429,
+            'provider_error_type': 'rate_limit_error',
+            'provider_error_code': None,
+            'retry_after': 5.0,
+        },
+    ),
+    # https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit documents how the message of
+    # a spend limit the user set starts.
+    Case(
+        id='anthropic-spend-limit',
+        model=_anthropic,
+        handler=_json(
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'You have reached your specified API usage limits. You will regain access on '
+                    '2026-12-01 at 00:00 UTC.',
+                },
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
+        id='anthropic-workspace-spend-limit',
+        model=_anthropic,
+        handler=_json(
+            400,
+            {
+                'type': 'error',
+                'error': {
+                    'type': 'invalid_request_error',
+                    'message': 'You have reached your specified workspace API usage limits. You will regain access on '
+                    '2026-12-01 at 00:00 UTC.',
+                },
+            },
+        ),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 400, 'provider_error_type': 'invalid_request_error'},
+    ),
+    Case(
         id='anthropic-api-error',
         model=_anthropic,
         handler=_json(500, {'type': 'error', 'error': {'type': 'api_error', 'message': 'Internal server error'}}),
@@ -1166,7 +1795,7 @@ CASES = [
         attrs={'status_code': 404, 'provider_error_code': 'model_not_found'},
     ),
     Case(
-        # The Responses API sends an unknown model as a 400; its code says what it is.
+        # Its code says what it is, whatever status it comes with.
         id='openai-model-not-found-400',
         model=_openai,
         handler=_json(
@@ -1215,7 +1844,7 @@ CASES = [
         attrs={'status_code': 409},
     ),
     Case(
-        # Its status before a stream opens depends on the API, so an in-stream one gets none, only the category.
+        # An in-stream one gets no status, only the category.
         id='openai-stream-model-not-found',
         model=_openai,
         handler=_sse_data({'error': {'message': 'The model does not exist.', 'code': 'model_not_found'}}),
@@ -1346,7 +1975,7 @@ CASES = [
             413,
             {'type': 'error', 'error': {'type': 'request_too_large', 'message': 'Request exceeds the maximum size'}},
         ),
-        categories={ModelHTTPError},
+        categories=_REJECTED,
         attrs={'status_code': 413, 'provider_error_type': 'request_too_large'},
     ),
     Case(
@@ -1596,6 +2225,14 @@ CASES = [
         stream=True,
     ),
     Case(
+        # The status a retrying transport gave up on still carries Gemini's body, and so its `RetryInfo` wait.
+        id='google-transport-gave-up-retry-info',
+        model=_google,
+        handler=_gave_up(429, content=json.dumps(_GEMINI_FREE_TIER_RATE_LIMIT).encode()),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'retry_after': 14.0},
+    ),
+    Case(
         id='mistral-transport-gave-up',
         model=_mistral,
         handler=_gave_up(503),
@@ -1616,6 +2253,14 @@ CASES = [
         handler=_gave_up(503),
         categories={ModelHTTPError, ModelUnavailableError},
         attrs={'status_code': 503, 'body': None},
+    ),
+    Case(
+        id='cohere-transport-gave-up-stream',
+        model=_cohere,
+        handler=_gave_up(503),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'body': None},
+        stream=True,
     ),
     Case(
         id='openai-transport-gave-up-unread-body',
@@ -1665,23 +2310,66 @@ async def test_http_provider_error_category(allow_model_requests: None, case: Ca
     assert (exc.__cause__ is not None) == case.has_cause
 
 
-def _retrying_client(handler: Handler) -> httpx2.AsyncClient:
-    """A client with a retrying transport like the retries guide's: 3 attempts, rejecting every error status."""
+_TRANSPORT_CLASSIFIED_MODELS: tuple[Callable[[Handler], Model], ...] = (
+    _openai,
+    _openrouter,
+    _zai,
+    _moonshotai,
+    _ollama,
+    _anthropic,
+    _anthropic_bedrock,
+    _google,
+    _mistral,
+)
+"""Models whose status a retrying transport gave up on is classified from its body as their SDK's error is.
 
-    def validate_response(response: httpx2.Response) -> None:
-        response.raise_for_status()
+Groq and Cohere chat aren't: their SDKs take a legacy `httpx` client, whose retrying transport closes the response
+without reading its body.
+"""
 
-    transport = AsyncHTTPX2TenacityTransport(
-        config=RetryConfig(
-            retry=retry_if_exception_type(httpx2.HTTPStatusError),
-            wait=wait_none(),
-            stop=stop_after_attempt(3),
-            reraise=True,
-        ),
-        wrapped=httpx2.MockTransport(handler),
-        validate_response=validate_response,
+_GAVE_UP_TWINS = [
+    case
+    for case in CASES
+    if case.model in _TRANSPORT_CLASSIFIED_MODELS
+    and not case.stream
+    and case.has_cause
+    and ModelHTTPError in case.categories
+    and 'transport-gave-up' not in case.id
+]
+
+
+def _error_summary(exc: ModelHTTPError) -> tuple[object, ...]:
+    """What a status a retrying transport gave up on must share with the provider SDK's error for the same response.
+
+    That's the error category, provider error code and type, suggested model ID, hint and `retry_after`.
+    """
+    categories = {cls for cls in _CATEGORIES if isinstance(exc, cls)}
+    return (
+        categories,
+        exc.status_code,
+        exc.provider_error_code,
+        exc.provider_error_type,
+        exc.suggested_model_id,
+        exc.hint,
+        exc.retry_after,
     )
-    return httpx2.AsyncClient(transport=transport)
+
+
+@pytest.mark.parametrize('case', _GAVE_UP_TWINS, ids=[case.id for case in _GAVE_UP_TWINS])
+async def test_transport_gave_up_status_error_category(allow_model_requests: None, case: Case):
+    """A status a retrying transport gave up on raises what the provider SDK raises for the same response.
+
+    That's the same error category, provider error code and type, suggested model ID, hint and `retry_after`.
+    """
+
+    async def error(handler: Handler) -> ModelHTTPError:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(case.model(handler)).run('hello')
+        return exc_info.value
+
+    sdk_error = await error(case.handler)
+    gave_up_error = await error(gave_up_on(case.handler))
+    assert _error_summary(gave_up_error) == _error_summary(sdk_error)
 
 
 def _retrying_openai(client: httpx2.AsyncClient) -> Model:
@@ -1728,7 +2416,7 @@ async def test_model_fallback_after_retrying_transport_gives_up(
         return ModelResponse(parts=[TextPart('from the fallback model')])
 
     agent = Agent(
-        make_model(_retrying_client(handler)),
+        make_model(retrying_client(handler)),
         model_settings={'max_retries': 0},
         capabilities=[ModelFallback(FunctionModel(fallback))],
     )
@@ -1741,8 +2429,219 @@ async def test_model_fallback_after_retrying_transport_gives_up(
     assert attempt.error is not None and attempt.error.startswith('ModelUnavailableError: status_code: 503')
 
 
-def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientError:
+_AZURE_CONTENT_FILTER_BODY: dict[str, Any] = {
+    'error': {
+        'message': "The response was filtered due to the prompt triggering Azure OpenAI's content management policy.",
+        'type': None,
+        'param': 'prompt',
+        'code': 'content_filter',
+        'status': 400,
+        'innererror': {
+            'code': 'ResponsibleAIPolicyViolation',
+            'content_filter_result': {'hate': {'filtered': True, 'severity': 'high'}},
+        },
+    }
+}
+
+
+async def _compact(model: Model) -> ModelResponse:
+    return await model.compact_messages(
+        ModelRequestContext(
+            model=model,
+            messages=[ModelRequest.user_text_prompt('hello')],
+            model_settings={'max_retries': 0},
+            model_request_parameters=ModelRequestParameters(),
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ('call', 'azure', 'history', 'status_code', 'body', 'category'),
+    [
+        pytest.param(
+            'chat',
+            True,
+            [ModelRequest.user_text_prompt('hello')],
+            400,
+            _AZURE_CONTENT_FILTER_BODY,
+            ModelRequestRejectedError,
+            id='azure-chat',
+        ),
+        pytest.param(
+            'responses',
+            True,
+            [ModelRequest.user_text_prompt('hello')],
+            400,
+            _AZURE_CONTENT_FILTER_BODY,
+            ModelRequestRejectedError,
+            id='azure-responses',
+        ),
+        pytest.param(
+            'compact', True, [], 400, _AZURE_CONTENT_FILTER_BODY, ModelRequestRejectedError, id='azure-compaction'
+        ),
+        pytest.param(
+            'responses',
+            False,
+            [
+                ModelRequest.user_text_prompt('hello'),
+                ModelResponse(
+                    parts=[],
+                    model_name='gpt-5.2',
+                    provider_name='openai',
+                    provider_response_id='resp_expired',
+                    state='suspended',
+                ),
+            ],
+            404,
+            {'error': {'message': "Response with id 'resp_expired' not found.", 'type': 'invalid_request_error'}},
+            ModelNotFoundError,
+            id='responses-resume',
+        ),
+    ],
+)
+async def test_retrying_transport_gave_up_is_not_recovered_from_so_fallback_moves_on(
+    allow_model_requests: None,
+    call: Literal['chat', 'responses', 'compact'],
+    azure: bool,
+    history: list[ModelMessage],
+    status_code: int,
+    body: dict[str, Any],
+    category: type[ModelHTTPError],
+):
+    """An OpenAI status the SDK's error would be recovered from stays a `ModelHTTPError` once a retrying transport gave up.
+
+    Recovered from, an Azure content filter is a `content_filter` response, which the agent raises as
+    `ContentFilterError`, and a resumed response the provider no longer has raises `SuspendedResponseExpired`.
+    Neither is a `ModelAPIError`, so fallback wouldn't move on to the next model, which is why a status a retrying
+    transport gave up on is raised as `ModelHTTPError`, see https://github.com/pydantic/pydantic-ai/pull/11934.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, json=body)
+
+    client = retrying_client(handler)
+    provider = (
+        AzureProvider(
+            azure_endpoint='https://example.openai.azure.com',
+            api_version='2024-10-21',
+            api_key='test',
+            http_client=client,
+        )
+        if azure
+        else OpenAIProvider(api_key='test', http_client=client)
+    )
+    with pytest.raises(category) as exc_info:
+        if call == 'chat':
+            await OpenAIChatModel('gpt-5.2', provider=provider).request(
+                history, {'max_retries': 0}, ModelRequestParameters()
+            )
+        elif call == 'responses':
+            await OpenAIResponsesModel('gpt-5.2', provider=provider).request(
+                history, {'max_retries': 0}, ModelRequestParameters()
+            )
+        else:
+            await _compact(OpenAIResponsesModel('gpt-5.2', provider=provider))
+
+    assert exc_info.value.status_code == status_code
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
+
+
+@pytest.mark.parametrize(
+    ('status_code', 'body'),
+    [
+        pytest.param(
+            400,
+            {'error': {'message': 'bad', 'type': 'invalid_request_error', 'param': None, 'code': None}},
+            id='400',
+        ),
+        pytest.param(
+            429,
+            {
+                'error': {
+                    'message': 'Rate limit reached.',
+                    'type': 'requests',
+                    'param': None,
+                    'code': 'rate_limit_exceeded',
+                }
+            },
+            id='429',
+        ),
+    ],
+)
+async def test_compaction_transport_gave_up_status_error_category(
+    allow_model_requests: None, status_code: int, body: dict[str, Any]
+):
+    """A status a retrying transport gave up on during compaction raises what the SDK raises for the same response."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, json=body, headers={'retry-after': '2'})
+
+    async def error(client: httpx2.AsyncClient) -> ModelHTTPError:
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await _compact(OpenAIResponsesModel('gpt-5.2', provider=OpenAIProvider(api_key='test', http_client=client)))
+        return exc_info.value
+
+    sdk_error = await error(httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
+    gave_up_error = await error(retrying_client(handler))
+    assert isinstance(gave_up_error.__cause__, httpx2.HTTPStatusError)
+    assert _error_summary(gave_up_error) == _error_summary(sdk_error)
+
+
+@pytest.mark.parametrize(
+    ('make_model', 'status_code', 'body', 'categories', 'retry_after'),
+    [
+        pytest.param(
+            _retrying_google,
+            429,
+            _GEMINI_FREE_TIER_RATE_LIMIT,
+            {ModelHTTPError, ModelRateLimitError},
+            14.0,
+            id='google-retry-info',
+        ),
+        pytest.param(
+            _retrying_openai,
+            503,
+            {'error': {'message': 'The server is overloaded.', 'type': 'server_error', 'code': None}},
+            _OVERLOADED,
+            None,
+            id='openai-overloaded',
+        ),
+    ],
+)
+async def test_retrying_transport_gave_up_keeps_streamed_error_body(
+    allow_model_requests: None,
+    make_model: Callable[[httpx2.AsyncClient], Model],
+    status_code: int,
+    body: dict[str, Any],
+    categories: set[type[ModelAPIError]],
+    retry_after: float | None,
+):
+    """A status the retrying transport gave up on keeps its body, and so the category and wait parsed from it.
+
+    The body is a stream, like one from the network, so nothing has read it when `validate_response` rejects it.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, stream=httpx2.ByteStream(json.dumps(body).encode()))
+
+    agent = Agent(make_model(retrying_client(handler)), model_settings={'max_retries': 0})
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run('hello')
+
+    exc = exc_info.value
+    assert {cls for cls in _CATEGORIES if isinstance(exc, cls)} == categories
+    assert exc.status_code == status_code
+    assert exc.body == body
+    assert exc.retry_after == retry_after
+
+
+def _bedrock_error(
+    code: str, message: str, status_code: int | None, original_status_code: int | None = None
+) -> ClientError:
     response: dict[str, Any] = {'Error': {'Code': code, 'Message': message}}
+    if original_status_code is not None:
+        # botocore puts a `ModelErrorException`'s modeled fields at the top level of the error response.
+        response['originalStatusCode'] = original_status_code
     if status_code is None:
         # An exception event inside a `ConverseStream` response: botocore gives it no response metadata.
         return EventStreamError(cast(Any, response), 'ConverseStream')
@@ -1790,6 +2689,20 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
             {ModelHTTPError, ModelServerError},
             {'status_code': 500, 'provider_error_code': 'InternalServerException'},
             id='server-error',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('ModelErrorException', 'The model returned an error.', 424),
+            {ModelHTTPError, ModelServerError},
+            {'status_code': 424, 'provider_error_code': 'ModelErrorException'},
+            id='model-error',
+        ),
+        pytest.param(
+            lambda: _bedrock_error(
+                'ModelErrorException', 'The model returned an error.', 424, original_status_code=429
+            ),
+            {ModelHTTPError, ModelRateLimitError},
+            {'status_code': 424, 'provider_error_code': 'ModelErrorException'},
+            id='model-error-original-status',
         ),
         pytest.param(
             lambda: _bedrock_error('serviceUnavailableException', 'Service unavailable.', None),
@@ -1893,8 +2806,8 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
         ),
         pytest.param(
             lambda: _bedrock_error('modelTimeoutException', 'The model took too long.', None),
-            {ModelHTTPError},
-            {'status_code': 408, 'in_stream': True, 'provider_error_code': 'modelTimeoutException'},
+            {ModelHTTPError, ModelConnectionError, ModelTimeoutError},
+            {'status_code': 408, 'in_stream': True, 'provider_error_code': 'modelTimeoutException', 'phase': None},
             id='stream-model-timeout',
         ),
         pytest.param(

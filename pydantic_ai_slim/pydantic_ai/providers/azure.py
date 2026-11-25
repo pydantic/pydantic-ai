@@ -11,6 +11,7 @@ from pydantic_ai._json_schema import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
@@ -133,6 +134,7 @@ class AzureProvider(_OpenAISDKProvider):
         }
 
         base: ModelProfile | None = None
+        route_profile = special_token_route_profile('azure', model_name)
         is_mistral = False
         for prefix, profile_func in prefix_to_profile.items():
             if model_name.startswith(prefix):
@@ -157,6 +159,7 @@ class AzureProvider(_OpenAISDKProvider):
         base = merge_profile(
             base,
             OpenAIModelProfile(openai_chat_supports_document_input=False, openai_responses_supports_websocket=False),
+            route_profile,
         )
 
         # Reported in #6593 (not verified against the live API here): Azure AI Foundry's
@@ -311,8 +314,8 @@ class AzureProvider(_OpenAISDKProvider):
             # `api_key` raises its usual explanatory error instead of realtime sending the placeholder
             # as a credential and getting an opaque auth failure back.
             self._api_key = None if openai_client.api_key == _api_key_sentinel else openai_client.api_key or None
-            # Resolve the Voice Live endpoint/key from their own environment prefix here too, exactly as the
-            # `else` branch does before `_resolve_voice_live_credentials` (which expects them pre-resolved and
+            # Resolve the Voice Live endpoint/key from their own environment prefix here too, exactly as
+            # `_init_from_arguments` does before `_resolve_voice_live_credentials` (which expects them pre-resolved and
             # only falls back to the Azure OpenAI values). Without this, `AzureProvider(openai_client=...)`
             # would ignore `AZURE_VOICELIVE_ENDPOINT` / `AZURE_VOICELIVE_API_KEY` and silently point Voice Live
             # at the Azure OpenAI client's resource.
@@ -322,87 +325,124 @@ class AzureProvider(_OpenAISDKProvider):
                 voice_live_api_version,
             )
         else:
-            # Azure AI Voice Live (used by `AzureRealtimeModel`) is a distinct resource with its own
-            # credentials. Each set is resolved from its own sources — explicit argument, then that set's
-            # environment prefix. They meet at the all-or-nothing fallback below, and where
-            # `_resolve_voice_live_credentials` fills a missing Voice Live endpoint or key.
-            azure_openai_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
-            azure_openai_api_key = api_key or os.getenv('AZURE_OPENAI_API_KEY')
-            azure_openai_api_version = api_version or os.getenv('OPENAI_API_VERSION')
-            voice_live_endpoint = voice_live_endpoint or os.getenv('AZURE_VOICELIVE_ENDPOINT')
-            voice_live_api_key = voice_live_api_key or os.getenv('AZURE_VOICELIVE_API_KEY')
+            self._init_from_arguments(
+                azure_endpoint=azure_endpoint,
+                api_version=api_version,
+                api_key=api_key,
+                voice_live_endpoint=voice_live_endpoint,
+                voice_live_api_key=voice_live_api_key,
+                voice_live_api_version=voice_live_api_version,
+                http_client=http_client,
+            )
 
-            # All-or-nothing: the Voice Live set supplies the data-plane client only when *nothing* about
-            # the Azure OpenAI resource was configured — a Voice-Live-only setup, where that client is a
-            # formality (a Voice Live resource doesn't serve the Azure OpenAI data plane) and its values
-            # merely let construction succeed. Filling individual gaps instead would point an Azure OpenAI
-            # resource at another resource's key or version.
-            is_voice_live_resource = not (azure_openai_endpoint or azure_openai_api_key or azure_openai_api_version)
+    def _init_from_arguments(
+        self,
+        *,
+        azure_endpoint: str | None,
+        api_version: str | None,
+        api_key: str | None,
+        voice_live_endpoint: str | None,
+        voice_live_api_key: str | None,
+        voice_live_api_version: str | None,
+        http_client: _OpenAIHTTPClient | None,
+    ) -> None:
+        # Azure AI Voice Live (used by `AzureRealtimeModel`) is a distinct resource with its own
+        # credentials. Each set is resolved from its own sources — explicit argument, then that set's
+        # environment prefix. They meet at the all-or-nothing fallback below, and where
+        # `_resolve_voice_live_credentials` fills a missing Voice Live endpoint or key.
+        azure_openai_endpoint = azure_endpoint or os.getenv('AZURE_OPENAI_ENDPOINT')
+        azure_openai_api_key = api_key or os.getenv('AZURE_OPENAI_API_KEY')
+        azure_openai_api_version = api_version or os.getenv('OPENAI_API_VERSION')
+        voice_live_endpoint = voice_live_endpoint or os.getenv('AZURE_VOICELIVE_ENDPOINT')
+        voice_live_api_key = voice_live_api_key or os.getenv('AZURE_VOICELIVE_API_KEY')
 
-            azure_endpoint = azure_openai_endpoint or (voice_live_endpoint if is_voice_live_resource else None)
-            if not azure_endpoint:
+        # All-or-nothing: the Voice Live set supplies the data-plane client only when *nothing* about
+        # the Azure OpenAI resource was configured — a Voice-Live-only setup, where that client is a
+        # formality (a Voice Live resource doesn't serve the Azure OpenAI data plane) and its values
+        # merely let construction succeed. Filling individual gaps instead would point an Azure OpenAI
+        # resource at another resource's key or version.
+        is_voice_live_resource = not (azure_openai_endpoint or azure_openai_api_key or azure_openai_api_version)
+
+        azure_endpoint = azure_openai_endpoint or (voice_live_endpoint if is_voice_live_resource else None)
+        if not azure_endpoint:
+            raise UserError(
+                'Must provide the `azure_endpoint` argument or set the `AZURE_OPENAI_ENDPOINT` '
+                '(or, for a Voice-Live-only provider, `voice_live_endpoint` / `AZURE_VOICELIVE_ENDPOINT`) '
+                'environment variable'
+            )
+
+        api_key = azure_openai_api_key or (voice_live_api_key if is_voice_live_resource else None)
+        if not api_key:
+            raise UserError(
+                'Must provide the `api_key` argument or set the `AZURE_OPENAI_API_KEY` '
+                '(or, for a Voice-Live-only provider, `voice_live_api_key` / `AZURE_VOICELIVE_API_KEY`) '
+                'environment variable'
+            )
+
+        self._azure_endpoint = azure_endpoint.rstrip('/')
+        # The SDK's Entra placeholder means "no key" here too, exactly as on the `openai_client`
+        # branch of `__init__`, so `api_key` reports its absence rather than handing the placeholder out.
+        # Normalized before the Voice Live set resolves, since that falls back to this value.
+        self._api_key = None if api_key == _api_key_sentinel else api_key
+        self._resolve_voice_live_credentials(voice_live_endpoint, voice_live_api_key, voice_live_api_version)
+
+        # One frame more than the default: this method sits between `_get_http_client` and `__init__`.
+        http_client = self._get_http_client(http_client, warning_stacklevel=4)
+        self._client = self._create_client(
+            azure_endpoint,
+            api_key,
+            http_client,
+            api_version=api_version,
+            azure_openai_api_version=azure_openai_api_version,
+            is_voice_live_resource=is_voice_live_resource,
+        )
+        self._base_url = str(self._client.base_url)
+
+    def _create_client(
+        self,
+        azure_endpoint: str,
+        api_key: str,
+        http_client: _OpenAIHTTPClient,
+        *,
+        api_version: str | None,
+        azure_openai_api_version: str | None,
+        is_voice_live_resource: bool,
+    ) -> AsyncOpenAI:
+        # The Azure OpenAI v1 GA API and Azure AI Foundry serverless model
+        # endpoints expose an OpenAI-compatible `/v1` API that rejects the
+        # `api-version` query parameter that `AsyncAzureOpenAI` always
+        # injects, so we use a plain `AsyncOpenAI` client instead.
+        if (v1_base_url := _openai_compatible_v1_base_url(azure_endpoint)) is not None:
+            if api_version is not None:
                 raise UserError(
-                    'Must provide the `azure_endpoint` argument or set the `AZURE_OPENAI_ENDPOINT` '
-                    '(or, for a Voice-Live-only provider, `voice_live_endpoint` / `AZURE_VOICELIVE_ENDPOINT`) '
-                    'environment variable'
+                    '`api_version` must not be set when `azure_endpoint` targets the Azure OpenAI '
+                    'v1 API or an Azure AI Foundry serverless model endpoint, which do not accept it.'
                 )
-
-            api_key = azure_openai_api_key or (voice_live_api_key if is_voice_live_resource else None)
-            if not api_key:
-                raise UserError(
-                    'Must provide the `api_key` argument or set the `AZURE_OPENAI_API_KEY` '
-                    '(or, for a Voice-Live-only provider, `voice_live_api_key` / `AZURE_VOICELIVE_API_KEY`) '
-                    'environment variable'
-                )
-
-            self._azure_endpoint = azure_endpoint.rstrip('/')
-            # The SDK's Entra placeholder means "no key" here too, exactly as on the `openai_client`
-            # branch above, so `api_key` reports its absence rather than handing the placeholder out.
-            # Normalized before the Voice Live set resolves, since that falls back to this value.
-            self._api_key = None if api_key == _api_key_sentinel else api_key
-            self._resolve_voice_live_credentials(voice_live_endpoint, voice_live_api_key, voice_live_api_version)
-
-            http_client = self._get_http_client(http_client)
-
-            # The Azure OpenAI v1 GA API and Azure AI Foundry serverless model
-            # endpoints expose an OpenAI-compatible `/v1` API that rejects the
-            # `api-version` query parameter that `AsyncAzureOpenAI` always
-            # injects, so we use a plain `AsyncOpenAI` client instead.
-            if (v1_base_url := _openai_compatible_v1_base_url(azure_endpoint)) is not None:
-                if api_version is not None:
-                    raise UserError(
-                        '`api_version` must not be set when `azure_endpoint` targets the Azure OpenAI '
-                        'v1 API or an Azure AI Foundry serverless model endpoint, which do not accept it.'
-                    )
-                self._client = AsyncOpenAI(
-                    base_url=v1_base_url,
-                    api_key=api_key,
-                    http_client=http_client,  # pyright: ignore[reportArgumentType]
-                )
-                self._base_url = str(self._client.base_url)
-            else:
-                api_version = azure_openai_api_version
-                if not api_version and is_voice_live_resource:
-                    # A Voice-Live-only configuration has no data-plane version to offer, and the client
-                    # built from it is a formality, so its own resolved version (which has a default) lets
-                    # construction succeed. Never borrowed for a real Azure OpenAI resource: the two
-                    # version schemes are unrelated, so the data plane would be called with a version it
-                    # doesn't recognize.
-                    api_version = self._voice_live_api_version
-                if not api_version:
-                    raise UserError(
-                        'Must provide the `api_version` argument or set the `OPENAI_API_VERSION` '
-                        'environment variable (`AZURE_VOICELIVE_API_VERSION` stands in only when the '
-                        'whole resource is configured through the `AZURE_VOICELIVE_*` variables)'
-                    )
-
-                self._client = AsyncAzureOpenAI(
-                    azure_endpoint=azure_endpoint,
-                    api_key=api_key,
-                    api_version=api_version,
-                    http_client=http_client,  # pyright: ignore[reportArgumentType]
-                )
-                self._base_url = str(self._client.base_url)
+            return AsyncOpenAI(
+                base_url=v1_base_url,
+                api_key=api_key,
+                http_client=http_client,  # pyright: ignore[reportArgumentType]
+            )
+        api_version = azure_openai_api_version
+        if not api_version and is_voice_live_resource:
+            # A Voice-Live-only configuration has no data-plane version to offer, and the client
+            # built from it is a formality, so its own resolved version (which has a default) lets
+            # construction succeed. Never borrowed for a real Azure OpenAI resource: the two
+            # version schemes are unrelated, so the data plane would be called with a version it
+            # doesn't recognize.
+            api_version = self._voice_live_api_version
+        if not api_version:
+            raise UserError(
+                'Must provide the `api_version` argument or set the `OPENAI_API_VERSION` '
+                'environment variable (`AZURE_VOICELIVE_API_VERSION` stands in only when the '
+                'whole resource is configured through the `AZURE_VOICELIVE_*` variables)'
+            )
+        return AsyncAzureOpenAI(
+            azure_endpoint=azure_endpoint,
+            api_key=api_key,
+            api_version=api_version,
+            http_client=http_client,  # pyright: ignore[reportArgumentType]
+        )
 
     def _resolve_voice_live_credentials(
         self,

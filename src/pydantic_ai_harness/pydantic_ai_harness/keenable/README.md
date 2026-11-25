@@ -1,0 +1,189 @@
+# Keenable Search
+
+`KeenableSearch` gives an agent web research tools backed by the
+[Keenable](https://keenable.ai) search API: search that returns a short excerpt
+of each hit, and full-page retrieval for digging into a specific URL.
+
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/keenable/)
+
+It needs no API key and no extra install: Keenable's endpoints are keyless by
+default, and this capability talks to them over `httpx2`, which
+`pydantic-ai-harness` already depends on. `KeenableSearch()` works in a fresh
+environment with no signup and no configuration. The examples use an Anthropic
+model, so set `ANTHROPIC_API_KEY` for them.
+
+## Usage
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import KeenableSearch
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[KeenableSearch()])
+```
+
+The capability adds two tools:
+
+- `web_search(query)`: returns the matching pages with title, URL, and a short
+  excerpt of each. Titles are cut at 300 characters, and a result whose URL is
+  longer than 2,048 characters or has whitespace inside is left out.
+- `get_page(url)`: retrieves one page as markdown.
+
+Both return a `ToolReturn` whose `metadata['sources']` lists the URLs and
+titles behind the result, so an application can render citations from
+`ToolReturnPart.metadata` without parsing the text.
+
+## Configuration
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import KeenableSearch
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[
+        KeenableSearch(
+            num_results=10,
+            max_snippet_chars=800,
+            max_page_chars=20_000,
+        )
+    ],
+)
+```
+
+| Field | Default | What it does |
+|---|---|---|
+| `num_results` | `5` | How many results `web_search` returns, from 1 to 50. |
+| `max_snippet_chars` | `500` | Excerpt budget per search result. |
+| `max_page_chars` | `10_000` | Page budget for `get_page`; longer pages are truncated and marked, with the marker counted against the budget. A budget too small to hold the marker ends the page with `…` instead. |
+| `guidance` | `None` | Replaces the default research instructions, including their untrusted-content rule; `''` contributes none. |
+| `client` | `None` | A `KeenableClient` to use instead of the default HTTP client. |
+
+`max_snippet_chars` exists because Keenable's snippets run to thousands of
+characters, far more than the excerpt a typical search API returns. Left
+unbounded, a single `web_search` would spend the context window
+on pages the agent has not chosen to read yet; `get_page` is how it opts into
+one.
+
+## Authentication
+
+Keenable is keyless by default, so nothing is required. An API key raises rate
+limits; keyed calls draw on your Keenable credits, and searches run in
+Keenable's default `pro` mode:
+
+```bash
+export KEENABLE_API_KEY='keen_...'
+```
+
+Set `KEENABLE_API_URL` to point at a different Keenable deployment. It must be
+`https`, except against loopback for local development, and carry no query or
+fragment: the endpoint path is appended to it.
+
+To configure either explicitly rather than through the environment, pass a
+client:
+
+```python {title="keenable_client.py" test="skip" lint="skip"}
+from pydantic_ai_harness.keenable import HttpKeenableClient, KeenableSearch
+
+KeenableSearch(client=HttpKeenableClient(api_key='keen_...'))
+```
+
+Any object satisfying the `KeenableClient` protocol works, which is also how
+tests substitute a fake.
+
+To reuse connections, or to send requests through a proxy, custom TLS, or a
+retrying transport, pass your own `httpx2.AsyncClient` as
+`HttpKeenableClient(http_client=...)`. Its timeouts apply alongside the
+30-second request deadline, and it stays open for you to close. Without one,
+each request opens and closes its own client. Requests never follow redirects,
+whatever the client is configured to do, so the API key stays with the
+configured host.
+
+For a proxy, a self-hosted deployment, or a `KeenableClient` of your own, this
+is what the default client sends. `search` posts a JSON body
+`{"query": ..., "max_results": ...}` to `/v1/search`, or to
+`/v1/search/public` when there is no key, and returns the response's `results`
+list; the toolset passes `num_results` as `max_results`. `fetch` sends
+`GET /v1/fetch`, or `/v1/fetch/public` when keyless, with the page address in
+the `url` query parameter, and returns the response object; the toolset reads
+its `content`, `title`, and `url`. Every request carries an `X-Keenable-Title: Pydantic AI
+Harness` header and adds `X-API-Key` when a key is set. Each request must finish
+within 30 seconds, and a response body over 10 MiB is abandoned before parsing.
+
+## Errors
+
+Any HTTP error status other than `401`, `402`, and `403` becomes `ModelRetry`,
+as do network failures, a request past its deadline, and a `2xx` whose body is
+too large, not JSON, or a search response without its `results` list, so the
+model can wait, rephrase, or try another URL
+rather than abort the run. A `get_page` call that comes back with no readable
+content is a `ModelRetry` too. `get_page`
+reads Keenable's indexed copy of a page, and Keenable documents that fetching a
+URL it has not indexed fails; the model sees that failure as a `ModelRetry` as
+well. A `401`, `402`, or `403` propagates as `httpx2.HTTPStatusError`: a
+rejected key or an exhausted account is configuration the model cannot fix.
+
+## Multiple instances
+
+Two instances register the same tool names and share the default `id`
+(`keenable_search`), so two that differ raise an error. To run a second setup in
+one agent, give it a distinct `id` and wrap it in core's `PrefixTools`
+capability, which puts a prefix in front of its tool names.
+
+Core `WebSearch`, `ExaSearch`, and `YouSearch` name their tools the same way --
+`web_search`, plus `get_page` for the two harness ones -- and an agent cannot
+have two tools with the same name, so adding one of them next to
+`KeenableSearch` fails on the agent's first run. Give an agent one web search
+capability, or wrap the extra one in `PrefixTools` to rename its tools.
+
+To use the provider's native search where there is one and Keenable's
+elsewhere, pass its tool to core `WebSearch` instead of adding the capability.
+This adds only `web_search`, not `get_page`, so the agent needs another tool to
+read the pages it finds.
+
+```python {title="keenable_fallback.py" test="skip" lint="skip"}
+from pydantic_ai.capabilities import WebSearch
+from pydantic_ai_harness import KeenableSearch
+
+WebSearch(local=KeenableSearch().web_search_tool())
+```
+
+## Durable execution
+
+Under [durable execution](https://pydantic.dev/docs/ai/capabilities/durable_execution/overview/), each Keenable request is recorded, so a
+recovered run reuses the result instead of making the request again. Temporal
+and Prefect record each tool call in its own activity or task. DBOS runs
+function tools in workflow code, so there the request runs as its own step.
+
+The records are named after the capability's `id`, which defaults to
+`keenable_search`, so durable execution needs no configuration. Changing an
+`id` renames the records, which in-flight runs then cannot find.
+
+## Agent spec (YAML/JSON)
+
+`KeenableSearch` works with Pydantic AI's
+[agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/), so you can declare it in a config
+file instead of Python:
+
+```yaml
+# agent.yaml
+model: anthropic:claude-sonnet-4-6
+capabilities:
+  - KeenableSearch:
+      num_results: 10
+```
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import KeenableSearch
+
+agent = Agent.from_file('agent.yaml', custom_capability_types=[KeenableSearch])
+```
+
+The `client` field is not spec-serializable; spec-loaded instances always
+build the default `HttpKeenableClient`, which reads `KEENABLE_API_KEY` and
+`KEENABLE_API_URL` from the environment.
+
+## Telemetry
+
+`KeenableSearch` emits no spans of its own. Core's tool-call spans cover each
+search and page read.

@@ -11,11 +11,11 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python (also Node) | Python |
 | License | Apache-2.0 | MIT |
 | Model providers | Many (plugins) | [Many](../models/overview.md) |
-| Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Pipeline nodes (`stt_node`, `llm_node`, …) | [Capabilities and toolsets](../extensibility.md); [100+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | With a [LiveKit Cloud plan](https://livekit.com/pricing) | [For the framework itself](../enterprise-support.md), no platform required |
-| Durable execution | No | [Eight integrations](../durable_execution/overview.md) |
+| Durable execution | No | [Nine integrations](../durable_execution/overview.md) |
 | Interfaces | WebRTC rooms, telephony, text sessions | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Speech-to-speech and cascaded STT + LLM + TTS | [Speech-to-speech](../realtime/overview.md), five providers |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
@@ -30,7 +30,7 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 | Speech-to-speech providers | Plugins for several providers | [Five](../realtime/overview.md#provider-support) behind one API: OpenAI, Azure OpenAI, Gemini Live, xAI, ElevenLabs |
 | Cascaded STT + LLM + TTS | Yes, the default; dozens of STT and TTS plugins | Hosted only, via [ElevenLabs Agents](../realtime/elevenlabs.md#elevenlabs-agents) or [Azure AI Voice Live](../realtime/azure.md#azure-ai-voice-live); otherwise [compose it yourself](../realtime/overview.md#other-ways-to-build-voice) around a text agent |
 | Audio transport | WebRTC rooms via LiveKit server or Cloud | Yours: [browser WebRTC sideband or WebSocket relay](../realtime/deployment.md) |
-| Telephony | SIP in and out, DTMF, transfers; numbers on Cloud | [Bridge a provider](../realtime/deployment.md#siptelephony-bridge) such as Twilio |
+| Telephony | SIP in and out, DTMF, transfers; numbers on Cloud | [Bridge Twilio Media Streams](../realtime/deployment.md#twilio-media-streams) to a session |
 | Turn detection | Silero VAD, own turn-detector model, adaptive interruption | [Provider turn detection, barge-in, push-to-talk](../realtime/turns.md) |
 | Noise cancellation | Krisp and ai-coustics plugins; enhanced models on Cloud | Provider-side only |
 | Hand off to another agent mid-call | Yes, context carried over | No; [delegate from a tool](../realtime/tools.md#delegating-work-during-a-call) instead |

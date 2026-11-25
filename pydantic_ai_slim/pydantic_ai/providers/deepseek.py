@@ -6,7 +6,7 @@ from typing import Literal, overload
 from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.deepseek import _DEEPSEEK_V4_PATTERN, deepseek_model_profile  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 
 try:
@@ -24,7 +24,8 @@ else:
 
 
 DeepSeekModelName = Literal[
-    'deepseek-chat', 'deepseek-flash', 'deepseek-reasoner', 'deepseek-v4-flash', 'deepseek-v4-pro'
+    'deepseek-v4-pro',
+    'deepseek-flash',
 ]
 
 
@@ -37,7 +38,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
 
     @property
     def base_url(self) -> str:
-        return 'https://api.deepseek.com'
+        return self._base_url
 
     @property
     def client(self) -> AsyncOpenAI:
@@ -46,7 +47,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         profile = deepseek_model_profile(model_name)
-        is_flash_or_v4 = model_name == 'deepseek-flash' or model_name.startswith('deepseek-v4-')
+        is_flash_or_v4 = model_name == 'deepseek-flash' or _DEEPSEEK_V4_PATTERN.match(model_name) is not None
         thinks_by_default = is_flash_or_v4 or model_name == 'deepseek-reasoner'
 
         # As DeepSeekProvider is most often used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
@@ -74,8 +75,8 @@ class DeepSeekProvider(_OpenAISDKProvider):
                 # DeepSeek rejects a forced tool choice only while thinking is on, answering
                 # `Thinking mode does not support this tool_choice`. `deepseek-reasoner` cannot turn
                 # thinking off, so for it the restriction is unconditional; Flash and V4 models can, so
-                # theirs is evaluated per request. `startswith` covers future deepseek-v4-* SKUs
-                # without listing each one.
+                # theirs is evaluated per request. The shared V4 point-release matcher covers future
+                # deepseek-v4-* SKUs without listing each one.
                 supports_forced_tool_choice=model_name != 'deepseek-reasoner',
                 supports_forced_tool_choice_with_thinking=not is_flash_or_v4,
                 # Thinking is on by default on Flash, V4 models and `deepseek-reasoner`; every other
@@ -87,6 +88,9 @@ class DeepSeekProvider(_OpenAISDKProvider):
                 # Flash and V4's native efforts are `low`, `high` and `max`, and they map `xhigh` to `high`, so
                 # `max` is the only way to reach their deepest reasoning. See https://api-docs.deepseek.com/guides/thinking_mode.
                 openai_chat_supports_max_reasoning_effort=is_flash_or_v4,
+                # DeepSeek's Chat Completions endpoint documents only `max_tokens` and silently ignores
+                # `max_completion_tokens`. See https://api-docs.deepseek.com/api/create-chat-completion.
+                openai_chat_supports_max_completion_tokens=False,
                 # `openai_supports_phase` is deliberately left at its `False` default even though
                 # DeepSeek labels its Responses API output with `phase`: the field is absent from
                 # DeepSeek's documented input items, and its API silently ignores what it doesn't
@@ -104,6 +108,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None: ...
@@ -112,6 +117,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
@@ -122,6 +128,8 @@ class DeepSeekProvider(_OpenAISDKProvider):
                 ' to use the DeepSeek provider.'
             )
 
+        assert openai_client is None or base_url is None, 'Cannot provide both `openai_client` and `base_url`'
+        self._base_url = base_url or 'https://api.deepseek.com'
         if openai_client is not None:
             self._client = openai_client
         else:

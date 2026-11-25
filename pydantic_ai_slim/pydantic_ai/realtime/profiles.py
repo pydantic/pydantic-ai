@@ -109,6 +109,15 @@ class RealtimeModelProfile(TypedDict, total=False):
     """Whether prior images can be included when seeding a session with `message_history`."""
     supports_seeding_audio: bool
     """Whether retained user audio can be included when seeding a session with `message_history`."""
+    supports_appending_voice_instructions: bool
+    """Whether the voice model the caller hears takes instructions of its own, apart from the agent's, that
+    [`append_voice_instructions`][pydantic_ai.realtime.RealtimeSession.append_voice_instructions] can add to
+    mid-session.
+
+    OpenAI GPT-Live sets it: the agent's instructions go to its delegated backend, and the voice model's own prompt,
+    `openai_live_instructions`, can only be added to once the session has started. When `False` (the default), the
+    agent's instructions are the voice model's, and a [changed instruction](../realtime/capabilities.md#instructions-that-change)
+    already reaches it."""
     supports_thinking: bool
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
@@ -164,7 +173,7 @@ class RealtimeModelProfile(TypedDict, total=False):
     """How finely the model reports when its speech is heard, with the
     [`output_speech_timestamps`][pydantic_ai.realtime.RealtimeModelSettings.output_speech_timestamps] setting on:
     per `'word'`, per `'segment'` of one or more words, or `None` (the default) when it doesn't report it.
-    Azure AI Voice Live and ElevenLabs Agents report words."""
+    Azure AI Voice Live and ElevenLabs Agents report words, and xAI Grok Voice segments."""
     synthesizes_turn_boundary: bool
     """Whether [`RealtimeTurnCompleteEvent`][pydantic_ai.realtime.RealtimeTurnCompleteEvent] is inferred
     by Pydantic AI rather than reported by the provider.
@@ -234,6 +243,7 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
+    'supports_appending_voice_instructions': False,
     'async_tool_call_mode': 'never',
     'supports_tool_return_schema': False,
     'supported_native_tools': frozenset(),

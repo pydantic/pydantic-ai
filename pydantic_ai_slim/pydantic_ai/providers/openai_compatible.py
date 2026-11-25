@@ -7,18 +7,18 @@ from typing import overload
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import ModelProfile, merge_profile
+from pydantic_ai.profiles._family import ModelProfileFunc, vendor_family_model_profile
+from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
-from pydantic_ai.profiles.anthropic import anthropic_model_profile
-from pydantic_ai.profiles.cohere import cohere_model_profile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile
-from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
-from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.inclusionai import inclusionai_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
-from pydantic_ai.profiles.qwen import qwen_model_profile
+from pydantic_ai.profiles.stepfun import stepfun_model_profile
+from pydantic_ai.profiles.tencent import tencent_model_profile
+from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
+from pydantic_ai.profiles.xiaomi import xiaomi_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -48,6 +48,37 @@ def _mistral_model_profile(model_name: str) -> ModelProfile:
     return merge_profile(openai_model_profile(model_name), profile)
 
 
+def _on_openai_defaults(family_profile: ModelProfileFunc) -> ModelProfileFunc:
+    """`family_profile`, on the OpenAI defaults assumed for a model no family profile describes.
+
+    For families whose profile only says whether the model thinks, so the rest of the profile still comes from the
+    OpenAI fallback. A model the family doesn't describe gets `None`, and so the fallback alone.
+    """
+
+    def profile(model_name: str) -> ModelProfile | None:
+        family = family_profile(model_name)
+        return None if family is None else merge_profile(openai_model_profile(model_name), family)
+
+    return profile
+
+
+_OPENAI_COMPATIBLE_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
+    'bedrock': amazon_model_profile,
+    'groq': groq_model_profile,
+    'inclusionai': _on_openai_defaults(inclusionai_model_profile),
+    'mistral': _mistral_model_profile,
+    'mistralai': _mistral_model_profile,
+    'nvidia': _on_openai_defaults(nvidia_model_profile),
+    'stepfun': _on_openai_defaults(stepfun_model_profile),
+    'stepfun-ai': _on_openai_defaults(stepfun_model_profile),
+    'tencent': _on_openai_defaults(tencent_model_profile),
+    'thinkingmachines': _on_openai_defaults(thinkingmachines_model_profile),
+    'xiaomi': _on_openai_defaults(xiaomi_model_profile),
+    'xiaomimimo': _on_openai_defaults(xiaomi_model_profile),
+}
+"""Vendors whose profile here differs from the shared family map, on top of it."""
+
+
 def _vendor_prefixed_model_profile(model_name: str) -> ModelProfile:
     """The profile for a model on an OpenAI-compatible service without a provider of its own.
 
@@ -55,31 +86,14 @@ def _vendor_prefixed_model_profile(model_name: str) -> ModelProfile:
     endpoints share, without the flags only OpenAI's own API supports. Either way, with the JSON schema
     transformer `OpenAIChatModel` uses.
     """
-    vendor_profiles: dict[str, Callable[[str], ModelProfile | None]] = {
-        'anthropic': anthropic_model_profile,
-        'openai': openai_model_profile,
-        'google': google_model_profile,
-        'mistralai': _mistral_model_profile,
-        'mistral': _mistral_model_profile,
-        'cohere': cohere_model_profile,
-        'amazon': amazon_model_profile,
-        'bedrock': amazon_model_profile,
-        'meta-llama': meta_model_profile,
-        'meta': meta_model_profile,
-        'groq': groq_model_profile,
-        'deepseek': deepseek_model_profile,
-        'moonshotai': moonshotai_model_profile,
-        'x-ai': grok_model_profile,
-        'qwen': qwen_model_profile,
-    }
-    profile = None
-    if '/' in model_name:
-        vendor, model_suffix = model_name.split('/', 1)
-        if vendor_profile := vendor_profiles.get(vendor):
-            profile = vendor_profile(model_suffix)
+    profile = vendor_family_model_profile(model_name, overrides=_OPENAI_COMPATIBLE_VENDOR_PROFILES)
     if profile is None:
         profile = openai_model_profile(model_name)
-    return merge_profile(OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer), profile)
+    return merge_profile(
+        OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
+        profile,
+        special_token_route_profile('openai-compatible', model_name),
+    )
 
 
 class OpenAICompatibleProvider(_OpenAISDKProvider):

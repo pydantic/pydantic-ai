@@ -36,6 +36,7 @@ one to `capabilities=[...]` like any other capability.
 
 ## Analytics and telemetry
 
+- [Pixeltable](pixeltable.md): query and similarity-search catalog tables, with optional memory in the same catalog.
 - [PostHog](posthog.md): query product analytics and manage feature flags, experiments, and dashboards in
   [PostHog](https://posthog.com).
 - [Logfire MCP](logfire-mcp.md): query [Logfire](https://pydantic.dev/logfire) telemetry and manage Logfire projects.

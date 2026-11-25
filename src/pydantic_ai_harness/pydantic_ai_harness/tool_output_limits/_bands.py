@@ -7,7 +7,7 @@ match (largest threshold that fits), passing through anything below the smallest
 Every action carries an optional `then` fallback, applied when the action cannot run --
 `Spill` whose store errors, `Truncate`/`Summarize` on a binary payload, a `Summarize`
 whose model call raises. `Spill(then=Truncate())` is the default: lossless when the store
-works, a bounded truncation otherwise, never a silent drop.
+accepts the write, otherwise truncated to `max_chars`.
 """
 
 from __future__ import annotations

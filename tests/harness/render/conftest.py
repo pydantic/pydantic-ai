@@ -37,9 +37,13 @@ else:
     from render.workflows import Options, Retry, TaskContext, TaskDefinition, TaskRunMetadata, Workflows
 
 
-def pytest_ignore_collect(collection_path: Path) -> bool:
-    """Ignore Render-extra tests only when the top-level optional package is absent."""
-    return _render_spec is None and collection_path.suffix == '.py'
+def pytest_ignore_collect(collection_path: Path) -> bool | None:
+    """Ignore Render-extra tests only when the top-level optional package is absent.
+
+    Returns `None` rather than `False` otherwise: this hook stops at the first non-`None` result, so `False` would
+    override `--ignore` and run these modules in every CI shard.
+    """
+    return True if _render_spec is None and collection_path.suffix == '.py' else None
 
 
 P = ParamSpec('P')

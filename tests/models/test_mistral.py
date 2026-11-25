@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import re
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -18,19 +18,23 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
+    AgentStreamEvent,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
     RetryInfo,
+    RunContext,
     StructuredDict,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
     ToolCallPart,
+    ToolCallPartDelta,
     ToolReturnPart,
     UploadedFile,
     UseEnumMemberDocstrings,
@@ -41,6 +45,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelRetry,
     TransportPhase,
@@ -88,6 +93,7 @@ with try_import() as imports_successful:
         _map_content,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.profiles.mistral import MistralModelProfile, MistralReasoningEffort
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -2253,6 +2259,157 @@ async def test_stream_tool_call(allow_model_requests: None):
     )
 
 
+@dataclass(frozen=True)
+class StreamedToolCallsCase:
+    id: str
+    chunks: list[list[tuple[int, str, str, str]]]
+    """Tool-call deltas per chunk, each as `(index, id, name, arguments)`."""
+    expected: list[tuple[str, str, str]]
+    """The response's tool calls, each as `(tool_name, args, tool_call_id)`."""
+
+
+STREAMED_TOOL_CALLS_CASES = [
+    StreamedToolCallsCase(
+        id='fragments_name_first',
+        chunks=[[(0, 'c1', 'search', '')], [(0, 'null', '', '{"query": "ver')], [(0, 'null', '', 'rous"}')]],
+        expected=[('search', '{"query": "verrous"}', 'c1')],
+    ),
+    StreamedToolCallsCase(
+        id='fragments_name_later',
+        chunks=[[(0, 'null', '', '{"query":')], [(0, 'c1', 'search', ' "verrous"}')]],
+        expected=[('search', '{"query": "verrous"}', 'c1')],
+    ),
+    StreamedToolCallsCase(
+        id='fragments_without_id',
+        chunks=[[(0, 'null', 'search', '{"query":')], [(0, 'null', '', ' "verrous"}')]],
+        expected=[('search', '{"query": "verrous"}', IsStr(regex=r'pyd_ai_.+'))],
+    ),
+    StreamedToolCallsCase(
+        id='interleaved_fragments',
+        chunks=[
+            [(0, 'c1', 'search', '{"query": '), (1, 'c2', 'lookup', '{"city": ')],
+            [(0, 'null', '', '"verrous"}'), (1, 'null', '', '"Paris"}')],
+        ],
+        expected=[('search', '{"query": "verrous"}', 'c1'), ('lookup', '{"city": "Paris"}', 'c2')],
+    ),
+    StreamedToolCallsCase(
+        id='whole_calls_in_separate_chunks',
+        chunks=[[(0, 'c1', 'search', '{"query": "verrous"}')], [(1, 'c2', 'lookup', '{"city": "Paris"}')]],
+        expected=[('search', '{"query": "verrous"}', 'c1'), ('lookup', '{"city": "Paris"}', 'c2')],
+    ),
+    StreamedToolCallsCase(
+        id='whole_call_without_arguments',
+        chunks=[[(0, 'c1', 'ping', '')]],
+        expected=[('ping', '', 'c1')],
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in STREAMED_TOOL_CALLS_CASES])
+async def test_stream_tool_call_deltas(allow_model_requests: None, case: StreamedToolCallsCase):
+    """Streamed tool-call deltas accumulate per wire `index`, in shapes `test_mistral_stream_parallel_tool_calls` doesn't record.
+
+    A mock stream, since no live model was seen sending these shapes. Continuation deltas carry an empty name and the
+    SDK-default `'null'` id, which must not replace the call's own.
+    """
+    # Built inside the test so importing this module does not require the mistral package.
+    tool_call_chunks = [
+        func_chunk(
+            [
+                MistralToolCall(index=index, id=call_id, function=MistralFunctionCall(name=name, arguments=arguments))
+                for index, call_id, name, arguments in deltas
+            ],
+            finish_reason='tool_calls' if n == len(case.chunks) - 1 else None,
+        )
+        for n, deltas in enumerate(case.chunks)
+    ]
+    mock_client = MockMistralAI.create_stream_mock(
+        [tool_call_chunks, [text_chunk('final response', finish_reason='stop')]]
+    )
+    agent = Agent(MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client)))
+
+    @agent.tool_plain
+    def search(query: str) -> str:
+        return 'found'
+
+    @agent.tool_plain
+    def lookup(city: str) -> str:
+        return 'found'
+
+    @agent.tool_plain
+    def ping() -> str:
+        return 'pong'
+
+    async with agent.run_stream('User prompt value') as result:
+        await result.get_output()
+
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    assert [(call.tool_name, call.args, call.tool_call_id) for call in response.tool_calls] == case.expected
+
+
+PARALLEL_TOOL_CALLS_EXPECTATIONS: dict[str, tuple[list[tuple[str, dict[str, Any], str]], bool]] = {
+    'mistral-small-latest': snapshot(
+        (
+            [
+                ('get_weather', {'city': 'Paris'}, 'Fi65w8Plu'),
+                ('get_weather', {'city': 'London'}, 'NpJQUR1bV'),
+                ('get_time', {'tz': 'UTC'}, 'lPaisIfGU'),
+            ],
+            False,
+        )
+    ),
+    'zai-glm-5-3': snapshot(
+        (
+            [
+                ('get_weather', {'city': 'Paris'}, 'chatcmpl-tool-a3e7e88e93ca0b08'),
+                ('get_weather', {'city': 'London'}, 'chatcmpl-tool-9c49fd171e27c24f'),
+                ('get_time', {'tz': 'UTC'}, 'chatcmpl-tool-9a5a1060e45bc189'),
+            ],
+            True,
+        )
+    ),
+}
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize('model_name', ['mistral-small-latest', 'zai-glm-5-3'])
+async def test_mistral_stream_parallel_tool_calls(allow_model_requests: None, mistral_api_key: str, model_name: str):
+    """Parallel tool calls survive streaming, whether a model sends each call whole or in fragments.
+
+    `mistral-small-latest` sends every call whole, all in one chunk, each under its own `index`. `zai-glm-5-3` splits
+    each call across chunks under its `index`: continuation fragments carry an empty name and the SDK-default `'null'`
+    id, and one chunk ends one call and starts the next. The expectation pins whether the stream was fragmented.
+    """
+    agent = Agent(MistralModel(model_name, provider=MistralProvider(api_key=mistral_api_key)))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'Sunny in {city}.'
+
+    @agent.tool_plain
+    def get_time(tz: str) -> str:
+        return f'12:00 in {tz}.'
+
+    tool_call_deltas = 0
+
+    async def count_tool_call_deltas(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal tool_call_deltas
+        async for event in stream:
+            if isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta):
+                tool_call_deltas += 1
+
+    result = await agent.run(
+        'Call get_weather for Paris, get_weather for London, and get_time for UTC. Call all three tools at once.',
+        event_stream_handler=count_tool_call_deltas,
+    )
+
+    response = result.all_messages()[1]
+    assert isinstance(response, ModelResponse)
+    tool_calls = [(call.tool_name, call.args_as_dict(), call.tool_call_id) for call in response.tool_calls]
+    assert (tool_calls, tool_call_deltas > 0) == PARALLEL_TOOL_CALLS_EXPECTATIONS[model_name]
+
+
 async def test_stream_tool_call_with_retry(allow_model_requests: None):
     completion = [
         [
@@ -3837,11 +3994,12 @@ async def test_reasoning_effort_not_sent_for_always_on_model(
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
-async def test_reasoning_effort_not_sent_without_config(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('model_name', ['mistral-small-latest', 'mistral-large-4'])
+async def test_reasoning_effort_not_sent_without_config(allow_model_requests: None, model_name: str) -> None:
     """Without any thinking config, reasoning_effort should be UNSET."""
     c = completion_message(MistralAssistantMessage(content='hello', role='assistant'))
     mock_client = MockMistralAI(completions=c)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     result = await agent.run('hello')
@@ -3849,24 +4007,34 @@ async def test_reasoning_effort_not_sent_without_config(allow_model_requests: No
     assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
-async def test_reasoning_effort_stream_with_unified_thinking(allow_model_requests: None) -> None:
-    """Unified thinking='high' should pass reasoning_effort='high' in streaming mode."""
+@pytest.mark.parametrize(
+    'model_name, thinking, expected',
+    [
+        pytest.param('mistral-small-latest', 'high', 'high', id='small-4-high'),
+        pytest.param('mistral-large-4', False, 'low', id='large-4-disable'),
+    ],
+)
+async def test_reasoning_effort_stream_with_unified_thinking(
+    allow_model_requests: None, model_name: str, thinking: ThinkingLevel, expected: str
+) -> None:
+    """Unified `thinking` maps to the same `reasoning_effort` in streaming mode as in `request`."""
     stream = [text_chunk('hello '), text_chunk('world', finish_reason='stop')]
     mock_client = MockMistralAI(stream=stream)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
-    async with agent.run_stream('hello', model_settings=MistralModelSettings(thinking='high')) as result:
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(thinking=thinking)) as result:
         text = await result.get_output()
     assert text == 'hello world'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'high'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected
 
 
-async def test_reasoning_effort_stream_not_sent_without_config(allow_model_requests: None) -> None:
+@pytest.mark.parametrize('model_name', ['mistral-small-latest', 'mistral-large-4'])
+async def test_reasoning_effort_stream_not_sent_without_config(allow_model_requests: None, model_name: str) -> None:
     """Without any thinking config, reasoning_effort should be UNSET in streaming mode."""
     stream = [text_chunk('hello', finish_reason='stop')]
     mock_client = MockMistralAI(stream=stream)
-    m = MistralModel('mistral-small-latest', provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
     agent = Agent(m)
 
     async with agent.run_stream('hello') as result:
@@ -3908,33 +4076,121 @@ async def test_reasoning_effort_stream_with_tools(allow_model_requests: None) ->
 
 
 @pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
-async def test_large4_adjustable_reasoning_sends_reasoning_effort_high(
-    allow_model_requests: None, model_name: str
+@pytest.mark.parametrize(
+    'thinking, expected_reasoning_effort',
+    [
+        (False, 'low'),
+        ('minimal', 'low'),
+        ('low', 'low'),
+        ('medium', 'medium'),
+        (True, 'high'),
+        ('high', 'high'),
+        ('xhigh', 'high'),
+        ('max', 'high'),
+    ],
+)
+async def test_large4_requested_efforts_map_to_closest_supported_level(
+    allow_model_requests: None, model_name: str, thinking: ThinkingLevel, expected_reasoning_effort: str
 ) -> None:
-    """Large 4 ids behave like the Small 4/Medium 3.5 ids: `thinking=True` maps to `reasoning_effort='high'`."""
+    """Large 4 accepts `'low'`/`'medium'`/`'high'` and can't turn reasoning off, so `thinking=False` sends `'low'`.
+
+    A unit test, so every level on both ids is pinned without a recording each; `test_thinking_wire_contract.py`
+    records the `False`, `'medium'` and unset cases against the API.
+    """
     c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
     mock_client = MockMistralAI(completions=c)
     m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
+    assert result.output == 'thought deeply'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected_reasoning_effort
+
+
+@pytest.mark.parametrize(
+    'reasoning_efforts, thinking, expected_reasoning_effort',
+    [
+        pytest.param(frozenset({'none', 'high'}), False, 'none', id='false-none-accepted'),
+        pytest.param(frozenset({'none', 'high'}), 'low', 'high', id='lowest-at-or-above'),
+        pytest.param(frozenset({'low', 'medium'}), 'high', 'medium', id='highest-below'),
+    ],
+)
+async def test_reasoning_efforts_profile_override(
+    allow_model_requests: None,
+    reasoning_efforts: frozenset[MistralReasoningEffort],
+    thinking: ThinkingLevel,
+    expected_reasoning_effort: str,
+) -> None:
+    """A user's `profile=` overrides the provider's `mistral_reasoning_efforts`.
+
+    A unit test: these effort sets come only from a user `profile=`, which no Mistral model serves to record.
+    """
+    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel(
+        'mistral-large-4',
+        provider=MistralProvider(mistral_client=cast(Mistral, mock_client)),
+        profile=MistralModelProfile(mistral_reasoning_efforts=reasoning_efforts),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=thinking))
+    assert result.output == 'thought deeply'
+    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == expected_reasoning_effort
+
+
+async def test_empty_reasoning_efforts_omits_reasoning_effort(allow_model_requests: None) -> None:
+    """A profile that accepts no `reasoning_effort` value sends none.
+
+    A unit test: an empty effort set comes only from a user `profile=`, which no Mistral model serves to record.
+    """
+    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
+    mock_client = MockMistralAI(completions=c)
+    m = MistralModel(
+        'mistral-large-4',
+        provider=MistralProvider(mistral_client=cast(Mistral, mock_client)),
+        profile=MistralModelProfile(mistral_reasoning_efforts=frozenset()),
+    )
     agent = Agent(m)
 
     result = await agent.run('hello', model_settings=MistralModelSettings(thinking=True))
     assert result.output == 'thought deeply'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'high'
+    assert isinstance(mock_client.chat_completion_kwargs[-1]['reasoning_effort'], MistralUnset)
 
 
-@pytest.mark.parametrize('model_name', ['mistral-large-4', 'mistral-large-4-0'])
-async def test_large4_thinking_disabled_sends_reasoning_effort_none(
-    allow_model_requests: None, model_name: str
+@pytest.mark.parametrize(
+    'reasoning_efforts, thinking, expected_reasoning_effort',
+    [
+        pytest.param(frozenset({'none', 'high'}), False, 'none', id='false-none-accepted'),
+        pytest.param(frozenset({'none', 'high'}), 'low', 'high', id='lowest-at-or-above'),
+        pytest.param(frozenset({'low', 'medium'}), 'high', 'medium', id='highest-below'),
+        pytest.param(frozenset[str](), True, None, id='empty-omits'),
+    ],
+)
+async def test_reasoning_efforts_profile_override_stream(
+    allow_model_requests: None,
+    reasoning_efforts: frozenset[MistralReasoningEffort],
+    thinking: ThinkingLevel,
+    expected_reasoning_effort: str | None,
 ) -> None:
-    """Large 4 ids behave like the Small 4/Medium 3.5 ids: only `thinking=False` maps to `reasoning_effort='none'`."""
-    c = completion_message(MistralAssistantMessage(content='thought deeply', role='assistant'))
-    mock_client = MockMistralAI(completions=c)
-    m = MistralModel(model_name, provider=MistralProvider(mistral_client=cast(Mistral, mock_client)))
+    """A user's `profile=` sets `reasoning_effort` in streaming mode as in `request`; `None` expects it omitted.
+
+    A unit test: these effort sets come only from a user `profile=`, which no Mistral model serves to record.
+    """
+    stream = [text_chunk('hello '), text_chunk('world', finish_reason='stop')]
+    mock_client = MockMistralAI(stream=stream)
+    m = MistralModel(
+        'mistral-large-4',
+        provider=MistralProvider(mistral_client=cast(Mistral, mock_client)),
+        profile=MistralModelProfile(mistral_reasoning_efforts=reasoning_efforts),
+    )
     agent = Agent(m)
 
-    result = await agent.run('hello', model_settings=MistralModelSettings(thinking=False))
-    assert result.output == 'thought deeply'
-    assert mock_client.chat_completion_kwargs[-1]['reasoning_effort'] == 'none'
+    async with agent.run_stream('hello', model_settings=MistralModelSettings(thinking=thinking)) as result:
+        text = await result.get_output()
+    assert text == 'hello world'
+    sent = mock_client.chat_completion_kwargs[-1]['reasoning_effort']
+    assert (None if isinstance(sent, MistralUnset) else sent) == expected_reasoning_effort
 
 
 #####################
@@ -4180,7 +4436,7 @@ async def test_mistral_foreign_tool_call_ids_are_rewritten(
 async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
     allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture, image_content: BinaryImage
 ):
-    """The `<tool_result>` tags framing a tool's image name the same rewritten ID as the call and its tool message."""
+    """The `<pyai:tool_result>` tags framing a tool's image name the same rewritten ID as the call and its tool message."""
     provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
     agent = Agent(MistralModel('mistral-small-latest', provider=provider))
 
@@ -4204,8 +4460,66 @@ async def test_mistral_tool_result_tags_name_the_rewritten_tool_call_id(
         for message in cast(list[dict[str, Any]], body['messages'])
         if message['role'] == 'user' and isinstance(message['content'], list)
         for chunk in cast(list[dict[str, Any]], message['content'])
-        if chunk['type'] == 'text' and chunk['text'].startswith('<tool_result')
+        if chunk['type'] == 'text' and chunk['text'].startswith('<pyai:tool_result')
     ]
-    assert tags == snapshot(
-        [f'<tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">']
+    assert tags == [
+        f'<pyai:tool_result tool_name="get_image" tool_call_id="2pESUE4jw" file_id="{image_content.identifier}">'
+    ]
+
+
+async def test_empty_choices_raise_model_empty_response_error(allow_model_requests: None):
+    """A completion without choices is a model error, so `FallbackModel` falls back on it, rather than an `AssertionError`.
+
+    Mocked because no provider returns a completion without choices on demand.
+    """
+    response = completion_message(MistralAssistantMessage(content='unused'))
+    response.choices = []
+    model = MistralModel(
+        'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_mock(response))
     )
+
+    with pytest.raises(ModelEmptyResponseError, match='Empty response from mistral: no choices') as exc_info:
+        await Agent(model).run('hello')
+    assert exc_info.value.model_name == 'mistral-large-latest'
+    assert exc_info.value.body == snapshot(
+        {
+            'id': '123',
+            'object': 'chat.completion',
+            'model': 'mistral-large-123',
+            'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 1},
+            'created': 1704067200,
+            'choices': [],
+        }
+    )
+
+
+async def test_choice_without_message_raises_model_empty_response_error(allow_model_requests: None):
+    """Mocked because no provider returns a choice without a message on demand."""
+    response = completion_message(MistralAssistantMessage(content='unused'))
+    response.choices[0].message = None
+    model = MistralModel(
+        'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_mock(response))
+    )
+
+    with pytest.raises(ModelEmptyResponseError, match='Unexpected empty response message from Mistral') as exc_info:
+        await Agent(model).run('hello')
+    assert exc_info.value.body == snapshot(
+        {
+            'id': '123',
+            'object': 'chat.completion',
+            'model': 'mistral-large-123',
+            'usage': {'prompt_tokens': 1, 'completion_tokens': 1, 'total_tokens': 1},
+            'created': 1704067200,
+            'choices': [{'index': 0, 'finish_reason': 'stop'}],
+        }
+    )
+
+
+async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None):
+    """Mocked because no provider sends an empty stream on demand."""
+    mock_client = MockMistralAI.create_stream_mock([[]])
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('hello'):
+            pass

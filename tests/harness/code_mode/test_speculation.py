@@ -43,6 +43,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDen
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.code_mode import (
     CodeMode,
     CodeModeToolset,
@@ -102,6 +103,7 @@ def build_agent(
     extra_capabilities: Sequence[AbstractCapability[None]] = (),
     raw_args: str | None = None,
     name: str | None = None,
+    tools: Sequence[Tool[None]] = (),
 ) -> Agent[None, str]:
     """Agent whose model streams one `run_code` call for `code` in `chunk_size` pieces."""
 
@@ -131,7 +133,7 @@ def build_agent(
 
     model = FunctionModel(call_code, stream_function=stream_code)
     agent: Agent[None, str] = Agent(
-        model, name=name, deps_type=type(None), capabilities=[capability, *extra_capabilities]
+        model, name=name, deps_type=type(None), tools=tools, capabilities=[capability, *extra_capabilities]
     )
 
     @agent.tool_plain
@@ -186,6 +188,33 @@ class TestSpeculation:
         assert capability.speculation_stats.launched == 1
         assert capability.speculation_stats.adopted == 1
         assert capability.speculation_stats.evicted == 0
+
+    async def test_renamed_parameters_launch_under_their_schema_names(self):
+        """A speculated call passes a keyword-named parameter to the tool under its schema name."""
+        log = ToolLog()
+
+        async def lookup(**kwargs: Any) -> str:
+            # Speculation launches the call while the model is still streaming the snippet.
+            assert not log.streaming_done
+            log.started_during_stream += 1
+            log.calls.append(('lookup', json.dumps(kwargs)))
+            return 'found'
+
+        tool = Tool[None].from_schema(
+            lookup,
+            name='lookup',
+            description='Look up a sender.',
+            json_schema={'type': 'object', 'properties': {'from': {'type': 'string'}}, 'required': ['from']},
+        )
+        capability = CodeMode[None](speculate=['lookup'])
+        agent = build_agent(log, padded('a = await lookup(from_="alpha")\nprint(a)'), capability, tools=[tool])
+
+        result = await agent.run('go')
+
+        assert result.output == 'done'
+        assert log.calls == [('lookup', '{"from": "alpha"}')]
+        assert log.started_during_stream == 1
+        assert capability.speculation_stats.adopted == 1
 
     async def test_disabled_by_default_runs_cold(self):
         """Without `speculate`, nothing launches early and behavior is unchanged."""
@@ -780,7 +809,7 @@ class TestSpeculationEdgeCases:
         launches = [e for e in seen if isinstance(e, SpeculativeCallLaunchedEvent)]
         assert [e.wrapped_tool_name for e in launches] == ['search']
         updates = [e for e in seen if isinstance(e, SpeculativeCodeUpdateEvent)]
-        assert updates[-1].closed_statements == 1
+        assert updates[-1].closed_statement_count == 1
         assert run_capability.speculation_stats.evicted == 1
 
     async def test_watcher_handles_dict_args_odd_indexes_and_caps_launches(self):
@@ -829,12 +858,33 @@ class TestSpeculationEdgeCases:
             # launches at the limit.
             assert run_capability.speculation_stats.launched == 32
             assert toolset.speculation is not None
-            await toolset.speculation.close()
+            await toolset.speculation.aclose()
 
         # Run-end cleanup cancels what no snippet claimed, without eviction events: the stream
         # is closed by then.
         assert run_capability.speculation_stats.evicted == 32
         assert not [e for e in emitted(ctx) if isinstance(e, SpeculativeCallEvictedEvent)]
+
+    async def test_close_is_a_deprecated_alias_of_aclose(self) -> None:
+        def search(query: str) -> str:
+            """Return a canned result."""
+            return f'result:{query}'  # pragma: no cover - the launch is cancelled before the body runs
+
+        part = ToolCallPart(
+            tool_name='run_code', args='{"code": "a = await search(query=\\"alpha\\")"}', tool_call_id='c1'
+        )
+        async with prepared_toolset([Tool(search)], CodeMode[None](speculate=['search'])) as (
+            run_capability,
+            toolset,
+            ctx,
+            _run_code,
+        ):
+            await observe(run_capability, ctx, [PartStartEvent(index=0, part=part), PartEndEvent(index=0, part=part)])
+            assert (run_capability.speculation_stats.launched, run_capability.speculation_stats.evicted) == (1, 0)
+            assert toolset.speculation is not None
+            with pytest.warns(HarnessDeprecationWarning, match=r'`SpeculationCoordinator\.close\(\)` has been renamed'):
+                await toolset.speculation.close()
+            assert run_capability.speculation_stats.evicted == 1
 
     @pytest.mark.parametrize(
         ('padding_lines', 'chunk_size', 'prefetched'),
@@ -1222,11 +1272,11 @@ class TestSpeculationEvents:
         claims = [e for e in events if isinstance(e, SpeculativeCallClaimedEvent)]
         assert len(updates) > 1
         assert updates[-1].code.startswith('a = await search')
-        closed_counts = [e.closed_statements for e in updates]
+        closed_counts = [e.closed_statement_count for e in updates]
         assert closed_counts == sorted(closed_counts)
         assert [e.kind for e in launches] == ['code_mode.speculative_call_launched']
         launch = launches[0]
-        assert launch.sandbox_function == 'search'
+        assert launch.sandbox_function_name == 'search'
         assert launch.wrapped_tool_name == 'search'
         assert launch.arguments == {'query': 'alpha'}
         assert (launch.line_start, launch.line_end) == (1, 1)

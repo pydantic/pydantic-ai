@@ -34,7 +34,8 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.messages import ModelRequest, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
@@ -44,16 +45,13 @@ from pydantic_ai.tools import (
     matches_tool_selector,
 )
 from pydantic_ai.toolsets import AbstractToolset, PreparedToolset
-from pydantic_ai_harness._background_completion import (
-    escape_tool_result_body,
-    make_background_completion,
-    tool_result_tags,
-)
+from pydantic_ai_harness._background_completion import BackgroundToolResultPart, make_background_result
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai.capabilities import WrapRunHandler, WrapToolExecuteHandler
     from pydantic_ai.run import AgentRunResult
+    from pydantic_ai.tool_manager import ToolManager
 
 
 _INSTRUCTIONS = """\
@@ -69,13 +67,23 @@ _RUN_IN_BACKGROUND_SCHEMA = {
     'description': 'Set to true to keep working and get the result later as a follow-up message.',
 }
 
-_backgrounded_call: ContextVar[ToolCallPart | None] = ContextVar('_backgrounded_call', default=None)
+_backgrounded_call: ContextVar[ToolCallPart | None] = ContextVar(
+    'pydantic_ai_harness.background_tools.backgrounded_call', default=None
+)
 """The tool call a background task is running, so another `BackgroundTools` instance does not schedule it again."""
 
 
 def _instructions(ctx: RunContext[Any]) -> str | None:
     # Realtime sessions run tools concurrently already; see `_background_mode`.
     return None if ctx.realtime else _INSTRUCTIONS
+
+
+def _position_in_response(ctx: RunContext[Any], call: ToolCallPart) -> int:
+    """The call's position among the tool calls of the response being executed, the last one in the history."""
+    response = next((message for message in reversed(ctx.messages) if isinstance(message, ModelResponse)), None)
+    call_ids = [part.tool_call_id for part in response.tool_calls] if response else []
+    # A call the model didn't make, such as one a capability builds and runs itself, sorts after the step's own.
+    return call_ids.index(call.tool_call_id) if call.tool_call_id in call_ids else len(call_ids)
 
 
 def _dispatched_by_tool(ctx: RunContext[Any]) -> bool:
@@ -108,7 +116,13 @@ class _Completion:
 
     tool_name: str
     max_retries: int
-    content: tuple[UserContent, ...]
+    result: BackgroundToolResultPart
+    dispatched: tuple[int, int]
+    """Where the model made the call: the run step, and the call's position in that step's response.
+
+    Both are part of the recorded history, so a replay sorts the results the same way, however the calls' hooks
+    were scheduled.
+    """
     retry: Exception | None = None
     """The failure that counts toward the tool's `max_retries`, when the call is to be retried."""
     succeeded: bool = False
@@ -119,14 +133,25 @@ _Outcome = _Completion | BaseException
 """What a finished background task hands to the run: the completed call, or the error that ends the run."""
 
 
+def _raise_if_retries_exhausted(tool_manager: ToolManager[Any], completion: _Completion) -> None:
+    """Raise if a retry would take the tool past its `max_retries`, which ends the run as for a sequential call."""
+    assert tool_manager.ctx is not None  # Set once the run has started.
+    if tool_manager.ctx.retries.get(completion.tool_name, 0) >= completion.max_retries:
+        raise UnexpectedModelBehavior(
+            f'Tool {completion.tool_name!r} exceeded max retries count of {completion.max_retries}. '
+            'Consider raising the retry limit, or see the docs on tool retries: '
+            'https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
+        ) from completion.retry
+
+
 _SignalledError = (
     ApprovalRequired | CallDeferred | ToolRetryError | ToolFailedError | ModelRetry | ToolFailed | ValidationError
 )
 """Errors a background task reports to the model as a failed result instead of ending the run."""
 
 
-def _format_background_failure(tool_name: str, task_id: str, error: _SignalledError) -> TextContent:
-    """Describe a tool-signalled failure to the model, framed as the call's failed result."""
+def _format_background_failure(tool_name: str, task_id: str, error: _SignalledError) -> BackgroundToolResultPart:
+    """Describe a tool-signalled failure to the model, as the call's failed result."""
     if isinstance(error, (ApprovalRequired, CallDeferred)):
         message = f'{type(error).__name__} was raised; background tools cannot defer a running task.'
     else:
@@ -140,15 +165,12 @@ def _format_background_failure(tool_name: str, task_id: str, error: _SignalledEr
             content = error.tool_retry.content
         else:
             content = error.tool_failed.content
-        message = escape_tool_result_body(content) if isinstance(content, str) and content else type(error).__name__
-    open_tag, close_tag = tool_result_tags(tool_name, task_id, failed=True)
-    return make_background_completion(f'{open_tag}\n{message}\n{close_tag}', task_id)
+        message = content if isinstance(content, str) and content else type(error).__name__
+    return make_background_result(tool_name, task_id, message, failed=True)
 
 
-def _format_background_result(
-    tool_name: str, task_id: str, result: Any
-) -> tuple[TextContent, *tuple[UserContent, ...]]:
-    """Format a tool result as model-visible user content with completion metadata."""
+def _format_background_result(tool_name: str, task_id: str, result: Any) -> BackgroundToolResultPart:
+    """The call's result as model-visible content: the return value, its files, then any `ToolReturn.content`."""
     if isinstance(result, ToolReturn):
         return_value: object = result.return_value
         extra_content = result.content
@@ -158,22 +180,21 @@ def _format_background_result(
 
     return_part = ToolReturnPart(tool_name=tool_name, tool_call_id=task_id, content=return_value)
     # The frame's attributes name the call the "running in background" reply announced, so the result needs no
-    # preamble. `ToolReturn.content` follows the frame unwrapped, as core sends it: content the tool author chose
-    # to add for the model.
-    open_tag, close_tag = tool_result_tags(tool_name, task_id)
-    completion_text = f'{open_tag}\n{escape_tool_result_body(return_part.model_response_str())}'
-    files = return_part.files
-    if not files:
-        completion_text = f'{completion_text}\n{close_tag}'
-    content: list[UserContent] = [completion_text, *files, close_tag] if files else [completion_text]
+    # preamble. `ToolReturn.content` is the tool's too, so it goes in the same frame, after what the tool returned.
+    content: list[UserContent] = [return_part.model_response_str(), *return_part.files]
     if isinstance(extra_content, str):
         content.append(extra_content)
     elif extra_content is not None:
         content.extend(extra_content)
-
-    if all(isinstance(item, str) for item in content):
-        return (make_background_completion('\n'.join(item for item in content if isinstance(item, str)), task_id),)
-    return (make_background_completion(completion_text, task_id), *content[1:])
+    # Adjacent text goes on separate lines, as one item.
+    merged: list[UserContent] = []
+    for item in content:
+        if isinstance(item, str) and merged and isinstance(merged[-1], str):
+            merged[-1] = f'{merged[-1]}\n{item}'
+        else:
+            merged.append(item)
+    body = merged[0] if len(merged) == 1 and isinstance(merged[0], str) else merged
+    return make_background_result(tool_name, task_id, body)
 
 
 @dataclass
@@ -247,6 +268,10 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     """Tools whose started message core counted as a success since the last node boundary."""
     _unsettled: list[_Completion] = field(default_factory=list[_Completion], init=False, repr=False, compare=False)
     """Delivered calls whose outcome has not been charged to the tool's retry count yet."""
+    _queued: dict[str, _Completion] = field(
+        default_factory=dict[str, _Completion], init=False, repr=False, compare=False
+    )
+    """Delivered calls by the ID `enqueue` returned, so a pause can take back the ones still queued."""
     _prepared_modes: dict[str, Literal['always', 'optional'] | None] = field(
         default_factory=dict[str, Literal['always', 'optional'] | None], init=False, repr=False, compare=False
     )
@@ -353,10 +378,11 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
 
         task_id = call.tool_call_id
         tool_name = call.tool_name
+        dispatched = (ctx.run_step, _position_in_response(ctx, call))
 
         def failure(error: _SignalledError, *, retry: Exception | None = None) -> _Completion:
-            content = (_format_background_failure(tool_name, task_id, error),)
-            return _Completion(tool_name, ctx.max_retries, content, retry=retry)
+            result = _format_background_failure(tool_name, task_id, error)
+            return _Completion(tool_name, ctx.max_retries, result, dispatched, retry=retry)
 
         async def _run() -> None:
             outcome: _Outcome
@@ -367,32 +393,33 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 _backgrounded_call.set(call)
                 try:
                     result = await handler(args)
-                except ToolRetryError as e:
+                except ToolRetryError as exc:
                     # Core charged the tool body's `ModelRetry` to the issuing step, whose count the next step may
                     # already have carried over. `_settle` charges it on delivery instead, so it counts exactly once.
                     assert ctx.tool_manager is not None  # Set for every tool call.
                     ctx.tool_manager.failed_tools.discard(tool_name)
-                    outcome = failure(e, retry=e)
-                except (ModelRetry, ValidationError) as e:
+                    outcome = failure(exc, retry=exc)
+                except (ModelRetry, ValidationError) as exc:
                     # Raised by an execute hook such as `before_tool_execute`. Core counts it outside
                     # `wrap_tool_execute`, so `_settle` does.
-                    outcome = failure(e, retry=e)
-                except (ApprovalRequired, CallDeferred, ToolFailedError, ToolFailed) as e:
-                    outcome = failure(e)
-                except anyio.get_cancelled_exc_class() as e:
+                    outcome = failure(exc, retry=exc)
+                except (ApprovalRequired, CallDeferred, ToolFailedError, ToolFailed) as exc:
+                    outcome = failure(exc)
+                except anyio.get_cancelled_exc_class() as exc:
                     # Propagate cancellation delivered by any enclosing scope. If none is pending,
                     # the tool raised this itself and it ends the run like a sequential tool.
                     await anyio.lowlevel.checkpoint_if_cancelled()
-                    outcome = e
-                except BaseException as e:
+                    outcome = exc
+                except BaseException as exc:
                     # Unexpected failures, including an exhausted retry budget, end the run as they
                     # would for a sequential tool.
-                    outcome = e
+                    outcome = exc
                 else:
                     outcome = _Completion(
                         tool_name,
                         ctx.max_retries,
                         _format_background_result(tool_name, task_id, result),
+                        dispatched,
                         succeeded=True,
                     )
                 self._send.send_nowait(outcome)
@@ -421,19 +448,31 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         from pydantic_graph import End
 
         if isinstance(result, End) and isinstance(result.data.output, DeferredToolRequests):
-            # At a deferred-tool pause the end-of-run drain records arrived results in the history when the
-            # step's own request ends it. After a step whose calls all deferred it would turn them into
-            # another model request instead, so finished tasks are left unswept.
-            if isinstance(ctx.messages[-1], ModelRequest):
-                for outcome in self._arrived():
-                    self._deliver(ctx, outcome)
+            # A pause ends the run without another model request, so no later step would take a result that
+            # arrives after it: wait for every live task here, and the end-of-run drain records their results.
+            # An error, or a retry past the tool's budget, ends the run at once, so the run's task group cancels
+            # the tasks still live.
+            arrived = [self._completed_at_pause(ctx, outcome) for outcome in self._arrived()]
+            while self._live:
+                arrived.append(self._completed_at_pause(ctx, await self._outcomes.receive()))
+            # A task sends its outcome before it stops counting as live, so several can still be buffered here.
+            arrived.extend(self._completed_at_pause(ctx, outcome) for outcome in self._arrived())
+            self._requeue_in_dispatch_order(ctx, arrived)
+            # No later node will settle them, so a retry that exhausts its budget ends the run here.
+            self._settle(ctx)
             return result
 
         for outcome in self._arrived():
             self._deliver(ctx, outcome)
-        if isinstance(result, End) and self._live and not ctx.pending_messages:
+        if (
+            isinstance(result, End)
+            and self._live
+            and not ctx.pending_messages
+            and not isinstance(result.data.output, PendingModelResponse)
+        ):
             # The model is ending the run while tasks are still live: wait for the next outcome, so
-            # that the end-of-run drain turns its follow-up into another model request.
+            # that the end-of-run drain turns its follow-up into another model request. A run that ends with a
+            # `PendingModelResponse` ends once its request is submitted, so `wrap_run` cancels its live tasks.
             self._deliver(ctx, await self._outcomes.receive())
         return result
 
@@ -441,13 +480,41 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], *, node: AgentNode[AgentDepsT]
     ) -> AgentNode[AgentDepsT]:
         self._settle(ctx)
+        # Keep only the results a pause could still take back, so a long run doesn't hold every delivered one.
+        still_queued = {message.enqueue_id for message in ctx.pending_messages or ()}
+        self._queued = {enqueue_id: c for enqueue_id, c in self._queued.items() if enqueue_id in still_queued}
         return node
 
     def _deliver(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> None:
         if isinstance(outcome, BaseException):
             raise outcome
-        ctx.enqueue(*outcome.content)
+        self._enqueue(ctx, outcome)
         self._unsettled.append(outcome)
+
+    def _enqueue(self, ctx: RunContext[AgentDepsT], completion: _Completion) -> None:
+        enqueue_id = ctx.enqueue(completion.result)
+        assert enqueue_id is not None  # Only an empty call queues nothing.
+        self._queued[enqueue_id] = completion
+
+    def _completed_at_pause(self, ctx: RunContext[AgentDepsT], outcome: _Outcome) -> _Completion:
+        if isinstance(outcome, BaseException):
+            raise outcome
+        if outcome.retry is not None:
+            assert ctx.tool_manager is not None  # Set once the run has started.
+            _raise_if_retries_exhausted(ctx.tool_manager, outcome)
+        return outcome
+
+    def _requeue_in_dispatch_order(self, ctx: RunContext[AgentDepsT], arrived: list[_Completion]) -> None:
+        """Queue the results no request has carried yet in the order their calls were dispatched.
+
+        They arrive in whatever order the tasks finish, but the request recorded at a pause must come out the same
+        when a durable engine replays the run.
+        """
+        taken_back = [completion for enqueue_id, completion in self._queued.items() if ctx.dequeue(enqueue_id)]
+        self._queued.clear()
+        self._unsettled.extend(arrived)
+        for completion in sorted([*taken_back, *arrived], key=lambda completion: completion.dispatched):
+            self._enqueue(ctx, completion)
 
     def _settle(self, ctx: RunContext[AgentDepsT]) -> None:
         """Charge delivered calls to the tool manager whose retry counts the next step carries over.
@@ -466,12 +533,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         unsettled, self._unsettled = self._unsettled, []
         for completion in unsettled:
             if completion.retry is not None:
-                if tool_manager.ctx.retries.get(completion.tool_name, 0) >= completion.max_retries:
-                    raise UnexpectedModelBehavior(
-                        f'Tool {completion.tool_name!r} exceeded max retries count of {completion.max_retries}. '
-                        'Consider raising the retry limit, or see the docs on tool retries: '
-                        'https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries'
-                    ) from completion.retry
+                _raise_if_retries_exhausted(tool_manager, completion)
                 tool_manager.failed_tools.add(completion.tool_name)
             elif completion.succeeded:
                 tool_manager.succeeded_tools.add(completion.tool_name)
@@ -493,12 +555,12 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         with self._send, self._outcomes:
             async with anyio.create_task_group() as self._task_group:
                 result = await handler()
-                # Tasks still live after a deferred-tool pause or `run_stream()` are dropped.
+                # Tasks still live after `run_stream()`, a `PendingModelResponse` end or an early stop are dropped.
                 self._task_group.cancel_scope.cancel()
             # An error from a task that finished after the last node boundary still ends the run.
-            for outcome in self._arrived():
-                if isinstance(outcome, BaseException):
-                    raise outcome
+            errors = [outcome for outcome in self._arrived() if isinstance(outcome, BaseException)]
+            if errors:
+                raise errors[0]
         # `result` is bound: the group re-raises the run's own exception, and no task cancels the group.
         assert result is not None
         return result

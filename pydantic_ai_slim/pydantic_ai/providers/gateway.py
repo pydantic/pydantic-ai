@@ -34,7 +34,7 @@ _HTTPClientT = TypeVar('_HTTPClientT', bound=AsyncHTTPClient)
 
 @overload
 def gateway_provider(
-    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'chat', 'responses'],
+    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'chat', 'responses', 'doubleword'],
     /,
     *,
     route: str | None = None,
@@ -162,7 +162,7 @@ def gateway_provider(
     canonical = normalize_gateway_provider(upstream_provider)
     if route is None:
         # Use the implied providerId as the default route.
-        route = _gateway_route(canonical)
+        route = _gateway_route(upstream_provider, canonical)
 
     base_url = _merge_url_path(base_url, route)
 
@@ -185,6 +185,7 @@ def gateway_provider(
         return _build_gateway_provider(
             lambda client: OpenAIProvider(api_key=api_key, base_url=base_url, http_client=client),
             api_key=api_key,
+            base_url=base_url,
             http_client=http_client,
             create_http_client=create_async_httpx2_client,
         )
@@ -203,6 +204,7 @@ def gateway_provider(
         return _build_gateway_provider(
             build_google_provider,
             api_key=api_key,
+            base_url=base_url,
             http_client=http_client,
             create_http_client=_create_google_httpx2_client,
         )
@@ -225,6 +227,7 @@ def gateway_provider(
         return _build_gateway_provider(
             build_anthropic_provider,
             api_key=api_key,
+            base_url=base_url,
             http_client=http_client,
             create_http_client=create_async_httpx2_client,
         )
@@ -238,6 +241,7 @@ def gateway_provider(
         return _build_gateway_provider(
             lambda client: GroqProvider(api_key=api_key, base_url=base_url, http_client=client),
             api_key=api_key,
+            base_url=base_url,
             http_client=http_client,
             create_http_client=create_async_http_client,
         )
@@ -249,6 +253,7 @@ def _build_gateway_provider(
     build_provider: Callable[[_HTTPClientT], _ProviderT],
     *,
     api_key: str,
+    base_url: str,
     http_client: _HTTPClientT | None,
     create_http_client: Callable[[], _HTTPClientT],
 ) -> _ProviderT:
@@ -261,14 +266,14 @@ def _build_gateway_provider(
 
     def create_hooked_http_client() -> _HTTPClientT:
         client = create_http_client()
-        _add_request_hook(client, _GatewayRequestHook(api_key))
+        _add_request_hook(client, _GatewayRequestHook(api_key, base_url))
         return client
 
     own_http_client = http_client is None
     if http_client is None:
         http_client = create_hooked_http_client()
     else:
-        _add_request_hook(http_client, _GatewayRequestHook(api_key))
+        _add_request_hook(http_client, _GatewayRequestHook(api_key, base_url))
 
     provider = build_provider(http_client)
     if own_http_client:
@@ -317,13 +322,17 @@ def _set_google_ws_gateway_auth(client: GoogleClient, api_key: str) -> None:
 class _GatewayRequestHook:
     """Request hook for the gateway provider.
 
-    It adds the `"traceparent"` and `"Authorization"` headers to the request. Implemented as a
-    typed callable class (rather than a closure with a marker attribute) so that `_add_request_hook`
-    can dedupe the gateway's own hook via `isinstance` on repeated calls with the same client.
+    It adds the `"traceparent"` and `"Authorization"` headers to requests sent to the Gateway's scheme, host
+    and port, and leaves other requests on a shared client unchanged. Implemented as a typed callable
+    class (rather than a closure with a marker attribute) so that `_add_request_hook` can dedupe the
+    gateway's own hook via `isinstance` on repeated calls with the same client.
     """
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, base_url: str) -> None:
         self._api_key = api_key
+        url = httpx2.URL(base_url)
+        # httpx and httpx2 both lowercase the scheme and host, and report a scheme's default port as `None`.
+        self._scheme_host_port = (url.scheme, url.host, url.port)
 
     @overload
     async def __call__(self, request: httpx.Request) -> httpx.Request: ...
@@ -332,6 +341,9 @@ class _GatewayRequestHook:
     async def __call__(self, request: httpx2.Request) -> httpx2.Request: ...
 
     async def __call__(self, request: httpx.Request | httpx2.Request) -> httpx.Request | httpx2.Request:
+        if (request.url.scheme, request.url.host, request.url.port) != self._scheme_host_port:
+            return request
+
         from opentelemetry.propagate import inject
 
         headers: dict[str, Any] = {}
@@ -380,9 +392,21 @@ _GATEWAY_ROUTE_REMAP: dict[str, str] = {
 }
 
 
-def _gateway_route(provider: str) -> str:
-    """Translate a canonical provider name into the Gateway URL route segment."""
-    return _GATEWAY_ROUTE_REMAP.get(provider, provider)
+def _gateway_route(provider: str, canonical: str) -> str:
+    """The Gateway URL route segment for a `gateway/` provider name and its canonical name."""
+    name = provider.removeprefix('gateway/')
+    if name in _GATEWAY_ROUTE_APIS:
+        # A route with no provider of its own keeps its name.
+        return name
+    return _GATEWAY_ROUTE_REMAP.get(canonical, canonical)
+
+
+# Gateway routes with no Pydantic AI provider of their own, mapped to the canonical
+# class-lookup name of the API they speak. Unlike `_GATEWAY_PROVIDER_ALIASES`, the
+# URL route keeps the route name rather than following the API's default route.
+_GATEWAY_ROUTE_APIS: dict[str, str] = {
+    'doubleword': 'openai-chat',
+}
 
 
 # User-facing aliases resolved to canonical class-lookup names. `gateway/google` collapses
@@ -402,6 +426,8 @@ def normalize_gateway_provider(provider: str) -> str:
     Wire-value remapping for the Gateway URL belongs in `_gateway_route`.
     """
     provider = provider.removeprefix('gateway/')
+    if provider in _GATEWAY_ROUTE_APIS:
+        return _GATEWAY_ROUTE_APIS[provider]
     return _GATEWAY_PROVIDER_ALIASES.get(provider, provider)
 
 

@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, 
 from contextlib import asynccontextmanager
 
 import pytest
-from pydantic_monty import AsyncSnapshot, MontyComplete
+from pydantic_monty import AsyncSnapshot
 
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs
@@ -314,9 +314,7 @@ class TestEagerCodeMode:
         calls: list[str] = []
         original_run = MontyExecutor.run
 
-        async def observe_refusal(
-            self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]
-        ) -> MontyComplete:
+        async def observe_refusal(self: MontyExecutor, feed_start: Callable[[], Awaitable[AsyncSnapshot]]) -> object:
             try:
                 return await original_run(self, feed_start)
             finally:
@@ -369,7 +367,7 @@ class TestEagerCodeMode:
         assert calls == ['alpha', 'beta']
 
     async def test_monty_limits_apply_to_eager_fragments(self):
-        capability = CodeMode[None](eager=True, resource_limits={'max_duration_secs': 0.3})
+        capability = CodeMode[None](eager=True, resource_limits={'max_duration_seconds': 0.3})
         code = 'y = 0\nfor i in range(100_000_000):\n    y += i\nz = 1\nz'
 
         async with prepared_eager_toolset([], capability) as (capability, toolset, ctx, run_code):

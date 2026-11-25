@@ -1,0 +1,89 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-4-hydrogen:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "224"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is 2+2? Reply with just the number.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+          thinkingConfig:
+            include_thoughts: true
+            thinking_level: XHIGH
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=3081
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: |+
+                Okay, here's my process, distilled into a first-person account, focusing on the core of the reasoning:
+
+                **My Thought Process: A Quick Calculation and Formatted Response**
+
+                Alright, I've got the question: "What is 2+2?" Simple enough. I see the constraint, "Reply with just the number." No need for elaborate explanations or linguistic flourishes - just the raw numerical answer.
+
+                First, I calculate the answer: $2 + 2 = 4$. That's the core operation; the math itself.
+
+                Next, I need to make sure I adhere to the formatting constraint, and so ensure that I'm only going to write the number `4`. No text, no symbols, nothing else. That's the only thing that I will produce.
+
+                Finally, a quick mental check: does the "4" answer the question, as a number? Yes. Does it obey the constraint of providing only the number? Also, yes. Therefore, I can safely assume that the formatted response will be satisfactory.
+
+
+              thought: true
+            - text: "4"
+              thoughtSignature: >-
+                EpwECpkEAWkUfRMLEg7yHtZSHdT5jQZ+VvGHIcTeAANwv0gXgypJ2hqxMY53FXI5EFMcG8rN2ZrTlgF3d5lSk+G/GBLya2VZYmOP1NxnOGBvPQAW89uTJfQGD0EmVvp6ZpbfPxP20LsBihmS3vT9wglQUfC5Gc9RO0vEq8Tv0tdi/JSwkdPEd5WSsFznjf7se6SEE/pzFs7foEo6b3X0j+n2GfgtaG6yA3+/q+SGBojfp8OsSVFrtj5TXCjhrqur8B/RM0ehjjhRqV/TySzzzGpbEL7RQM8zE0fQajVAAqWjtZuNCkg6AiVR3LglrKuEY/R3OqNz9NC+U4xAgik7jfreo1qB01OvSqkb1ArbXx85FOqDbIdecAt7aZYGfJm73jG8I/mK+agYle/pbBo8/ULN2KHwFd5UgrtoPBY7s2qldh2JAspiXW2cj6f23JXqjaj3gUb8NGSAYQdZfdp/jsIGWaUBajhBbIGHbvfethseZwsT8jm7pwMwvcVZtkdDTO31I3+b1aS5c2l0VFOqOzZMmUfjCoP6OgRu3YdpewDJ4pAlmhoXbSU2UXzEGE6aOtfht5f0DSi8eyKZfwlj6OhGgtA9zhdgprefZqdxJN4BgYKkGTanCDjKtYd19Aed/rrZgBnFOCnAxBH7//zfw9mT/gBI0JYIxAuZ/t/UCUq93snKIGU7PkAXrsCseXKWvq2Q3X17W2JOmycjT10c
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 44
+          candidatesTokenCount: 5
+          totalTokenCount: 177
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 44
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 5
+          thoughtsTokenCount: 128
+          serviceTier: standard
+        modelVersion: gemini-4-hydrogen
+        responseId: Ikv2aq_PG-Ob28oPscOqmAQ
+  recorded_at: 2026-11-12T23:26:29.319358+00:00

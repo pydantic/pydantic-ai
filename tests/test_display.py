@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import errno
 import importlib.util
 import os
@@ -23,6 +24,7 @@ from pydantic_ai.agent import _registered_capability_count  # pyright: ignore[re
 from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_graph import _utils as graph_utils
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -975,10 +977,22 @@ async def test_banner_is_shown_for_a_run_an_anyio_task_group_starts(monkeypatch:
 def test_banner_is_shown_for_a_run_on_its_own_thread(monkeypatch: pytest.MonkeyPatch, stderr: TTYStream):
     """Nothing but `threading` sits above a thread's run, which says nothing about who started it."""
     monkeypatch.setattr(sys, 'stderr', stderr)
+    # `run_sync` gives a thread without an event loop one that nothing closes. Closed here, as otherwise the garbage
+    # collector finds it unclosed in whichever test is running once the thread is gone.
+    get_event_loop = graph_utils.get_event_loop
+    loops: list[asyncio.AbstractEventLoop] = []
+
+    def recorded_event_loop() -> asyncio.AbstractEventLoop:
+        loops.append(get_event_loop())
+        return loops[-1]
+
+    monkeypatch.setattr(graph_utils, 'get_event_loop', recorded_event_loop)
     thread = threading.Thread(target=Agent(TestModel(), name='support_agent').run_sync, args=('hello',))
 
     thread.start()
     thread.join()
+    (loop,) = loops
+    loop.close()
 
     assert 'agent: support_agent' in stderr.getvalue()
 

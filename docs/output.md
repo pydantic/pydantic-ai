@@ -249,6 +249,8 @@ If desired, this marker class can be used alongside one or more [`ToolOutput`](#
 
 Like other output functions, text output functions can optionally take [`RunContext`][pydantic_ai.tools.RunContext] as the first argument, and can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the model to try again with modified arguments (or with a different output type).
 
+The text is passed as a `str`. A function whose argument is a Pydantic model, dataclass or `TypedDict` instead, even one with a single `str` field, raises a [`UserError`][pydantic_ai.exceptions.UserError] when the agent is created. To turn the text into a model, take a `str` and build the model inside the function. An alias on the `str` argument must not be another argument's name: the text goes to that argument instead, and the run fails when the `str` argument has no default or is positional-only.
+
 Some models cannot write text at all, and say so through [`supports_text_output=False`][pydantic_ai.profiles.ModelProfile.supports_text_output] on their profile — [decision models](models/decision.md) such as [TypeSafe's Jev](models/typesafe.md) are. On those, any `output_type` that leaves text output available is a [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent: the default `str`, a `str` among several output types, a `TextOutput` function, and [`PromptedOutput`](#prompted-output), which asks for its structured data as text. Give such a model a structured `output_type`, such as a `BaseModel` or a union of them, instead.
 
 !!! note
@@ -372,7 +374,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits. On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. [Groq](models/groq.md#structured-output) also cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits. On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -456,7 +458,7 @@ A run ends when the model produces a final result. That result usually comes fro
 !!! warning "Priority of output and deferred tools in streaming methods"
     The [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] and [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] methods will consider the first output that matches the [output type](output.md#structured-output) (which could be text, an [output tool](output.md#tool-output) call, or a [deferred](deferred-tools.md) tool call) to be the final output of the agent run, even when the model generates (additional) tool calls after this "final" output.
 
-    This means that if the model calls deferred tools before output tools when using these methods, the deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
+    This means that if the model streams text (with an output type like `str | Foo`, see [Streamed Results](#streamed-results)) or calls deferred tools before output tools when using these methods, that text or those deferred tool calls determine the agent run's final output, while the other [run methods](agent.md#running-agents) would have prioritized the tool output. Regardless of `end_strategy`, these methods commit the first matching output the instant it streams, so they behave like `'early'`: that result is locked in, and the [retry-after-tool-failure](#retrying-after-a-tool-failure) behavior below does not apply.
 
 | Strategy | Output tools | Function tools — output succeeded | Function tools — every output failed |
 |---|---|---|---|
@@ -486,6 +488,66 @@ Under the `'graceful'` and `'exhaustive'` [end strategies](#parallel-output-tool
 ##### Controlling output tool parallelism
 
 Like function tools, [output tools](#tool-output) run concurrently. Under the `'exhaustive'` [end strategy](#parallel-output-tool-calls), where multiple output tools can run in parallel, you can make an output tool a barrier with [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] — useful when you want all of a response's function tools to finish before the output tool runs. This is the output-tool counterpart of the `sequential=True` flag for function tools; see [Parallel tool calls & concurrency](tools-advanced.md#parallel-tool-calls-concurrency) for how the barrier behaves and how to run an entire run's tools serially.
+
+### Submitting output from a tool {#submit-output}
+
+Sometimes a tool already has everything the final output needs, such as records with long opaque IDs it just fetched. Rather than return them to the model and have it copy them into its output, which costs a model request and risks mistyped IDs, the tool can submit the output itself with [`RunContext.submit_output()`][pydantic_ai.tools.RunContext.submit_output]:
+
+```python {title="submit_output.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, RunContext
+
+
+class Invoice(BaseModel):
+    order_id: str
+    customer_id: str
+    total_cents: int
+
+
+agent = Agent('{{ openai:medium }}', output_type=Invoice)
+
+
+@agent.tool
+async def build_invoice(ctx: RunContext, order_id: str) -> str:
+    """Build the invoice for an order and submit it as the final output."""
+    order = {'id': order_id, 'customer': 'cus_Q8fZ3kLmW2', 'lines': [1250, 4999]}  # (1)!
+    await ctx.submit_output(
+        'final_result',
+        {'order_id': order['id'], 'customer_id': order['customer'], 'total_cents': sum(order['lines'])},
+    )
+    return 'Invoice submitted.'
+
+
+result = agent.run_sync('Draft the invoice for order ord_8Kq2Zp.')
+print(result.output)
+#> order_id='ord_8Kq2Zp' customer_id='cus_Q8fZ3kLmW2' total_cents=6249
+print(len(result.all_messages()))  # (2)!
+#> 3
+```
+
+1. In a real application, this would come from your database or an API.
+2. The user prompt, the model's `build_invoice` call, and the tool's return. There's no further model request.
+
+The names and arguments a tool can submit are in [`RunContext.output_tools`][pydantic_ai.tools.RunContext.output_tools], one [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] per output type, keyed by name like [`RunContext.tools`][pydantic_ai.tools.RunContext.tools]. They're the same whatever the [output mode](#output-modes): with [Tool Output](#tool-output) they're the agent's output tools, as the current step's [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] hooks left them (before the run's first step, as they're declared, though a submission is still checked against what those hooks leave), and with [Native Output](#native-output) or [Prompted Output](#prompted-output) they're the output tools Tool Output would have used. With a union output type, the name picks the member, so a tool never has to say which type a value is meant to be. Plain text output has one that takes the text as `response`. [Image output](#image-output) and [`DeferredToolRequests`](deferred-tools.md) can't be submitted.
+
+A submission is processed like output the model produces in the run's output mode: it goes through the same validation, [output functions](#output-functions), [output validators](#output-validator-functions), and [output validation](hooks.md#output-validation-hooks) and [processing](hooks.md#output-processing-hooks) hooks. So a run that ends on a submission still ends on output that matches `output_type`. Once it's accepted, the tool returns as usual, its result goes into message history, and its call counts as an output tool call at its position in the model's response: the run ends after the response's tool calls, as decided by the [`end_strategy`](#parallel-output-tool-calls). If the tool raises an error or asks for a retry after submitting, the submission is dropped.
+
+A rejected submission uses up one of the agent's output retries, like rejected output from the model. `submit_output()` then raises [`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError] carrying the validation errors. Let it propagate, and the model gets them as the result of the tool call, without the call counting against the tool's own retries. The errors say which fields failed and why, but not the values the tool submitted, which could hold data the tool didn't otherwise give the model. If your tool catches exceptions broadly, re-raise it: a tool that swallows it returns as if it succeeded, and the model never sees the errors.
+
+A capability's [tool execution hooks](hooks.md) for a tool call (`before_tool_execute`, `after_tool_execute` and `wrap_tool_execute`) can submit output on its behalf: their `ctx` belongs to that tool call, so the submission works exactly as if the tool made it. If a hook then skips the call's execution with [`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution], as a guardrail blocking it does, the submission is discarded: only a call that ran can end the run with its output.
+
+Other [capability hooks](capabilities/custom.md) can submit output too, such as a `before_model_request` hook that decides the run has what it needs, or an `after_model_request` hook that builds the output from the response. Such a submission isn't tied to a tool call, so the run ends with it at the next point it would otherwise continue:
+
+- Before the next model request is sent, from `before_model_request`, `prepare_model_request`, or any hook that runs before them, such as `before_run`, `wrap_run` before it calls its handler, or a node hook after the step's tool calls. That request isn't sent, but it stays in message history, so the tool returns it carries still answer their calls. A submission made before the step starts, such as from `before_run` or a node hook, ends the run before any of the step's request hooks run, including a `wrap_model_request` guard.
+- From `after_model_request`, as an output tool call at the start of the model's response, so the [`end_strategy`](#parallel-output-tool-calls) decides what happens to the response's tool calls and every one of them is answered.
+
+If a later hook then retries the step with [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], or asks for another attempt with [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], the submission is discarded along with the request or response it may have been built from.
+
+There's no tool call to answer, so a rejected submission doesn't use up an output retry. Instead, `submit_output()` raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] carrying the validation errors: catch it to submit again, or let it propagate to have the hook's usual `ModelRetry` behavior apply, such as a model retry from a model request hook. Only one submission from outside a tool call can be accepted per run, and not once the run has its final result. Output functions, output validators and output hooks can't submit output, as they run while output is being processed.
+
+!!! note "Durable execution"
+    A tool can only submit output from the code that runs the agent, because a durable engine replays a durable unit's recorded result without running it again, and the replay wouldn't submit the output. `submit_output()` raises a [`UserError`][pydantic_ai.exceptions.UserError] when the tool runs in a [Temporal](durable_execution/temporal.md) activity, a [DBOS](durable_execution/dbos.md) step or a [Prefect](durable_execution/prefect.md) task, including a step or task the tool's own code runs. Function tools run in their own activity with Temporal and their own task with Prefect, so opt a tool that submits output out of that with [`metadata={'temporal': False}`](durable_execution/temporal.md#per-tool-activity-config) or [`metadata={'prefect': False}`](durable_execution/prefect.md#tool-wrapping), which requires an `async` tool. DBOS runs function tools in the workflow, so they can submit output as they are. Alternatively, return the data for the model to copy into its output.
 
 ### Custom JSON schema {#structured-dict}
 
@@ -886,6 +948,41 @@ When the model returns an empty response and `None` is an allowed output type, t
 !!! note
     When using [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] with an optional output type, an empty model response has no intermediate values to yield, so [`stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output] produces an empty iterator in this case. Use [`get_output()`][pydantic_ai.result.StreamedRunResult.get_output] to retrieve the final `None` value instead.
 
+## Output cut off by the token limit {#truncated-output}
+
+A response that reaches the [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] model setting, or the model's own output limit, is cut off by the provider, and its [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] is `'length'`.
+
+Text output, such as `str` or a [`TextOutput`](#text-output) function, has no shape to check, so text that was cut off is the run's output like any other. When a complete answer matters, check the finish reason of the response it came from:
+
+```python {title="truncated_text_output.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def cut_off(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A deterministic stand-in for a model that reaches `max_tokens` mid-sentence.
+    return ModelResponse(
+        parts=[TextPart('The three largest cities are Tokyo, Delhi and')], finish_reason='length'
+    )
+
+
+agent = Agent(FunctionModel(cut_off))
+result = agent.run_sync('Name the three largest cities.', model_settings={'max_tokens': 10})
+print(result.output)
+#> The three largest cities are Tokyo, Delhi and
+if result.response.finish_reason == 'length':
+    print('The answer was cut off.')
+    #> The answer was cut off.
+```
+
+Structured output is validated, so output that was cut off is usually caught:
+
+- With [`NativeOutput`](#native-output) or [`PromptedOutput`](#prompted-output), text that was cut off into JSON that doesn't parse raises [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] with a message naming the token limit, in [`run()`][pydantic_ai.agent.AbstractAgent.run] and [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] alike. The model isn't asked to try again, as it would run into the same limit. Text that was cut off but still parses is validated as usual, so it's the output when it's valid, and is retried when the schema or an [output validator](#output-validator-functions) rejects it.
+- With [tool output](#tool-output), an output tool call whose arguments were cut off into JSON that doesn't parse raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] right away, in `run()` and `run_stream()` alike. Arguments that were cut off but still parse are validated as usual, and are retried when the schema or an output validator rejects them.
+- A response that was cut off before it produced any output, say while the model was [thinking](capabilities/thinking.md), raises `OutputTokenLimitExceeded`.
+
+To get the whole answer, raise `max_tokens`, ask for a shorter one, or have [another model take over](capabilities/model-fallback.md#token-limit).
+
 ## Streamed Results
 
 There two main challenges with streamed results:
@@ -896,6 +993,10 @@ There two main challenges with streamed results:
 !!! note
     As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
     it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+
+    That first output can be text. With an output type that allows both text and [tool output](#tool-output), like `output_type=str | Foo`,
+    text the model streams before it calls the output tool becomes the run's output, and the output tool call is not used.
+    [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], `run_stream_events()` and `iter()` return the output tool's result.
 
     If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
     use [`agent.run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] ([docs](agent.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agent.md#streaming-all-events-and-output)) instead.

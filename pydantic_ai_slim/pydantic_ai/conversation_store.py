@@ -14,7 +14,9 @@ both histories share. A fork points at an existing entry rather than copying the
 
 from __future__ import annotations as _annotations
 
+import bisect
 import dataclasses
+import functools
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from copy import deepcopy
@@ -22,22 +24,38 @@ from dataclasses import KW_ONLY
 from datetime import datetime
 from typing import Any, Literal
 
+from typing_extensions import TypedDict
+
 from . import messages as _messages, usage as _usage
 from ._conversation_marks import mark_stored, stored_boundary
 from ._deferred import DeferredToolRequests
-from ._utils import now_utc
+from ._utils import UNSET, Unset, now_utc
 from ._uuid import uuid7
 from .conversation import Conversation
 from .exceptions import UserError
 from .run import AgentRunResult
 
 __all__ = (
+    'ConversationDetails',
     'ConversationEntry',
     'ConversationRecord',
     'ConversationConflict',
     'ConversationStore',
     'InMemoryConversationStore',
 )
+
+
+class ConversationDetails(TypedDict, total=False):
+    """The fields of a [`ConversationRecord`][pydantic_ai.conversation_store.ConversationRecord] an update changes, or expects.
+
+    A key that's missing leaves that field as it is, and `None` clears it.
+    """
+
+    title: str | None
+    """The conversation's title."""
+
+    metadata: dict[str, Any] | None
+    """The conversation's metadata, which replaces the old."""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -93,6 +111,20 @@ class ConversationRecord:
     forked_at: str | None = None
     """The last entry of the history the fork kept, or `None` if it kept none or this conversation isn't a fork."""
 
+    title: str | None = None
+    """What the conversation is about, for a list of conversations to show.
+
+    Set with [`update`][pydantic_ai.conversation_store.ConversationStore.update], by the user or by an
+    agent that titles the conversation after its first turn. A save never changes it.
+    """
+
+    metadata: dict[str, Any] | None = None
+    """Anything else the app keeps about the conversation, such as the model the user picked for it.
+
+    Set with [`update`][pydantic_ai.conversation_store.ConversationStore.update], which replaces it
+    whole. A save never changes it.
+    """
+
     branches: list[str] = dataclasses.field(default_factory=list[str])
     """The last entries of the branches this conversation has left, oldest first.
 
@@ -116,20 +148,23 @@ class ConversationRecord:
 
 
 class ConversationConflict(UserError):
-    """Raised when a conversation changed in the store since it was loaded, so saving it would lose those changes.
+    """Raised when a conversation changed in the store since it was read, so writing it would lose those changes.
 
-    It's an expected outcome when more than one writer saves the same conversation: catch it, load the
-    conversation again, and retry. It subclasses [`UserError`][pydantic_ai.exceptions.UserError], so a
-    broad `except UserError` catches it too.
+    It's an expected outcome when more than one writer changes the same conversation. Load it again
+    and decide what to do: after a save, run the turn again only if repeating its tool calls is safe;
+    after an [`update`][pydantic_ai.conversation_store.ConversationStore.update] whose
+    `expected_title` no longer matched, don't retry. It subclasses
+    [`UserError`][pydantic_ai.exceptions.UserError], so a broad `except UserError` catches it too.
     """
 
     conversation_id: str
     """The conversation that changed."""
 
-    def __init__(self, conversation_id: str):
+    def __init__(self, conversation_id: str, *, message: str | None = None):
         self.conversation_id = conversation_id
         super().__init__(
-            f'Conversation {conversation_id!r} was saved or deleted since it was loaded, '
+            message
+            or f'Conversation {conversation_id!r} was saved or deleted since it was loaded, '
             'or already exists in the store. Load it again before saving.'
         )
 
@@ -142,6 +177,10 @@ def _in_scope(record: ConversationRecord | None, scope: str | None) -> bool:
 def _left(branches: list[str], tip: str) -> list[str]:
     """`branches` with `tip`, the last entry of a history a conversation left, recorded as the newest."""
     return [*(entry for entry in branches if entry != tip), tip]
+
+
+def _part_count(messages: Sequence[_messages.ModelMessage]) -> int:
+    return sum(len(message.parts) for message in messages)
 
 
 class ConversationStore(ABC):
@@ -167,8 +206,10 @@ class ConversationStore(ABC):
     Pass `scope=` to the methods that read or change a stored conversation to keep it to its owner: a
     conversation saved with another scope is treated as one the store doesn't have.
 
-    A backend implements the five storage primitives below; the store works out which messages are new,
-    where a history branches, and what a fork shares.
+    A backend implements the five storage primitives below, plus the optional
+    [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details] to support
+    [`update`][pydantic_ai.conversation_store.ConversationStore.update]; the store works out which
+    messages are new, where a history branches, and what a fork shares.
     """
 
     async def load(
@@ -249,9 +290,11 @@ class ConversationStore(ABC):
         messages, up to the last one, as `new_message_index` says it holds, say after the
         conversation was serialized, or with all of them when it's `None`. Those that extend it are
         appended, and if it was rewritten, the messages from the first difference on branch off the
-        last message both share, keeping the old branch stored. Messages are matched with `==`, so a
-        change only to a field message equality ignores, like a file's `media_type` or `identifier`,
-        isn't stored.
+        last message both share, keeping the old branch stored. A run cleans the history it's sent
+        before it sets that index, merging a stored output tool result with its new prompt, say, so
+        the messages before the index can also match the stored ones they were cleaned from, not only
+        as many stored ones. Messages are matched with `==`, so a change only to a field message
+        equality ignores, like a file's `media_type` or `identifier`, isn't stored.
 
         The save is checked against the conversation's
         [`revision`][pydantic_ai.conversation.Conversation.revision]: it must be the stored one, or
@@ -298,20 +341,9 @@ class ConversationStore(ABC):
         else:
             # Compare only the stored messages the conversation says it holds, so a window isn't
             # taken for a history rewritten from its first message.
-            window = conversation.new_message_index
-            history = await self._history_of(record, limit=window) if record is not None else []
-            if history is None:
-                raise ConversationConflict(conversation_id)
-            shared = 0
-            for entry, message in zip(history, messages):
-                if entry.message != message:
-                    break
-                shared += 1
-            parent_id = history[shared - 1].id if shared else history[0].parent_id if history else None
-            unsaved = messages[shared:]
-            if shared < len(history):
-                # A rewritten history leaves the stored one as a branch.
-                branches = _left(branches, history[-1].id)
+            parent_id, unsaved, branches = await self._unsaved_after_history(
+                record, conversation_id, messages, branches, window=conversation.new_message_index
+            )
         new_entries: list[ConversationEntry] = []
         for message in unsaved:
             entry = ConversationEntry(parent_id=parent_id, message=message)
@@ -325,6 +357,8 @@ class ConversationStore(ABC):
             scope=scope if scope is not None else record.scope if record is not None else None,
             forked_from=record.forked_from if record is not None else None,
             forked_at=record.forked_at if record is not None else None,
+            title=record.title if record is not None else None,
+            metadata=record.metadata if record is not None else None,
             branches=branches,
         )
         await self.write_record(updated, new_entries=new_entries, expected_revision=expected_revision)
@@ -333,6 +367,94 @@ class ConversationStore(ABC):
         if result is not None:
             result._conversation_saved(updated.revision)  # pyright: ignore[reportPrivateUsage]
         return new_entries
+
+    async def _unsaved_after_history(
+        self,
+        record: ConversationRecord | None,
+        conversation_id: str,
+        messages: list[_messages.ModelMessage],
+        branches: list[str],
+        *,
+        window: int | None,
+    ) -> tuple[str | None, list[_messages.ModelMessage], list[str]]:
+        """Compare `messages` with the last `window` stored ones: the entry the rest follow, the rest, and the branches left."""
+        history = await self._history_of(record, limit=window) if record is not None else []
+        if history is None:
+            raise ConversationConflict(conversation_id)
+        shared = 0
+        for entry, message in zip(history, messages):
+            if entry.message != message:
+                break
+            shared += 1
+        if (
+            record is not None
+            and window is not None
+            and shared < len(history)
+            and await self._sent_as_cleaned(record, history, messages[:window])
+        ):
+            return record.head_id, messages[window:], branches
+        parent_id = history[shared - 1].id if shared else history[0].parent_id if history else None
+        if shared < len(history):
+            # A rewritten history leaves the stored one as a branch.
+            branches = _left(branches, history[-1].id)
+        return parent_id, messages[shared:], branches
+
+    async def _sent_as_cleaned(
+        self, record: ConversationRecord, history: list[ConversationEntry], sent: list[_messages.ModelMessage]
+    ) -> bool:
+        """Whether `sent` is the last stored messages as a run cleans the history it's sent, say merging adjacent requests.
+
+        `history` is the last `len(sent)` stored entries, as the save already read them. A history
+        that starts earlier never cleans to fewer messages or parts, so the entries before them are
+        read only until the stored ones clean to as many parts as `sent`, or to more messages, not the
+        whole history. Cleaning can also add a message, like a result for a tool call nothing
+        answered, so the history `sent` came from can be shorter than `sent`.
+
+        That holds because `repair_messages` drops a tool result only when no earlier message holds
+        its call, and otherwise only adds parts or merges adjacent messages. If a change to it broke
+        that, the search could miss the history `sent` came from, and the save would branch as if
+        `sent` had been edited.
+        """
+        parts = _part_count(sent)
+        stored = [entry.message for entry in history]
+        first, step, read = history[0], 0, len(stored)
+        cleaned = _messages.repair_messages(stored, repair_last_response=False)
+        while _part_count(cleaned) < parts and len(cleaned) <= len(sent) and first.parent_id is not None:
+            # A request that merges into the next one adds no message, so an entry read back can add none:
+            # read at least as many as are missing, and twice as many as last time.
+            step = max(len(sent) - len(cleaned), 2 * step, 1)
+            earlier = await self._history_of(record, up_to=first.parent_id, limit=step)
+            if earlier is None:
+                raise ConversationConflict(record.conversation_id)
+            if not earlier:
+                # A `read_history` that returns nothing for an entry it has can't be read further back.
+                return False
+            first, read = earlier[0], len(earlier)
+            stored = [*(entry.message for entry in earlier), *stored]
+            cleaned = _messages.repair_messages(stored, repair_last_response=False)
+        if _part_count(cleaned) < parts:
+            return False
+        if cleaned == sent:
+            return True
+
+        @functools.cache
+        def cleaned_from(start: int) -> list[_messages.ModelMessage]:
+            return _messages.repair_messages(stored[start:], repair_last_response=False)
+
+        def cleans_to_fewer_parts(start: int) -> bool:
+            return _part_count(cleaned_from(start)) < parts
+
+        # Starting a history one entry earlier adds a part for each entry cleaning keeps a part of, so
+        # only the latest start that cleans to as many parts as `sent` is compared: those before it
+        # differ only by messages cleaning keeps no part of, like a request of tool results whose calls
+        # came before it. It's among the entries read last, and usually near the first, as a stored
+        # history edited before it was sent cleans to about as many parts, so the search doubles its
+        # distance from the first before it bisects.
+        bound = 1
+        while bound < read and not cleans_to_fewer_parts(bound):
+            bound *= 2
+        latest = bisect.bisect_left(range(min(bound, read)), True, lo=bound // 2 + 1, key=cleans_to_fewer_parts)
+        return latest > 1 and cleaned_from(latest - 1) == sent
 
     async def branch(
         self,
@@ -412,6 +534,11 @@ class ConversationStore(ABC):
                     f'`at` must be between 0 and {len(history)}, the number of messages in the conversation.'
                 )
             return history[:keep]
+        return await self._history_to_entry(record, history, from_entry)
+
+    async def _history_to_entry(
+        self, record: ConversationRecord, history: list[ConversationEntry], from_entry: str
+    ) -> list[ConversationEntry]:
         for tip in [None, *reversed(record.branches)]:
             line = history if tip is None else await self.read_history(tip)
             for index, entry in enumerate(line):
@@ -492,6 +619,70 @@ class ConversationStore(ABC):
             raise UserError('`limit` must not be negative.')
         return list(await self.read_records(scope=scope, limit=limit))
 
+    async def update(
+        self,
+        conversation_id: str,
+        *,
+        title: str | None | Unset = UNSET,
+        metadata: dict[str, Any] | None | Unset = UNSET,
+        expected_title: str | None | Unset = UNSET,
+        scope: str | None = None,
+    ) -> ConversationRecord:
+        """Change a conversation's title or metadata.
+
+        These are its record's [`title`][pydantic_ai.conversation_store.ConversationRecord.title] and
+        [`metadata`][pydantic_ai.conversation_store.ConversationRecord.metadata]. Only what's passed
+        changes, and `None` clears it. An update doesn't change the conversation's
+        [`revision`][pydantic_ai.conversation.Conversation.revision], so it never makes a save of the
+        conversation conflict, and a save never undoes it. Of two updates to the same field at once,
+        the last one written wins.
+
+        Pass `expected_title` to change it only if the title is still that one, or with `None`, only
+        if it has none. An agent that titles conversations passes `expected_title=None`, so a title
+        the user set is never replaced.
+
+        Args:
+            conversation_id: The conversation to update.
+            title: Its new title.
+            metadata: Its new metadata, which replaces the old.
+            expected_title: The title it must still have for the update to be written.
+            scope: Only update it if it was saved with this scope.
+
+        Returns:
+            The record as stored after the update.
+
+        Raises:
+            UserError: If the store doesn't have the conversation.
+            ConversationConflict: If its title isn't `expected_title`. Nothing is written. Don't
+                retry with the title read back: that would replace the one set since.
+            NotImplementedError: If the backend doesn't implement
+                [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details].
+        """
+        details: ConversationDetails = {}
+        if not isinstance(title, Unset):
+            details['title'] = title
+        if not isinstance(metadata, Unset):
+            details['metadata'] = metadata
+        expected: ConversationDetails = {}
+        if not isinstance(expected_title, Unset):
+            expected['title'] = expected_title
+        while (record := await self._read_record(conversation_id, scope=scope)) is not None:
+            if 'title' in expected and record.title != expected['title']:
+                raise ConversationConflict(
+                    conversation_id,
+                    message=f'Conversation {conversation_id!r} is titled {record.title!r}, '
+                    f'not {expected_title!r}, so it was not updated.',
+                )
+            if not details:
+                return record
+            try:
+                return await self.write_details(
+                    conversation_id, details, expected_revision=record.revision, expected=expected
+                )
+            except ConversationConflict:
+                continue  # Saved, replaced or retitled since it was read: check it again.
+        raise UserError(f'Conversation {conversation_id!r} is not in the store.')
+
     async def delete(self, conversation_id: str, *, scope: str | None = None) -> None:
         """Delete a conversation, so it no longer loads or lists.
 
@@ -514,15 +705,15 @@ class ConversationStore(ABC):
         return record if _in_scope(record, scope) else None
 
     async def _history_of(
-        self, record: ConversationRecord, *, limit: int | None = None
+        self, record: ConversationRecord, *, limit: int | None = None, up_to: str | None = None
     ) -> list[ConversationEntry] | None:
-        """`record`'s history, or `None` if another writer replaced or deleted the record while it was read.
+        """`record`'s history, or the part of it up to the entry `up_to`, or `None` if another writer replaced or deleted the record while it was read.
 
         A backend that reads the record and its history separately can find entries gone that a
         concurrent save or delete released. That is only an error when the record is unchanged.
         """
         try:
-            return await self.read_history(record.head_id, limit=limit)
+            return await self.read_history(record.head_id if up_to is None else up_to, limit=limit)
         except LookupError:
             current = await self.read_record(record.conversation_id)
             if current is not None and current.revision == record.revision:
@@ -561,7 +752,9 @@ class ConversationStore(ABC):
         """Store a record and the new entries its history adds, replacing the record with `expected_revision`.
 
         `new_entries` are in order, each after the one it points at. A backend that can should
-        store them and the record together, so a conflict leaves neither behind.
+        store them and the record together, so a conflict leaves neither behind. A backend that
+        implements [`write_details`][pydantic_ai.conversation_store.ConversationStore.write_details]
+        keeps the replaced record's `title` and `metadata`.
 
         Raises:
             ConversationConflict: If the stored record's revision isn't `expected_revision`, a record
@@ -570,6 +763,38 @@ class ConversationStore(ABC):
                 the conversation a fork points into released it.
         """
         raise NotImplementedError
+
+    async def write_details(
+        self,
+        conversation_id: str,
+        details: ConversationDetails,
+        *,
+        expected_revision: str,
+        expected: ConversationDetails | None = None,
+    ) -> ConversationRecord:
+        """Replace the record's `title` or `metadata`, or both, keeping its `revision` and `updated_at`.
+
+        Only the keys in `details` are written, so a concurrent update of the other field isn't undone.
+        The write is made only if the stored record has `expected_revision` and, for each key in
+        `expected`, that value, checked and written in one step, such as one `UPDATE ... WHERE`. A
+        backend raises `NotImplementedError` for a key in `details` or `expected` it doesn't store.
+
+        A backend that implements this keeps a stored record's `title` and `metadata` when
+        [`write_record`][pydantic_ai.conversation_store.ConversationStore.write_record] replaces it, so a
+        save that read the record before an update doesn't undo it. The default raises
+        `NotImplementedError`, for backends written before conversations had titles.
+
+        Returns:
+            The record as stored after the write.
+
+        Raises:
+            ConversationConflict: If no record with `expected_revision` and the `expected` values is
+                stored, because the conversation was saved, replaced, deleted or updated since it was read.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} doesn't implement `write_details`, which `update` needs to change a "
+            "conversation's title or metadata."
+        )
 
     @abstractmethod
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
@@ -630,7 +855,28 @@ class InMemoryConversationStore(ConversationStore):
             raise ConversationConflict(record.conversation_id)
         for entry in new_entries:
             self._entries[entry.id] = deepcopy(entry)
+        if stored is not None:
+            record = dataclasses.replace(record, title=stored.title, metadata=stored.metadata)
         self._records[record.conversation_id] = deepcopy(record)
+
+    async def write_details(
+        self,
+        conversation_id: str,
+        details: ConversationDetails,
+        *,
+        expected_revision: str,
+        expected: ConversationDetails | None = None,
+    ) -> ConversationRecord:
+        stored = self._records.get(conversation_id)
+        if stored is None or stored.revision != expected_revision:
+            raise ConversationConflict(conversation_id)
+        if expected and any(getattr(stored, key) != value for key, value in expected.items()):
+            raise ConversationConflict(conversation_id)
+        if 'title' in details:
+            stored.title = details['title']
+        if 'metadata' in details:
+            stored.metadata = deepcopy(details['metadata'])
+        return deepcopy(stored)
 
     async def delete_record(self, conversation_id: str, *, expected_revision: str) -> None:
         stored = self._records.get(conversation_id)

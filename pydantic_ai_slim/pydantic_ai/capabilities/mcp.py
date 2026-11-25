@@ -77,6 +77,19 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""
 
+    include_instructions: bool = True
+    """Whether to add the server's instructions to the agent's instructions.
+
+    On by default. The server writes this text, and the model receives it with the same authority
+    as instructions you write yourself, so set this to `False` for servers you don't trust, such as
+    ones your end users supply.
+
+    Applies to the local toolset the capability builds from `url=` or a non-toolset `local=` input.
+    A pre-built [`MCPToolset`][pydantic_ai.mcp.MCPToolset] passed as `local=` keeps its own
+    [`include_instructions`][pydantic_ai.mcp.MCPToolset.include_instructions], and native MCP is
+    handled by the model provider.
+    """
+
     _telemetry_url_derived_id: str | None = field(init=False, repr=False, compare=False, default=None)
     """Whether the final configured ID came from the URL (retained by capability merges)."""
 
@@ -94,6 +107,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         allowed_tools: list[str] | None = None,
         tool_prefix: str | bool | None = None,
         description: str | None = None,
+        include_instructions: bool = True,
         defer_loading: bool = False,
     ) -> None:
         if tool_prefix == '':
@@ -153,7 +167,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # Stamp the derived id so this leaf can be used with durable execution too. `self.url` is
             # usually `None` here (the input carries its own connection), so the id comes from an
             # explicit `id=` or a native `MCPServerTool`, matching the `_build_local` URL path.
-            local = MCPToolset(local, include_instructions=True, id=self._derive_id(self.url))
+            local = MCPToolset(local, include_instructions=include_instructions, id=self._derive_id(self.url))
             # Without a URL of its own the capability has no marker to give, so a client or transport the
             # toolset derived its `id` from keeps the toolset's own.
             if self._telemetry_url_derived_id is not None:
@@ -164,6 +178,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         self.allowed_tools = allowed_tools
         self.tool_prefix = tool_prefix
         self.description = description
+        self.include_instructions = include_instructions
         self.defer_loading = defer_loading
         self.__post_init__()
 
@@ -187,7 +202,8 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     def _derive_id(self, url: str | None) -> str | None:
         """Derive a stable id for this capability from `url`.
 
-        Precedence: explicit `id` → the native `MCPServerTool`'s id → the hostname of `url`.
+        Precedence: explicit `id` → the native `MCPServerTool`'s id → the hostname of `url`, with `-` in
+        place of the `:`s of an IPv6 address.
         Returns `None` when there's nothing to derive from — no `id`, no native `MCPServerTool`,
         and no hostname (e.g. a non-URL `local=` client that carries its own connection).
 
@@ -203,7 +219,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             return self.native.id
         if url is None:
             return None
-        return urlparse(url).hostname or None
+        return _utils.host_derived_id(url)
 
     @cached_property
     def _resolved_id(self) -> str:
@@ -300,7 +316,12 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             # Stamp the derived id onto the local toolset so it can be used with durable execution
             # (which wraps leaf toolsets by `id`). `url` is always concrete here, so derivation from
             # it succeeds even when `self.url` is `None` (the `local='https://…'` override path).
-            toolset = MCPToolset(url, headers=local_headers, include_instructions=True, id=self._derive_id(url))
+            toolset = MCPToolset(
+                url,
+                headers=local_headers,
+                include_instructions=self.include_instructions,
+                id=self._derive_id(url),
+            )
             if self.id is None and not isinstance(self.native, MCPServerTool):
                 toolset._telemetry_url_derived_id = toolset.id  # pyright: ignore[reportPrivateUsage]
             else:
@@ -341,6 +362,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
         allowed_tools: list[str] | None = None,
         tool_prefix: str | bool | None = None,
         description: str | None = None,
+        include_instructions: bool = True,
         defer_loading: bool = False,
     ) -> MCP[AgentDepsT]:
         """Construct an `MCP` capability from spec-serializable args.
@@ -362,6 +384,7 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
             allowed_tools=allowed_tools,
             tool_prefix=tool_prefix,
             description=description,
+            include_instructions=include_instructions,
             defer_loading=defer_loading,
         )
 

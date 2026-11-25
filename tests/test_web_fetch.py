@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from threading import Event, Lock
-from typing import Any
+from typing import Any, Self
 from unittest.mock import AsyncMock, patch
 
 import anyio
@@ -27,8 +28,10 @@ from pydantic_ai.common_tools.web_fetch import (
     web_fetch_tool,
 )
 from pydantic_ai.exceptions import ModelRetry
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
-READINESS_WAIT_TIMEOUT = 10
+_CPU_SECONDS_BUDGET = 60
+"""What a conversion may cost. It's counted in CPU time, which a slow algorithm uses up but a stalled runner doesn't."""
 
 
 def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8') -> httpx2.Response:
@@ -39,6 +42,17 @@ def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8')
         headers={'content-type': content_type},
         request=httpx2.Request('GET', 'https://example.com'),
     )
+
+
+class _RecordingExecutor(ThreadPoolExecutor):
+    def __init__(self):
+        super().__init__()
+        self.submitted: list[Future[Any]] = []
+
+    def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
+        future = super().submit(fn, *args, **kwargs)
+        self.submitted.append(future)
+        return future
 
 
 class TestWebFetchLocalTool:
@@ -472,11 +486,14 @@ class TestWebFetchLocalTool:
         with pytest.raises(ModelRetry, match='Failed to fetch'):
             await tool('not-a-url')
 
-    async def test_idna_invalid_hostname_raises_model_retry(self):
+    async def test_idna_invalid_hostname_raises_model_retry(self, monkeypatch: pytest.MonkeyPatch):
         """A hostname httpx2's IDNA parser rejects raises ModelRetry, not `httpx2.InvalidURL`.
 
-        The URL is rejected before any name resolution, so this never reaches the network.
+        The SSRF check resolves the hostname before httpx2 parses it, and the resolver's IDNA
+        encoding accepts it. Resolution is stubbed with a public address, so the test reaches
+        httpx2's rejection without the runner's DNS, which can fail and raise first.
         """
+        monkeypatch.setattr('pydantic_ai._ssrf.resolve_hostname', AsyncMock(return_value=['93.184.215.14']))
         # A fullwidth "e" (U+FF45), spelled as an escape so the hostname survives any normalization
         # a tool might apply to this file, and so a reader can tell it apart from a plain "e".
         url = 'https://\uff45xample.com/'
@@ -721,16 +738,6 @@ class TestWebFetchLocalTool:
         only sync work the tool submits.
         """
 
-        class RecordingExecutor(ThreadPoolExecutor):
-            def __init__(self):
-                super().__init__()
-                self.submitted: list[Future[Any]] = []
-
-            def submit(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Future[Any]:
-                future = super().submit(fn, *args, **kwargs)
-                self.submitted.append(future)
-                return future
-
         html = '<html><head><title>Threaded</title></head><body><p>Content</p></body></html>'
         with (
             patch(
@@ -738,7 +745,7 @@ class TestWebFetchLocalTool:
                 new_callable=AsyncMock,
                 return_value=_html_response(html),
             ),
-            RecordingExecutor() as executor,
+            _RecordingExecutor() as executor,
             using_thread_executor(executor),
         ):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
@@ -763,14 +770,14 @@ class TestWebFetchLocalTool:
             return_value=_html_response(html),
         ):
             tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
-            start = time.perf_counter()
+            start = time.process_time()
             result = await tool('https://example.com')
-            elapsed = time.perf_counter() - start
+            elapsed = time.process_time() - start
 
         assert isinstance(result, dict)
         assert result['title'] == ''
         assert result['content'] == ''
-        assert elapsed < 60
+        assert elapsed < _CPU_SECONDS_BUDGET
 
     @pytest.mark.parametrize('html', ['<title>never closed', '<title never opened'])
     async def test_fetch_html_unterminated_title_is_empty(self, html: str):
@@ -910,6 +917,100 @@ class TestWebFetchLocalTool:
         assert isinstance(result, dict)
         assert result['content'] == '[[[[]]]]'
 
+    async def test_json_output_matches_full_formatting_at_every_length(self):
+        """Every `max_content_length` returns the same content as indenting the whole document, then truncating."""
+        body = '{"a": [[1, 2.5], {"b": "line\\nbreak", "c": []}], "d": {}, "e": null, "f": "\u00e9t\u00e9"}'
+        formatted = f'```json\n{json.dumps(json.loads(body), indent=2)}\n```'
+
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(body, content_type='application/json'),
+        ):
+            for max_content_length in [*range(len(formatted) + 2), None]:
+                tool = WebFetchLocalTool(max_content_length=max_content_length, allow_local_urls=False, timeout=30)
+                result = await tool('https://example.com')
+
+                assert isinstance(result, dict)
+                if max_content_length is None or len(formatted) <= max_content_length:
+                    assert result['content'] == formatted
+                else:
+                    assert result['content'] == formatted[:max_content_length] + '\n\n[Content truncated]'
+
+    @pytest.fixture
+    def encoded_chunk_lengths(self, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        """Wrap `json.JSONEncoder` to record the length of every chunk it produces."""
+        lengths: list[int] = []
+
+        class CountingEncoder(json.JSONEncoder):
+            def iterencode(self, o: object, _one_shot: bool = False) -> Iterator[str]:
+                for chunk in super().iterencode(o, _one_shot):  # pragma: no branch
+                    lengths.append(len(chunk))
+                    yield chunk
+
+        monkeypatch.setattr(json, 'JSONEncoder', CountingEncoder)
+        return lengths
+
+    @pytest.mark.parametrize('max_content_length', [1_000, 10_000])
+    async def test_json_formatting_stops_at_max_content_length(
+        self, encoded_chunk_lengths: list[int], max_content_length: int
+    ):
+        """Indenting stops once the content is longer than `max_content_length` rather than covering the whole document.
+
+        Indentation grows with nesting depth, so the indented document can be many times the size of
+        the body.
+        """
+        body = json.dumps([[[[[i]]]] for i in range(5_000)])
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(body, content_type='application/json'),
+        ):
+            tool = WebFetchLocalTool(max_content_length=max_content_length, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert len(result['content']) == max_content_length + len('\n\n[Content truncated]')
+        assert sum(encoded_chunk_lengths) < max_content_length + 100
+
+    async def test_json_over_formatting_limit_is_returned_as_fetched_without_max_content_length(
+        self, monkeypatch: pytest.MonkeyPatch, encoded_chunk_lengths: list[int]
+    ):
+        """With no `max_content_length`, a body whose indented form passes the formatting limit is returned as-is."""
+        body = json.dumps([[[[[i]]]] for i in range(5_000)])
+        monkeypatch.setattr('pydantic_ai.common_tools.web_fetch._MAX_JSON_FORMATTED_LENGTH', 1_000)
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.safe_download',
+            new_callable=AsyncMock,
+            return_value=_html_response(body, content_type='application/json'),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        assert isinstance(result, dict)
+        assert result['content'] == body
+        assert sum(encoded_chunk_lengths) < 1_000 + 100
+
+    async def test_json_parsing_and_formatting_run_in_worker_thread(self):
+        """Parsing and indenting a JSON body run through the sync-function executor, not on the event loop."""
+        body = '{"key": "value"}'
+        with (
+            patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response(body, content_type='application/json'),
+            ),
+            _RecordingExecutor() as executor,
+            using_thread_executor(executor),
+        ):
+            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+            result = await tool('https://example.com')
+
+        formatted = '```json\n{\n  "key": "value"\n}\n```'
+        assert isinstance(result, dict)
+        assert result['content'] == formatted
+        assert [future.result() for future in executor.submitted] == [body, formatted]
+
 
 _CONVERTER_PARITY_CASES = [
     pytest.param(
@@ -965,7 +1066,206 @@ def scaled_text_scan_budget():
         yield
 
 
+@pytest.fixture
+def stubbed_conversion():
+    """Stub out the Markdown conversion, so only the checks before it can reject a document."""
+    with patch.object(MarkdownConverter, 'convert_soup', return_value='converted'):
+        yield
+
+
+class _RecordedBudget(int):
+    """A budget that records every amount a check finds over it.
+
+    A check `amount > budget` calls the budget's reflected `__lt__`, because the budget's type subclasses `int`.
+    A check that rejects the document as soon as it finds it over budget leaves exactly one amount.
+    """
+
+    amounts_over: list[int]
+
+    def __new__(cls, value: int) -> Self:
+        budget = super().__new__(cls, value)
+        budget.amounts_over = []
+        return budget
+
+    def __lt__(self, amount: int) -> bool:
+        if int(self) < amount:
+            self.amounts_over.append(amount)
+            return True
+        return False
+
+
+_COST_BUDGET = '_MAX_HTML_CONVERSION_COST'
+_TEXT_BUDGET = '_MAX_HTML_TEXT_SCAN_COST'
+# Content after these 16 `<div>`s sits at depth 18 (the document itself is depth 1), two levels past the 16 where
+# deep scans start. The deepest `<div>` charges 8 conversion cost for its own scan.
+_DEEP = '<div>' * 16
+# One digit more than `int()` parses.
+_TOO_MANY_DIGITS = '1' * (sys.get_int_max_str_digits() + 1)
+
+# Each case is a document, the budget it pins, and the exact total charged against that budget.
+_BUDGET_TOTAL_CASES = [
+    pytest.param('<p>a&amp;b</p>', '_MAX_HTML_MARKUP_DELIMITERS', 3, id='markup-delimiters'),
+    # Tag and attribute, self-closing tag, entity, character reference, end tag.
+    pytest.param('<p a=1>a<br/>&amp;&#65;</p>', '_MAX_HTML_MARKUP_EVENTS', 6, id='markup-events'),
+    pytest.param(
+        '<!DOCTYPE html><!--x--><?pi x?><![CDATA[x]]>', '_MAX_HTML_MARKUP_EVENTS', 4, id='markup-special-sections'
+    ),
+    pytest.param('<p a b=1 c>x</p>', '_MAX_HTML_TAG_ATTRIBUTES', 3, id='tag-attributes'),
+    # An indent of depth 1 and width 4: 5 for the tag and 5 for its one line break.
+    pytest.param('<ul><li>a\nb</li></ul>', _COST_BUDGET, 10, id='list-item'),
+    pytest.param('<blockquote>a\nb</blockquote>', _COST_BUDGET, 10, id='blockquote'),
+    # A cell's 8 per column and its row's 8 per node; the quote inside the cell doesn't indent.
+    pytest.param(
+        '<table><tr><td><blockquote>a\nb</blockquote></td></tr></table>', _COST_BUDGET, 40, id='blockquote-in-cell'
+    ),
+    pytest.param('<table><tr><th><dd>a\nb</dd></th></tr></table>', _COST_BUDGET, 40, id='definition-in-header-cell'),
+    # Line breaks inside `<pre>` are not indented.
+    pytest.param('<blockquote><pre>a\nb</pre></blockquote>', _COST_BUDGET, 10, id='pre-in-blockquote'),
+    # Ordered-list markers are as wide as the start number without leading zeros, or the item count, plus 3.
+    pytest.param('<ol start="0012"><li>a\nb</li></ol>', _COST_BUDGET, 12, id='ordered-list-start'),
+    pytest.param('<ol start="12²"><li>a\nb</li></ol>', _COST_BUDGET, 10, id='ordered-list-non-decimal-start'),
+    # A start `int()` rejects counts as absent, as the converter treats it.
+    pytest.param(
+        f'<ol start="{_TOO_MANY_DIGITS}"><li>a\nb</li></ol>', _COST_BUDGET, 10, id='ordered-list-start-too-long'
+    ),
+    pytest.param('<ol><li>a\nb</li>' + '<li></li>' * 9 + '</ol>', _COST_BUDGET, 66, id='ordered-list-item-count'),
+    # Past depth 16, each tag charges 8 per level, times its indent depth plus one.
+    pytest.param(_DEEP + '<p><br></p>', _COST_BUDGET, 48, id='deep-tags'),
+    pytest.param(_DEEP + '<ul><li>x</li></ul>', _COST_BUDGET, 77, id='deep-list-item'),
+    pytest.param(
+        '<table><tr><td colspan="00005">x</td></tr></table>', _COST_BUDGET, 64, id='colspan-with-leading-zeros'
+    ),
+    pytest.param('<table><tr><td colspan="2000">x</td></tr></table>', _COST_BUDGET, 8024, id='colspan-capped-at-1000'),
+    pytest.param('<table><tr><td colspan="x">x</td></tr></table>', _COST_BUDGET, 32, id='colspan-not-a-number'),
+    pytest.param(
+        f'<table><tr><td colspan="{_TOO_MANY_DIGITS}">x</td></tr></table>', _COST_BUDGET, 32, id='colspan-too-long'
+    ),
+    pytest.param(_DEEP + '<table><tr><td colspan="3">x</td></tr></table>', _COST_BUDGET, 224, id='deep-colspan'),
+    # Each `<thead>` row that holds a data cell also charges the whole `<thead>`; the first `<tbody>` row, the whole
+    # table.
+    pytest.param(
+        '<table><thead><tr><td>x</td></tr><tr><td>y</td></tr></thead></table>', _COST_BUDGET, 176, id='table-head-rows'
+    ),
+    pytest.param('<table><thead><tr><th>x</th></tr></thead></table>', _COST_BUDGET, 32, id='table-head-header-cells'),
+    pytest.param(
+        '<table><tbody><tr><td>x</td></tr><tr><td>y</td></tr></tbody></table>', _COST_BUDGET, 128, id='table-body-rows'
+    ),
+    # A video without `src` charges 8 per node it searches for a source.
+    pytest.param('<video>' + '<!---->' * 100 + '</video>', _COST_BUDGET, 808, id='video-source-search'),
+    pytest.param('<video>' * 3 + '<!---->' * 100 + '</video>' * 3, _COST_BUDGET, 2448, id='nested-video-source-search'),
+    pytest.param(_DEEP + '<video src="s"><!----></video>', _COST_BUDGET, 24, id='video-with-src'),
+    # A deep link's autolink probe charges 8 per descendant, even when it renders as one autolink.
+    pytest.param(
+        '<div>' * 17 + f'<a href="{"x" * 200}">' + 'x<!--ignored-->' * 200 + '</a>' + '</div>' * 17,
+        _COST_BUDGET,
+        1648,
+        id='link-probe-descendants',
+    ),
+    # A link at depth 16 is not probed; the `<br>` inside it, at depth 17, charges 8.
+    pytest.param('<div>' * 14 + '<a href="u">x<br></a>', _COST_BUDGET, 8, id='link-at-depth-16'),
+    # Past depth 16, text charges its converted length per level, unless an inline or `<pre>` container drops it.
+    pytest.param(_DEEP + '<p>abc</p>', _TEXT_BUDGET, 6, id='deep-text'),
+    pytest.param(_DEEP + '<p>*</p>', _TEXT_BUDGET, 4, id='deep-escaped-text'),
+    pytest.param(_DEEP + '<h3>abc</h3><p>x</p>', _TEXT_BUDGET, 2, id='text-in-heading'),
+    # Underlined headings repeat their text, and code delimiters repeat each backtick twice.
+    *(pytest.param(_DEEP + f'<{tag}>abc</{tag}>', _TEXT_BUDGET, 6, id=f'deep-{tag}') for tag in ('h1', 'h2')),
+    pytest.param(
+        _DEEP + '<table><tr><td><h1>abc</h1></td></tr></table><p>x</p>', _TEXT_BUDGET, 2, id='heading-in-cell'
+    ),
+    *(
+        pytest.param(_DEEP + f'<{tag}>a`b</{tag}>', _TEXT_BUDGET, 10, id=f'deep-{tag}')
+        for tag in ('code', 'kbd', 'samp')
+    ),
+    pytest.param(_DEEP + '<pre><code>`</code></pre><p>x</p>', _TEXT_BUDGET, 2, id='code-in-pre'),
+    *(
+        pytest.param(_DEEP + f'<{tag}><code>`</code></{tag}>', _TEXT_BUDGET, 7, id=f'code-in-{tag}')
+        for tag in ('kbd', 'samp')
+    ),
+    # A deep link that isn't an autolink charges its URL and title per level, plus one per escaped quote.
+    pytest.param(_DEEP + '<a href="uv">t</a>', _TEXT_BUDGET, 6, id='deep-link'),
+    pytest.param(_DEEP + '<a href="uv"><span>t</span></a>', _TEXT_BUDGET, 7, id='deep-link-with-wrapped-text'),
+    pytest.param(_DEEP + '<a href="u" title=\'a"b\'>u</a>', _TEXT_BUDGET, 12, id='deep-link-with-title'),
+    pytest.param(_DEEP + '<a href="u"><em>u</em></a>', _TEXT_BUDGET, 5, id='deep-link-with-formatted-text'),
+    # A link with only blank text renders nothing for its URL; these elements render even when empty.
+    pytest.param(_DEEP + '<a href="u"> </a>', _TEXT_BUDGET, 2, id='deep-link-with-blank-text'),
+    *(
+        pytest.param(_DEEP + f'<a href="u">{content}</a>', _TEXT_BUDGET, total, id=f'deep-link-around-{name}')
+        for name, content, total in (
+            ('hr', '<hr>', 2),
+            ('q', '<q></q>', 2),
+            ('td', '<td></td>', 2),
+            ('th', '<th></th>', 2),
+            ('tr', '<tr></tr>', 2),
+            ('video-src', '<video src="s"></video>', 5),
+            ('video-poster', '<video poster="p"></video>', 5),
+            ('video-source', '<video><source src="s"></video>', 5),
+        )
+    ),
+    pytest.param(
+        _DEEP + '<table><tr><td><a href="u"><video src="s"></video></a></td></tr></table><p>x</p>',
+        _TEXT_BUDGET,
+        2,
+        id='deep-link-around-inline-video',
+    ),
+    pytest.param(_DEEP + '<a href="a_b">a_b</a>', _TEXT_BUDGET, 8, id='deep-autolink-with-underscore'),
+    pytest.param(
+        '<div>' * 17 + '<a href="x\ny"><span>x<!--ignored-->\n\n<!--ignored-->y</span></a>',
+        _TEXT_BUDGET,
+        12,
+        id='deep-autolink-with-newline-only-text',
+    ),
+    # Code, headings and videos no deeper than 16 charge nothing, ahead of the deep ones that are charged.
+    pytest.param(
+        '<code>`</code><h1>abc</h1>' + _DEEP + '<code>`</code><h1>abc</h1>',
+        _TEXT_BUDGET,
+        12,
+        id='shallow-code-and-heading',
+    ),
+    pytest.param('<video src="ab"></video>' + _DEEP + '<video src="abc"></video>', _TEXT_BUDGET, 6, id='shallow-video'),
+    # A block video past depth 16 charges its URL and poster per level.
+    pytest.param(_DEEP + '<video src="ab"></video>', _TEXT_BUDGET, 4, id='deep-video-src'),
+    pytest.param(_DEEP + '<video poster="ab"></video>', _TEXT_BUDGET, 4, id='deep-video-poster'),
+    pytest.param(_DEEP + '<video><source src="ab"></video>', _TEXT_BUDGET, 4, id='deep-video-source'),
+    pytest.param(
+        _DEEP + '<video><source src="a"><source src="bcd"></video>', _TEXT_BUDGET, 2, id='deep-video-first-source'
+    ),
+    pytest.param(
+        _DEEP + '<video><source><source src="ab"></video>', _TEXT_BUDGET, 4, id='deep-video-source-without-src'
+    ),
+    pytest.param(
+        _DEEP + '<video><source src=""><source src="ab"></video><p>x</p>', _TEXT_BUDGET, 2, id='deep-video-empty-source'
+    ),
+]
+
+# Each case is a document, a budget, the amount at which a check first finds the document over a budget one below
+# that amount, and the amount at which the next check does.
+_BUDGET_CHECK_CASES = [
+    pytest.param(_DEEP + '<p></p><p></p>', _COST_BUDGET, 24, 40, id='per-node-cost'),
+    pytest.param(_DEEP + '<p>a</p><p>b</p>', _TEXT_BUDGET, 2, 4, id='per-node-text'),
+    pytest.param(_DEEP + '<a href="u">x<!---->y</a>', _COST_BUDGET, 32, 40, id='link-probe-descendant'),
+    # Link text in a heading isn't scanned, so the probe's rendering is the only text charge. The first link
+    # renders 100 fragments, joins them for its one tag, and compares the result with its URL.
+    *(
+        pytest.param(
+            '<div>' * 16 + f'<h3><a href="{"x" * 100}">' + 'x<!---->' * 100 + '</a><a href="z">z</a></h3>',
+            _TEXT_BUDGET,
+            first,
+            then,
+            id=f'link-probe-{name}',
+        )
+        for name, first, then in (('fragment', 51, 52), ('tag', 200, 300), ('link', 300, 301))
+    ),
+    pytest.param(_DEEP + '<a href="uv">t</a><a href="w">s</a>', _TEXT_BUDGET, 8, 10, id='per-link-text'),
+    pytest.param('<table><tr><td>x</td></tr><tr><td>y</td></tr></table>', _COST_BUDGET, 40, 64, id='per-row-cost'),
+    pytest.param('<video><!----></video><video><!----></video>', _COST_BUDGET, 16, 32, id='per-video-cost'),
+    pytest.param(_DEEP + '<video src="ab"></video><video src="c"></video>', _TEXT_BUDGET, 4, 6, id='per-video-text'),
+]
+
+
 class TestMarkdownConverter:
+    # The largest number `int()` parses and `str()` writes.
+    _LARGEST_NUMBER = '9' * sys.get_int_max_str_digits()
+
     def test_large_well_formed_reference_list_passes_markup_budgets(self):
         """A page with more markup than a 2.9 MB Wikipedia article (~101k parser events) reaches parsing."""
 
@@ -1197,38 +1497,115 @@ class TestMarkdownConverter:
         _, content = _convert_html(html)
         assert content == markdownify(html, strip=['img', 'script', 'style'])
 
-    def test_non_decimal_list_start_is_ignored(self):
-        """A `start` made of digits `int()` rejects, like `²`, numbers the list from 1 instead of raising.
+    @pytest.mark.parametrize(
+        ('html', 'expected'),
+        [
+            pytest.param('<ol start="²"><li>one</li><li>two</li></ol>', '1. one\n2. two', id='list-start-non-decimal'),
+            pytest.param(
+                f'<ol start="{_TOO_MANY_DIGITS}"><li>one</li><li>two</li></ol>',
+                '1. one\n2. two',
+                id='list-start-too-long',
+            ),
+            # The second item's number has one digit too many for `str()`.
+            pytest.param(
+                f'<ol start="{_LARGEST_NUMBER}"><li>one</li><li>two</li></ol>',
+                f'{_LARGEST_NUMBER}. one\n2. two',
+                id='list-start-at-limit',
+            ),
+            # An empty item renders no number, so it converts as it does on `main`.
+            pytest.param(
+                f'<ol start="{_LARGEST_NUMBER}"><li>one</li><li></li></ol>',
+                f'{_LARGEST_NUMBER}. one',
+                id='list-start-at-limit-empty-item',
+            ),
+            pytest.param(
+                '<table><tr><td>x</td><td colspan="²">y</td></tr></table>',
+                '|  |  |\n| --- | --- |\n| x | y |',
+                id='colspan-non-decimal',
+            ),
+            pytest.param(
+                '<table><tr><th>x</th><th colspan="²">y</th></tr></table>',
+                '| x | y |\n| --- | --- |',
+                id='header-colspan-non-decimal',
+            ),
+            pytest.param(
+                f'<table><tr><td>x</td><td colspan="{_TOO_MANY_DIGITS}">y</td></tr></table>',
+                '|  |  |\n| --- | --- |\n| x | y |',
+                id='colspan-too-long',
+            ),
+            pytest.param(f'<h{_TOO_MANY_DIGITS}>x</h{_TOO_MANY_DIGITS}>', 'x', id='heading-level-too-long'),
+            # The conversion estimate looks up conversion functions for what a deep link contains.
+            pytest.param(
+                _DEEP + f'<a href="/x"><h{_TOO_MANY_DIGITS}>x</h{_TOO_MANY_DIGITS}></a>',
+                '[x](/x)',
+                id='heading-level-too-long-in-deep-link',
+            ),
+        ],
+    )
+    def test_numbers_int_rejects_are_ignored(self, html: str, expected: str):
+        """A number `int()` rejects counts as absent instead of raising: a list `start`, a cell `colspan`, an `<hN>` level.
 
-        `markdownify` checks `isnumeric()` and then calls `int()`, which raises on such digits.
+        `markdownify` checks `isnumeric()` or `isdigit()` and then calls `int()`, which raises on digits like `²` and
+        on more digits than `sys.get_int_max_str_digits()`. A list item whose number `str()` can't write for that
+        limit is numbered as if the list had no `start`.
         """
-        _, content = _convert_html('<ol start="²"><li>one</li><li>two</li></ol>')
-        assert content == '1. one\n2. two'
+        assert _convert_html(html)[1] == expected
+
+    @pytest.mark.parametrize(
+        ('html', 'expected'),
+        [
+            pytest.param(f'<p>&#{_TOO_MANY_DIGITS};</p>', '\N{REPLACEMENT CHARACTER}', id='text'),
+            pytest.param(
+                f'<a href="/x&#{_TOO_MANY_DIGITS};">x</a>', '[x](/x\N{REPLACEMENT CHARACTER})', id='attribute'
+            ),
+            pytest.param(f'<p>&#{"0" * len(_TOO_MANY_DIGITS)}65;</p>', 'A', id='leading-zeros'),
+            # Zero, like any value outside Unicode's characters, reads as U+FFFD.
+            pytest.param(f'<p>&#{"0" * len(_TOO_MANY_DIGITS)};</p>', '\N{REPLACEMENT CHARACTER}', id='all-zeros'),
+            pytest.param(
+                f'<p>&#65;&#{_TOO_MANY_DIGITS};</p>', 'A\N{REPLACEMENT CHARACTER}', id='with-parsable-reference'
+            ),
+            # A raw-text element shows its references as written, so it doesn't raise.
+            pytest.param(f'<xmp>&#{_TOO_MANY_DIGITS};</xmp>', f'&#{_TOO_MANY_DIGITS};', id='raw-text-unchanged'),
+            # On a page that raised, every such reference is shortened before parsing again, raw text included.
+            pytest.param(
+                f'<p>&#{_TOO_MANY_DIGITS};</p><xmp>&#{_TOO_MANY_DIGITS};</xmp>',
+                '\N{REPLACEMENT CHARACTER}\n\n&#11111111;',
+                id='raw-text-on-page-that-raised',
+            ),
+        ],
+    )
+    def test_too_long_decimal_character_references_convert(self, html: str, expected: str):
+        """A decimal character reference too long for `int()` converts as its value does instead of raising.
+
+        `bs4` and `html.unescape` call `int()` on it, which raises past `sys.get_int_max_str_digits()`. Leading zeros
+        don't change the value, and a value above U+10FFFF reads as U+FFFD.
+        """
+        assert _convert_html(html)[1] == expected
 
     @pytest.mark.parametrize('tag', ['blockquote', 'dd', 'li'])
     def test_deeply_nested_indentation_is_bounded(self, tag: str):
         """The converter rejects repeated indentation before intermediate Markdown expands."""
         html = f'<{tag}>' * 120 + 'line\n' * 150_000 + f'</{tag}>' * 120
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_deeply_nested_empty_tags_are_bounded(self):
         """Generated line breaks must count towards work even without descendant text."""
         html = '<q>' * 120 + '<br>' * 30_000 + '</q>' * 120
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_shallow_nested_indentation_is_bounded(self):
         """Indented lines also count when the document is fewer than 16 levels deep."""
         html = '<dd>' * 15 + 'x\n' * 300_000 + '</dd>' * 15
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     @pytest.mark.parametrize(
         ('tag', 'depth', 'prefix'),
@@ -1340,24 +1717,6 @@ class TestMarkdownConverter:
         html = f'<a href="{value}">' + '<span>' * 300 + content + '</span>' * 300 + '</a>'
         assert _convert_html(html)[1] == f'<{value}>'
 
-    def test_autolink_probe_node_budget(self):
-        """Many link descendants are charged even when they render as one autolink."""
-        value = 'x' * 200
-        html = '<div>' * 17 + f'<a href="{value}">' + 'x<!--ignored-->' * 200 + '</a>' + '</div>' * 17
-        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_CONVERSION_COST', 1500):
-            with pytest.raises(ModelRetry, match='too complex'):
-                _convert_html(html)
-
-    @pytest.mark.parametrize('budget', [50, 150, 250])
-    def test_autolink_probe_text_budget(self, budget: int):
-        """Rendered link text is bounded while inline context skips the leaf scan estimate."""
-        value = 'x' * 100
-        html = '<div>' * 16 + f'<h3><a href="{value}">' + 'x<!--ignored-->' * 100
-        html += '</a></h3>' + '</div>' * 16
-        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', budget):
-            with pytest.raises(ModelRetry, match='too complex'):
-                _convert_html(html)
-
     @pytest.mark.usefixtures('scaled_text_scan_budget')
     def test_pre_padding_is_not_overcharged(self):
         """Preformatted whitespace is stripped before enclosing blocks scan it."""
@@ -1398,31 +1757,52 @@ class TestMarkdownConverter:
     def test_repeated_table_row_search_is_bounded(self):
         """Rows under thead must not each rescan all of their siblings."""
         html = '<table><thead>' + '<tr><td>x</td></tr>' * 5000 + '</thead></table>'
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_repeated_tbody_table_search_is_bounded(self):
         """The first row of each tbody must not rescan the whole table."""
         html = '<table>' + '<tbody><tr><td>x</td></tr></tbody>' * 2000 + '</table>'
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_small_table_colspan_converts(self):
         """Small decimal colspans retain the converter's output."""
         html = '<table><tr><td colspan="002">x</td></tr></table>'
         assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
-    def test_nested_video_source_search_is_bounded(self):
-        """Repeated source searches through ignored descendants must be counted before conversion."""
-        comments = '<!---->' * 100
-        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_CONVERSION_COST', 1_000):
-            assert _convert_html(f'<video>{comments}</video>')[1] == ''
-            with pytest.raises(ModelRetry, match='too complex'):
-                _convert_html('<video>' * 3 + comments + '</video>' * 3)
+    @pytest.mark.parametrize(('html', 'budget', 'total'), _BUDGET_TOTAL_CASES)
+    @pytest.mark.usefixtures('stubbed_conversion')
+    def test_budget_rejects_one_past_the_charged_total(self, html: str, budget: str, total: int):
+        """Each budget accepts a document at exactly what it charges for it, and rejects it one below.
+
+        With the conversion stubbed out, only the checks before it can reject the document, so each total is
+        exactly what they charge: a charge that is dropped, loosened or added moves the boundary.
+        """
+        target = f'pydantic_ai.common_tools.web_fetch.{budget}'
+        with patch(target, total):
+            assert _convert_html(html)[1] == 'converted'
+        with patch(target, total - 1), pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+
+    @pytest.mark.parametrize(('html', 'budget', 'first', 'then'), _BUDGET_CHECK_CASES)
+    @pytest.mark.usefixtures('stubbed_conversion')
+    def test_budget_check_rejects_at_the_first_amount_past_it(self, html: str, budget: str, first: int, then: int):
+        """Each check rejects a document as soon as it finds it over budget, before the rest is charged.
+
+        A later check would also reject the document, so the budget records every amount found over it: the first
+        check to find one must be the one that rejects the document.
+        """
+        for limit, rejected_at in ((first - 1, first), (first, then)):
+            recorded = _RecordedBudget(limit)
+            with patch(f'pydantic_ai.common_tools.web_fetch.{budget}', recorded):
+                with pytest.raises(ModelRetry, match='too complex'):
+                    _convert_html(html)
+            assert recorded.amounts_over == [rejected_at]
 
     @pytest.mark.parametrize(('tag', 'character'), [('code', '`'), ('h1', 'x')])
     @pytest.mark.usefixtures('scaled_text_scan_budget')
@@ -1491,10 +1871,10 @@ class TestMarkdownConverter:
     def test_wide_ordered_list_marker_is_bounded(self):
         """A large list start must count towards indentation on every continuation line."""
         html = '<ol start="' + '9' * 4300 + '"><li>' + 'x\n' * 10_000 + '</li></ol>'
-        started = time.perf_counter()
+        started = time.process_time()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 60
+        assert time.process_time() - started < _CPU_SECONDS_BUDGET
 
     def test_generated_list_lines_with_wide_marker_are_bounded(self):
         """A URL can generate the lines an ordered-list marker would indent."""
@@ -1522,12 +1902,12 @@ class TestMarkdownConverter:
         long either, and neither may normalizing text among tens of thousands of siblings. The
         bound is generous; the point is that it isn't minutes.
         """
-        start = time.perf_counter()
+        start = time.process_time()
         try:
             _convert_html(html)
         except (RecursionError, ModelRetry):
             assert html.startswith('<div>x<div>')
-        assert time.perf_counter() - start < 60
+        assert time.process_time() - start < _CPU_SECONDS_BUDGET
 
 
 class TestWebFetchToolFactory:

@@ -293,7 +293,7 @@ LLMJudge(
 **Parameters:**
 
 - `rubric` (str): The evaluation criteria (required)
-- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
+- `model` (Model | KnownModelName | str | None): Model to use (default: `'openai:gpt-5.2'`)
 - `include_input` (bool): Include task inputs in the prompt (default: `False`)
 - `include_expected_output` (bool): Include expected output in the prompt (default: `False`)
 - `model_settings` (ModelSettings | None): Custom model settings
@@ -384,7 +384,7 @@ GEval(
 - `evaluation_steps` (list[str]): Explicit chain-of-thought steps the judge should follow (required)
 - `score_range` (tuple[int, int]): Inclusive integer score range (default: `(1, 5)`)
 - `include_input` (bool): Include task inputs in the prompt (default: `False`)
-- `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
+- `model` (Model | KnownModelName | str | None): Model to use (default: `'openai:gpt-5.2'`)
 - `model_settings` (ModelSettings | None): Custom model settings
 - `evaluation_name` (str | None): Custom name for the result (default: `'GEval'`)
 
@@ -419,7 +419,8 @@ HasMatchingSpan(
 - `query` ([`SpanQuery`][pydantic_evals.otel.SpanQuery]): Query to match against spans
 - `evaluation_name` (str | None): Custom name for this evaluation in reports
 
-**Returns:** `bool` - `True` if any span matches the query
+**Returns:** `bool` - `True` if any span matches the query. To check a condition on every span, see
+[Checking every span](span-based.md#checking-every-span).
 
 **Example:**
 
@@ -441,11 +442,14 @@ dataset = Dataset(
             query={'has_status': 'error'},
             evaluation_name='had_errors',
         ),
-        # Check duration constraints
+        # Every LLM call took at most 2s (assumes the task runs inside a 'task_execution' span)
         HasMatchingSpan(
             query={
-                'name_equals': 'llm_call',
-                'max_duration': 2.0,  # seconds
+                'name_equals': 'task_execution',
+                'no_descendant_has': {
+                    'name_equals': 'llm_call',
+                    'not_': {'max_duration': 2.0},  # seconds
+                },
             },
             evaluation_name='llm_fast_enough',
         ),

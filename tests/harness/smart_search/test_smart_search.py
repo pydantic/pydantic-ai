@@ -453,6 +453,17 @@ def reject_expired(session):
         with pytest.raises(ValueError, match='threshold'):
             SmartSearchToolset[None](model=FakeJev('x'), threshold=-1, concurrency=1)
 
+    async def test_toolset_judges_on_its_own(self, tmp_path: Path) -> None:
+        write_repo(tmp_path)
+        agent = Agent(
+            calls_smart_search(),
+            deps_type=type(None),
+            capabilities=[LocalWorkspace[None](tmp_path)],
+            toolsets=[SmartSearchToolset[None](model=language_judge('expired'))],
+        )
+        result = await search(agent)
+        assert [match.symbol for match in result.matches] == ['reject_expired', 'test_expired_session_is_rejected']
+
     def test_toolset_advertises_the_upstream_schema(self) -> None:
         toolset = SmartSearch[None](FakeJev('x')).get_toolset()
         assert isinstance(toolset, SmartSearchToolset)

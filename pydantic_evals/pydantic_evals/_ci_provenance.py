@@ -93,15 +93,7 @@ def _set_if_known(attributes: dict[str, str], key: str, value: str | None) -> No
 
 def _github_actions_attributes(env: Mapping[str, str]) -> dict[str, str]:
     attributes: dict[str, str] = {_PROVIDER_ATTR: 'github'}
-    server, repo = env.get('GITHUB_SERVER_URL'), env.get('GITHUB_REPOSITORY')
-    if server and repo:
-        attributes[_REPOSITORY_URL_ATTR] = f'{server}/{repo}'
-        if run_id := env.get('GITHUB_RUN_ID'):
-            run_url = f'{server}/{repo}/actions/runs/{run_id}'
-            # Each re-run of a workflow run is a separate attempt with its own URL.
-            if attempt := env.get('GITHUB_RUN_ATTEMPT'):
-                run_url = f'{run_url}/attempts/{attempt}'
-            attributes[_RUN_URL_ATTR] = run_url
+    _set_github_urls(attributes, env)
 
     event_name = env.get('GITHUB_EVENT_NAME')
     head_type: Literal['branch', 'tag'] = 'branch'
@@ -147,6 +139,19 @@ def _github_actions_attributes(env: Mapping[str, str]) -> dict[str, str]:
     if number is not None:
         attributes[_CHANGE_ID_ATTR] = str(number)
     return attributes
+
+
+def _set_github_urls(attributes: dict[str, str], env: Mapping[str, str]) -> None:
+    server, repo = env.get('GITHUB_SERVER_URL'), env.get('GITHUB_REPOSITORY')
+    if not (server and repo):
+        return
+    attributes[_REPOSITORY_URL_ATTR] = f'{server}/{repo}'
+    if run_id := env.get('GITHUB_RUN_ID'):
+        run_url = f'{server}/{repo}/actions/runs/{run_id}'
+        # Each re-run of a workflow run is a separate attempt with its own URL.
+        if attempt := env.get('GITHUB_RUN_ATTEMPT'):
+            run_url = f'{run_url}/attempts/{attempt}'
+        attributes[_RUN_URL_ATTR] = run_url
 
 
 def _read_pull_request(event_path: str | None) -> _GitHubPullRequest | None:

@@ -178,19 +178,19 @@ async def test_anthropic_batch_mixes_successes_and_errors(
     provider = AnthropicProvider(api_key=anthropic_api_key)
     model = AnthropicModel('claude-haiku-4-5', provider=provider)
     unknown = AnthropicModel('not-a-real-anthropic-model', provider=provider)
-    ok, too_long = _request('batch-ok'), _request('batch-too-many-tokens', {'max_tokens': 10_000_000})
+    ok, invalid = _request('batch-ok'), _request('batch-invalid-temperature', {'temperature': 5})
     missing = _request('batch-unknown-model')
-    encoded = [await model.batch_encode(ok), await model.batch_encode(too_long), await unknown.batch_encode(missing)]
+    encoded = [await model.batch_encode(ok), await model.batch_encode(invalid), await unknown.batch_encode(missing)]
     batch = await wait_for_batch(model, await model.batch_create(encoded), vcr)
     results = {result.custom_id: result for result in await model.batch_results(batch)}
     assert {custom_id: result.status for custom_id, result in results.items()} == {
         'batch-ok': 'succeeded',
-        'batch-too-many-tokens': 'errored',
+        'batch-invalid-temperature': 'errored',
         'batch-unknown-model': 'errored',
     }
     assert model.batch_decode(results['batch-ok'], ok).text == 'OK.'
     with pytest.raises(ModelHTTPError) as exc_info:
-        model.batch_decode(results['batch-too-many-tokens'], too_long)
+        model.batch_decode(results['batch-invalid-temperature'], invalid)
     assert exc_info.value.status_code == 400
     assert not isinstance(exc_info.value, ModelServerError)
     assert exc_info.value.provider_error_type == 'invalid_request_error'
@@ -221,14 +221,18 @@ async def test_anthropic_batches_split_by_beta_flags(
         'OK.',
     ]
     creates = [
-        ([item['custom_id'] for item in json.loads(raw)['requests']], headers.get('anthropic-beta'))
+        (
+            [item['custom_id'] for item in json.loads(raw)['requests']],
+            # Before anthropic 2.9.0, the SDK adds `message-batches-2024-09-24` to every batch create.
+            [b for b in headers.get('anthropic-beta', '').split(',') if b not in ('', 'message-batches-2024-09-24')],
+        )
         for path, raw, headers in zip(request_capture.paths, request_capture.raw_bodies, request_capture.headers)
         if path == '/v1/messages/batches' and raw
     ]
     assert creates == snapshot(
         [
-            (['no-betas'], 'message-batches-2024-09-24'),
-            (['with-betas'], 'interleaved-thinking-2025-05-14,message-batches-2024-09-24'),
+            (['no-betas'], []),
+            (['with-betas'], ['interleaved-thinking-2025-05-14']),
         ]
     )
 

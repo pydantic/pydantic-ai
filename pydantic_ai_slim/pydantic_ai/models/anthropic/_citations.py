@@ -3,7 +3,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from anthropic.types.beta import (
     BetaCitationCharLocation,
@@ -16,8 +16,13 @@ from anthropic.types.beta import (
     BetaPlainTextSource,
     BetaRequestDocumentBlockParam,
     BetaTextCitation,
+    BetaToolUnionParam,
     BetaWebFetchBlock,
+    BetaWebFetchTool20260209Param,
+    BetaWebFetchTool20260318Param,
     BetaWebFetchToolResultBlock,
+    BetaWebSearchTool20260209Param,
+    BetaWebSearchTool20260318Param,
 )
 from pydantic import ValidationError
 
@@ -38,6 +43,10 @@ from ...native_tools import WebFetchTool
 from ...settings import ModelSettings
 from .. import ModelRequestParameters
 from .._tool_choice import resolve_tool_choice
+from ._native_tools import provisions_code_execution
+
+if TYPE_CHECKING:
+    from . import AnthropicWebToolCaller
 
 
 def fetched_page(block: BetaWebFetchToolResultBlock) -> tuple[str, str] | None:
@@ -55,12 +64,44 @@ _CITATIONS_WITH_FORCED_TOOL_ERROR = (
 
 
 def citations_included(model_settings: ModelSettings, model_request_parameters: ModelRequestParameters) -> bool:
-    """Whether the `citations` setting turns on document and Web Fetch citations for this request.
+    """Whether the `citations` setting turns on citations for this request: of documents, Web Fetch, and Web Search.
 
     Anthropic rejects citations with native structured output, and writes its `<cite>` markup into tool and prompted
     output, so they're only turned on for text output.
     """
     return model_settings.get('citations', False) and model_request_parameters.output_mode == 'text'
+
+
+def route_cited_web_tools_direct(
+    tools: list[BetaToolUnionParam], include_citations: bool, code_execution_in_open_turn: bool
+) -> None:
+    """Send the cited web tools whose versions default to calls from code execution with direct calls instead.
+
+    Anthropic doesn't add results the model reads from code execution to its context, so it returns them uncited. Web
+    search is cited when the request asks for citations, and web fetch when its `citations` are on. A user turn that
+    already used code execution keeps the default callers when direct calls would leave the request without code
+    execution, which its container and pending calls need, so a turn's callers don't change between its requests.
+    """
+    cited: list[
+        BetaWebSearchTool20260209Param
+        | BetaWebSearchTool20260318Param
+        | BetaWebFetchTool20260209Param
+        | BetaWebFetchTool20260318Param
+    ] = []
+    uncited: list[BetaToolUnionParam] = []
+    for tool in tools:
+        match tool:
+            case {'type': 'web_search_20260209' | 'web_search_20260318'} if include_citations:
+                cited.append(tool)
+            case {'type': 'web_fetch_20260209' | 'web_fetch_20260318', 'citations': {'enabled': True}}:
+                cited.append(tool)
+            case _:
+                uncited.append(tool)
+    if code_execution_in_open_turn and not provisions_code_execution(uncited):
+        return
+    for tool in cited:
+        direct: list[AnthropicWebToolCaller] = ['direct']
+        tool['allowed_callers'] = direct
 
 
 def check_citations_tool_choice(
@@ -71,8 +112,9 @@ def check_citations_tool_choice(
 ) -> None:
     """Raise if the `citations` setting turned on citations for a request that forces a function tool call.
 
-    The model writes its `<cite>` markup into a forced tool call's arguments. A request with nothing to cite, no
-    document and no Web Fetch tool, is unchanged by the setting, so it's allowed.
+    The model writes its `<cite>` markup into a forced tool call's arguments. A request with no document and no Web
+    Fetch tool is allowed, including one with web search, whose direct calls Anthropic cites whether or not citations
+    were asked for.
     """
     if not include_citations:
         return
@@ -100,15 +142,17 @@ def fetched_pages_from_history(messages: Sequence[ModelMessage]) -> list[tuple[s
     """Return the URL and text of each page Web Fetch fetched earlier in the conversation, which a new answer can cite."""
     pages: list[tuple[str, str]] = []
     for message in messages:
-        if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, NativeToolReturnPart) and part.tool_name == WebFetchTool.kind:
-                    try:
-                        page = BetaWebFetchBlock.model_validate(part.content)
-                    except ValidationError:
-                        continue
-                    if isinstance(page.content.source, BetaPlainTextSource):
-                        pages.append((page.url, page.content.source.data))
+        if not isinstance(message, ModelResponse):
+            continue
+        for part in message.parts:
+            if not (isinstance(part, NativeToolReturnPart) and part.tool_name == WebFetchTool.kind):
+                continue
+            try:
+                page = BetaWebFetchBlock.model_validate(part.content)
+            except ValidationError:
+                continue
+            if isinstance(page.content.source, BetaPlainTextSource):
+                pages.append((page.url, page.content.source.data))
     return pages
 
 

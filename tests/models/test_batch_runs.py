@@ -23,6 +23,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResult,
     CallToolsNode,
+    Conversation,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestNode,
@@ -31,6 +32,7 @@ from pydantic_ai import (
     TextPart,
     ToolCallPart,
     UsageLimitExceeded,
+    UserPromptPart,
 )
 from pydantic_ai.capabilities import AbstractCapability, BatchModelRequests, SelectModel
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult, WrapRunHandler
@@ -54,7 +56,12 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, ModelSelectionContext
 from pydantic_ai.models._batch_codec import BatchJobError
-from pydantic_ai.models._batch_model import BatchedModel, BatchPool
+from pydantic_ai.models._batch_model import (
+    BatchedModel,
+    BatchPool,
+    _Requester,  # pyright: ignore[reportPrivateUsage]
+    _Ticket,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.models._in_memory_batch import _State  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.models.batch import Batch, BatchRequest, BatchResult, EncodedBatchRequest
 from pydantic_ai.models.fallback import FallbackModel
@@ -64,7 +71,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
 
-from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, UNRUN_MESSAGES, SlowBatchTestModel
+from ..batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, READINESS_WAIT_TIMEOUT, UNRUN_MESSAGES, SlowBatchTestModel
 from ..continuation_utils import ScriptedContinuationModel, scripted_response
 
 Outcome = Literal['ran', 'expired', 'canceled', 'missing'] | int | ModelAPIError
@@ -397,6 +404,55 @@ async def test_a_check_that_would_fail_again_reaches_the_run(error: ModelAPIErro
     assert wrapped.failed == 1
 
 
+async def test_runs_sharing_a_failed_check_each_get_their_own_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A run gives the error it raises its conversation, so runs waiting on one check each need their own error."""
+    release = asyncio.Event()
+
+    class GatedFailingCheckModel(SlowBatchTestModel):
+        async def batch_status(self, batch: Batch) -> Batch:
+            self._record('batch_status')
+            await release.wait()
+            raise ModelHTTPError(status_code=401, model_name='test', body={'error': 'denied'})
+
+    polling: list[_Ticket] = []
+    both_polling = asyncio.Event()
+    poll = BatchPool.poll
+
+    async def counting_poll(
+        self: BatchPool, model: Model, ticket: _Ticket, requester: _Requester | None
+    ) -> tuple[Batch, dict[str, BatchResult] | None]:
+        # `poll` joins a running check before it first awaits, so a run counted here has joined it once the other is.
+        polling.append(ticket)
+        if len(polling) == 2:
+            both_polling.set()
+        return await poll(self, model, ticket, requester)
+
+    monkeypatch.setattr(BatchPool, 'poll', counting_poll)
+    checks: list[str] = []
+    wrapped = GatedFailingCheckModel(on_batch_call=checks.append)
+    agent = Agent(wrapped, capabilities=[BatchModelRequests(**FAST_POLLING, max_requests=2, max_wait=None)])
+
+    runs = asyncio.gather(agent.run('one'), agent.run('two'), return_exceptions=True)
+    await asyncio.wait_for(both_polling.wait(), READINESS_WAIT_TIMEOUT)
+    release.set()
+    first, second = await runs
+
+    assert checks.count('batch_status') == 1
+    assert isinstance(first, ModelHTTPError) and isinstance(second, ModelHTTPError)
+    assert first is not second
+    assert (first.status_code, first.body) == (second.status_code, second.body)
+    assert [_first_prompt(error.conversation) for error in (first, second)] == ['one', 'two']
+
+
+def _first_prompt(conversation: Conversation | None) -> object:
+    assert conversation is not None
+    request = conversation.messages[0]
+    assert isinstance(request, ModelRequest)
+    part = request.parts[0]
+    assert isinstance(part, UserPromptPart)
+    return part.content
+
+
 def _one_request() -> list[BatchRequest]:
     return [BatchRequest(custom_id='one', messages=[ModelRequest.user_text_prompt('Hello')])]
 
@@ -620,20 +676,20 @@ async def test_a_tool_loop_takes_a_batch_per_model_request() -> None:
     assert created == [1, 1, 1, 1]
 
 
-@pytest.mark.usefixtures('young_gc')
-async def test_many_concurrent_runs_fill_batches_of_the_default_size() -> None:
+async def test_many_concurrent_runs_fill_batches_of_max_requests() -> None:
+    assert BatchModelRequests().max_requests == 1_000
+    # Filling batches of the default size takes a thousand runs; a small limit splits the runs the same way.
     wrapped = SlowBatchTestModel()
-    batching = BatchModelRequests(**FAST_POLLING, max_wait=None)
-    assert batching.max_requests == 1_000
+    batching = BatchModelRequests(**FAST_POLLING, max_requests=10, max_wait=None)
     agent = Agent(wrapped, capabilities=[batching])
 
-    runs = [asyncio.create_task(agent.run(f'Question {i}')) for i in range(1_050)]
-    await wrapped.wait_until(lambda m: m.encoded == 1_050)
+    runs = [asyncio.create_task(agent.run(f'Question {i}')) for i in range(25)]
+    await wrapped.wait_until(lambda m: m.encoded == 25)
     await batching.flush()
     results = await asyncio.gather(*runs)
 
     assert {result.output for result in results} == {'success (no tool calls)'}
-    assert [batch.request_count for batch in wrapped.created] == [1_000, 50]
+    assert [batch.request_count for batch in wrapped.created] == [10, 10, 5]
 
 
 async def test_a_batch_waits_up_to_max_wait_for_more_requests(monkeypatch: pytest.MonkeyPatch) -> None:

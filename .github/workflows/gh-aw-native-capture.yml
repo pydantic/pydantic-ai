@@ -7,6 +7,8 @@ on:
       - '.github/workflows/gh-aw-native-capture.yml'
       - '.github/scripts/gh_aw_native_capture/**'
       - '.github/scripts/gh_aw_native_capture.py'
+      - '.github/workflows/shared/engine-zai.md'
+      - '.github/aw/imports/pydantic/pydantic-ai/**'
       - 'src/pydantic_ai_harness/gh-aw/**'
       - 'tests/harness/gh_aw/**'
 
@@ -31,7 +33,7 @@ jobs:
         with:
           node-version: '24'
 
-      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: false
 

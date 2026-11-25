@@ -1,20 +1,10 @@
-"""WarnOnCacheBusts: an observational cache-collapse warning.
+"""`WarnOnCacheBusts`: warn when a conversation's prompt cache hit collapses.
 
-This is the runtime `observe` arm of the cache-prefix-stability work. It does not
-inspect the structured request (that signal false-positives on internal metadata
-serialization strips, and is blind to serialization-level busts). Instead it reads
-the provider's own ground-truth verdict -- `response.usage.cache_read_tokens` -- and
-warns when a cache hit that was previously established collapses. That verdict is
-cross-provider for free: pyai normalizes every provider into the `cache_read_tokens`
-/ `cache_write_tokens` fields on `RequestUsage` via genai-prices.
-
-The detection and classification are Pydantic AI core's (`pydantic_ai._cache_health`), the
-same detector behind the `pydantic_ai.cache.*` span attributes and the
-`pydantic_ai.cache.collapse` span event that instrumentation records. This capability is a
-second output over it: a Python warning instead of telemetry.
-
-The deterministic, always-on structural catch lives at the wire level in `tests/` (VCR
-cassette prefix assertion), not here.
+It reads the provider-reported `usage.cache_read_tokens` rather than inspecting the
+structured request, which false-positives on internal metadata and misses
+serialization-level busts. Detection and classification are core's
+(`pydantic_ai._cache_health`), the detector behind instrumentation's `pydantic_ai.cache.*`
+span attributes.
 """
 
 from __future__ import annotations
@@ -39,13 +29,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_argument_ignored
 
 _WARN_ON: frozenset[CollapseReason] = frozenset({'unexpected', 'unknown'})
-"""The collapses worth a warning: those the provider's retention window doesn't explain.
-
-A `ttl_expired` collapse is the provider's cache expiring under an unchanged prefix, a
-`compacted` one is provider-native compaction shrinking the history by design, and an
-`unreported` one can't be told apart from caching being off for that request, so none is
-evidence that the prefix moved.
-"""
+"""The collapses the provider's retention window doesn't explain (see `CacheBustWarning.reason`)."""
 
 _SILENCE_HINT = (
     '    import warnings\n'
@@ -181,31 +165,10 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     with `reason='unknown'`. A response reporting no cache usage at all doesn't warn: it looks
     the same whether caching was off for that request or the cache fully missed.
 
-    A response whose usage sums cache reads over several internal model calls, such as one
-    that ran a native tool like web search, is still judged, so a low total can warn, but it
-    doesn't raise the mark or confirm recovery: its total isn't a prefix the next request can
-    read back. A response that reports a single call to the main model, or Gemini's separate
-    tool-use prompt count, is ordinary cache accounting and updates the mark as usual.
-
-    This is the same detector, with the same classification, that Pydantic AI's instrumentation
-    uses for its `pydantic_ai.cache.*` span attributes. Its `pydantic_ai.cache.collapse` span
-    event fires only for `unexpected` collapses; this warning also fires for `unknown` ones, so
-    that it still catches moved prefixes on providers that don't publish a retention window.
-
     Marks are kept per conversation (`RunContext.conversation_id`), not per run, so a run
-    that continues an earlier one via `message_history` -- including history that was
-    serialized and loaded back, which carries the conversation id with it -- is judged against
-    the prefix the earlier run established. That is where a moved prefix most often hides:
-    the first request of the next turn re-sends what the previous turn cached. A run that
-    starts a new conversation (no history, or `conversation_id='new'`) starts from a clean
-    mark.
-
-    Keying per provider, endpoint, and model means a mid-run model switch does not warn: a
-    `FallbackModel` failover or a per-step model change uses a different cache key, so it
-    starts a fresh mark for that key instead of comparing against the previous model's. Marks
-    are kept per key rather than reset, so switching back to an earlier model still compares
-    against that model's established prefix, and its retention window is timed from that same
-    model's previous request, not whatever ran in between.
+    that continues an earlier one via `message_history` is judged against the prefix the
+    earlier run established. Keying per provider, endpoint, and model means a mid-run model
+    switch starts a fresh mark for the new key instead of warning.
 
     ```python
     from pydantic_ai import Agent

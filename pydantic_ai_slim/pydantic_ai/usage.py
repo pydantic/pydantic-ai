@@ -50,6 +50,36 @@ class _UsageSerializerDescriptor:
         return _usage_serializer(owner)
 
 
+def _validate_usage(
+    value: Any, inner: core_schema.ValidatorFunctionWrapHandler, *, reserved_names: frozenset[str]
+) -> UsageBase:
+    if isinstance(value, dict):
+        value_dict = cast(dict[str, Any], value)
+        input_value = _with_legacy_defaults(value_dict)
+    else:
+        value_dict = None
+        input_value = cast(object, value)
+
+    result = inner(input_value)
+    assert isinstance(result, UsageBase)
+    if value_dict is not None:
+        for key, item in value_dict.items():
+            if key not in reserved_names:
+                setattr(result, key, item)
+    return result
+
+
+def _with_legacy_defaults(value: dict[str, Any]) -> dict[str, Any]:
+    """A copy of stored usage data, with the empty `details` and `None` token counts older versions stored defaulted."""
+    input_value = value.copy()
+    if not value.get('details'):
+        input_value['details'] = {}
+    for field_name, legacy_name in _LEGACY_TOKEN_ALIASES:
+        if field_name not in value and legacy_name in value and value[legacy_name] is None:
+            input_value[legacy_name] = 0
+    return input_value
+
+
 def _serialize_usage(
     value: UsageBase,
     inner: core_schema.SerializerFunctionWrapHandler,
@@ -186,25 +216,7 @@ class UsageBase:
         extra_serializer = SchemaSerializer(core_schema.any_schema())
 
         def validate(value: Any, inner: core_schema.ValidatorFunctionWrapHandler) -> UsageBase:
-            if isinstance(value, dict):
-                value_dict = cast(dict[str, Any], value)
-                input_value = value_dict.copy()
-                if not value_dict.get('details'):
-                    input_value['details'] = {}
-                for field_name, legacy_name in _LEGACY_TOKEN_ALIASES:
-                    if field_name not in value_dict and legacy_name in value_dict and value_dict[legacy_name] is None:
-                        input_value[legacy_name] = 0
-            else:
-                value_dict = None
-                input_value = cast(object, value)
-
-            result = inner(input_value)
-            assert isinstance(result, UsageBase)
-            if value_dict is not None:
-                for key, item in value_dict.items():
-                    if key not in reserved_names:
-                        setattr(result, key, item)
-            return result
+            return _validate_usage(value, inner, reserved_names=reserved_names)
 
         def serialize(
             value: UsageBase,
@@ -276,18 +288,17 @@ class UsageBase:
             details['cache_audio_read_tokens'] = self.cache_audio_read_tokens
         if self.output_audio_tokens:
             details['output_audio_tokens'] = self.output_audio_tokens
-        if details:
-            prefix = 'gen_ai.usage.details.'
-            for key, value in details.items():
-                # Never emit a `details` entry whose name collides with a first-class token attribute: the
-                # value is already reported as `gen_ai.usage.{input,output}_tokens`, and emitting it again
-                # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
-                if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
-                    continue
-                # Zero is a meaningful value, but a `None` would be an invalid OTel attribute value.
-                # Provider data can contain None despite the annotation.
-                if value is not None:  # pyright: ignore[reportUnnecessaryComparison]
-                    result[prefix + key] = value
+        prefix = 'gen_ai.usage.details.'
+        for key, value in details.items():
+            # Never emit a `details` entry whose name collides with a first-class token attribute: the
+            # value is already reported as `gen_ai.usage.{input,output}_tokens`, and emitting it again
+            # under `gen_ai.usage.details.*` makes consumers like Langfuse sum the two and double-count.
+            if key in _FIRST_CLASS_TOKEN_DETAIL_KEYS:
+                continue
+            # Zero is a meaningful value, but a `None` would be an invalid OTel attribute value.
+            # Provider data can contain None despite the annotation.
+            if value is not None:  # pyright: ignore[reportUnnecessaryComparison]
+                result[prefix + key] = value
         return result
 
     def __repr__(self):

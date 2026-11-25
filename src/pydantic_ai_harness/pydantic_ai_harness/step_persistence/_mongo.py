@@ -40,6 +40,8 @@ from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import BulkWriteError, DuplicateKeyError
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
+from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
+from pydantic_ai_harness._mongo_driver_info import harness_driver_info
 from pydantic_ai_harness.media import MediaStore, externalize_media, restore_media
 from pydantic_ai_harness.media._mongo import MongoMediaStore
 from pydantic_ai_harness.step_persistence._messages import (
@@ -121,7 +123,7 @@ class MongoStepStore:
             self._own_client = False
         else:
             assert db_url is not None
-            self._client = AsyncMongoClient[_MongoDocument](db_url)
+            self._client = AsyncMongoClient[_MongoDocument](db_url, driver=harness_driver_info())
             self._own_client = True
 
         self._db: AsyncDatabase[_MongoDocument] = self._client[database]
@@ -353,7 +355,9 @@ class MongoStepStore:
         messages_json: object = json.loads(messages_text)
         if self._media_store is not None:
             messages_json = await restore_media(messages_json, media_store=self._media_store)
-        messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(messages_json)
+        messages: list[ModelMessage] = ModelMessagesTypeAdapter.validate_python(
+            messages_json, context=STORED_HISTORY_CONTEXT
+        )
         return ContinuableSnapshot(
             run_id=run_id,
             step_index=step_index,

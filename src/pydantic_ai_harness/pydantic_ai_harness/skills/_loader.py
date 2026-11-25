@@ -12,8 +12,8 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from pydantic_ai.workspaces import FileEntry, Workspace
-from pydantic_ai_harness._workspace import workspace_path
+from pydantic_ai.workspaces import Workspace
+from pydantic_ai_harness._workspace import stat_or_none, workspace_path
 from pydantic_ai_harness.artifact_scanning import ArtifactScanResult
 
 # Imported with the module rather than on first parse: a durable engine such as Temporal parses skills in
@@ -43,7 +43,6 @@ _BEHAVIORAL_FRONTMATTER_FIELDS = frozenset(
         'paths',
         'shell',
         'tools',
-        'when_to_use',
     }
 )
 
@@ -53,6 +52,7 @@ class _SkillFrontmatter(BaseModel):
 
     name: str | None = None
     description: str
+    when_to_use: str | None = None
     disable_model_invocation: bool = Field(default=False, alias='disable-model-invocation')
     user_invocable: bool = Field(default=True, alias='user-invocable')
 
@@ -72,6 +72,13 @@ class _SkillFrontmatter(BaseModel):
         if not stripped:
             raise ValueError('must not be empty')
         return stripped
+
+    @field_validator('when_to_use', mode='after')
+    @classmethod
+    def _strip_when_to_use(cls, value: str) -> str | None:
+        # Frontmatter is loaded without implicit types, so a set field is always text. An empty trigger has
+        # nothing to append to the catalog description.
+        return value.strip() or None
 
 
 MissingDirectories: TypeAlias = Literal['error', 'skip']
@@ -95,6 +102,9 @@ Skipping suits a selection shared by several projects, such as a person's list o
 _ARGUMENTS_PLACEHOLDER = re.compile(r'\$ARGUMENTS(?![\[\w])')
 """`$ARGUMENTS` itself, not Claude Code's indexed `$ARGUMENTS[0]` or a longer name such as `$ARGUMENTS_LIST`."""
 
+_PLACEHOLDERS = re.compile(rf'{_ARGUMENTS_PLACEHOLDER.pattern}|\$\{{(?:CLAUDE_)?SKILL_DIR\}}')
+"""`$ARGUMENTS`, Claude Code's `${CLAUDE_SKILL_DIR}`, and the `${SKILL_DIR}` other clients use."""
+
 
 @dataclass(frozen=True, kw_only=True)
 class SkillDefinition:
@@ -105,6 +115,9 @@ class SkillDefinition:
 
     description: str
     """The `description` frontmatter field, listed in the model's catalog."""
+
+    when_to_use: str | None = None
+    """The `when_to_use` frontmatter field, appended to the catalog description."""
 
     body: str
     """The Markdown after the frontmatter, without leading and trailing blank lines."""
@@ -148,15 +161,19 @@ class SkillDefinition:
         `$ARGUMENTS[0]`, are left unchanged. Without `arguments`, the result is the instructions the
         model gets when it loads the skill.
 
-        The directory line is left out unless `in_run_workspace`.
+        When `in_run_workspace`, `${CLAUDE_SKILL_DIR}` and `${SKILL_DIR}` in the body become the skill's
+        directory. Otherwise they are left unchanged, and the directory line is left out.
         """
-        body = self.body
-        if arguments is not None:
-            if _ARGUMENTS_PLACEHOLDER.search(body):
-                # A function, so backslashes in the arguments are not read as group references.
-                body = _ARGUMENTS_PLACEHOLDER.sub(lambda _: arguments, body)
-            elif arguments:
-                body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
+        directory = self.directory if self.in_run_workspace else None
+
+        # One pass over the original body, so a value put in for one placeholder is not read as another.
+        def substitute(match: re.Match[str]) -> str:
+            value = arguments if match.group() == '$ARGUMENTS' else directory
+            return match.group() if value is None else value
+
+        body = _PLACEHOLDERS.sub(substitute, self.body)
+        if arguments and not _ARGUMENTS_PLACEHOLDER.search(self.body):
+            body = '\n\n'.join(part for part in (body, f'ARGUMENTS: {arguments}') if part)
         heading = f'# Skill: {self.name}'
         if self.in_run_workspace:
             heading += f'\n\nSkill directory: `{self.directory}`. Relative paths in this skill resolve against it.'
@@ -170,7 +187,7 @@ SkipReason: TypeAlias = Literal['invalid', 'duplicate_name', 'not_a_directory', 
 - `'duplicate_name'`: a `SKILL.md` named like a valid skill found earlier, with `duplicate_names='keep_first'`.
 - `'not_a_directory'`: a library path that is a file, with `missing_directories='skip'`.
 - `'skill_package'`: a library path that holds a `SKILL.md` itself, with `missing_directories='skip'`.
-- `'flagged'`: a skill whose description or body the `Skills(scanner=...)` artifact scan flagged.
+- `'flagged'`: a skill whose description, `when_to_use` or body the `Skills(scanner=...)` artifact scan flagged.
 """
 
 
@@ -274,15 +291,8 @@ def _normalize_name(name: str) -> str:
     return unicodedata.normalize('NFKC', name)
 
 
-async def _stat(workspace: Workspace, path: str) -> FileEntry | None:
-    try:
-        return await workspace.stat(path)
-    except (FileNotFoundError, NotADirectoryError):
-        return None
-
-
 async def _is_file(workspace: Workspace, path: str) -> bool:
-    entry = await _stat(workspace, path)
+    entry = await stat_or_none(workspace, path)
     return entry is not None and not entry.is_dir
 
 
@@ -311,7 +321,7 @@ async def _libraries(
         if library in seen:
             continue
         seen.add(library)
-        entry = await _stat(workspace, library)
+        entry = await stat_or_none(workspace, library)
         if entry is None:
             if missing_directories == 'skip':
                 continue
@@ -319,18 +329,26 @@ async def _libraries(
         if entry.is_dir and not await _is_file(workspace, posixpath.join(library, 'SKILL.md')):
             libraries.append(library)
             continue
-        # The model's tools can create either mid-session, so with 'skip' they must not fail every later run.
-        if missing_directories == 'skip':
-            reason: SkipReason = 'skill_package' if entry.is_dir else 'not_a_directory'
-            problem = 'it is a skill package, not a library' if entry.is_dir else 'it is not a directory'
-            skipped.append(SkippedSkill(path=library, reason=reason, message=f'Skipping {library}: {problem}.'))
-        elif entry.is_dir:
-            raise ValueError(
-                f'Skill library path points to a skill package: {configured}. Pass its parent directory instead.'
-            )
-        else:
-            raise ValueError(f'Skill library path is not a directory: {configured}')
+        skipped.append(
+            _skip_non_library(configured, library, is_dir=entry.is_dir, missing_directories=missing_directories)
+        )
     return libraries, skipped
+
+
+def _skip_non_library(
+    configured: str | Path, library: str, *, is_dir: bool, missing_directories: MissingDirectories
+) -> SkippedSkill:
+    """The entry for `library`, a skill package or a file; raises unless `missing_directories` is `'skip'`."""
+    # The model's tools can create either mid-session, so with 'skip' they must not fail every later run.
+    if missing_directories == 'skip':
+        reason: SkipReason = 'skill_package' if is_dir else 'not_a_directory'
+        problem = 'it is a skill package, not a library' if is_dir else 'it is not a directory'
+        return SkippedSkill(path=library, reason=reason, message=f'Skipping {library}: {problem}.')
+    if is_dir:
+        raise ValueError(
+            f'Skill library path points to a skill package: {configured}. Pass its parent directory instead.'
+        )
+    raise ValueError(f'Skill library path is not a directory: {configured}')
 
 
 async def same_skill(first: tuple[Workspace, str], second: tuple[Workspace, str]) -> bool:
@@ -392,6 +410,7 @@ def parse_skill(text: str, skill_file: str) -> SkillDefinition:
     return SkillDefinition(
         name=normalized_name,
         description=frontmatter.description,
+        when_to_use=frontmatter.when_to_use,
         body=body,
         ignored_behavioral_fields=ignored_fields,
         model_invocable=not frontmatter.disable_model_invocation,
@@ -434,11 +453,7 @@ async def load_skill_libraries(
         if name not in selected_names:
             continue
         try:
-            try:
-                text = await workspace.read_text(skill_file)
-            except UnicodeDecodeError as error:
-                raise ValueError(f'{skill_file} is not valid UTF-8: {error}') from error
-            skill = parse_skill(text, skill_file)
+            skill = await _read_skill(workspace, skill_file)
         except ValueError as error:
             # A model-editable skill should not make unrelated valid skills unusable.
             skipped.append(SkippedSkill(path=skill_file, reason='invalid', message=f'Skipping {skill_file}: {error}'))
@@ -448,6 +463,14 @@ async def load_skill_libraries(
         elif not await same_skill((workspace, previous.path), (workspace, skill_file)):
             skipped.append(skip_duplicate_name(skill.name, previous.path, skill_file, duplicate_names))
     return list(by_name.values()), skipped
+
+
+async def _read_skill(workspace: Workspace, skill_file: str) -> SkillDefinition:
+    try:
+        text = await workspace.read_text(skill_file)
+    except UnicodeDecodeError as error:
+        raise ValueError(f'{skill_file} is not valid UTF-8: {error}') from error
+    return parse_skill(text, skill_file)
 
 
 def _validate_selection(

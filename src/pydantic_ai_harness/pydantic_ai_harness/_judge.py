@@ -27,7 +27,6 @@ from pydantic_ai.messages import (
     RetryFeedbackPart,
     RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
-    TextContent,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -35,17 +34,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, user_prompt_text
 
 JudgeAnswer: TypeAlias = Literal['yes', 'no', 'unsure']
 """The answer to a yes/no risk question about one tool call."""
 
 SerializableToolSelector: TypeAlias = Literal['all'] | Sequence[str] | dict[str, Any]
 """The `ToolSelector` forms an agent spec can express. A predicate is code-only."""
-
-# Same ~4 characters-per-token heuristic, transcript renderer, and window clamp as
-# `pydantic_ai_harness.trajectory_judge`. Not shared with it because that renderer also tags the run
-# id and splits the transcript; fold them together if a shared transcript helper lands.
-_CHARS_PER_TOKEN = 4
 
 # The `<` of every opening or closing `tool_call` or `conversation` tag, the two blocks this prompt is
 # built from. Pydantic AI's own framing tags (`<system>` and the rest) are neutralized by
@@ -94,7 +89,7 @@ def tool_call_prompt(
     # Neutralize before clamping, so escaping can't push the transcript past its window. A cut that
     # lands inside an escaped `&lt;` leaves no `<` behind, so it can't make a closing tag either.
     transcript = _neutralize_tags(_render_transcript(messages))
-    max_chars = conversation_window * _CHARS_PER_TOKEN
+    max_chars = conversation_window * CHARS_PER_TOKEN
     if len(transcript) > max_chars:
         transcript = transcript[-max_chars:]
     return f'<conversation>\n{transcript}\n</conversation>\n\n{tool_call}'
@@ -109,19 +104,9 @@ def _neutralize_tags(text: str) -> str:
     return _BLOCK_TAG_OPENER.sub('&lt;', neutralize_tags(text))
 
 
-def _prompt_text(content: str | Sequence[object]) -> str:
-    """The text of a user prompt; non-text content (images, files) is omitted."""
-    if isinstance(content, str):
-        return content
-    texts: list[str] = []
-    for item in content:
-        if isinstance(item, str):
-            texts.append(item)
-        elif isinstance(item, TextContent):
-            texts.append(item.content)
-    return ' '.join(texts)
-
-
+# Same transcript renderer as `pydantic_ai_harness.trajectory_judge`. Not shared with it because
+# that renderer also tags the run id and splits the transcript; fold them together if a shared
+# transcript helper lands.
 def _render_transcript(messages: Sequence[ModelMessage]) -> str:
     """Render the conversation as model-readable lines.
 
@@ -132,7 +117,7 @@ def _render_transcript(messages: Sequence[ModelMessage]) -> str:
     for message in messages:
         for part in message.parts:
             if isinstance(part, UserPromptPart):
-                text = _prompt_text(part.content)
+                text = user_prompt_text(part)
                 if text:
                     lines.append(f'user: {text}')
             elif (line := render_part(part)) is not None:

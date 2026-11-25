@@ -261,11 +261,13 @@ class ExtractPosting(PydanticAIWorkflow):  # (1)!
 
 With [DBOS](durable_execution/dbos.md) or [Prefect](durable_execution/prefect.md), put [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] or [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability] next to `BatchModelRequests` instead, and run the agent in a DBOS workflow or a Prefect flow. Under Prefect, the waits between checks are plain sleeps in the flow, which a retried flow run sleeps again.
 
+With [Azure Durable Task](harness/azure-durable-task.md) from Pydantic AI Harness, put `AzureDurableTaskDurability` next to `BatchModelRequests` and run the agent with `run_durable` in your orchestrator. Submitting a request and every check on its batch run as activities, and the waits between checks are durable timers, so a recovered orchestration continues with the same batch.
+
 Once the step that submitted a request has completed, replaying or recovering the workflow reuses its recorded result, so the request isn't submitted again. The one exception is a step that's retried after the provider created its batch but before the step completed, for example because the worker crashed, or because the step timed out: like any model request, the retry sends the request again, which submits it in another batch. A request waits for its batch to be submitted inside its step, so keep `max_wait` well below the step's timeout (for example, the Temporal model activity's `start_to_close_timeout`). For the same reason, `max_wait=None` doesn't suit durable execution: [`flush()`][pydantic_ai.capabilities.BatchModelRequests.flush] can't be called from workflow code. A [resubmission](#failed-requests) happens inside the step that found the failure, with the same exception.
 
 Other engines record less:
 
-- With the durability capabilities in [Pydantic AI Harness](harness/index.md) for AWS Lambda, Absurd, pgtask and Render Workflows, submitting a request and each check on its batch are durable steps too, but the waits between checks are plain sleeps in the process running the agent. That process has to stay up for as long as the batch takes, within its invocation, claim or task timeout. On AWS Lambda, Absurd and pgtask, a recovered run continues with the same batch, after sleeping again through the waits it already did. A retried Render Workflows entry task, or a run continued from a [Step Persistence](harness/step-persistence.md) snapshot taken while it waited, submits the request in a new batch instead.
+- With the other durability capabilities in [Pydantic AI Harness](harness/index.md), for AWS Lambda, Absurd, pgtask and Render Workflows, submitting a request and each check on its batch are durable steps too, but the waits between checks are plain sleeps in the process running the agent. That process has to stay up for as long as the batch takes, within its invocation, claim or task timeout. On AWS Lambda, Absurd and pgtask, a recovered run continues with the same batch, after sleeping again through the waits it already did. A retried Render Workflows entry task, or a run continued from a [Step Persistence](harness/step-persistence.md) snapshot taken while it waited, submits the request in a new batch instead.
 - Restate and Airflow record model requests through model wrappers of their own, which batched requests don't go through, so batching isn't recorded there and recovery submits the request again, in a new batch that's billed too.
 
 To wait out long batches on any of these, add [`PendingModelResponse`](#ending-a-run-while-it-waits) to the `output_type` and schedule the next run from the returned message history yourself.
@@ -281,6 +283,53 @@ A batch the provider refuses to create, for example because too many requests ar
 A check on a batch that fails the way a live request is retried on, for example with a dropped connection or a server error, says nothing about the batch, so the request keeps waiting and the batch is checked again at the next poll. After 3 failed checks in a row, the next failure raises the error.
 
 The number of resubmissions and of failed checks is recorded in the message history, so a run resumed from a history whose batch has failed submits the request again, rather than reading the same failed result every time it's resumed. A resubmitted request waits for its new batch as usual, or, with [`PendingModelResponse`](#ending-a-run-while-it-waits), ends the run with a new `PendingModelResponse`.
+
+### Retrying transports {#retrying-transports}
+
+Pydantic AI sends the request that creates a batch once, with the provider SDK's retries turned off, because a failed attempt may still have created the batch. A [retrying transport](retries.md#transport-retries) on the provider's HTTP client sits below the SDK, so it sends the request again on every failure its `validate_response` raises for, such as the 429 and 5xx responses in [A retrying client](retries.md#a-retrying-client). If the failed attempt did create a batch, the retry creates a second one with the same requests, and the first one, which Pydantic AI never learns about, still runs.
+
+To send the create once, return from `validate_response` without raising for it, so that its error reaches the SDK and is raised:
+
+```python {title="batch_retrying_client.py" gateway_toggle="skip"}
+import httpx2
+from tenacity import retry_if_exception_type, stop_after_attempt
+
+from pydantic_ai.models import create_async_httpx2_client
+from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.retries import (
+    AsyncHTTPX2TenacityTransport,
+    RetryConfig,
+    wait_retry_after,
+)
+
+BATCH_CREATE_PATHS = ('/batches', ':batchGenerateContent')  # (1)!
+
+
+def should_retry_status(response: httpx2.Response) -> None:
+    request = response.request
+    if request.method == 'POST' and request.url.path.endswith(BATCH_CREATE_PATHS):
+        return
+    if response.status_code in (429, 502, 503, 504):
+        response.raise_for_status()
+
+
+transport = AsyncHTTPX2TenacityTransport(
+    config=RetryConfig(
+        retry=retry_if_exception_type((httpx2.HTTPStatusError, httpx2.ConnectError)),
+        wait=wait_retry_after(),
+        stop=stop_after_attempt(5),
+        reraise=True,
+    ),
+    validate_response=should_retry_status,
+)
+client = create_async_httpx2_client(transport=transport)
+model = OpenAIResponsesModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
+```
+
+1. OpenAI creates a batch with `POST /v1/batches`, Anthropic with `POST /v1/messages/batches`, and Google with `POST /v1beta/models/<model>:batchGenerateContent`.
+
+The transport still retries a create that failed to connect, as it never reached the provider, and every other request, such as a check on a batch. The create's error then fails the batch's requests, as when the provider refuses to create a batch, so check the provider's batches before submitting the requests again. Uploading the input file of an OpenAI or Google batch is still retried too, which at worst leaves an unused file in place until the provider expires it.
 
 ## Direct batch requests
 
@@ -385,7 +434,7 @@ async def main():
 4. `batch_decode` raises the [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] the request failed with, if it did. Resubmitting failed requests is up to you, as is handling a request the batch ended without a result for.
 5. Or check from a scheduled job.
 
-[`batch_cancel`][pydantic_ai.models.Model.batch_cancel] asks the provider to cancel a batch. `batch_create` doesn't retry a failed submission, because the provider may have created the batch before the connection failed: check the provider's batches before submitting the requests again.
+[`batch_cancel`][pydantic_ai.models.Model.batch_cancel] asks the provider to cancel a batch. `batch_create` doesn't retry a failed submission, because the provider may have created the batch before the connection failed: check the provider's batches before submitting the requests again. A retrying transport does send it again after an error response, unless its `validate_response` [skips batch creates](#retrying-transports).
 
 ## Details
 
