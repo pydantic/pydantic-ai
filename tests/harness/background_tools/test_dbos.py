@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Generator
+from dataclasses import dataclass
 
 import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -22,7 +23,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import BackgroundTools
 from tests._timeouts import READINESS_WAIT_TIMEOUT
@@ -41,18 +42,41 @@ _research_calls: list[str] = []
 _gated_calls: list[str] = []
 _tokens: list[str] = []
 _asked: list[anyio.Event] = []
+_research_entered: list[anyio.Event] = []
 _research_may_finish: list[anyio.Event] = []
 _research_finished: list[anyio.Event] = []
 
 
-@DBOS.step()
-async def research() -> str:
-    """Research the topic."""
+@DBOS.step(name='research')
+async def _research_step() -> str:
     _research_calls.append('research')
     # Still running when the run starts waiting for the approval, and finishing while it waits.
     await _research_may_finish[-1].wait()
     _research_finished[-1].set()
     return 'durable result'
+
+
+async def research() -> str:
+    """Research the topic."""
+    # Every execution enters here, the replays included. DBOS numbers the step as soon as the call below starts,
+    # before it first yields to the event loop, so whatever waits on this event resumes after the numbering.
+    _research_entered[-1].set()
+    return await _research_step()
+
+
+@dataclass
+class _WaitForTheBackgroundStep(AbstractCapability[None]):
+    """Holds the approval wait until the background step has its step number.
+
+    DBOS numbers steps in the order they start, so a background step that started during the wait would be
+    numbered differently on replay: here it always starts first, in every execution.
+    """
+
+    async def handle_deferred_tool_calls(
+        self, ctx: RunContext[None], *, requests: DeferredToolRequests
+    ) -> DeferredToolResults | None:
+        await _research_entered[-1].wait()
+        return None
 
 
 def gated() -> str:
@@ -102,7 +126,12 @@ agent = Agent(
         FunctionToolset[None](tools=[research], id='background-tools', metadata={'background': True}),
         FunctionToolset[None](tools=[Tool(gated, requires_approval=True)], id='gated-tools'),
     ],
-    capabilities=[BackgroundTools[None](), DBOSDurability[None](), HandleDeferredToolCalls[None](_hand_on)],
+    capabilities=[
+        BackgroundTools[None](),
+        DBOSDurability[None](),
+        _WaitForTheBackgroundStep(),
+        HandleDeferredToolCalls[None](_hand_on),
+    ],
 )
 
 
@@ -152,6 +181,7 @@ async def _stop_while_waiting(dbos: DBOS, handle: WorkflowHandleAsync[str]) -> N
 
 async def test_a_background_step_runs_through_an_approval_wait_and_recovery_does_not_ask_again(dbos: DBOS) -> None:
     _asked.append(anyio.Event())
+    _research_entered.append(anyio.Event())
     _research_may_finish.append(anyio.Event())
     _research_finished.append(anyio.Event())
     workflow_id = f'background-{uuid.uuid4()}'
@@ -167,6 +197,7 @@ async def test_a_background_step_runs_through_an_approval_wait_and_recovery_does
 
     # The execution stops while it waits, as if its process died, and a new one takes over.
     await _stop_while_waiting(dbos, handle)
+    _research_entered.append(anyio.Event())
     resumed = await DBOS.resume_workflow_async(workflow_id)
     await resolve_external_event(token, {'approvals': {'gated-call': True}})
     # The model only answers `'done'` once it has the background result, which comes with the approved call's.
@@ -188,6 +219,7 @@ async def test_a_background_step_runs_through_an_approval_wait_and_recovery_does
     ]
 
     # A fork from the last step replays the whole run, the background step and the wait included.
+    _research_entered.append(anyio.Event())
     fork = await DBOS.fork_workflow_async(workflow_id, steps[-1]['function_id'])
     assert await fork.get_result(polling_interval_sec=0.01) == 'done'
     assert _tokens == [token]
