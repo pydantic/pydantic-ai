@@ -1225,7 +1225,9 @@ Each submitted prompt is echoed into the transcript after a `>` marker in the th
 accent colour, with the prompt text in bold and every row after its first (wrapped or
 its own line) indented under the text. This keeps your prompts apart from answers.
 Steering messages, commands entered during a turn, and prompts restored by `/resume`
-look the same.
+look the same. An answer you type to a question gets the same marker and bold text,
+without the indent. Under a bundled palette, on a terminal that advertises 24-bit
+colour, all of these also sit on a grey background; see [Themes](#themes).
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders, so they cannot drift out of alignment.
@@ -1929,6 +1931,13 @@ terminal (OSC 11), else from `COLORFGBG`; when neither says, it assumes a dark o
 It does not ask when stdin or stdout is not a terminal, with `TERM=dumb`, on Windows, or with `-p` or `--web`; keys typed
 during the question still reach the first prompt. The logo keeps its brand colours. On a dark or unknown background the default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
+
+Under a bundled palette, your prompts sit on a grey background: the palette's
+background moved a little towards its text colour, lighter on a dark palette and
+darker on a light one. This needs a terminal that advertises 24-bit colour
+(`COLORTERM=truecolor`), since the nearest of 256 colours is often not grey; without
+it, prompts keep the bold text alone. Under `default` they keep the bold text alone
+too, on a light terminal background as on a dark one.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. Pax adds
