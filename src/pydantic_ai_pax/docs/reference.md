@@ -3140,8 +3140,8 @@ Run `/sandbox PROVIDER` (`local smol`, `local boxlite`, `e2b`, `boxd`, `daytona`
 `sprites`, or `kubernetes`) in a new conversation, before its first prompt. `local smol` and `local boxlite` run a
 microVM on this machine, with SmolVM or BoxLite; `/sandbox local` alone asks which, and says what each still needs.
 The others are cloud sandboxes. Pax copies this checkout (the branch, its unpushed commits, and
-uncommitted files) into a new sandbox, and every command and file edit of the conversation runs
-there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+uncommitted files) into a new sandbox, saying which step it is on, and every command and file edit of the
+conversation runs there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
 the conversation runs. To work on this machine again, run `/new`.
 
 A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If Pax stops
@@ -3150,7 +3150,10 @@ it. A fork or copy of the conversation uses the same sandbox, and stops working 
 
 `git` and `gh` in the sandbox act as your `gh` login, so the agent can push and open pull requests.
 Each sandbox gets the token `gh` has when you run `/sandbox`, and loses it when the sandbox is deleted.
-Without a `gh` login, the sandbox has no GitHub access, and its copy has no `origin` remote.
+The copy downloads older versions of files from GitHub when a command first reads them, so `git log -p`,
+`git blame`, `git diff` against an older commit, or checking out another branch also need that token, and
+fail once it stops working. Without a `gh` login, the sandbox has no GitHub access, and its copy has no
+`origin` remote; it gets the whole history from this machine instead, and needs nothing from GitHub.
 
 | Provider | Install extra | Keys | Where your GitHub token is | Who can read it |
 |---|---|---|---|---|
