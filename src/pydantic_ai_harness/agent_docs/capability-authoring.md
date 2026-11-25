@@ -318,6 +318,12 @@ reason from what the capability actually does, not from what would be
 convenient: a reason like "one per rooted directory" is wrong if the toolset's
 fixed tool names make two unreachable.
 
+The same entry is what the conformance contracts run: a capability whose
+toolset or tool hooks run when a tool is called also declares `calls`, and
+each area in
+[Capability Conformance](../../../agent_docs/capability-conformance.md) says
+what else the entry must pass.
+
 ## Telemetry
 
 Decide what a capability emits to OpenTelemetry while designing it, not after

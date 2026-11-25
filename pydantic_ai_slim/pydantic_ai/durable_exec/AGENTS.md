@@ -27,6 +27,12 @@ Choose the backend tier from the engine SDK's execution model:
   the five model operations during agent assembly, so `registrations()` is complete before worker
   start; pass the collected registrations to the engine SDK when creating the worker.
 
+If user code can open its own durable unit around tool code in the same process (a DBOS step via
+`DBOS.step_id`, a Prefect task via `TaskRunContext`), override `in_durable_unit` to detect it, as the
+DBOS and Prefect capabilities do. `RunContext.submit_output()` refuses inside a unit, because replaying
+the unit's recorded result wouldn't submit the output again; a unit the capability can't see would
+lose the submission on recovery.
+
 When durable units can run in another process (Temporal activities, Render child tasks), give the
 backend a `ParameterTransports` subclass that moves the public `*Params` types across the boundary,
 and serialize and rebuild their `RunContext` with `DurableRunContext` (subclass it for
@@ -114,6 +120,21 @@ site. The label job (`durable-exec-label` in `.github/workflows/bots.yml`) and C
 generator and the manifest from the base branch, never the pull request's copies, so an edit to
 either takes effect only once merged. To list the touched entries yourself, run
 `uv run python scripts/durable_exec_contract.py --touched <owner/repo> <pr> <base sha> <head sha>`.
+
+A durable-exec reviewer with write access signs off by commenting the marker line that
+`uv run python scripts/durable_exec_contract.py --signoff-marker <owner/repo> <pr> <base sha> <head sha>`
+prints, on a line of its own, and removing the label. Run it from a checkout of the current base
+branch, with that branch's tip as `<base sha>`, so it uses the manifest the label job uses, and with
+the head you reviewed as `<head sha>`: it refuses when that is not the pull request's current head.
+The label then stays off until the pull request's own added or removed lines in the core files whose
+gating entries it touches change, or a newer marker comment by a user with write access carries
+another fingerprint. Merging the base branch in does not bring it back, unless a manifest change
+there gives a core file the pull request changes its first touched gating entry or takes away its
+last, which changes the set of files fingerprinted. The fingerprint covers the
+text and order of those lines, not where they are, so moving a changed line to another definition in
+the same file keeps it. A core file GitHub shows no patch for cannot be signed off. A push that lands
+while the label job checks the previous one can bring the label back: remove it again, and the next
+push's run checks the fingerprint again.
 
 `tests/durable_exec/test_durable_exec_contract_manifest.py` fails when the manifest is stale.
 Regenerate it with `uv run python scripts/durable_exec_contract.py --write` and commit the diff.
