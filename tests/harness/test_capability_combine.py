@@ -162,6 +162,39 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
         await agent.run('hello', workspace=LocalWorkspaceBackend(COMBINE_ROOT_A))
 
 
+_CODER_LEAF_CLASS_NAMES = {base.__name__ for leaf in leaf_capabilities(Coder()) for base in type(leaf).__mro__}
+"""Every class `Coder`'s own leaves are instances of, so a `Collides` case it carries is found by its name."""
+
+
+# Asyncio only: `Agent.run` reaches `asyncio.create_task` for its lifecycle hooks.
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
+@pytest.mark.parametrize(
+    'name',
+    sorted(
+        n
+        for n, c in CASES.items()
+        if isinstance(c.combine, Collides) and c.combine.make is not None and n in _CODER_LEAF_CLASS_NAMES
+    ),
+)
+async def test_a_colliding_capability_beside_coder_raises(name: str, anyio_backend: str) -> None:
+    """A `Collides` capability that `Coder` carries also refuses a second one added beside `Coder`.
+
+    `Collides` pairs are two standalone instances, which collide on their tool names. Beside `Coder` the second
+    one meets `Coder`'s own instance instead, configured with other tools: `Coder`'s `Shell` registers `shell`,
+    a plain `Shell` registers `run_command`, and for a while the pair silently ran both
+    (https://github.com/pydantic/pydantic-ai/issues/14515). Adding one beside `Coder` reads as narrowing
+    `Coder`'s, which it never does, so it has to raise however the tool names fall.
+    """
+    shipped, _ = shipped_capability_types(HARNESS_CAPABILITY_PACKAGES)
+    policy = CASES[name].combine
+    assert isinstance(policy, Collides) and policy.make is not None
+
+    first, _ = policy.make(shipped[name])
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[Coder(), first])
+    with pytest.raises(UserError):
+        await agent.run('hello', workspace=LocalWorkspaceBackend(COMBINE_ROOT_A))
+
+
 @pytest.mark.parametrize(
     ('field_name', 'first_kwargs', 'second_kwargs'),
     [

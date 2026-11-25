@@ -177,7 +177,9 @@ Then the plumbing, which the agent never calls directly:
 
 Every tool comes from `FileSystem`, `Shell`, or `SubAgents`; those pages document each one in full. Build the same
 agent from the pieces to change any setting, for example to keep content hashes, add `list_directory`,
-or allowlist commands.
+or allowlist commands. A `Shell` added beside `Coder()` would not narrow `Coder`'s `shell` tool, only add
+`run_command` and its siblings next to it, so a run with both fails at its start
+([#14515](https://github.com/pydantic/pydantic-ai/issues/14515) tracks narrowing `Coder` this way).
 
 ## Tools
 
