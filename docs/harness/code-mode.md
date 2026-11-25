@@ -493,7 +493,7 @@ Use `https://` unless the network is trusted: the connection carries your agent'
 
 Only code execution moves to the worker. Tools, `os_access`, and `print` output stay in your process, and REPL state persists across `run_code` calls as it does locally. `mount` directories are read in your process too, except when turns run as activities, where the activity worker reads them.
 
-Run the server on `pydantic-monty>=1.5.0`; earlier servers speak WebSockets, which this client no longer uses. The `run_code` description lists the modules Monty 1.5 can import.
+Run the server on `pydantic-monty>=1.7.0`: servers before 1.5 speak WebSockets, which this client no longer uses, and the `run_code` description lists the modules Monty 1.7 can import.
 
 ### Error handling
 
@@ -738,7 +738,7 @@ In a [Temporal workflow](#temporal-durability), a `'system'` clock or `random_st
 
 Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python subset:
 
-- No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib` (each must be imported before use).
+- No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib`, `colorsys`, `keyword`, `stat`, `statistics` (each must be imported before use).
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments. Other task creation and wait APIs are unavailable.
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail unless an `os_access` handler implements them (the built-in `OSAccess` does), or, for the clock, `os_policy` sets one. `time.sleep` and `asyncio.sleep` really wait, up to the sleep allowance in [Resource limits](#resource-limits); in a Temporal workflow a sleep is a durable timer.
 - No `import *`.
