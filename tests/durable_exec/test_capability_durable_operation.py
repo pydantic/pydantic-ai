@@ -1515,6 +1515,48 @@ async def test_operations_called_from_a_nested_realtime_sessions_setup_run_direc
     assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot([])
 
 
+class ResolvesAmbientlyInInstructions(AbstractCapability[Any]):
+    """Calls a durable operation that takes no context from its dynamic instructions."""
+
+    id = 'resolves_ambiently_in_instructions'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def get_instructions(self) -> Callable[[RunContext[Any]], Awaitable[str]]:
+        async def instructions(ctx: RunContext[Any]) -> str:
+            await self.resolve()
+            return 'Be brief.'
+
+        return instructions
+
+    @durable_operation('resolve')
+    async def resolve(self) -> int:
+        self.calls += 1
+        return self.calls
+
+
+async def test_operations_a_nested_realtime_signaling_call_runs_run_directly() -> None:
+    """A signaling call installs no run context of its own, so it runs as a top-level one does, not in the enclosing run."""
+    from ..realtime.test_session import FakeRealtimeConnection, FakeRealtimeModel
+
+    inner = ResolvesAmbientlyInInstructions()
+    inner_agent = Agent(name='inner_signaling', capabilities=[inner])
+    agent = Agent(
+        TestModel(), name='outer_of_signaling', capabilities=[ResolvesAmbientlyInInstructions(), RecordingDurability()]
+    )
+
+    @agent.tool_plain
+    async def mint() -> str:
+        with pytest.raises(UserError, match='create_client_secret'):
+            await inner_agent.realtime(FakeRealtimeModel(FakeRealtimeConnection([]))).create_client_secret()
+        return 'done'
+
+    await agent.run('test')
+
+    assert inner.calls == 1
+
+
 async def test_run_replacement_that_drops_the_bound_id_is_refused() -> None:
     """A replacement under a different `id` leaves the bound operations unreachable.
 

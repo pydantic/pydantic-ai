@@ -4400,6 +4400,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         yielded = False
         async with AsyncExitStack() as session_stack:
+            # Nor does what the session runs before its own context is installed: instructions, toolset entry and exit,
+            # and the whole of a signaling call, which installs none.
+            session_stack.enter_context(set_current_run_context(None))
             if lifecycle_state is not None:
                 # As for a classic run: nothing the session records is credited to an enclosing run's span.
                 session_stack.enter_context(_usage_attribution.accumulate(None))
