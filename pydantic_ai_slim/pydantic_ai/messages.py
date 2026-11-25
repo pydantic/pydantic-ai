@@ -3388,7 +3388,9 @@ class InstructionId:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def _deserialize_instruction_id(value: str | InstructionId | None) -> InstructionId | None:
+def _deserialize_instruction_id(
+    value: str | InstructionId | dict[str, Any] | None,
+) -> InstructionId | dict[str, Any] | None:
     """Rebuild a key from the string it renders to.
 
     A namespace this version doesn't know can only come from a newer one, whose keys it has no way to
@@ -3396,7 +3398,7 @@ def _deserialize_instruction_id(value: str | InstructionId | None) -> Instructio
     goes for a source `kind` it doesn't know in an id written as an object.
     """
     if isinstance(value, dict):
-        source = cast(dict[str, Any], value).get('source')
+        source = value.get('source')
         if isinstance(source, dict) and (kind := cast(dict[str, Any], source).get('kind')) is not None:
             return value if kind in _INSTRUCTION_SOURCE_KINDS else None
         return value
