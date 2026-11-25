@@ -372,6 +372,20 @@ class ModelProfile(TypedDict, total=False):
     pays a full prefix re-write either way, so the marginal cache cost of the mutation is ~zero.
     """
 
+    prompt_cache_warms_siblings: bool
+    """Whether concurrent requests that share a prompt prefix should start one at a time to share its cache. Default: `False`.
+
+    Some providers only serve a cached prefix to a request that arrives after another request has started writing it,
+    so identical requests sent at the same moment each write the whole prefix again. When True, a fan-out that starts
+    several sibling runs at once, such as the harness `SubAgents` and `DynamicWorkflow` capabilities, sends the first
+    sibling's first request alone and holds the others until it starts streaming, so they read the prefix from the
+    cache instead. It only takes effect when the request has prompt caching configured, such as through the unified
+    [`cache`][pydantic_ai.settings.ModelSettings.cache] setting.
+
+    True on Anthropic's Messages API and on Claude via Bedrock. Like the other cache facts, it's set by providers rather
+    than shared profile functions.
+    """
+
     supports_thinking: bool
     """Whether the model supports thinking/reasoning configuration. Default: `False`.
 
@@ -671,6 +685,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supports_auto_cache': False,
     'supported_cache_retentions': (),
     'default_cache_retention': None,
+    'prompt_cache_warms_siblings': False,
     'supports_thinking': False,
     'thinking_always_enabled': False,
     'thinking_enabled_by_default': False,

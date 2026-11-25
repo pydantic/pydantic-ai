@@ -61,6 +61,7 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness._code_tools import reserve_nested_call
 from pydantic_ai_harness._models import is_request_response_model
+from pydantic_ai_harness._sibling_cache import WarmSiblingCache, sibling_cache_warming
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
@@ -584,6 +585,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         workspace_resolver: WorkspaceResolver[AgentDepsT] | None = None,
         forward_deferred_calls: bool = False,
         deferred_state_store: DeferredStateStore | None = None,
+        warm_sibling_cache: WarmSiblingCache = 'auto',
         _record_delegation: RecordDelegation | None = None,
     ) -> None:
         super().__init__(id=id)
@@ -620,6 +622,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             deferred_state_store if deferred_state_store is not None else InMemoryDeferredStateStore()
         )
         self._workspace_resolver = workspace_resolver
+        self._warm_sibling_cache: WarmSiblingCache = warm_sibling_cache
         self._models: dict[str, ModelOption] = dict(models or {})
         self._include_self = include_self
         self._max_depth = max_depth
@@ -1498,6 +1501,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         toolsets = self._inherited_toolsets(ctx) if inherit_tools else None
         serving_model = ServingModelRecorder()
         capabilities = self._child_capabilities(ctx, owner, record, serving_model, extra_capabilities)
+        # Delegations to one sub-agent from one parent step share their first request's prefix.
+        warming = sibling_cache_warming(ctx, agent_name, self._warm_sibling_cache)
+        if warming is not None:
+            capabilities.append(warming)
         own_budget, child_usage, usage_limits = self._child_budget(ctx, sub_agent, managed=managed or owner is not None)
 
         run_model, settings = self._run_model(ctx, sub_agent, key=key, is_self=is_self)

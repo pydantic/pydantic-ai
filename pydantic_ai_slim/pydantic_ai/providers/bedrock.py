@@ -401,6 +401,7 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
             supports_cache=True,
+            prompt_cache_warms_siblings=True,
             # AWS grants the 1-hour cache TTL to only a subset of Claude models.
             supported_cache_retentions=bedrock_claude_cache_retentions(model_name),
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),

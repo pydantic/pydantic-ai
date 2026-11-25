@@ -119,6 +119,21 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     `DBOSDurability`, the calls already run one at a time in that order, and the factory is not called.
     """
 
+    warm_sibling_cache: bool | Literal['auto'] = 'auto'
+    """Whether calls to one sub-agent that the script starts together go one at a time, so they share the prompt cache.
+
+    When the script gathers several calls to the same sub-agent, each one's first request carries the same tool
+    definitions and instructions. With this on, the first goes alone and the others wait until it starts streaming,
+    by when the provider has cached that prefix, so they read it from the cache instead of writing it again. They
+    wait at most 10 seconds. The first call's first request is streamed, so it can release the others early.
+
+    `'auto'` (the default) does this when the sub-agent's model profile says it pays off
+    ([`prompt_cache_warms_siblings`][pydantic_ai.profiles.ModelProfile.prompt_cache_warms_siblings], True on Anthropic
+    and Claude via Bedrock) and the sub-agent has prompt caching configured, such as with the `Caching` capability
+    (the parent's caching doesn't reach it). `True` does it on any model, such as OpenAI's, where calls started together share the cache only some
+    of the time. `False` starts them together. Calls under durable execution always start together.
+    """
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         # Not spec-serializable: `agents` holds live Agent objects, not YAML-expressible config.
@@ -167,6 +182,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
             sub_agent_usage_limits=self.sub_agent_usage_limits,
             resource_limits=self.resource_limits,
             call_scheduler=self.call_scheduler,
+            warm_sibling_cache=self.warm_sibling_cache,
             toolset_id=self.id,
             owning_capability=self,
         )

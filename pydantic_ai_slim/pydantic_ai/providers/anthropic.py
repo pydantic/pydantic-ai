@@ -229,6 +229,9 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                 supports_cache=True,
                 supported_cache_retentions=('5m', '1h'),
                 supports_auto_cache=True,
+                # Concurrent requests miss a prefix another request is still writing, but read it once that request
+                # has started streaming.
+                prompt_cache_warms_siblings=True,
             ),
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)

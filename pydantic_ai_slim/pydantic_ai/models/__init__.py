@@ -3146,6 +3146,10 @@ class StreamedResponse(ABC):
     _first_chunk_monotonic: float | None = field(default=None, init=False)
     """`time.perf_counter()` stamped on the first event surfaced to the consumer, or `None` if nothing
     was yielded; surfaced as a duration by the `time_to_first_chunk` method."""
+    _first_event_callbacks: list[Callable[[], None]] = field(
+        default_factory=list[Callable[[], None]], init=False, repr=False
+    )
+    """Called once, when the first event reaches the consumer. Added through `_call_on_first_event`."""
     _request_deadline: RequestDeadline | None = field(default=None, init=False, repr=False)
     """The `ModelSettings['request_timeout']` and `ModelSettings['first_event_timeout']` deadlines each pull of the next
     event runs under, if any.
@@ -3236,8 +3240,7 @@ class StreamedResponse(ABC):
                 try:
                     async for event in iterator:
                         if self._first_chunk_monotonic is None:
-                            # First event surfaced to the consumer: stamp the monotonic clock.
-                            self._first_chunk_monotonic = time.perf_counter()
+                            self._mark_first_event()
                         yield event
                 except self.get_stream_cancel_errors():
                     if not self.cancelled:
@@ -3274,6 +3277,17 @@ class StreamedResponse(ABC):
         if part.provider_name is not None and part.provider_name == self.provider_name:
             return self.canonical_system
         return None
+
+    def _mark_first_event(self) -> None:
+        """Stamp the monotonic clock on the first event surfaced to the consumer, and call the first-event callbacks."""
+        self._first_chunk_monotonic = time.perf_counter()
+        for callback in self._first_event_callbacks:
+            callback()
+
+    def _call_on_first_event(self, callback: Callable[[], None]) -> None:
+        """Call `callback` when the first event reaches the consumer."""
+        assert self._event_iterator is None, 'A first-event callback must be added before the stream is iterated'
+        self._first_event_callbacks.append(callback)
 
     def _enforce_request_deadline(self, deadline: RequestDeadline) -> None:
         """Pull each event under `deadline`, the deadlines this stream was opened under."""

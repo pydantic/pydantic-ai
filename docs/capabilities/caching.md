@@ -174,6 +174,36 @@ On Anthropic models that bind thinking blocks to the prefix that produced them (
 
 Provider caches expire after idle gaps. This is unavoidable, but it creates a useful opportunity: schedule history-mutating maintenance for [cache-cold windows](../message-history.md#scheduling-maintenance-into-cache-cold-windows), when the next request would pay the full input price anyway. Each provider's documented default retention is recorded as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention], a longer retention requested through settings is resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention], and [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] takes either to predict whether the next request will find the cache cold.
 
+## Sub-agents that start together
+
+When an agent fans out to several sub-agents at once, each sub-agent's first request starts with the same tool definitions and instructions. Anthropic only serves a cached prefix to a request that arrives after another request has started writing it, so sub-agents sent at the same moment each write that prefix again, and none of them reads it.
+
+The Pydantic AI Harness [`SubAgents`](../harness/subagents.md) and [`DynamicWorkflow`](../harness/dynamic-workflow.md) capabilities handle this with `warm_sibling_cache`. When several runs of the same sub-agent start in one step of the parent run, the first one's first request goes alone, and the others wait until it starts streaming, which is when the provider has cached the prefix. The sub-agents after the first then read the shared prefix from the cache instead of writing it again, at the cost of waiting for the first one to start streaming. A held sub-agent waits at most 10 seconds, and the first one releases the others if it fails before it streams. Only each sub-agent's first request is held; the ones after it carry that sub-agent's own conversation.
+
+- `'auto'` (the default) holds them when the model's profile sets [`prompt_cache_warms_siblings`][pydantic_ai.profiles.ModelProfile.prompt_cache_warms_siblings], which is true on Anthropic and on Claude via Bedrock, and the sub-agent has caching configured, for example with the [`Caching`][pydantic_ai.capabilities.Caching] capability. Caching on the parent agent doesn't reach its sub-agents.
+- `True` holds them on any model. OpenAI caches implicitly, and sub-agents it receives at the same moment already share the cache much of the time, so holding them is an optional, smaller saving there.
+- `False` starts them together.
+
+Gemini's implicit caching doesn't serve sibling requests sooner for being held, so `'auto'` doesn't hold them there. Under [durable execution](../durable_execution/overview.md), sub-agents always start together.
+
+```python
+from pydantic_ai_harness import SubAgent, SubAgents
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Caching
+
+researcher = Agent(
+    '{{ anthropic:large }}',
+    name='researcher',
+    instructions='...',  # long instructions every delegation shares
+    capabilities=[Caching()],
+)
+agent = Agent(
+    '{{ anthropic:large }}',
+    capabilities=[Caching(), SubAgents(agents=[SubAgent(researcher)])],  # warm_sibling_cache='auto'
+)
+```
+
 ## Prefix-stability guarantees
 
 Pydantic AI makes the following guarantees about the prompt prefix it sends to providers:

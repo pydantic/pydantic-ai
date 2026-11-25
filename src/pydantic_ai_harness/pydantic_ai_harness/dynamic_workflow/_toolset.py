@@ -65,6 +65,7 @@ from pydantic_ai_harness._monty_exec import (
     in_temporal_workflow,
 )
 from pydantic_ai_harness._monty_turns import is_sandbox_panic
+from pydantic_ai_harness._sibling_cache import WarmSiblingCache, sibling_cache_warming
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
@@ -739,6 +740,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     """Creates the scheduler that decides when each script's sub-agent calls start.
     See `DynamicWorkflow.call_scheduler`."""
 
+    warm_sibling_cache: WarmSiblingCache = 'auto'
+    """Whether calls to one sub-agent that start together go one at a time. See `DynamicWorkflow.warm_sibling_cache`."""
+
     toolset_id: str | None = None
     """Stable toolset id; defaults to the tool name."""
 
@@ -957,6 +961,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             usage_limits = ctx.usage_limits
         # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
         deny = find_deny_unanswered(ctx)
+        # Calls to one sub-agent from one `run_workflow` call share their first request's prefix.
+        warming = sibling_cache_warming(ctx, agent_name, self.warm_sibling_cache)
         try:
             result = await self._by_name[agent_name].agent.run(
                 task,
@@ -964,7 +970,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 model=inherited_model,
                 usage=ctx.usage if self.forward_usage else None,
                 usage_limits=usage_limits,
-                capabilities=[serving_model, *([deny] if deny is not None else [])],
+                capabilities=[serving_model, *([deny] if deny is not None else []), *([warming] if warming else [])],
             )
             reason = resumable_output_reason(result.output)
             if reason is None:

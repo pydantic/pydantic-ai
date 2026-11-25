@@ -307,6 +307,21 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     its own limit. This bounds `include_self`, whose delegate carries the delegate tool again,
     and a roster that reaches the same agent through another path."""
 
+    warm_sibling_cache: bool | Literal['auto'] = field(default='auto', kw_only=True)
+    """Whether delegations to one sub-agent that start together go one at a time, so they share the prompt cache.
+
+    When the parent delegates to the same sub-agent several times in one step, each delegation's first request
+    carries the same tool definitions and instructions. With this on, the first goes alone and the others wait until
+    it starts streaming, by when the provider has cached that prefix, so they read it from the cache instead of
+    writing it again. They wait at most 10 seconds.
+
+    `'auto'` (the default) does this when the sub-agent's model profile says it pays off
+    ([`prompt_cache_warms_siblings`][pydantic_ai.profiles.ModelProfile.prompt_cache_warms_siblings], True on Anthropic
+    and Claude via Bedrock) and the sub-agent has prompt caching configured, such as with the `Caching` capability
+    (the parent's caching doesn't reach it). `True` does it on any model, such as OpenAI's, where siblings started together share the cache only
+    some of the time. `False` starts them together. Delegations under durable execution always start together.
+    See [Sub-agents that start together](https://pydantic.dev/docs/ai/capabilities/caching/#sub-agents-that-start-together)."""
+
     _by_name: dict[str, SubAgent[AgentDepsT]] = field(
         default_factory=dict[str, 'SubAgent[AgentDepsT]'], init=False, repr=False, compare=False
     )
@@ -830,6 +845,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             workspace_resolver=self.workspace_resolver,
             forward_deferred_calls=self.forward_deferred_calls,
             deferred_state_store=self._deferred_state_store,
+            warm_sibling_cache=self.warm_sibling_cache,
             _record_delegation=self._delegate
             if self.dynamic_agents is not None or self.task_control is not None
             else None,

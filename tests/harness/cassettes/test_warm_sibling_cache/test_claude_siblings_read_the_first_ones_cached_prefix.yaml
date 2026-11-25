@@ -1,0 +1,1531 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "32931"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 256
+        messages:
+        - role: user
+          content:
+          - text: alpha
+            type: text
+        model: claude-opus-5-5
+        cache_control:
+          type: ephemeral
+          ttl: 5m
+        output_config:
+          effort: low
+        stream: true
+        system:
+        - type: text
+          text: |-
+            You do one small task.
+
+            0. When a task mentions topic 0, answer in a single short sentence about it.
+            1. When a task mentions topic 1, answer in a single short sentence about it.
+            2. When a task mentions topic 2, answer in a single short sentence about it.
+            3. When a task mentions topic 3, answer in a single short sentence about it.
+            4. When a task mentions topic 4, answer in a single short sentence about it.
+            5. When a task mentions topic 5, answer in a single short sentence about it.
+            6. When a task mentions topic 6, answer in a single short sentence about it.
+            7. When a task mentions topic 7, answer in a single short sentence about it.
+            8. When a task mentions topic 8, answer in a single short sentence about it.
+            9. When a task mentions topic 9, answer in a single short sentence about it.
+            10. When a task mentions topic 10, answer in a single short sentence about it.
+            11. When a task mentions topic 11, answer in a single short sentence about it.
+            12. When a task mentions topic 12, answer in a single short sentence about it.
+            13. When a task mentions topic 13, answer in a single short sentence about it.
+            14. When a task mentions topic 14, answer in a single short sentence about it.
+            15. When a task mentions topic 15, answer in a single short sentence about it.
+            16. When a task mentions topic 16, answer in a single short sentence about it.
+            17. When a task mentions topic 17, answer in a single short sentence about it.
+            18. When a task mentions topic 18, answer in a single short sentence about it.
+            19. When a task mentions topic 19, answer in a single short sentence about it.
+            20. When a task mentions topic 20, answer in a single short sentence about it.
+            21. When a task mentions topic 21, answer in a single short sentence about it.
+            22. When a task mentions topic 22, answer in a single short sentence about it.
+            23. When a task mentions topic 23, answer in a single short sentence about it.
+            24. When a task mentions topic 24, answer in a single short sentence about it.
+            25. When a task mentions topic 25, answer in a single short sentence about it.
+            26. When a task mentions topic 26, answer in a single short sentence about it.
+            27. When a task mentions topic 27, answer in a single short sentence about it.
+            28. When a task mentions topic 28, answer in a single short sentence about it.
+            29. When a task mentions topic 29, answer in a single short sentence about it.
+            30. When a task mentions topic 30, answer in a single short sentence about it.
+            31. When a task mentions topic 31, answer in a single short sentence about it.
+            32. When a task mentions topic 32, answer in a single short sentence about it.
+            33. When a task mentions topic 33, answer in a single short sentence about it.
+            34. When a task mentions topic 34, answer in a single short sentence about it.
+            35. When a task mentions topic 35, answer in a single short sentence about it.
+            36. When a task mentions topic 36, answer in a single short sentence about it.
+            37. When a task mentions topic 37, answer in a single short sentence about it.
+            38. When a task mentions topic 38, answer in a single short sentence about it.
+            39. When a task mentions topic 39, answer in a single short sentence about it.
+            40. When a task mentions topic 40, answer in a single short sentence about it.
+            41. When a task mentions topic 41, answer in a single short sentence about it.
+            42. When a task mentions topic 42, answer in a single short sentence about it.
+            43. When a task mentions topic 43, answer in a single short sentence about it.
+            44. When a task mentions topic 44, answer in a single short sentence about it.
+            45. When a task mentions topic 45, answer in a single short sentence about it.
+            46. When a task mentions topic 46, answer in a single short sentence about it.
+            47. When a task mentions topic 47, answer in a single short sentence about it.
+            48. When a task mentions topic 48, answer in a single short sentence about it.
+            49. When a task mentions topic 49, answer in a single short sentence about it.
+            50. When a task mentions topic 50, answer in a single short sentence about it.
+            51. When a task mentions topic 51, answer in a single short sentence about it.
+            52. When a task mentions topic 52, answer in a single short sentence about it.
+            53. When a task mentions topic 53, answer in a single short sentence about it.
+            54. When a task mentions topic 54, answer in a single short sentence about it.
+            55. When a task mentions topic 55, answer in a single short sentence about it.
+            56. When a task mentions topic 56, answer in a single short sentence about it.
+            57. When a task mentions topic 57, answer in a single short sentence about it.
+            58. When a task mentions topic 58, answer in a single short sentence about it.
+            59. When a task mentions topic 59, answer in a single short sentence about it.
+            60. When a task mentions topic 60, answer in a single short sentence about it.
+            61. When a task mentions topic 61, answer in a single short sentence about it.
+            62. When a task mentions topic 62, answer in a single short sentence about it.
+            63. When a task mentions topic 63, answer in a single short sentence about it.
+            64. When a task mentions topic 64, answer in a single short sentence about it.
+            65. When a task mentions topic 65, answer in a single short sentence about it.
+            66. When a task mentions topic 66, answer in a single short sentence about it.
+            67. When a task mentions topic 67, answer in a single short sentence about it.
+            68. When a task mentions topic 68, answer in a single short sentence about it.
+            69. When a task mentions topic 69, answer in a single short sentence about it.
+            70. When a task mentions topic 70, answer in a single short sentence about it.
+            71. When a task mentions topic 71, answer in a single short sentence about it.
+            72. When a task mentions topic 72, answer in a single short sentence about it.
+            73. When a task mentions topic 73, answer in a single short sentence about it.
+            74. When a task mentions topic 74, answer in a single short sentence about it.
+            75. When a task mentions topic 75, answer in a single short sentence about it.
+            76. When a task mentions topic 76, answer in a single short sentence about it.
+            77. When a task mentions topic 77, answer in a single short sentence about it.
+            78. When a task mentions topic 78, answer in a single short sentence about it.
+            79. When a task mentions topic 79, answer in a single short sentence about it.
+            80. When a task mentions topic 80, answer in a single short sentence about it.
+            81. When a task mentions topic 81, answer in a single short sentence about it.
+            82. When a task mentions topic 82, answer in a single short sentence about it.
+            83. When a task mentions topic 83, answer in a single short sentence about it.
+            84. When a task mentions topic 84, answer in a single short sentence about it.
+            85. When a task mentions topic 85, answer in a single short sentence about it.
+            86. When a task mentions topic 86, answer in a single short sentence about it.
+            87. When a task mentions topic 87, answer in a single short sentence about it.
+            88. When a task mentions topic 88, answer in a single short sentence about it.
+            89. When a task mentions topic 89, answer in a single short sentence about it.
+            90. When a task mentions topic 90, answer in a single short sentence about it.
+            91. When a task mentions topic 91, answer in a single short sentence about it.
+            92. When a task mentions topic 92, answer in a single short sentence about it.
+            93. When a task mentions topic 93, answer in a single short sentence about it.
+            94. When a task mentions topic 94, answer in a single short sentence about it.
+            95. When a task mentions topic 95, answer in a single short sentence about it.
+            96. When a task mentions topic 96, answer in a single short sentence about it.
+            97. When a task mentions topic 97, answer in a single short sentence about it.
+            98. When a task mentions topic 98, answer in a single short sentence about it.
+            99. When a task mentions topic 99, answer in a single short sentence about it.
+            100. When a task mentions topic 100, answer in a single short sentence about it.
+            101. When a task mentions topic 101, answer in a single short sentence about it.
+            102. When a task mentions topic 102, answer in a single short sentence about it.
+            103. When a task mentions topic 103, answer in a single short sentence about it.
+            104. When a task mentions topic 104, answer in a single short sentence about it.
+            105. When a task mentions topic 105, answer in a single short sentence about it.
+            106. When a task mentions topic 106, answer in a single short sentence about it.
+            107. When a task mentions topic 107, answer in a single short sentence about it.
+            108. When a task mentions topic 108, answer in a single short sentence about it.
+            109. When a task mentions topic 109, answer in a single short sentence about it.
+            110. When a task mentions topic 110, answer in a single short sentence about it.
+            111. When a task mentions topic 111, answer in a single short sentence about it.
+            112. When a task mentions topic 112, answer in a single short sentence about it.
+            113. When a task mentions topic 113, answer in a single short sentence about it.
+            114. When a task mentions topic 114, answer in a single short sentence about it.
+            115. When a task mentions topic 115, answer in a single short sentence about it.
+            116. When a task mentions topic 116, answer in a single short sentence about it.
+            117. When a task mentions topic 117, answer in a single short sentence about it.
+            118. When a task mentions topic 118, answer in a single short sentence about it.
+            119. When a task mentions topic 119, answer in a single short sentence about it.
+            120. When a task mentions topic 120, answer in a single short sentence about it.
+            121. When a task mentions topic 121, answer in a single short sentence about it.
+            122. When a task mentions topic 122, answer in a single short sentence about it.
+            123. When a task mentions topic 123, answer in a single short sentence about it.
+            124. When a task mentions topic 124, answer in a single short sentence about it.
+            125. When a task mentions topic 125, answer in a single short sentence about it.
+            126. When a task mentions topic 126, answer in a single short sentence about it.
+            127. When a task mentions topic 127, answer in a single short sentence about it.
+            128. When a task mentions topic 128, answer in a single short sentence about it.
+            129. When a task mentions topic 129, answer in a single short sentence about it.
+            130. When a task mentions topic 130, answer in a single short sentence about it.
+            131. When a task mentions topic 131, answer in a single short sentence about it.
+            132. When a task mentions topic 132, answer in a single short sentence about it.
+            133. When a task mentions topic 133, answer in a single short sentence about it.
+            134. When a task mentions topic 134, answer in a single short sentence about it.
+            135. When a task mentions topic 135, answer in a single short sentence about it.
+            136. When a task mentions topic 136, answer in a single short sentence about it.
+            137. When a task mentions topic 137, answer in a single short sentence about it.
+            138. When a task mentions topic 138, answer in a single short sentence about it.
+            139. When a task mentions topic 139, answer in a single short sentence about it.
+            140. When a task mentions topic 140, answer in a single short sentence about it.
+            141. When a task mentions topic 141, answer in a single short sentence about it.
+            142. When a task mentions topic 142, answer in a single short sentence about it.
+            143. When a task mentions topic 143, answer in a single short sentence about it.
+            144. When a task mentions topic 144, answer in a single short sentence about it.
+            145. When a task mentions topic 145, answer in a single short sentence about it.
+            146. When a task mentions topic 146, answer in a single short sentence about it.
+            147. When a task mentions topic 147, answer in a single short sentence about it.
+            148. When a task mentions topic 148, answer in a single short sentence about it.
+            149. When a task mentions topic 149, answer in a single short sentence about it.
+            150. When a task mentions topic 150, answer in a single short sentence about it.
+            151. When a task mentions topic 151, answer in a single short sentence about it.
+            152. When a task mentions topic 152, answer in a single short sentence about it.
+            153. When a task mentions topic 153, answer in a single short sentence about it.
+            154. When a task mentions topic 154, answer in a single short sentence about it.
+            155. When a task mentions topic 155, answer in a single short sentence about it.
+            156. When a task mentions topic 156, answer in a single short sentence about it.
+            157. When a task mentions topic 157, answer in a single short sentence about it.
+            158. When a task mentions topic 158, answer in a single short sentence about it.
+            159. When a task mentions topic 159, answer in a single short sentence about it.
+            160. When a task mentions topic 160, answer in a single short sentence about it.
+            161. When a task mentions topic 161, answer in a single short sentence about it.
+            162. When a task mentions topic 162, answer in a single short sentence about it.
+            163. When a task mentions topic 163, answer in a single short sentence about it.
+            164. When a task mentions topic 164, answer in a single short sentence about it.
+            165. When a task mentions topic 165, answer in a single short sentence about it.
+            166. When a task mentions topic 166, answer in a single short sentence about it.
+            167. When a task mentions topic 167, answer in a single short sentence about it.
+            168. When a task mentions topic 168, answer in a single short sentence about it.
+            169. When a task mentions topic 169, answer in a single short sentence about it.
+            170. When a task mentions topic 170, answer in a single short sentence about it.
+            171. When a task mentions topic 171, answer in a single short sentence about it.
+            172. When a task mentions topic 172, answer in a single short sentence about it.
+            173. When a task mentions topic 173, answer in a single short sentence about it.
+            174. When a task mentions topic 174, answer in a single short sentence about it.
+            175. When a task mentions topic 175, answer in a single short sentence about it.
+            176. When a task mentions topic 176, answer in a single short sentence about it.
+            177. When a task mentions topic 177, answer in a single short sentence about it.
+            178. When a task mentions topic 178, answer in a single short sentence about it.
+            179. When a task mentions topic 179, answer in a single short sentence about it.
+            180. When a task mentions topic 180, answer in a single short sentence about it.
+            181. When a task mentions topic 181, answer in a single short sentence about it.
+            182. When a task mentions topic 182, answer in a single short sentence about it.
+            183. When a task mentions topic 183, answer in a single short sentence about it.
+            184. When a task mentions topic 184, answer in a single short sentence about it.
+            185. When a task mentions topic 185, answer in a single short sentence about it.
+            186. When a task mentions topic 186, answer in a single short sentence about it.
+            187. When a task mentions topic 187, answer in a single short sentence about it.
+            188. When a task mentions topic 188, answer in a single short sentence about it.
+            189. When a task mentions topic 189, answer in a single short sentence about it.
+            190. When a task mentions topic 190, answer in a single short sentence about it.
+            191. When a task mentions topic 191, answer in a single short sentence about it.
+            192. When a task mentions topic 192, answer in a single short sentence about it.
+            193. When a task mentions topic 193, answer in a single short sentence about it.
+            194. When a task mentions topic 194, answer in a single short sentence about it.
+            195. When a task mentions topic 195, answer in a single short sentence about it.
+            196. When a task mentions topic 196, answer in a single short sentence about it.
+            197. When a task mentions topic 197, answer in a single short sentence about it.
+            198. When a task mentions topic 198, answer in a single short sentence about it.
+            199. When a task mentions topic 199, answer in a single short sentence about it.
+            200. When a task mentions topic 200, answer in a single short sentence about it.
+            201. When a task mentions topic 201, answer in a single short sentence about it.
+            202. When a task mentions topic 202, answer in a single short sentence about it.
+            203. When a task mentions topic 203, answer in a single short sentence about it.
+            204. When a task mentions topic 204, answer in a single short sentence about it.
+            205. When a task mentions topic 205, answer in a single short sentence about it.
+            206. When a task mentions topic 206, answer in a single short sentence about it.
+            207. When a task mentions topic 207, answer in a single short sentence about it.
+            208. When a task mentions topic 208, answer in a single short sentence about it.
+            209. When a task mentions topic 209, answer in a single short sentence about it.
+            210. When a task mentions topic 210, answer in a single short sentence about it.
+            211. When a task mentions topic 211, answer in a single short sentence about it.
+            212. When a task mentions topic 212, answer in a single short sentence about it.
+            213. When a task mentions topic 213, answer in a single short sentence about it.
+            214. When a task mentions topic 214, answer in a single short sentence about it.
+            215. When a task mentions topic 215, answer in a single short sentence about it.
+            216. When a task mentions topic 216, answer in a single short sentence about it.
+            217. When a task mentions topic 217, answer in a single short sentence about it.
+            218. When a task mentions topic 218, answer in a single short sentence about it.
+            219. When a task mentions topic 219, answer in a single short sentence about it.
+            220. When a task mentions topic 220, answer in a single short sentence about it.
+            221. When a task mentions topic 221, answer in a single short sentence about it.
+            222. When a task mentions topic 222, answer in a single short sentence about it.
+            223. When a task mentions topic 223, answer in a single short sentence about it.
+            224. When a task mentions topic 224, answer in a single short sentence about it.
+            225. When a task mentions topic 225, answer in a single short sentence about it.
+            226. When a task mentions topic 226, answer in a single short sentence about it.
+            227. When a task mentions topic 227, answer in a single short sentence about it.
+            228. When a task mentions topic 228, answer in a single short sentence about it.
+            229. When a task mentions topic 229, answer in a single short sentence about it.
+            230. When a task mentions topic 230, answer in a single short sentence about it.
+            231. When a task mentions topic 231, answer in a single short sentence about it.
+            232. When a task mentions topic 232, answer in a single short sentence about it.
+            233. When a task mentions topic 233, answer in a single short sentence about it.
+            234. When a task mentions topic 234, answer in a single short sentence about it.
+            235. When a task mentions topic 235, answer in a single short sentence about it.
+            236. When a task mentions topic 236, answer in a single short sentence about it.
+            237. When a task mentions topic 237, answer in a single short sentence about it.
+            238. When a task mentions topic 238, answer in a single short sentence about it.
+            239. When a task mentions topic 239, answer in a single short sentence about it.
+            240. When a task mentions topic 240, answer in a single short sentence about it.
+            241. When a task mentions topic 241, answer in a single short sentence about it.
+            242. When a task mentions topic 242, answer in a single short sentence about it.
+            243. When a task mentions topic 243, answer in a single short sentence about it.
+            244. When a task mentions topic 244, answer in a single short sentence about it.
+            245. When a task mentions topic 245, answer in a single short sentence about it.
+            246. When a task mentions topic 246, answer in a single short sentence about it.
+            247. When a task mentions topic 247, answer in a single short sentence about it.
+            248. When a task mentions topic 248, answer in a single short sentence about it.
+            249. When a task mentions topic 249, answer in a single short sentence about it.
+            250. When a task mentions topic 250, answer in a single short sentence about it.
+            251. When a task mentions topic 251, answer in a single short sentence about it.
+            252. When a task mentions topic 252, answer in a single short sentence about it.
+            253. When a task mentions topic 253, answer in a single short sentence about it.
+            254. When a task mentions topic 254, answer in a single short sentence about it.
+            255. When a task mentions topic 255, answer in a single short sentence about it.
+            256. When a task mentions topic 256, answer in a single short sentence about it.
+            257. When a task mentions topic 257, answer in a single short sentence about it.
+            258. When a task mentions topic 258, answer in a single short sentence about it.
+            259. When a task mentions topic 259, answer in a single short sentence about it.
+            260. When a task mentions topic 260, answer in a single short sentence about it.
+            261. When a task mentions topic 261, answer in a single short sentence about it.
+            262. When a task mentions topic 262, answer in a single short sentence about it.
+            263. When a task mentions topic 263, answer in a single short sentence about it.
+            264. When a task mentions topic 264, answer in a single short sentence about it.
+            265. When a task mentions topic 265, answer in a single short sentence about it.
+            266. When a task mentions topic 266, answer in a single short sentence about it.
+            267. When a task mentions topic 267, answer in a single short sentence about it.
+            268. When a task mentions topic 268, answer in a single short sentence about it.
+            269. When a task mentions topic 269, answer in a single short sentence about it.
+            270. When a task mentions topic 270, answer in a single short sentence about it.
+            271. When a task mentions topic 271, answer in a single short sentence about it.
+            272. When a task mentions topic 272, answer in a single short sentence about it.
+            273. When a task mentions topic 273, answer in a single short sentence about it.
+            274. When a task mentions topic 274, answer in a single short sentence about it.
+            275. When a task mentions topic 275, answer in a single short sentence about it.
+            276. When a task mentions topic 276, answer in a single short sentence about it.
+            277. When a task mentions topic 277, answer in a single short sentence about it.
+            278. When a task mentions topic 278, answer in a single short sentence about it.
+            279. When a task mentions topic 279, answer in a single short sentence about it.
+            280. When a task mentions topic 280, answer in a single short sentence about it.
+            281. When a task mentions topic 281, answer in a single short sentence about it.
+            282. When a task mentions topic 282, answer in a single short sentence about it.
+            283. When a task mentions topic 283, answer in a single short sentence about it.
+            284. When a task mentions topic 284, answer in a single short sentence about it.
+            285. When a task mentions topic 285, answer in a single short sentence about it.
+            286. When a task mentions topic 286, answer in a single short sentence about it.
+            287. When a task mentions topic 287, answer in a single short sentence about it.
+            288. When a task mentions topic 288, answer in a single short sentence about it.
+            289. When a task mentions topic 289, answer in a single short sentence about it.
+            290. When a task mentions topic 290, answer in a single short sentence about it.
+            291. When a task mentions topic 291, answer in a single short sentence about it.
+            292. When a task mentions topic 292, answer in a single short sentence about it.
+            293. When a task mentions topic 293, answer in a single short sentence about it.
+            294. When a task mentions topic 294, answer in a single short sentence about it.
+            295. When a task mentions topic 295, answer in a single short sentence about it.
+            296. When a task mentions topic 296, answer in a single short sentence about it.
+            297. When a task mentions topic 297, answer in a single short sentence about it.
+            298. When a task mentions topic 298, answer in a single short sentence about it.
+            299. When a task mentions topic 299, answer in a single short sentence about it.
+            300. When a task mentions topic 300, answer in a single short sentence about it.
+            301. When a task mentions topic 301, answer in a single short sentence about it.
+            302. When a task mentions topic 302, answer in a single short sentence about it.
+            303. When a task mentions topic 303, answer in a single short sentence about it.
+            304. When a task mentions topic 304, answer in a single short sentence about it.
+            305. When a task mentions topic 305, answer in a single short sentence about it.
+            306. When a task mentions topic 306, answer in a single short sentence about it.
+            307. When a task mentions topic 307, answer in a single short sentence about it.
+            308. When a task mentions topic 308, answer in a single short sentence about it.
+            309. When a task mentions topic 309, answer in a single short sentence about it.
+            310. When a task mentions topic 310, answer in a single short sentence about it.
+            311. When a task mentions topic 311, answer in a single short sentence about it.
+            312. When a task mentions topic 312, answer in a single short sentence about it.
+            313. When a task mentions topic 313, answer in a single short sentence about it.
+            314. When a task mentions topic 314, answer in a single short sentence about it.
+            315. When a task mentions topic 315, answer in a single short sentence about it.
+            316. When a task mentions topic 316, answer in a single short sentence about it.
+            317. When a task mentions topic 317, answer in a single short sentence about it.
+            318. When a task mentions topic 318, answer in a single short sentence about it.
+            319. When a task mentions topic 319, answer in a single short sentence about it.
+            320. When a task mentions topic 320, answer in a single short sentence about it.
+            321. When a task mentions topic 321, answer in a single short sentence about it.
+            322. When a task mentions topic 322, answer in a single short sentence about it.
+            323. When a task mentions topic 323, answer in a single short sentence about it.
+            324. When a task mentions topic 324, answer in a single short sentence about it.
+            325. When a task mentions topic 325, answer in a single short sentence about it.
+            326. When a task mentions topic 326, answer in a single short sentence about it.
+            327. When a task mentions topic 327, answer in a single short sentence about it.
+            328. When a task mentions topic 328, answer in a single short sentence about it.
+            329. When a task mentions topic 329, answer in a single short sentence about it.
+            330. When a task mentions topic 330, answer in a single short sentence about it.
+            331. When a task mentions topic 331, answer in a single short sentence about it.
+            332. When a task mentions topic 332, answer in a single short sentence about it.
+            333. When a task mentions topic 333, answer in a single short sentence about it.
+            334. When a task mentions topic 334, answer in a single short sentence about it.
+            335. When a task mentions topic 335, answer in a single short sentence about it.
+            336. When a task mentions topic 336, answer in a single short sentence about it.
+            337. When a task mentions topic 337, answer in a single short sentence about it.
+            338. When a task mentions topic 338, answer in a single short sentence about it.
+            339. When a task mentions topic 339, answer in a single short sentence about it.
+            340. When a task mentions topic 340, answer in a single short sentence about it.
+            341. When a task mentions topic 341, answer in a single short sentence about it.
+            342. When a task mentions topic 342, answer in a single short sentence about it.
+            343. When a task mentions topic 343, answer in a single short sentence about it.
+            344. When a task mentions topic 344, answer in a single short sentence about it.
+            345. When a task mentions topic 345, answer in a single short sentence about it.
+            346. When a task mentions topic 346, answer in a single short sentence about it.
+            347. When a task mentions topic 347, answer in a single short sentence about it.
+            348. When a task mentions topic 348, answer in a single short sentence about it.
+            349. When a task mentions topic 349, answer in a single short sentence about it.
+            350. When a task mentions topic 350, answer in a single short sentence about it.
+            351. When a task mentions topic 351, answer in a single short sentence about it.
+            352. When a task mentions topic 352, answer in a single short sentence about it.
+            353. When a task mentions topic 353, answer in a single short sentence about it.
+            354. When a task mentions topic 354, answer in a single short sentence about it.
+            355. When a task mentions topic 355, answer in a single short sentence about it.
+            356. When a task mentions topic 356, answer in a single short sentence about it.
+            357. When a task mentions topic 357, answer in a single short sentence about it.
+            358. When a task mentions topic 358, answer in a single short sentence about it.
+            359. When a task mentions topic 359, answer in a single short sentence about it.
+            360. When a task mentions topic 360, answer in a single short sentence about it.
+            361. When a task mentions topic 361, answer in a single short sentence about it.
+            362. When a task mentions topic 362, answer in a single short sentence about it.
+            363. When a task mentions topic 363, answer in a single short sentence about it.
+            364. When a task mentions topic 364, answer in a single short sentence about it.
+            365. When a task mentions topic 365, answer in a single short sentence about it.
+            366. When a task mentions topic 366, answer in a single short sentence about it.
+            367. When a task mentions topic 367, answer in a single short sentence about it.
+            368. When a task mentions topic 368, answer in a single short sentence about it.
+            369. When a task mentions topic 369, answer in a single short sentence about it.
+            370. When a task mentions topic 370, answer in a single short sentence about it.
+            371. When a task mentions topic 371, answer in a single short sentence about it.
+            372. When a task mentions topic 372, answer in a single short sentence about it.
+            373. When a task mentions topic 373, answer in a single short sentence about it.
+            374. When a task mentions topic 374, answer in a single short sentence about it.
+            375. When a task mentions topic 375, answer in a single short sentence about it.
+            376. When a task mentions topic 376, answer in a single short sentence about it.
+            377. When a task mentions topic 377, answer in a single short sentence about it.
+            378. When a task mentions topic 378, answer in a single short sentence about it.
+            379. When a task mentions topic 379, answer in a single short sentence about it.
+            380. When a task mentions topic 380, answer in a single short sentence about it.
+            381. When a task mentions topic 381, answer in a single short sentence about it.
+            382. When a task mentions topic 382, answer in a single short sentence about it.
+            383. When a task mentions topic 383, answer in a single short sentence about it.
+            384. When a task mentions topic 384, answer in a single short sentence about it.
+            385. When a task mentions topic 385, answer in a single short sentence about it.
+            386. When a task mentions topic 386, answer in a single short sentence about it.
+            387. When a task mentions topic 387, answer in a single short sentence about it.
+            388. When a task mentions topic 388, answer in a single short sentence about it.
+            389. When a task mentions topic 389, answer in a single short sentence about it.
+            390. When a task mentions topic 390, answer in a single short sentence about it.
+            391. When a task mentions topic 391, answer in a single short sentence about it.
+            392. When a task mentions topic 392, answer in a single short sentence about it.
+            393. When a task mentions topic 393, answer in a single short sentence about it.
+            394. When a task mentions topic 394, answer in a single short sentence about it.
+            395. When a task mentions topic 395, answer in a single short sentence about it.
+            396. When a task mentions topic 396, answer in a single short sentence about it.
+            397. When a task mentions topic 397, answer in a single short sentence about it.
+            398. When a task mentions topic 398, answer in a single short sentence about it.
+            399. When a task mentions topic 399, answer in a single short sentence about it.
+          cache_control:
+            type: ephemeral
+            ttl: 5m
+        thinking:
+          type: adaptive
+  response:
+    status: 200
+    headers:
+      accept-encoding:
+      - gzip, identity
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=49
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-690effb60a0a598c8b57873ff746a085-cee8864613e78d61-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011ChNzJLF9ViwGYbyzVxZNY","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":4,"cache_creation_input_tokens":10414,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":10414,"ephemeral_1h_input_tokens":0},"output_tokens":9,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSwAUKEAgUGAI4AUIIdGhpbmtpbmcSDAw9JQVjqseihd1niBoM/pPgu15+kilfJ2vHIjDy5qwWUPhPJGIX+ZRiHIyZYElEAYCeIQzzBrzoA2gILjfFZVzo9PVFO+oWCetdgfsq3QTQiUieaX7OWkX5sQ4vQIm2u5upKp94iLc3eljqflEO4Cs4jL5HrkiSkpiuQhKvvwOBs2hecYnDIgccLXtlr0n9hl9hdXuBZIPYs+0o6JeEWtItqulzRDkYCzlvycs1/WWZnT0hTns9eUFuowf9i2BRLIWE2GdYdnR4eHnaC9oF1PR8PeVH9adlX4uOQdHnbAxJq27f5QPefqUvsRLnyVo5lK6GV6kxUWoAAzv9bG2cT/eJT1uEFIBAUWo1zIUcVF9MzI/TDe8B/eN7GrQoDQ8VESYDb79/zVh1UtYwf7ZfRqPXseFBidTIcBB1e6xnFJQEqRddFa3epqQ449Y5a5t65tNh8i+WugqvVj13n5Xois1DM4ZN56DkdT1GxhCyXh9ybNyrzdY4exLwrgPWcYW6vKrwQz8RpUf04AO8WvCVv9fXmUjpSz9pDb9R4YOrtbeqdWFx0TGcgzFjTLnDqMcrzWsnqLJFcfEU2EdikD4bbmFG899+FYiMeX4YcaMBVyl2+/GOnNUyOBQCIFqd5yp54Y6POKtQkE9SLsWpumtcQhDUogf2oxgO0G1AHOvr5EempxhkwUZhSK+xFKsmLOdGQfdPhncv8dEr8OuFI9FD1yPq6RC2/eSL9vnYqOD8rBsDicRmLpWkORfslOKnNyU4/JOB2wo0cDAJBF928ZAUV1byMyeMLwRGBl9p9LYCzISr5ierpKT5gkE7R0ARf7luu0cJFHK3MpuwXXnrVB2J2EjvtWAs+J6+XbLJ8VF/ZOhEK3y2RfotiiTDz9YlHgd/cXp+cFsr+ss45Z3k5hgB"}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\"Alpha\""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" do"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"esn't match any of the top"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ics I'm set up"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" for (0–399). Which"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" topic number"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" did"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" you mean,"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" or what would you like to know about"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" \""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"alpha\"?"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":4,"cache_creation_input_tokens":10414,"cache_read_input_tokens":0,"output_tokens":85,"output_tokens_details":{"thinking_tokens":32}}  }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-11-25T04:08:14.405930+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "32931"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 256
+        messages:
+        - role: user
+          content:
+          - text: beta
+            type: text
+        model: claude-opus-5-5
+        cache_control:
+          type: ephemeral
+          ttl: 5m
+        output_config:
+          effort: low
+        stream: false
+        system:
+        - type: text
+          text: |-
+            You do one small task.
+
+            0. When a task mentions topic 0, answer in a single short sentence about it.
+            1. When a task mentions topic 1, answer in a single short sentence about it.
+            2. When a task mentions topic 2, answer in a single short sentence about it.
+            3. When a task mentions topic 3, answer in a single short sentence about it.
+            4. When a task mentions topic 4, answer in a single short sentence about it.
+            5. When a task mentions topic 5, answer in a single short sentence about it.
+            6. When a task mentions topic 6, answer in a single short sentence about it.
+            7. When a task mentions topic 7, answer in a single short sentence about it.
+            8. When a task mentions topic 8, answer in a single short sentence about it.
+            9. When a task mentions topic 9, answer in a single short sentence about it.
+            10. When a task mentions topic 10, answer in a single short sentence about it.
+            11. When a task mentions topic 11, answer in a single short sentence about it.
+            12. When a task mentions topic 12, answer in a single short sentence about it.
+            13. When a task mentions topic 13, answer in a single short sentence about it.
+            14. When a task mentions topic 14, answer in a single short sentence about it.
+            15. When a task mentions topic 15, answer in a single short sentence about it.
+            16. When a task mentions topic 16, answer in a single short sentence about it.
+            17. When a task mentions topic 17, answer in a single short sentence about it.
+            18. When a task mentions topic 18, answer in a single short sentence about it.
+            19. When a task mentions topic 19, answer in a single short sentence about it.
+            20. When a task mentions topic 20, answer in a single short sentence about it.
+            21. When a task mentions topic 21, answer in a single short sentence about it.
+            22. When a task mentions topic 22, answer in a single short sentence about it.
+            23. When a task mentions topic 23, answer in a single short sentence about it.
+            24. When a task mentions topic 24, answer in a single short sentence about it.
+            25. When a task mentions topic 25, answer in a single short sentence about it.
+            26. When a task mentions topic 26, answer in a single short sentence about it.
+            27. When a task mentions topic 27, answer in a single short sentence about it.
+            28. When a task mentions topic 28, answer in a single short sentence about it.
+            29. When a task mentions topic 29, answer in a single short sentence about it.
+            30. When a task mentions topic 30, answer in a single short sentence about it.
+            31. When a task mentions topic 31, answer in a single short sentence about it.
+            32. When a task mentions topic 32, answer in a single short sentence about it.
+            33. When a task mentions topic 33, answer in a single short sentence about it.
+            34. When a task mentions topic 34, answer in a single short sentence about it.
+            35. When a task mentions topic 35, answer in a single short sentence about it.
+            36. When a task mentions topic 36, answer in a single short sentence about it.
+            37. When a task mentions topic 37, answer in a single short sentence about it.
+            38. When a task mentions topic 38, answer in a single short sentence about it.
+            39. When a task mentions topic 39, answer in a single short sentence about it.
+            40. When a task mentions topic 40, answer in a single short sentence about it.
+            41. When a task mentions topic 41, answer in a single short sentence about it.
+            42. When a task mentions topic 42, answer in a single short sentence about it.
+            43. When a task mentions topic 43, answer in a single short sentence about it.
+            44. When a task mentions topic 44, answer in a single short sentence about it.
+            45. When a task mentions topic 45, answer in a single short sentence about it.
+            46. When a task mentions topic 46, answer in a single short sentence about it.
+            47. When a task mentions topic 47, answer in a single short sentence about it.
+            48. When a task mentions topic 48, answer in a single short sentence about it.
+            49. When a task mentions topic 49, answer in a single short sentence about it.
+            50. When a task mentions topic 50, answer in a single short sentence about it.
+            51. When a task mentions topic 51, answer in a single short sentence about it.
+            52. When a task mentions topic 52, answer in a single short sentence about it.
+            53. When a task mentions topic 53, answer in a single short sentence about it.
+            54. When a task mentions topic 54, answer in a single short sentence about it.
+            55. When a task mentions topic 55, answer in a single short sentence about it.
+            56. When a task mentions topic 56, answer in a single short sentence about it.
+            57. When a task mentions topic 57, answer in a single short sentence about it.
+            58. When a task mentions topic 58, answer in a single short sentence about it.
+            59. When a task mentions topic 59, answer in a single short sentence about it.
+            60. When a task mentions topic 60, answer in a single short sentence about it.
+            61. When a task mentions topic 61, answer in a single short sentence about it.
+            62. When a task mentions topic 62, answer in a single short sentence about it.
+            63. When a task mentions topic 63, answer in a single short sentence about it.
+            64. When a task mentions topic 64, answer in a single short sentence about it.
+            65. When a task mentions topic 65, answer in a single short sentence about it.
+            66. When a task mentions topic 66, answer in a single short sentence about it.
+            67. When a task mentions topic 67, answer in a single short sentence about it.
+            68. When a task mentions topic 68, answer in a single short sentence about it.
+            69. When a task mentions topic 69, answer in a single short sentence about it.
+            70. When a task mentions topic 70, answer in a single short sentence about it.
+            71. When a task mentions topic 71, answer in a single short sentence about it.
+            72. When a task mentions topic 72, answer in a single short sentence about it.
+            73. When a task mentions topic 73, answer in a single short sentence about it.
+            74. When a task mentions topic 74, answer in a single short sentence about it.
+            75. When a task mentions topic 75, answer in a single short sentence about it.
+            76. When a task mentions topic 76, answer in a single short sentence about it.
+            77. When a task mentions topic 77, answer in a single short sentence about it.
+            78. When a task mentions topic 78, answer in a single short sentence about it.
+            79. When a task mentions topic 79, answer in a single short sentence about it.
+            80. When a task mentions topic 80, answer in a single short sentence about it.
+            81. When a task mentions topic 81, answer in a single short sentence about it.
+            82. When a task mentions topic 82, answer in a single short sentence about it.
+            83. When a task mentions topic 83, answer in a single short sentence about it.
+            84. When a task mentions topic 84, answer in a single short sentence about it.
+            85. When a task mentions topic 85, answer in a single short sentence about it.
+            86. When a task mentions topic 86, answer in a single short sentence about it.
+            87. When a task mentions topic 87, answer in a single short sentence about it.
+            88. When a task mentions topic 88, answer in a single short sentence about it.
+            89. When a task mentions topic 89, answer in a single short sentence about it.
+            90. When a task mentions topic 90, answer in a single short sentence about it.
+            91. When a task mentions topic 91, answer in a single short sentence about it.
+            92. When a task mentions topic 92, answer in a single short sentence about it.
+            93. When a task mentions topic 93, answer in a single short sentence about it.
+            94. When a task mentions topic 94, answer in a single short sentence about it.
+            95. When a task mentions topic 95, answer in a single short sentence about it.
+            96. When a task mentions topic 96, answer in a single short sentence about it.
+            97. When a task mentions topic 97, answer in a single short sentence about it.
+            98. When a task mentions topic 98, answer in a single short sentence about it.
+            99. When a task mentions topic 99, answer in a single short sentence about it.
+            100. When a task mentions topic 100, answer in a single short sentence about it.
+            101. When a task mentions topic 101, answer in a single short sentence about it.
+            102. When a task mentions topic 102, answer in a single short sentence about it.
+            103. When a task mentions topic 103, answer in a single short sentence about it.
+            104. When a task mentions topic 104, answer in a single short sentence about it.
+            105. When a task mentions topic 105, answer in a single short sentence about it.
+            106. When a task mentions topic 106, answer in a single short sentence about it.
+            107. When a task mentions topic 107, answer in a single short sentence about it.
+            108. When a task mentions topic 108, answer in a single short sentence about it.
+            109. When a task mentions topic 109, answer in a single short sentence about it.
+            110. When a task mentions topic 110, answer in a single short sentence about it.
+            111. When a task mentions topic 111, answer in a single short sentence about it.
+            112. When a task mentions topic 112, answer in a single short sentence about it.
+            113. When a task mentions topic 113, answer in a single short sentence about it.
+            114. When a task mentions topic 114, answer in a single short sentence about it.
+            115. When a task mentions topic 115, answer in a single short sentence about it.
+            116. When a task mentions topic 116, answer in a single short sentence about it.
+            117. When a task mentions topic 117, answer in a single short sentence about it.
+            118. When a task mentions topic 118, answer in a single short sentence about it.
+            119. When a task mentions topic 119, answer in a single short sentence about it.
+            120. When a task mentions topic 120, answer in a single short sentence about it.
+            121. When a task mentions topic 121, answer in a single short sentence about it.
+            122. When a task mentions topic 122, answer in a single short sentence about it.
+            123. When a task mentions topic 123, answer in a single short sentence about it.
+            124. When a task mentions topic 124, answer in a single short sentence about it.
+            125. When a task mentions topic 125, answer in a single short sentence about it.
+            126. When a task mentions topic 126, answer in a single short sentence about it.
+            127. When a task mentions topic 127, answer in a single short sentence about it.
+            128. When a task mentions topic 128, answer in a single short sentence about it.
+            129. When a task mentions topic 129, answer in a single short sentence about it.
+            130. When a task mentions topic 130, answer in a single short sentence about it.
+            131. When a task mentions topic 131, answer in a single short sentence about it.
+            132. When a task mentions topic 132, answer in a single short sentence about it.
+            133. When a task mentions topic 133, answer in a single short sentence about it.
+            134. When a task mentions topic 134, answer in a single short sentence about it.
+            135. When a task mentions topic 135, answer in a single short sentence about it.
+            136. When a task mentions topic 136, answer in a single short sentence about it.
+            137. When a task mentions topic 137, answer in a single short sentence about it.
+            138. When a task mentions topic 138, answer in a single short sentence about it.
+            139. When a task mentions topic 139, answer in a single short sentence about it.
+            140. When a task mentions topic 140, answer in a single short sentence about it.
+            141. When a task mentions topic 141, answer in a single short sentence about it.
+            142. When a task mentions topic 142, answer in a single short sentence about it.
+            143. When a task mentions topic 143, answer in a single short sentence about it.
+            144. When a task mentions topic 144, answer in a single short sentence about it.
+            145. When a task mentions topic 145, answer in a single short sentence about it.
+            146. When a task mentions topic 146, answer in a single short sentence about it.
+            147. When a task mentions topic 147, answer in a single short sentence about it.
+            148. When a task mentions topic 148, answer in a single short sentence about it.
+            149. When a task mentions topic 149, answer in a single short sentence about it.
+            150. When a task mentions topic 150, answer in a single short sentence about it.
+            151. When a task mentions topic 151, answer in a single short sentence about it.
+            152. When a task mentions topic 152, answer in a single short sentence about it.
+            153. When a task mentions topic 153, answer in a single short sentence about it.
+            154. When a task mentions topic 154, answer in a single short sentence about it.
+            155. When a task mentions topic 155, answer in a single short sentence about it.
+            156. When a task mentions topic 156, answer in a single short sentence about it.
+            157. When a task mentions topic 157, answer in a single short sentence about it.
+            158. When a task mentions topic 158, answer in a single short sentence about it.
+            159. When a task mentions topic 159, answer in a single short sentence about it.
+            160. When a task mentions topic 160, answer in a single short sentence about it.
+            161. When a task mentions topic 161, answer in a single short sentence about it.
+            162. When a task mentions topic 162, answer in a single short sentence about it.
+            163. When a task mentions topic 163, answer in a single short sentence about it.
+            164. When a task mentions topic 164, answer in a single short sentence about it.
+            165. When a task mentions topic 165, answer in a single short sentence about it.
+            166. When a task mentions topic 166, answer in a single short sentence about it.
+            167. When a task mentions topic 167, answer in a single short sentence about it.
+            168. When a task mentions topic 168, answer in a single short sentence about it.
+            169. When a task mentions topic 169, answer in a single short sentence about it.
+            170. When a task mentions topic 170, answer in a single short sentence about it.
+            171. When a task mentions topic 171, answer in a single short sentence about it.
+            172. When a task mentions topic 172, answer in a single short sentence about it.
+            173. When a task mentions topic 173, answer in a single short sentence about it.
+            174. When a task mentions topic 174, answer in a single short sentence about it.
+            175. When a task mentions topic 175, answer in a single short sentence about it.
+            176. When a task mentions topic 176, answer in a single short sentence about it.
+            177. When a task mentions topic 177, answer in a single short sentence about it.
+            178. When a task mentions topic 178, answer in a single short sentence about it.
+            179. When a task mentions topic 179, answer in a single short sentence about it.
+            180. When a task mentions topic 180, answer in a single short sentence about it.
+            181. When a task mentions topic 181, answer in a single short sentence about it.
+            182. When a task mentions topic 182, answer in a single short sentence about it.
+            183. When a task mentions topic 183, answer in a single short sentence about it.
+            184. When a task mentions topic 184, answer in a single short sentence about it.
+            185. When a task mentions topic 185, answer in a single short sentence about it.
+            186. When a task mentions topic 186, answer in a single short sentence about it.
+            187. When a task mentions topic 187, answer in a single short sentence about it.
+            188. When a task mentions topic 188, answer in a single short sentence about it.
+            189. When a task mentions topic 189, answer in a single short sentence about it.
+            190. When a task mentions topic 190, answer in a single short sentence about it.
+            191. When a task mentions topic 191, answer in a single short sentence about it.
+            192. When a task mentions topic 192, answer in a single short sentence about it.
+            193. When a task mentions topic 193, answer in a single short sentence about it.
+            194. When a task mentions topic 194, answer in a single short sentence about it.
+            195. When a task mentions topic 195, answer in a single short sentence about it.
+            196. When a task mentions topic 196, answer in a single short sentence about it.
+            197. When a task mentions topic 197, answer in a single short sentence about it.
+            198. When a task mentions topic 198, answer in a single short sentence about it.
+            199. When a task mentions topic 199, answer in a single short sentence about it.
+            200. When a task mentions topic 200, answer in a single short sentence about it.
+            201. When a task mentions topic 201, answer in a single short sentence about it.
+            202. When a task mentions topic 202, answer in a single short sentence about it.
+            203. When a task mentions topic 203, answer in a single short sentence about it.
+            204. When a task mentions topic 204, answer in a single short sentence about it.
+            205. When a task mentions topic 205, answer in a single short sentence about it.
+            206. When a task mentions topic 206, answer in a single short sentence about it.
+            207. When a task mentions topic 207, answer in a single short sentence about it.
+            208. When a task mentions topic 208, answer in a single short sentence about it.
+            209. When a task mentions topic 209, answer in a single short sentence about it.
+            210. When a task mentions topic 210, answer in a single short sentence about it.
+            211. When a task mentions topic 211, answer in a single short sentence about it.
+            212. When a task mentions topic 212, answer in a single short sentence about it.
+            213. When a task mentions topic 213, answer in a single short sentence about it.
+            214. When a task mentions topic 214, answer in a single short sentence about it.
+            215. When a task mentions topic 215, answer in a single short sentence about it.
+            216. When a task mentions topic 216, answer in a single short sentence about it.
+            217. When a task mentions topic 217, answer in a single short sentence about it.
+            218. When a task mentions topic 218, answer in a single short sentence about it.
+            219. When a task mentions topic 219, answer in a single short sentence about it.
+            220. When a task mentions topic 220, answer in a single short sentence about it.
+            221. When a task mentions topic 221, answer in a single short sentence about it.
+            222. When a task mentions topic 222, answer in a single short sentence about it.
+            223. When a task mentions topic 223, answer in a single short sentence about it.
+            224. When a task mentions topic 224, answer in a single short sentence about it.
+            225. When a task mentions topic 225, answer in a single short sentence about it.
+            226. When a task mentions topic 226, answer in a single short sentence about it.
+            227. When a task mentions topic 227, answer in a single short sentence about it.
+            228. When a task mentions topic 228, answer in a single short sentence about it.
+            229. When a task mentions topic 229, answer in a single short sentence about it.
+            230. When a task mentions topic 230, answer in a single short sentence about it.
+            231. When a task mentions topic 231, answer in a single short sentence about it.
+            232. When a task mentions topic 232, answer in a single short sentence about it.
+            233. When a task mentions topic 233, answer in a single short sentence about it.
+            234. When a task mentions topic 234, answer in a single short sentence about it.
+            235. When a task mentions topic 235, answer in a single short sentence about it.
+            236. When a task mentions topic 236, answer in a single short sentence about it.
+            237. When a task mentions topic 237, answer in a single short sentence about it.
+            238. When a task mentions topic 238, answer in a single short sentence about it.
+            239. When a task mentions topic 239, answer in a single short sentence about it.
+            240. When a task mentions topic 240, answer in a single short sentence about it.
+            241. When a task mentions topic 241, answer in a single short sentence about it.
+            242. When a task mentions topic 242, answer in a single short sentence about it.
+            243. When a task mentions topic 243, answer in a single short sentence about it.
+            244. When a task mentions topic 244, answer in a single short sentence about it.
+            245. When a task mentions topic 245, answer in a single short sentence about it.
+            246. When a task mentions topic 246, answer in a single short sentence about it.
+            247. When a task mentions topic 247, answer in a single short sentence about it.
+            248. When a task mentions topic 248, answer in a single short sentence about it.
+            249. When a task mentions topic 249, answer in a single short sentence about it.
+            250. When a task mentions topic 250, answer in a single short sentence about it.
+            251. When a task mentions topic 251, answer in a single short sentence about it.
+            252. When a task mentions topic 252, answer in a single short sentence about it.
+            253. When a task mentions topic 253, answer in a single short sentence about it.
+            254. When a task mentions topic 254, answer in a single short sentence about it.
+            255. When a task mentions topic 255, answer in a single short sentence about it.
+            256. When a task mentions topic 256, answer in a single short sentence about it.
+            257. When a task mentions topic 257, answer in a single short sentence about it.
+            258. When a task mentions topic 258, answer in a single short sentence about it.
+            259. When a task mentions topic 259, answer in a single short sentence about it.
+            260. When a task mentions topic 260, answer in a single short sentence about it.
+            261. When a task mentions topic 261, answer in a single short sentence about it.
+            262. When a task mentions topic 262, answer in a single short sentence about it.
+            263. When a task mentions topic 263, answer in a single short sentence about it.
+            264. When a task mentions topic 264, answer in a single short sentence about it.
+            265. When a task mentions topic 265, answer in a single short sentence about it.
+            266. When a task mentions topic 266, answer in a single short sentence about it.
+            267. When a task mentions topic 267, answer in a single short sentence about it.
+            268. When a task mentions topic 268, answer in a single short sentence about it.
+            269. When a task mentions topic 269, answer in a single short sentence about it.
+            270. When a task mentions topic 270, answer in a single short sentence about it.
+            271. When a task mentions topic 271, answer in a single short sentence about it.
+            272. When a task mentions topic 272, answer in a single short sentence about it.
+            273. When a task mentions topic 273, answer in a single short sentence about it.
+            274. When a task mentions topic 274, answer in a single short sentence about it.
+            275. When a task mentions topic 275, answer in a single short sentence about it.
+            276. When a task mentions topic 276, answer in a single short sentence about it.
+            277. When a task mentions topic 277, answer in a single short sentence about it.
+            278. When a task mentions topic 278, answer in a single short sentence about it.
+            279. When a task mentions topic 279, answer in a single short sentence about it.
+            280. When a task mentions topic 280, answer in a single short sentence about it.
+            281. When a task mentions topic 281, answer in a single short sentence about it.
+            282. When a task mentions topic 282, answer in a single short sentence about it.
+            283. When a task mentions topic 283, answer in a single short sentence about it.
+            284. When a task mentions topic 284, answer in a single short sentence about it.
+            285. When a task mentions topic 285, answer in a single short sentence about it.
+            286. When a task mentions topic 286, answer in a single short sentence about it.
+            287. When a task mentions topic 287, answer in a single short sentence about it.
+            288. When a task mentions topic 288, answer in a single short sentence about it.
+            289. When a task mentions topic 289, answer in a single short sentence about it.
+            290. When a task mentions topic 290, answer in a single short sentence about it.
+            291. When a task mentions topic 291, answer in a single short sentence about it.
+            292. When a task mentions topic 292, answer in a single short sentence about it.
+            293. When a task mentions topic 293, answer in a single short sentence about it.
+            294. When a task mentions topic 294, answer in a single short sentence about it.
+            295. When a task mentions topic 295, answer in a single short sentence about it.
+            296. When a task mentions topic 296, answer in a single short sentence about it.
+            297. When a task mentions topic 297, answer in a single short sentence about it.
+            298. When a task mentions topic 298, answer in a single short sentence about it.
+            299. When a task mentions topic 299, answer in a single short sentence about it.
+            300. When a task mentions topic 300, answer in a single short sentence about it.
+            301. When a task mentions topic 301, answer in a single short sentence about it.
+            302. When a task mentions topic 302, answer in a single short sentence about it.
+            303. When a task mentions topic 303, answer in a single short sentence about it.
+            304. When a task mentions topic 304, answer in a single short sentence about it.
+            305. When a task mentions topic 305, answer in a single short sentence about it.
+            306. When a task mentions topic 306, answer in a single short sentence about it.
+            307. When a task mentions topic 307, answer in a single short sentence about it.
+            308. When a task mentions topic 308, answer in a single short sentence about it.
+            309. When a task mentions topic 309, answer in a single short sentence about it.
+            310. When a task mentions topic 310, answer in a single short sentence about it.
+            311. When a task mentions topic 311, answer in a single short sentence about it.
+            312. When a task mentions topic 312, answer in a single short sentence about it.
+            313. When a task mentions topic 313, answer in a single short sentence about it.
+            314. When a task mentions topic 314, answer in a single short sentence about it.
+            315. When a task mentions topic 315, answer in a single short sentence about it.
+            316. When a task mentions topic 316, answer in a single short sentence about it.
+            317. When a task mentions topic 317, answer in a single short sentence about it.
+            318. When a task mentions topic 318, answer in a single short sentence about it.
+            319. When a task mentions topic 319, answer in a single short sentence about it.
+            320. When a task mentions topic 320, answer in a single short sentence about it.
+            321. When a task mentions topic 321, answer in a single short sentence about it.
+            322. When a task mentions topic 322, answer in a single short sentence about it.
+            323. When a task mentions topic 323, answer in a single short sentence about it.
+            324. When a task mentions topic 324, answer in a single short sentence about it.
+            325. When a task mentions topic 325, answer in a single short sentence about it.
+            326. When a task mentions topic 326, answer in a single short sentence about it.
+            327. When a task mentions topic 327, answer in a single short sentence about it.
+            328. When a task mentions topic 328, answer in a single short sentence about it.
+            329. When a task mentions topic 329, answer in a single short sentence about it.
+            330. When a task mentions topic 330, answer in a single short sentence about it.
+            331. When a task mentions topic 331, answer in a single short sentence about it.
+            332. When a task mentions topic 332, answer in a single short sentence about it.
+            333. When a task mentions topic 333, answer in a single short sentence about it.
+            334. When a task mentions topic 334, answer in a single short sentence about it.
+            335. When a task mentions topic 335, answer in a single short sentence about it.
+            336. When a task mentions topic 336, answer in a single short sentence about it.
+            337. When a task mentions topic 337, answer in a single short sentence about it.
+            338. When a task mentions topic 338, answer in a single short sentence about it.
+            339. When a task mentions topic 339, answer in a single short sentence about it.
+            340. When a task mentions topic 340, answer in a single short sentence about it.
+            341. When a task mentions topic 341, answer in a single short sentence about it.
+            342. When a task mentions topic 342, answer in a single short sentence about it.
+            343. When a task mentions topic 343, answer in a single short sentence about it.
+            344. When a task mentions topic 344, answer in a single short sentence about it.
+            345. When a task mentions topic 345, answer in a single short sentence about it.
+            346. When a task mentions topic 346, answer in a single short sentence about it.
+            347. When a task mentions topic 347, answer in a single short sentence about it.
+            348. When a task mentions topic 348, answer in a single short sentence about it.
+            349. When a task mentions topic 349, answer in a single short sentence about it.
+            350. When a task mentions topic 350, answer in a single short sentence about it.
+            351. When a task mentions topic 351, answer in a single short sentence about it.
+            352. When a task mentions topic 352, answer in a single short sentence about it.
+            353. When a task mentions topic 353, answer in a single short sentence about it.
+            354. When a task mentions topic 354, answer in a single short sentence about it.
+            355. When a task mentions topic 355, answer in a single short sentence about it.
+            356. When a task mentions topic 356, answer in a single short sentence about it.
+            357. When a task mentions topic 357, answer in a single short sentence about it.
+            358. When a task mentions topic 358, answer in a single short sentence about it.
+            359. When a task mentions topic 359, answer in a single short sentence about it.
+            360. When a task mentions topic 360, answer in a single short sentence about it.
+            361. When a task mentions topic 361, answer in a single short sentence about it.
+            362. When a task mentions topic 362, answer in a single short sentence about it.
+            363. When a task mentions topic 363, answer in a single short sentence about it.
+            364. When a task mentions topic 364, answer in a single short sentence about it.
+            365. When a task mentions topic 365, answer in a single short sentence about it.
+            366. When a task mentions topic 366, answer in a single short sentence about it.
+            367. When a task mentions topic 367, answer in a single short sentence about it.
+            368. When a task mentions topic 368, answer in a single short sentence about it.
+            369. When a task mentions topic 369, answer in a single short sentence about it.
+            370. When a task mentions topic 370, answer in a single short sentence about it.
+            371. When a task mentions topic 371, answer in a single short sentence about it.
+            372. When a task mentions topic 372, answer in a single short sentence about it.
+            373. When a task mentions topic 373, answer in a single short sentence about it.
+            374. When a task mentions topic 374, answer in a single short sentence about it.
+            375. When a task mentions topic 375, answer in a single short sentence about it.
+            376. When a task mentions topic 376, answer in a single short sentence about it.
+            377. When a task mentions topic 377, answer in a single short sentence about it.
+            378. When a task mentions topic 378, answer in a single short sentence about it.
+            379. When a task mentions topic 379, answer in a single short sentence about it.
+            380. When a task mentions topic 380, answer in a single short sentence about it.
+            381. When a task mentions topic 381, answer in a single short sentence about it.
+            382. When a task mentions topic 382, answer in a single short sentence about it.
+            383. When a task mentions topic 383, answer in a single short sentence about it.
+            384. When a task mentions topic 384, answer in a single short sentence about it.
+            385. When a task mentions topic 385, answer in a single short sentence about it.
+            386. When a task mentions topic 386, answer in a single short sentence about it.
+            387. When a task mentions topic 387, answer in a single short sentence about it.
+            388. When a task mentions topic 388, answer in a single short sentence about it.
+            389. When a task mentions topic 389, answer in a single short sentence about it.
+            390. When a task mentions topic 390, answer in a single short sentence about it.
+            391. When a task mentions topic 391, answer in a single short sentence about it.
+            392. When a task mentions topic 392, answer in a single short sentence about it.
+            393. When a task mentions topic 393, answer in a single short sentence about it.
+            394. When a task mentions topic 394, answer in a single short sentence about it.
+            395. When a task mentions topic 395, answer in a single short sentence about it.
+            396. When a task mentions topic 396, answer in a single short sentence about it.
+            397. When a task mentions topic 397, answer in a single short sentence about it.
+            398. When a task mentions topic 398, answer in a single short sentence about it.
+            399. When a task mentions topic 399, answer in a single short sentence about it.
+          cache_control:
+            type: ephemeral
+            ttl: 5m
+        thinking:
+          type: adaptive
+  response:
+    status: 200
+    headers:
+      accept-encoding:
+      - gzip, identity
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=1139
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-9a6f784f6ab679fd3f2ec085207836bd-f48d1fca05b55812-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-opus-5-5
+        id: msg_011ChNzJRYdQHxJBU4LBWz3e
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAQS2gUKEAgUGAI4AUIIdGhpbmtpbmcSDKYKXlnlLirIe/YO1xoMfN8t+wPmYznmeWnxIjBLef3+09KUGlJn40IUDV8JcIvPgVNDYjkIHvTAR2gjcUQ53kAUvgDVHNb7aYeLHkMq9wTqFRKxPOaSU1BX/lwZMIJ/1IZa7Z+nrGC0uuZlc+gxi0SFcaNHXer8Wd6k6/yAUnDQB99TJyh7KkXhwl7eAgO+kP3y0OubM9AyS4/lDFxXHN8YeWzwcm4c4C1y8OxRCEX69U8yOjCjKb6uvyUTc073GuahbOjsbDDRxYjS0ShAmQX7rH6fs6Uc2to7iZ53/o9K8TM6pUkzgTBGaJ7R0G2nhq0ikwZyWAMXAcvNpaGNHDhbbI+feb8QiucO9M6I6osXYa5fBz6SdNcdqLpELfitTVHUHIL/tlgc2rXXAH55iSebRyJep4Ofu/oIYNGP8ZxGr7RwXD0bfpsKeYXfP4yeUfom9+UeuPn6qFcztpTo+q+B8fLH+h/X5haEc1w2hMSAAQt6eleY1HhHWRBCgP85fBtAnzj3g+mIYnkwAH5PH9pZJFwG4vDA6psDIxkxpz4R9i1Yx2EcVah1EjS6oxwM6z1RYYBLkJrj/W/zuRSdyY1hUsY1q90zUS4zvR/QErEBV/4eqjuAlODD+W0omM6/hs0LSzN+FP5CQ8UWz0a2eldD5HBolVHjssahDkywn6p0+deys19KRDRH9EZsrsRYAIFYx6eOy83bE91f96wxARCPtkbVtJVBIDc1iAuKLph8C/NO2Qoedaupqc6/AnfRt+XW/Bf3d0grrAVLC3/B0g1afExqEtkNtadU0yUXOTGrtGRk67oaq5dUfb5O1l1GLFuJui66pbZSPaUsrkkOPHDyVzebrmQNUm0NrH8o4EMFNKuP2G3kRBunegJlIi8wFu2Fs6GwH8HnTKgDrIBXUqWfogYLcxpaU+B2/vLlRC16peNIhSw7GAE=
+        - type: text
+          text: >-
+            Beta is the second letter of the Greek alphabet (Β, β). If you meant one of the
+            numbered topics, tell me the number.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 4
+          cache_creation_input_tokens: 4
+          cache_read_input_tokens: 10409
+          cache_creation:
+            ephemeral_5m_input_tokens: 4
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 85
+          output_tokens_details:
+            thinking_tokens: 41
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-11-25T04:08:15.627267+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "32932"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 256
+        messages:
+        - role: user
+          content:
+          - text: gamma
+            type: text
+        model: claude-opus-5-5
+        cache_control:
+          type: ephemeral
+          ttl: 5m
+        output_config:
+          effort: low
+        stream: false
+        system:
+        - type: text
+          text: |-
+            You do one small task.
+
+            0. When a task mentions topic 0, answer in a single short sentence about it.
+            1. When a task mentions topic 1, answer in a single short sentence about it.
+            2. When a task mentions topic 2, answer in a single short sentence about it.
+            3. When a task mentions topic 3, answer in a single short sentence about it.
+            4. When a task mentions topic 4, answer in a single short sentence about it.
+            5. When a task mentions topic 5, answer in a single short sentence about it.
+            6. When a task mentions topic 6, answer in a single short sentence about it.
+            7. When a task mentions topic 7, answer in a single short sentence about it.
+            8. When a task mentions topic 8, answer in a single short sentence about it.
+            9. When a task mentions topic 9, answer in a single short sentence about it.
+            10. When a task mentions topic 10, answer in a single short sentence about it.
+            11. When a task mentions topic 11, answer in a single short sentence about it.
+            12. When a task mentions topic 12, answer in a single short sentence about it.
+            13. When a task mentions topic 13, answer in a single short sentence about it.
+            14. When a task mentions topic 14, answer in a single short sentence about it.
+            15. When a task mentions topic 15, answer in a single short sentence about it.
+            16. When a task mentions topic 16, answer in a single short sentence about it.
+            17. When a task mentions topic 17, answer in a single short sentence about it.
+            18. When a task mentions topic 18, answer in a single short sentence about it.
+            19. When a task mentions topic 19, answer in a single short sentence about it.
+            20. When a task mentions topic 20, answer in a single short sentence about it.
+            21. When a task mentions topic 21, answer in a single short sentence about it.
+            22. When a task mentions topic 22, answer in a single short sentence about it.
+            23. When a task mentions topic 23, answer in a single short sentence about it.
+            24. When a task mentions topic 24, answer in a single short sentence about it.
+            25. When a task mentions topic 25, answer in a single short sentence about it.
+            26. When a task mentions topic 26, answer in a single short sentence about it.
+            27. When a task mentions topic 27, answer in a single short sentence about it.
+            28. When a task mentions topic 28, answer in a single short sentence about it.
+            29. When a task mentions topic 29, answer in a single short sentence about it.
+            30. When a task mentions topic 30, answer in a single short sentence about it.
+            31. When a task mentions topic 31, answer in a single short sentence about it.
+            32. When a task mentions topic 32, answer in a single short sentence about it.
+            33. When a task mentions topic 33, answer in a single short sentence about it.
+            34. When a task mentions topic 34, answer in a single short sentence about it.
+            35. When a task mentions topic 35, answer in a single short sentence about it.
+            36. When a task mentions topic 36, answer in a single short sentence about it.
+            37. When a task mentions topic 37, answer in a single short sentence about it.
+            38. When a task mentions topic 38, answer in a single short sentence about it.
+            39. When a task mentions topic 39, answer in a single short sentence about it.
+            40. When a task mentions topic 40, answer in a single short sentence about it.
+            41. When a task mentions topic 41, answer in a single short sentence about it.
+            42. When a task mentions topic 42, answer in a single short sentence about it.
+            43. When a task mentions topic 43, answer in a single short sentence about it.
+            44. When a task mentions topic 44, answer in a single short sentence about it.
+            45. When a task mentions topic 45, answer in a single short sentence about it.
+            46. When a task mentions topic 46, answer in a single short sentence about it.
+            47. When a task mentions topic 47, answer in a single short sentence about it.
+            48. When a task mentions topic 48, answer in a single short sentence about it.
+            49. When a task mentions topic 49, answer in a single short sentence about it.
+            50. When a task mentions topic 50, answer in a single short sentence about it.
+            51. When a task mentions topic 51, answer in a single short sentence about it.
+            52. When a task mentions topic 52, answer in a single short sentence about it.
+            53. When a task mentions topic 53, answer in a single short sentence about it.
+            54. When a task mentions topic 54, answer in a single short sentence about it.
+            55. When a task mentions topic 55, answer in a single short sentence about it.
+            56. When a task mentions topic 56, answer in a single short sentence about it.
+            57. When a task mentions topic 57, answer in a single short sentence about it.
+            58. When a task mentions topic 58, answer in a single short sentence about it.
+            59. When a task mentions topic 59, answer in a single short sentence about it.
+            60. When a task mentions topic 60, answer in a single short sentence about it.
+            61. When a task mentions topic 61, answer in a single short sentence about it.
+            62. When a task mentions topic 62, answer in a single short sentence about it.
+            63. When a task mentions topic 63, answer in a single short sentence about it.
+            64. When a task mentions topic 64, answer in a single short sentence about it.
+            65. When a task mentions topic 65, answer in a single short sentence about it.
+            66. When a task mentions topic 66, answer in a single short sentence about it.
+            67. When a task mentions topic 67, answer in a single short sentence about it.
+            68. When a task mentions topic 68, answer in a single short sentence about it.
+            69. When a task mentions topic 69, answer in a single short sentence about it.
+            70. When a task mentions topic 70, answer in a single short sentence about it.
+            71. When a task mentions topic 71, answer in a single short sentence about it.
+            72. When a task mentions topic 72, answer in a single short sentence about it.
+            73. When a task mentions topic 73, answer in a single short sentence about it.
+            74. When a task mentions topic 74, answer in a single short sentence about it.
+            75. When a task mentions topic 75, answer in a single short sentence about it.
+            76. When a task mentions topic 76, answer in a single short sentence about it.
+            77. When a task mentions topic 77, answer in a single short sentence about it.
+            78. When a task mentions topic 78, answer in a single short sentence about it.
+            79. When a task mentions topic 79, answer in a single short sentence about it.
+            80. When a task mentions topic 80, answer in a single short sentence about it.
+            81. When a task mentions topic 81, answer in a single short sentence about it.
+            82. When a task mentions topic 82, answer in a single short sentence about it.
+            83. When a task mentions topic 83, answer in a single short sentence about it.
+            84. When a task mentions topic 84, answer in a single short sentence about it.
+            85. When a task mentions topic 85, answer in a single short sentence about it.
+            86. When a task mentions topic 86, answer in a single short sentence about it.
+            87. When a task mentions topic 87, answer in a single short sentence about it.
+            88. When a task mentions topic 88, answer in a single short sentence about it.
+            89. When a task mentions topic 89, answer in a single short sentence about it.
+            90. When a task mentions topic 90, answer in a single short sentence about it.
+            91. When a task mentions topic 91, answer in a single short sentence about it.
+            92. When a task mentions topic 92, answer in a single short sentence about it.
+            93. When a task mentions topic 93, answer in a single short sentence about it.
+            94. When a task mentions topic 94, answer in a single short sentence about it.
+            95. When a task mentions topic 95, answer in a single short sentence about it.
+            96. When a task mentions topic 96, answer in a single short sentence about it.
+            97. When a task mentions topic 97, answer in a single short sentence about it.
+            98. When a task mentions topic 98, answer in a single short sentence about it.
+            99. When a task mentions topic 99, answer in a single short sentence about it.
+            100. When a task mentions topic 100, answer in a single short sentence about it.
+            101. When a task mentions topic 101, answer in a single short sentence about it.
+            102. When a task mentions topic 102, answer in a single short sentence about it.
+            103. When a task mentions topic 103, answer in a single short sentence about it.
+            104. When a task mentions topic 104, answer in a single short sentence about it.
+            105. When a task mentions topic 105, answer in a single short sentence about it.
+            106. When a task mentions topic 106, answer in a single short sentence about it.
+            107. When a task mentions topic 107, answer in a single short sentence about it.
+            108. When a task mentions topic 108, answer in a single short sentence about it.
+            109. When a task mentions topic 109, answer in a single short sentence about it.
+            110. When a task mentions topic 110, answer in a single short sentence about it.
+            111. When a task mentions topic 111, answer in a single short sentence about it.
+            112. When a task mentions topic 112, answer in a single short sentence about it.
+            113. When a task mentions topic 113, answer in a single short sentence about it.
+            114. When a task mentions topic 114, answer in a single short sentence about it.
+            115. When a task mentions topic 115, answer in a single short sentence about it.
+            116. When a task mentions topic 116, answer in a single short sentence about it.
+            117. When a task mentions topic 117, answer in a single short sentence about it.
+            118. When a task mentions topic 118, answer in a single short sentence about it.
+            119. When a task mentions topic 119, answer in a single short sentence about it.
+            120. When a task mentions topic 120, answer in a single short sentence about it.
+            121. When a task mentions topic 121, answer in a single short sentence about it.
+            122. When a task mentions topic 122, answer in a single short sentence about it.
+            123. When a task mentions topic 123, answer in a single short sentence about it.
+            124. When a task mentions topic 124, answer in a single short sentence about it.
+            125. When a task mentions topic 125, answer in a single short sentence about it.
+            126. When a task mentions topic 126, answer in a single short sentence about it.
+            127. When a task mentions topic 127, answer in a single short sentence about it.
+            128. When a task mentions topic 128, answer in a single short sentence about it.
+            129. When a task mentions topic 129, answer in a single short sentence about it.
+            130. When a task mentions topic 130, answer in a single short sentence about it.
+            131. When a task mentions topic 131, answer in a single short sentence about it.
+            132. When a task mentions topic 132, answer in a single short sentence about it.
+            133. When a task mentions topic 133, answer in a single short sentence about it.
+            134. When a task mentions topic 134, answer in a single short sentence about it.
+            135. When a task mentions topic 135, answer in a single short sentence about it.
+            136. When a task mentions topic 136, answer in a single short sentence about it.
+            137. When a task mentions topic 137, answer in a single short sentence about it.
+            138. When a task mentions topic 138, answer in a single short sentence about it.
+            139. When a task mentions topic 139, answer in a single short sentence about it.
+            140. When a task mentions topic 140, answer in a single short sentence about it.
+            141. When a task mentions topic 141, answer in a single short sentence about it.
+            142. When a task mentions topic 142, answer in a single short sentence about it.
+            143. When a task mentions topic 143, answer in a single short sentence about it.
+            144. When a task mentions topic 144, answer in a single short sentence about it.
+            145. When a task mentions topic 145, answer in a single short sentence about it.
+            146. When a task mentions topic 146, answer in a single short sentence about it.
+            147. When a task mentions topic 147, answer in a single short sentence about it.
+            148. When a task mentions topic 148, answer in a single short sentence about it.
+            149. When a task mentions topic 149, answer in a single short sentence about it.
+            150. When a task mentions topic 150, answer in a single short sentence about it.
+            151. When a task mentions topic 151, answer in a single short sentence about it.
+            152. When a task mentions topic 152, answer in a single short sentence about it.
+            153. When a task mentions topic 153, answer in a single short sentence about it.
+            154. When a task mentions topic 154, answer in a single short sentence about it.
+            155. When a task mentions topic 155, answer in a single short sentence about it.
+            156. When a task mentions topic 156, answer in a single short sentence about it.
+            157. When a task mentions topic 157, answer in a single short sentence about it.
+            158. When a task mentions topic 158, answer in a single short sentence about it.
+            159. When a task mentions topic 159, answer in a single short sentence about it.
+            160. When a task mentions topic 160, answer in a single short sentence about it.
+            161. When a task mentions topic 161, answer in a single short sentence about it.
+            162. When a task mentions topic 162, answer in a single short sentence about it.
+            163. When a task mentions topic 163, answer in a single short sentence about it.
+            164. When a task mentions topic 164, answer in a single short sentence about it.
+            165. When a task mentions topic 165, answer in a single short sentence about it.
+            166. When a task mentions topic 166, answer in a single short sentence about it.
+            167. When a task mentions topic 167, answer in a single short sentence about it.
+            168. When a task mentions topic 168, answer in a single short sentence about it.
+            169. When a task mentions topic 169, answer in a single short sentence about it.
+            170. When a task mentions topic 170, answer in a single short sentence about it.
+            171. When a task mentions topic 171, answer in a single short sentence about it.
+            172. When a task mentions topic 172, answer in a single short sentence about it.
+            173. When a task mentions topic 173, answer in a single short sentence about it.
+            174. When a task mentions topic 174, answer in a single short sentence about it.
+            175. When a task mentions topic 175, answer in a single short sentence about it.
+            176. When a task mentions topic 176, answer in a single short sentence about it.
+            177. When a task mentions topic 177, answer in a single short sentence about it.
+            178. When a task mentions topic 178, answer in a single short sentence about it.
+            179. When a task mentions topic 179, answer in a single short sentence about it.
+            180. When a task mentions topic 180, answer in a single short sentence about it.
+            181. When a task mentions topic 181, answer in a single short sentence about it.
+            182. When a task mentions topic 182, answer in a single short sentence about it.
+            183. When a task mentions topic 183, answer in a single short sentence about it.
+            184. When a task mentions topic 184, answer in a single short sentence about it.
+            185. When a task mentions topic 185, answer in a single short sentence about it.
+            186. When a task mentions topic 186, answer in a single short sentence about it.
+            187. When a task mentions topic 187, answer in a single short sentence about it.
+            188. When a task mentions topic 188, answer in a single short sentence about it.
+            189. When a task mentions topic 189, answer in a single short sentence about it.
+            190. When a task mentions topic 190, answer in a single short sentence about it.
+            191. When a task mentions topic 191, answer in a single short sentence about it.
+            192. When a task mentions topic 192, answer in a single short sentence about it.
+            193. When a task mentions topic 193, answer in a single short sentence about it.
+            194. When a task mentions topic 194, answer in a single short sentence about it.
+            195. When a task mentions topic 195, answer in a single short sentence about it.
+            196. When a task mentions topic 196, answer in a single short sentence about it.
+            197. When a task mentions topic 197, answer in a single short sentence about it.
+            198. When a task mentions topic 198, answer in a single short sentence about it.
+            199. When a task mentions topic 199, answer in a single short sentence about it.
+            200. When a task mentions topic 200, answer in a single short sentence about it.
+            201. When a task mentions topic 201, answer in a single short sentence about it.
+            202. When a task mentions topic 202, answer in a single short sentence about it.
+            203. When a task mentions topic 203, answer in a single short sentence about it.
+            204. When a task mentions topic 204, answer in a single short sentence about it.
+            205. When a task mentions topic 205, answer in a single short sentence about it.
+            206. When a task mentions topic 206, answer in a single short sentence about it.
+            207. When a task mentions topic 207, answer in a single short sentence about it.
+            208. When a task mentions topic 208, answer in a single short sentence about it.
+            209. When a task mentions topic 209, answer in a single short sentence about it.
+            210. When a task mentions topic 210, answer in a single short sentence about it.
+            211. When a task mentions topic 211, answer in a single short sentence about it.
+            212. When a task mentions topic 212, answer in a single short sentence about it.
+            213. When a task mentions topic 213, answer in a single short sentence about it.
+            214. When a task mentions topic 214, answer in a single short sentence about it.
+            215. When a task mentions topic 215, answer in a single short sentence about it.
+            216. When a task mentions topic 216, answer in a single short sentence about it.
+            217. When a task mentions topic 217, answer in a single short sentence about it.
+            218. When a task mentions topic 218, answer in a single short sentence about it.
+            219. When a task mentions topic 219, answer in a single short sentence about it.
+            220. When a task mentions topic 220, answer in a single short sentence about it.
+            221. When a task mentions topic 221, answer in a single short sentence about it.
+            222. When a task mentions topic 222, answer in a single short sentence about it.
+            223. When a task mentions topic 223, answer in a single short sentence about it.
+            224. When a task mentions topic 224, answer in a single short sentence about it.
+            225. When a task mentions topic 225, answer in a single short sentence about it.
+            226. When a task mentions topic 226, answer in a single short sentence about it.
+            227. When a task mentions topic 227, answer in a single short sentence about it.
+            228. When a task mentions topic 228, answer in a single short sentence about it.
+            229. When a task mentions topic 229, answer in a single short sentence about it.
+            230. When a task mentions topic 230, answer in a single short sentence about it.
+            231. When a task mentions topic 231, answer in a single short sentence about it.
+            232. When a task mentions topic 232, answer in a single short sentence about it.
+            233. When a task mentions topic 233, answer in a single short sentence about it.
+            234. When a task mentions topic 234, answer in a single short sentence about it.
+            235. When a task mentions topic 235, answer in a single short sentence about it.
+            236. When a task mentions topic 236, answer in a single short sentence about it.
+            237. When a task mentions topic 237, answer in a single short sentence about it.
+            238. When a task mentions topic 238, answer in a single short sentence about it.
+            239. When a task mentions topic 239, answer in a single short sentence about it.
+            240. When a task mentions topic 240, answer in a single short sentence about it.
+            241. When a task mentions topic 241, answer in a single short sentence about it.
+            242. When a task mentions topic 242, answer in a single short sentence about it.
+            243. When a task mentions topic 243, answer in a single short sentence about it.
+            244. When a task mentions topic 244, answer in a single short sentence about it.
+            245. When a task mentions topic 245, answer in a single short sentence about it.
+            246. When a task mentions topic 246, answer in a single short sentence about it.
+            247. When a task mentions topic 247, answer in a single short sentence about it.
+            248. When a task mentions topic 248, answer in a single short sentence about it.
+            249. When a task mentions topic 249, answer in a single short sentence about it.
+            250. When a task mentions topic 250, answer in a single short sentence about it.
+            251. When a task mentions topic 251, answer in a single short sentence about it.
+            252. When a task mentions topic 252, answer in a single short sentence about it.
+            253. When a task mentions topic 253, answer in a single short sentence about it.
+            254. When a task mentions topic 254, answer in a single short sentence about it.
+            255. When a task mentions topic 255, answer in a single short sentence about it.
+            256. When a task mentions topic 256, answer in a single short sentence about it.
+            257. When a task mentions topic 257, answer in a single short sentence about it.
+            258. When a task mentions topic 258, answer in a single short sentence about it.
+            259. When a task mentions topic 259, answer in a single short sentence about it.
+            260. When a task mentions topic 260, answer in a single short sentence about it.
+            261. When a task mentions topic 261, answer in a single short sentence about it.
+            262. When a task mentions topic 262, answer in a single short sentence about it.
+            263. When a task mentions topic 263, answer in a single short sentence about it.
+            264. When a task mentions topic 264, answer in a single short sentence about it.
+            265. When a task mentions topic 265, answer in a single short sentence about it.
+            266. When a task mentions topic 266, answer in a single short sentence about it.
+            267. When a task mentions topic 267, answer in a single short sentence about it.
+            268. When a task mentions topic 268, answer in a single short sentence about it.
+            269. When a task mentions topic 269, answer in a single short sentence about it.
+            270. When a task mentions topic 270, answer in a single short sentence about it.
+            271. When a task mentions topic 271, answer in a single short sentence about it.
+            272. When a task mentions topic 272, answer in a single short sentence about it.
+            273. When a task mentions topic 273, answer in a single short sentence about it.
+            274. When a task mentions topic 274, answer in a single short sentence about it.
+            275. When a task mentions topic 275, answer in a single short sentence about it.
+            276. When a task mentions topic 276, answer in a single short sentence about it.
+            277. When a task mentions topic 277, answer in a single short sentence about it.
+            278. When a task mentions topic 278, answer in a single short sentence about it.
+            279. When a task mentions topic 279, answer in a single short sentence about it.
+            280. When a task mentions topic 280, answer in a single short sentence about it.
+            281. When a task mentions topic 281, answer in a single short sentence about it.
+            282. When a task mentions topic 282, answer in a single short sentence about it.
+            283. When a task mentions topic 283, answer in a single short sentence about it.
+            284. When a task mentions topic 284, answer in a single short sentence about it.
+            285. When a task mentions topic 285, answer in a single short sentence about it.
+            286. When a task mentions topic 286, answer in a single short sentence about it.
+            287. When a task mentions topic 287, answer in a single short sentence about it.
+            288. When a task mentions topic 288, answer in a single short sentence about it.
+            289. When a task mentions topic 289, answer in a single short sentence about it.
+            290. When a task mentions topic 290, answer in a single short sentence about it.
+            291. When a task mentions topic 291, answer in a single short sentence about it.
+            292. When a task mentions topic 292, answer in a single short sentence about it.
+            293. When a task mentions topic 293, answer in a single short sentence about it.
+            294. When a task mentions topic 294, answer in a single short sentence about it.
+            295. When a task mentions topic 295, answer in a single short sentence about it.
+            296. When a task mentions topic 296, answer in a single short sentence about it.
+            297. When a task mentions topic 297, answer in a single short sentence about it.
+            298. When a task mentions topic 298, answer in a single short sentence about it.
+            299. When a task mentions topic 299, answer in a single short sentence about it.
+            300. When a task mentions topic 300, answer in a single short sentence about it.
+            301. When a task mentions topic 301, answer in a single short sentence about it.
+            302. When a task mentions topic 302, answer in a single short sentence about it.
+            303. When a task mentions topic 303, answer in a single short sentence about it.
+            304. When a task mentions topic 304, answer in a single short sentence about it.
+            305. When a task mentions topic 305, answer in a single short sentence about it.
+            306. When a task mentions topic 306, answer in a single short sentence about it.
+            307. When a task mentions topic 307, answer in a single short sentence about it.
+            308. When a task mentions topic 308, answer in a single short sentence about it.
+            309. When a task mentions topic 309, answer in a single short sentence about it.
+            310. When a task mentions topic 310, answer in a single short sentence about it.
+            311. When a task mentions topic 311, answer in a single short sentence about it.
+            312. When a task mentions topic 312, answer in a single short sentence about it.
+            313. When a task mentions topic 313, answer in a single short sentence about it.
+            314. When a task mentions topic 314, answer in a single short sentence about it.
+            315. When a task mentions topic 315, answer in a single short sentence about it.
+            316. When a task mentions topic 316, answer in a single short sentence about it.
+            317. When a task mentions topic 317, answer in a single short sentence about it.
+            318. When a task mentions topic 318, answer in a single short sentence about it.
+            319. When a task mentions topic 319, answer in a single short sentence about it.
+            320. When a task mentions topic 320, answer in a single short sentence about it.
+            321. When a task mentions topic 321, answer in a single short sentence about it.
+            322. When a task mentions topic 322, answer in a single short sentence about it.
+            323. When a task mentions topic 323, answer in a single short sentence about it.
+            324. When a task mentions topic 324, answer in a single short sentence about it.
+            325. When a task mentions topic 325, answer in a single short sentence about it.
+            326. When a task mentions topic 326, answer in a single short sentence about it.
+            327. When a task mentions topic 327, answer in a single short sentence about it.
+            328. When a task mentions topic 328, answer in a single short sentence about it.
+            329. When a task mentions topic 329, answer in a single short sentence about it.
+            330. When a task mentions topic 330, answer in a single short sentence about it.
+            331. When a task mentions topic 331, answer in a single short sentence about it.
+            332. When a task mentions topic 332, answer in a single short sentence about it.
+            333. When a task mentions topic 333, answer in a single short sentence about it.
+            334. When a task mentions topic 334, answer in a single short sentence about it.
+            335. When a task mentions topic 335, answer in a single short sentence about it.
+            336. When a task mentions topic 336, answer in a single short sentence about it.
+            337. When a task mentions topic 337, answer in a single short sentence about it.
+            338. When a task mentions topic 338, answer in a single short sentence about it.
+            339. When a task mentions topic 339, answer in a single short sentence about it.
+            340. When a task mentions topic 340, answer in a single short sentence about it.
+            341. When a task mentions topic 341, answer in a single short sentence about it.
+            342. When a task mentions topic 342, answer in a single short sentence about it.
+            343. When a task mentions topic 343, answer in a single short sentence about it.
+            344. When a task mentions topic 344, answer in a single short sentence about it.
+            345. When a task mentions topic 345, answer in a single short sentence about it.
+            346. When a task mentions topic 346, answer in a single short sentence about it.
+            347. When a task mentions topic 347, answer in a single short sentence about it.
+            348. When a task mentions topic 348, answer in a single short sentence about it.
+            349. When a task mentions topic 349, answer in a single short sentence about it.
+            350. When a task mentions topic 350, answer in a single short sentence about it.
+            351. When a task mentions topic 351, answer in a single short sentence about it.
+            352. When a task mentions topic 352, answer in a single short sentence about it.
+            353. When a task mentions topic 353, answer in a single short sentence about it.
+            354. When a task mentions topic 354, answer in a single short sentence about it.
+            355. When a task mentions topic 355, answer in a single short sentence about it.
+            356. When a task mentions topic 356, answer in a single short sentence about it.
+            357. When a task mentions topic 357, answer in a single short sentence about it.
+            358. When a task mentions topic 358, answer in a single short sentence about it.
+            359. When a task mentions topic 359, answer in a single short sentence about it.
+            360. When a task mentions topic 360, answer in a single short sentence about it.
+            361. When a task mentions topic 361, answer in a single short sentence about it.
+            362. When a task mentions topic 362, answer in a single short sentence about it.
+            363. When a task mentions topic 363, answer in a single short sentence about it.
+            364. When a task mentions topic 364, answer in a single short sentence about it.
+            365. When a task mentions topic 365, answer in a single short sentence about it.
+            366. When a task mentions topic 366, answer in a single short sentence about it.
+            367. When a task mentions topic 367, answer in a single short sentence about it.
+            368. When a task mentions topic 368, answer in a single short sentence about it.
+            369. When a task mentions topic 369, answer in a single short sentence about it.
+            370. When a task mentions topic 370, answer in a single short sentence about it.
+            371. When a task mentions topic 371, answer in a single short sentence about it.
+            372. When a task mentions topic 372, answer in a single short sentence about it.
+            373. When a task mentions topic 373, answer in a single short sentence about it.
+            374. When a task mentions topic 374, answer in a single short sentence about it.
+            375. When a task mentions topic 375, answer in a single short sentence about it.
+            376. When a task mentions topic 376, answer in a single short sentence about it.
+            377. When a task mentions topic 377, answer in a single short sentence about it.
+            378. When a task mentions topic 378, answer in a single short sentence about it.
+            379. When a task mentions topic 379, answer in a single short sentence about it.
+            380. When a task mentions topic 380, answer in a single short sentence about it.
+            381. When a task mentions topic 381, answer in a single short sentence about it.
+            382. When a task mentions topic 382, answer in a single short sentence about it.
+            383. When a task mentions topic 383, answer in a single short sentence about it.
+            384. When a task mentions topic 384, answer in a single short sentence about it.
+            385. When a task mentions topic 385, answer in a single short sentence about it.
+            386. When a task mentions topic 386, answer in a single short sentence about it.
+            387. When a task mentions topic 387, answer in a single short sentence about it.
+            388. When a task mentions topic 388, answer in a single short sentence about it.
+            389. When a task mentions topic 389, answer in a single short sentence about it.
+            390. When a task mentions topic 390, answer in a single short sentence about it.
+            391. When a task mentions topic 391, answer in a single short sentence about it.
+            392. When a task mentions topic 392, answer in a single short sentence about it.
+            393. When a task mentions topic 393, answer in a single short sentence about it.
+            394. When a task mentions topic 394, answer in a single short sentence about it.
+            395. When a task mentions topic 395, answer in a single short sentence about it.
+            396. When a task mentions topic 396, answer in a single short sentence about it.
+            397. When a task mentions topic 397, answer in a single short sentence about it.
+            398. When a task mentions topic 398, answer in a single short sentence about it.
+            399. When a task mentions topic 399, answer in a single short sentence about it.
+          cache_control:
+            type: ephemeral
+            ttl: 5m
+        thinking:
+          type: adaptive
+  response:
+    status: 200
+    headers:
+      accept-encoding:
+      - gzip, identity
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=2205
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-27dfafbe7bb0c1ce759a9318c60b983f-72305351332765d8-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-opus-5-5
+        id: msg_011ChNzJRa7asr71Pn13u1S4
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAQSuQUKEAgUGAI4AUIIdGhpbmtpbmcSDIBFlbybGXH7fde50RoMVpA2i/SFPAyDsKyuIjBA0QVIMZ48HJeffitjtbOTT/2KLbCwLf4KRxqfHM8UgeeFa7Taku94jmeUuScUvzAq1gQMMF8ORQKr60lxGtGLEbLR3WZcPqswa3iMYg3GF8wnUNN3ki8CS5EFsCEhI2DLg8QwGDjsvlwhC97ba2eLWmQv5Pc3XjirThxj3y3aSvw1xpG/iBS8q5qbrlNJdkvA83+VavLaUtbxm1G30MC1yji3h92C+qLcWD5fK6kZHRe7ZmrtOWMcjZv6iR+phoWt4wJFC4cgK/dFs9FnxzDCUgoeOFiULKizIq4ITfQgOcOzQq9pIVHyTajidQ6YpZgp605yXs184uXoGxE/t8gQ4LsjAnhpr3+44XOAwJ9dVoAfTgy0Q0Y4QFVm/VDS5HkVRbisQ0vQLaEQ3Sh/VFmCZwWlJ0dFLjv0floYXhNt4uUZuhfYjLA7Xz/lrUmoRE72sneieP+pjtjsgAZ7XiXTmv3ehJQLrtuZWq8IgNJNaLaFpTprsCdJzbhUx87V1LSwzQGuqvuStqm5WhJ/TktLfgSAHtzFnqJmWbTSI+KFM12w0bAQHqFoDivPPGI683uSloLWwOW7ZZT1I7/gptUrfjeb5+oOh981emkeTdsNY3ljvoM43ZocR6hJ6XYNQFpHEgZiVOAbJOlw7TxrL1pzOQ75IAjb0PdTRWwSDZ86bvc9guNxg02xDnLQUPWQxe1PAbs1VxUeHvQIWQ8YAu20nMNW83OxiR3k5G4DDF8cAO+uODtzNDgBRjQNqcVJag/C8KUej8Yy08/cEg1bmJgV7tS0Acqy9UjT0FYZWcKxOzzT00fnY6xFCsd1zQtDhQfot0hyXmlSAnr8Dwsz8KDjCpJUlbAdGTQxGAE=
+        - type: text
+          text: >-
+            Gamma (γ) is the third letter of the Greek alphabet. It also names gamma rays,
+            the gamma function, and the Lorentz factor in physics. If you meant one of the
+            numbered topics, tell me which number.
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 4
+          cache_creation_input_tokens: 5
+          cache_read_input_tokens: 10409
+          cache_creation:
+            ephemeral_5m_input_tokens: 5
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 104
+          output_tokens_details:
+            thinking_tokens: 32
+          service_tier: standard
+          inference_geo: global
+          speed: standard
+        diagnostics: null
+  recorded_at: 2026-11-25T04:08:16.706527+00:00

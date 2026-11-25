@@ -704,6 +704,7 @@ SubAgents(
     max_depth=3,  # delegation levels, counting the top-level run
     task_control=None,  # TaskControl: background tasks, task-control tools, questions, and task events
     dynamic_agents=None,  # DynamicAgents: let the model create sub-agents with `create_agent`
+    warm_sibling_cache='auto',  # start parallel delegations to one sub-agent one at a time to share the prompt cache
 )
 ```
 
@@ -749,7 +750,7 @@ TaskControl(
 ## Notes
 
 - Sub-agents can have their own `SubAgents`, forming a tree. Each `SubAgents` stops offering delegation at its own `max_depth`, so a delegate with a higher limit can go deeper than its parent's. Share `usage` (the default) and set `usage_limits` on the top-level run to bound the whole tree.
-- Delegations the model issues in parallel run as independent sub-agent runs.
+- Delegations the model issues in parallel run as independent sub-agent runs. On Anthropic with caching configured, parallel delegations to the same sub-agent start one at a time, so the ones after the first read the shared prompt prefix from the cache: see [Sub-agents that start together](https://pydantic.dev/docs/ai/capabilities/caching/#sub-agents-that-start-together) and `warm_sibling_cache`.
 
 ## Further reading
 

@@ -280,6 +280,10 @@ host passes a per-run model override to the parent agent, for example from a `/m
 every sub-agent dispatch should follow that resolved parent model. Leave it `False` when a sub-agent
 is deliberately pinned to a different model.
 
+### Gathered calls and the prompt cache
+
+When the script gathers several calls to the same sub-agent, their first requests share the sub-agent's tool definitions and instructions. With `warm_sibling_cache='auto'` (the default), on Anthropic with caching configured, the first call goes alone and the others wait until it starts streaming, so they read that prefix from the cache instead of writing it again. See [Sub-agents that start together](https://pydantic.dev/docs/ai/capabilities/caching/#sub-agents-that-start-together) for when this applies and how to turn it on or off.
+
 ## Keeping it safe: budgets
 
 A sub-agent is non-deterministic, costs tokens, and can fan out into more sub-agents.
