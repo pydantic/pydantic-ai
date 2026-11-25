@@ -299,8 +299,10 @@ The preview is public. Stop it with `stop_command` while the workspace is attach
 
 - E2B's file service runs as root, so Unix permissions don't restrict file tools. Commands run as `user`.
 - Concurrent writes to one path can interleave, and a reader can see a partial file. Write to separate paths.
+- File reads refuse a FIFO with `OSError`, but not a device file such as `/dev/null`.
 - A background process that keeps the command's stdout or stderr open keeps `run()` waiting. Redirect its output to a file. `Shell.start_command` does this for you.
 - A command whose output passes 10 MiB is stopped with `WorkspaceOutputLimitError`. Redirect large output to a file.
+- Each argv item is quoted for a shell twice, and the whole command reaches `bash -c` as one argument, so each single quote in an item counts 17 bytes against Linux's 128 KiB limit on one argument. Pass large data through a file.
 - On a timeout, the command's process group is stopped. Custom templates need `/bin/bash`, `/bin/sh` and `setsid` for that. Without `setsid`, only the command itself is stopped.
 - Stopping is best effort. If E2B can't be reached, the command may keep running, so keep the ref to inspect or kill the sandbox.
 - The E2B SDK needs asyncio. Under Trio, every operation raises `UserError`.
