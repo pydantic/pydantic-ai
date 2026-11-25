@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import anyio
 import pytest
 from pydantic import JsonValue
 from rich.console import Console
@@ -568,3 +569,38 @@ async def test_a_link_that_cannot_be_got_leaves_the_row_without_one(
     assert row(plugin) == ['fake sandbox (computer-use)', '']
     assert 'Could not get the link to watch the Fake desktop: the provider is down' in caplog.text
     await plugin.on_session_end(SessionEnd(reason='exit'))
+
+
+async def test_a_turn_cut_off_mid_stream_keeps_computer_use_on(
+    checkout: Path, provider: FakeProvider, display: FakeDisplay
+) -> None:
+    """Core keeps an interrupted turn's partial response without `after_model_request`, so it has no `COMPUTER_USE`."""
+    loaded = load(checkout)
+    plugin = plugin_of(loaded)
+    offered: list[list[str]] = []
+    streaming = anyio.Event()
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        offered.append([tool.name for tool in info.function_tools])
+        yield 'half'
+        if not streaming.is_set():
+            streaming.set()
+            await anyio.sleep_forever()
+
+    session = on_screen(loaded, checkout, model=FunctionModel(stream_function=respond))
+    await plugin.computer_use_command(['on'])
+    await plugin.command(['fake'])
+    async with anyio.create_task_group() as tasks:
+        tasks.start_soon(session.prompt, 'click it')
+        await streaming.wait()
+        tasks.cancel_scope.cancel()
+    cut_off = session.messages[-1]
+    assert isinstance(cut_off, ModelResponse) and cut_off.parts and COMPUTER_USE not in (cut_off.metadata or {})
+
+    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox (computer-use)', '']
+    resumed = plugin_of(load(checkout, Transcript(messages=session.messages)))
+    assert on_screen_sandbox(resumed).desktop is True
+    await session.prompt('click it again')
+    assert 'computer' in offered[-1]
+    await plugin.on_session_end(SessionEnd(reason='exit'))
+    await resumed.on_session_end(SessionEnd(reason='exit'))

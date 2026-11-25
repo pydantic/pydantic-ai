@@ -391,7 +391,7 @@ class SandboxPlugin(Plugin):
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         return render_computer_event(event)
 
-    def sandbox(self, ref: WorkspaceRef, messages: Sequence[ModelMessage]) -> _Sandbox:
+    def sandbox(self, ref: WorkspaceRef, messages: Sequence[ModelMessage] = ()) -> _Sandbox:
         """The sandbox `ref` names, which a `/sandbox` provider owns; `messages`, a history naming it, says if it has a desktop."""
         if (sandbox := self._sandboxes.get(ref)) is None:
             provider = _owner(ref)

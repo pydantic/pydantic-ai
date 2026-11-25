@@ -44,19 +44,21 @@ COMPUTER_USE = 'clai2_computer_use'
 """`ModelResponse.metadata` key of a sandbox with a desktop: `True` while `/computer-use` is on, `False` once off.
 
 Pax's own, never sent to a model. `/sandbox` and `/computer-use` save it on the response they record, and every
-later response in the sandbox carries it on, so the latest response says both, even after compaction.
+later response in the sandbox carries it on, so a recent response says both, even after compaction. A turn cut off
+mid-stream keeps a response without it, as core records that one without `after_model_request`.
 """
 
 
 def computer_use_state(messages: Sequence[ModelMessage]) -> bool | None:
-    """`COMPUTER_USE` on the history's latest response: `None` when its sandbox has no desktop."""
-    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
-    state = None if response is None else (response.metadata or {}).get(COMPUTER_USE)
-    return state if isinstance(state, bool) else None
+    """`COMPUTER_USE` on the history's latest response that has it: `None` when its sandbox has no desktop."""
+    for message in reversed(messages):
+        if isinstance(message, ModelResponse) and isinstance(state := (message.metadata or {}).get(COMPUTER_USE), bool):
+            return state
+    return None
 
 
 def computer_use_on(messages: Sequence[ModelMessage]) -> bool:
-    """Whether `/computer-use` is on, according to the history's latest response."""
+    """Whether `/computer-use` is on, according to the history's latest response that says."""
     return computer_use_state(messages) is True
 
 
