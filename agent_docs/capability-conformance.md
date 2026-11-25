@@ -20,7 +20,7 @@ The contracts are numbered C0, C1, … in the order they land. C1–C5 work towa
 **How it's tested**
 
 - `DECLARES_CALLS` (C0) builds every buildable public case and checks it: `test_a_capability_that_runs_with_tools_declares_calls`. A capability made of others is checked through its parts.
-- `test_pending_calls_backfill` pins how many cases are still pending. A PR that writes a case's `calls` removes its exemption and lowers the count; a new capability doesn't add a pending one.
+- `test_pending_calls_backfill` pins how many cases are still pending. A PR that writes a case's `calls`, or gives a case a reasoned exemption of its own (such as a route other tools run through, which C1 covers), removes its pending exemption and lowers the count; no PR raises it, so a new capability doesn't add a pending one.
 - For a capability whose hooks run around other tools' calls, `with_echo` builds it beside an `echo` tool, and `ECHO` calls it.
 
 ## Prompt cache
