@@ -149,7 +149,7 @@ class Selection:
         span = self.span(frame, rows=rows, joins=joins)
         width = frame.width
         last = (span.stop - 1) // width
-        text = ''
+        text = line = ''
         for row in range(span.start // width, last + 1):
             cells = ''.join(frame.chars[max(span.start, row * width) : min(span.stop, (row + 1) * width)])
             if row < last and _joined(joins, row + 1):
@@ -157,9 +157,10 @@ class Selection:
                 # That blank is no text, though a space that happened to land there reads the same.
                 tail = (row + 1) * width + 1
                 padded = cells.endswith(' ') and frame.chars[tail : tail + 1] == [WIDE_TAIL]
-                text += cells[:-1] if padded else cells
+                line += cells[:-1] if padded else cells
             else:
-                text += cells.rstrip() + '\n'
+                text += (line + cells).rstrip() + '\n'
+                line = ''
         return text.rstrip('\n')
 
 

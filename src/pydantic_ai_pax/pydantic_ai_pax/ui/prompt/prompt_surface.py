@@ -109,6 +109,12 @@ class PromptSurface(io.StringIO):
         """The cells last painted, which a selection copies from."""
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript."""
+        self._joins: tuple[bool, ...] = ()
+        """Which of the frame's transcript rows wrap on from the row above, for a selection.
+
+        Read when the frame paints, since output before the next paint can change the rows.
+        Pinned rows never wrap on, and neither does a row `SCROLLED_HINT` covers.
+        """
         self._hint_on_transcript = False
         """Whether `SCROLLED_HINT` covers the last transcript row, as when no editor rule is pinned."""
         self._select_pinned = False
@@ -265,7 +271,7 @@ class PromptSurface(io.StringIO):
                 text = self.selection.text(
                     self._frame,
                     rows=self._frame.height if self._select_pinned else self._transcript_rows,
-                    joins=self._wraps(),
+                    joins=self._joins,
                 )
                 if text.strip():
                     copy_text(text, output=self.output)
@@ -280,13 +286,6 @@ class PromptSurface(io.StringIO):
     def _url_at(self, cell: tuple[int, int]) -> str | None:
         assert self._frame is not None
         return url_at(self._frame, cell, rows=self._transcript_rows - self._hint_on_transcript, joins=self.view.joins())
-
-    def _wraps(self) -> tuple[bool, ...]:
-        """Which of the frame's transcript rows wrap on from the row above, for a selection.
-
-        Pinned rows never do, and neither does a row `SCROLLED_HINT` covers.
-        """
-        return self.view.joins()[: self._transcript_rows - self._hint_on_transcript]
 
     def _paint_soon(self) -> None:
         """Paint once the event loop finishes the current callback, or now outside one.
@@ -385,12 +384,13 @@ class PromptSurface(io.StringIO):
             frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
         # A URL the hint covers part of is not opened.
         self._hint_on_transcript = self.view.anchor is not None and _show_scrolled_hint(frame, top=bottom)
-        self._transcript_rows = bottom
+        self._joins = self.view.joins()[: bottom - self._hint_on_transcript]
         self.selection.highlight(
-            frame, rows=height if self._select_pinned else bottom, joins=self._wraps(), previous=self._frame
+            frame, rows=height if self._select_pinned else bottom, joins=self._joins, previous=self._frame
         )
         parts.append(render_diff(self._previous, frame))
         self._previous = self._frame = frame
+        self._transcript_rows = bottom
         self._dirty = False
         self._painted_at = self.clock()
         self._painted_as = (width, height, theme.name())

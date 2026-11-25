@@ -794,6 +794,26 @@ def test_a_soft_wrap_before_a_double_width_character_copies_no_padding() -> None
     assert screen.surface.transcript_key('mouse', release(4, 2)) == 'ab日本語'
 
 
+def test_a_wrapped_line_copies_without_its_trailing_blanks() -> None:
+    screen = Screen(width=5, height=8)
+    screen.surface.paint(('ED',))
+    screen.write('abc' + ' ' * 10 + '\nnext\n')
+    for report in (press(1, 1), drag(2, 4)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(2, 4)) == 'abc\nne'
+
+
+def test_a_copy_joins_the_rows_its_frame_painted() -> None:
+    """Output that changes the rows before the next paint must not change where the copy breaks lines."""
+    screen = Screen(width=20, height=8)
+    screen.surface.paint(('ED',))
+    screen.write('y' * 50)  # Unfinished, so a carriage return rewrites it.
+    for report in (press(1, 1), drag(5, 2)):
+        screen.surface.transcript_key('mouse', report)
+    screen.surface.write('\rshort')  # Inside the frame interval: the frame still shows the wrapped rows.
+    assert screen.surface.transcript_key('mouse', release(5, 2)) == 'y' * 25
+
+
 def test_question_selection_opt_in_does_not_leak_into_editor_rows() -> None:
     screen = Screen(width=40, height=10)
     screen.surface.paint(ROWS, select_pinned=True)
