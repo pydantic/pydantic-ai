@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "135"
+      - "125"
       content-type:
       - application/json
       host:
@@ -23,7 +23,7 @@ interactions:
         stream: false
         messages:
         - role: user
-          content: What is the capital of France? Answer in one word.
+          content: What is 2+2? Reply with just the number.
   response:
     status: 200
     headers:
@@ -38,7 +38,7 @@ interactions:
       content-type:
       - application/json
       openai-processing-ms:
-      - "1264"
+      - "870"
       openai-version:
       - 2020-10-01
       strict-transport-security:
@@ -50,24 +50,24 @@ interactions:
     body:
       type: json
       content:
-        id: chatcmpl-a29ed349-0de6-485d-9a11-603d0c29b6a7
+        id: chatcmpl-5423ed37-ffbe-4a31-a70a-e16b04982edb
         object: chat.completion
-        created: 1795570324
+        created: 1795574538
         model: gpt-5-search-api-2025-10-14
         choices:
         - index: 0
           message:
             role: assistant
-            content: Paris
+            content: "4"
             refusal: null
             annotations: []
           finish_reason: stop
         usage:
-          prompt_tokens: 1575
+          prompt_tokens: 1576
           completion_tokens: 5
-          total_tokens: 1580
+          total_tokens: 1581
           prompt_tokens_details:
-            cached_tokens: 0
+            cached_tokens: 1408
             audio_tokens: 0
           completion_tokens_details:
             reasoning_tokens: 0
@@ -75,4 +75,4 @@ interactions:
             accepted_prediction_tokens: 0
             rejected_prediction_tokens: 0
         system_fingerprint: null
-  recorded_at: 2026-11-25T01:32:04.144081+00:00
+  recorded_at: 2026-11-25T02:42:19.088997+00:00
