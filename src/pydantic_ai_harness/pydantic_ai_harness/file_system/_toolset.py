@@ -334,8 +334,7 @@ def _search_files_arguments(
         '--max-columns',
         str(_MAX_MATCH_COLUMNS),
         '--max-columns-preview',
-        *(['--glob', command_glob] if command_glob and not fnmatch_only else []),
-        *hidden_flag,
+        *(_ripgrep_glob(command_glob, hidden_flag) if command_glob and not fnmatch_only else hidden_flag),
         '--regexp',
         pattern,
         '--',
@@ -373,8 +372,7 @@ def _grep_arguments(
         str(context),
     ]
     if glob is not None:
-        arguments.extend(['--glob', glob])
-    arguments.extend(hidden_flag)
+        arguments.extend(_ripgrep_glob(glob, hidden_flag))
     if file_type is not None:
         arguments.extend(['--type', file_type])
     if ignore_case:
@@ -435,6 +433,16 @@ def _ripgrep_hidden(glob: str | None) -> list[str]:
         )
     )
     return ['--hidden'] if named else []
+
+
+def _ripgrep_glob(glob: str, hidden_flag: list[str]) -> list[str]:
+    """The `rg` arguments that filter by `glob`, keeping hidden paths out unless `hidden_flag` lets them in.
+
+    A `--glob` overrides `rg`'s own hidden-path skip: one that matches a hidden path, as `*` does, makes `rg`
+    walk every hidden directory, only for the results to drop what it found there. A later `!.*` takes
+    precedence and prunes those directories; paths passed to `rg` explicitly are still searched.
+    """
+    return ['--glob', glob, *(hidden_flag or ['--glob', '!.*'])]
 
 
 def _sort_key(path: str) -> list[str]:
@@ -1855,8 +1863,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             '--files',
             '--sort',
             'path',
-            *(['--glob', glob] if glob is not None else []),
-            *hidden_flag,
+            *(_ripgrep_glob(glob, hidden_flag) if glob is not None else []),
         ]
         try:
             if scope.bounds.lacks_ripgrep:
