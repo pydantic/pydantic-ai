@@ -1331,6 +1331,23 @@ def test_resolved_id_serialization_round_trip(id: InstructionId, serialized: str
     assert instruction_part_ta.validate_python(payload) == part
 
 
+def test_unnamed_run_instruction_id_survives_serialization():
+    """An id whose source has no segment of its own must load back, not read as an unknown namespace.
+
+    `agent` is the only such source with a dedicated branch in the deserializer, but `run` renders
+    to `'run'` too. A round trip used to drop it to `None`, so a delta addressing that block could
+    no longer be applied after the message was persisted.
+    """
+    id = InstructionId(RunInstructionSource())
+    payload = instruction_part_ta.dump_python(InstructionPart(content='Instructions.', id=id), mode='json')
+    assert payload['id'] == 'run'
+    assert instruction_part_ta.validate_python(payload).id == id
+
+    named = InstructionId(RunInstructionSource(), name='urgent')
+    named_payload = instruction_part_ta.dump_python(InstructionPart(content='Instructions.', id=named), mode='json')
+    assert instruction_part_ta.validate_python(named_payload).id == named
+
+
 def test_unresolved_and_missing_id_serialization_round_trip():
     # A name whose source has no identity of its own travels as a name, with no key beside it.
     unresolved = InstructionPart(content='Instructions.', name='limits')
