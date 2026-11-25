@@ -2312,7 +2312,7 @@ class _RealtimeSessionLifecycle:
     short_result: AgentRunResult[Any] | None = None
 
     def result(self) -> AgentRunResult[Any] | None:
-        return self.session._result if self.session is not None else self.short_result  # pyright: ignore[reportPrivateUsage]
+        return self.session.result if self.session is not None else self.short_result
 
 
 @dataclass
