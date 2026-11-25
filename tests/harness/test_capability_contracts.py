@@ -11,9 +11,10 @@ import json
 import re
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from functools import cache
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, assert_never
 
 import anyio
 import pytest
@@ -21,7 +22,10 @@ from _pytest.mark import ParameterSet
 
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace, Toolset
-from pydantic_ai.capabilities.abstract import leaf_capabilities
+from pydantic_ai.capabilities.abstract import (
+    _declares_default_id,  # pyright: ignore[reportPrivateUsage]
+    leaf_capabilities,
+)
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
@@ -37,6 +41,7 @@ from ..capability_cases import (
     CORE_CAPABILITY_PACKAGES,
     CUSTOM_ID,
     DECLARES_CALLS,
+    DEFAULT_ID_MATCHES_COMBINE,
     FORWARDS_USAGE,
     PENDING_CALLS,
     RENAMED,
@@ -45,8 +50,13 @@ from ..capability_cases import (
     Anonymous,
     Calls,
     CapabilityCase,
+    Collides,
     Combines,
     Contract,
+    Narrows,
+    Policy,
+    Rejected,
+    shipped_capability_types,
 )
 from ..function_model_prefix import RequestRecorder, patch_models
 from .capability_cases import (
@@ -439,6 +449,63 @@ def test_a_capability_that_runs_with_tools_declares_calls(
         return
     declared = CASES[name].calls is not None
     _assert_holds(DECLARES_CALLS, name, [] if declared else [f'it contributes {contributes} but declares no `calls`'])
+
+
+def _declares_default_id_under(policy: Policy) -> bool:
+    """Whether a capability under `policy` declares a default `id`; a new policy fails here until it is classified."""
+    match policy:
+        case Combines() | Narrows():
+            return True
+        case Anonymous() | Collides() | Rejected():
+            return False
+        case _:  # pragma: no cover
+            assert_never(policy)
+
+
+@cache
+def _shipped() -> dict[str, type[AbstractCapability[None]]]:
+    """Every installed capability class, private ones included, which `PUBLIC` leaves out."""
+    shipped, _ = shipped_capability_types((*CORE_CAPABILITY_PACKAGES, *HARNESS_CAPABILITY_PACKAGES))
+    return shipped
+
+
+def _default_id_breaks(capability_type: type[AbstractCapability[None]], policy: Policy) -> list[str]:
+    """Read through `_declares_default_id`, the question the resolver asks, so this can't drift from it."""
+    declared = _declares_default_id(capability_type)
+    if declared == _declares_default_id_under(policy):
+        return []
+    declares = f'the default id {capability_type.id!r}, so two of it merge' if declared else 'no default id'
+    return [f'it is declared `{type(policy).__name__}`, but its class declares {declares}']
+
+
+@pytest.mark.parametrize(
+    'name', sorted(name for name, case in CASES.items() if DEFAULT_ID_MATCHES_COMBINE.applies(name, case))
+)
+def test_a_default_id_matches_the_combine_policy(name: str) -> None:
+    if name not in _shipped():  # pragma: lax no cover
+        pytest.skip(f'{name} needs an optional dependency group that is not installed')
+    _assert_holds(DEFAULT_ID_MATCHES_COMBINE, name, _default_id_breaks(_shipped()[name], CASES[name].combine))
+
+
+def test_a_default_id_that_contradicts_the_policy_breaks_it() -> None:
+    """A class whose default `id` says the opposite of its policy breaks the contract, in either direction."""
+
+    @dataclass
+    class WithId(AbstractCapability[None]):
+        id: str | None = 'with_id'
+
+    @dataclass
+    class WithoutId(AbstractCapability[None]):
+        pass
+
+    combines = Combines('built only here', make=lambda: (WithId(), WithId()), check=lambda _: None)
+    assert _default_id_breaks(WithId, Anonymous('built only here')) == [
+        "it is declared `Anonymous`, but its class declares the default id 'with_id', so two of it merge"
+    ]
+    assert _default_id_breaks(WithoutId, combines) == [
+        'it is declared `Combines`, but its class declares no default id'
+    ]
+    assert _default_id_breaks(WithId, combines) == []
 
 
 def test_pending_calls_backfill() -> None:

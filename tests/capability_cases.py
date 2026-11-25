@@ -828,6 +828,12 @@ vacuously. An exemption says why the tools can't run offline; one whose reason s
 case still to be backfilled, which `test_pending_calls_backfill` counts.
 """
 
+DEFAULT_ID_MATCHES_COMBINE = Contract('default_id_matches_combine', applies=lambda _name, _case: True)
+"""A capability's class declares a default `id`, as `_declares_default_id` reads it, exactly when its `combine`
+policy says two of it are one: `Combines` and `Narrows` declare one, so two meet and `combine` resolves them;
+`Anonymous`, `Collides` and `Rejected` declare none. A new policy fails it until it is classified. It reads the
+class, not an instance, so it applies to every case, the unbuildable and the private ones included."""
+
 CONTRACTS = (
     RENAMED,
     UNSET_ID,
@@ -836,5 +842,6 @@ CONTRACTS = (
     FORWARDS_USAGE,
     WORKSPACE_FROM_FUNCTION,
     DECLARES_CALLS,
+    DEFAULT_ID_MATCHES_COMBINE,
 )
 """Every contract, so a meta-test can check each one's exemptions."""

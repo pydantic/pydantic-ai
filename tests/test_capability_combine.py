@@ -39,7 +39,6 @@ from pydantic_ai.capabilities._ordering import find_capability
 from pydantic_ai.capabilities.abstract import (
     AbstractCapability,
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
-    _declares_default_id,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
@@ -70,22 +69,12 @@ def test_capability_combine_policy_holds(name: str) -> None:
     shipped, _ = shipped_capability_types(CORE_CAPABILITY_PACKAGES)
     if name not in shipped:  # pragma: lax no cover
         pytest.skip(f'{name} needs an optional dependency group that is not installed')
-    capability_type = shipped[name]
 
     if isinstance(policy, Anonymous):
-        # Anonymous capabilities declare no default id, so two never meet under one key. Read
-        # through `_declares_default_id` rather than the class attribute directly, so this test
-        # asks the same question the resolver does.
-        assert not _declares_default_id(capability_type), (
-            f'{name} is declared `Anonymous` but its instances carry a default id'
-        )
+        # Two never meet, as the `default_id_matches_combine` contract checks: there is nothing to combine.
         return
 
     assert isinstance(policy, Combines), f'{name}: a core capability is `Anonymous` or `Combines`'
-    assert _declares_default_id(capability_type), (
-        f'{name} is declared `Combines` but declares no default id, so two never meet'
-    )
-
     first, second = policy.make()
     assert first.id is not None and first.id == second.id, (
         f'{name} is declared `Combines` but two instances do not share an id'

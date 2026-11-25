@@ -33,7 +33,8 @@ The contracts are numbered C0, C1, … in the order they land. C1–C5 are plann
 **How it's tested**
 
 - `tests/test_history_append_only.py` and `tests/harness/test_history_append_only.py` run every buildable case through a scripted conversation on each provider adapter. A capability that keeps state the conversation should change gets a `SCENARIOS` entry; a prefix move that is a bug goes in `KNOWN`, linked to its issue, and one that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move. A case whose `calls` rewrite history by design sets `moves_cache_prefix`.
-- `tests/test_capability_combine.py` and its Harness twin check each case's `combine` policy; `COMBINE_FIXED_POINT` checks that a configuration stated twice is stated once.
+- `DEFAULT_ID_MATCHES_COMBINE` checks every case's class, the unbuildable and private ones included: under `Combines` or `Narrows` it declares a default `id`, under `Anonymous`, `Collides` or `Rejected` none, and a new policy fails until it is classified: `test_a_default_id_matches_the_combine_policy`.
+- `tests/test_capability_combine.py` and its Harness twin check that each case combines the way its `combine` policy says; `COMBINE_FIXED_POINT` checks that a configuration stated twice is stated once.
 
 ## Voice and authority
 
