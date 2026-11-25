@@ -77,7 +77,6 @@ from pydantic_ai.capabilities import (
     BatchModelRequests,
     Capability,
     DynamicCapability,
-    HandleDeferredToolCalls,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -103,7 +102,9 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
@@ -157,6 +158,7 @@ from ..._inline_snapshot import snapshot
 from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, FailingBatchTestModel, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ...realtime_connections import InferredConnection
+from ..override_rebind_cases import REBIND_CASES, RebindCase
 from ..span_utils import drop_fastmcp_client_spans
 
 try:
@@ -325,6 +327,75 @@ class RunSyncDurableAgentWorkflow:
         return simple_durable_agent.run_sync(prompt).output
 
 
+async def _submit_output_tool(ctx: RunContext[None]) -> str:
+    await ctx.submit_output('final_result', {'response': 'submitted'})
+    return 'done'
+
+
+def _call_submit_output_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('_submit_output_tool', {})])
+
+
+def _submit_output_agent(name: str, metadata: dict[str, Any] | None) -> Agent[None, str]:
+    toolset = FunctionToolset[None](id=f'{name}_tools')
+    toolset.add_function(_submit_output_tool, metadata=metadata)
+    return Agent(
+        FunctionModel(_call_submit_output_tool),
+        name=name,
+        deps_type=NoneType,
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+
+submit_output_in_activity_agent = _submit_output_agent('durability_submit_output_in_activity', None)
+submit_output_in_workflow_agent = _submit_output_agent('durability_submit_output_in_workflow', {'temporal': False})
+
+
+@workflow.defn
+class SubmitOutputInActivityWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_activity_agent.run(prompt)).output
+
+
+@workflow.defn
+class SubmitOutputInWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_workflow_agent.run(prompt)).output
+
+
+async def test_durability_submit_output_needs_the_tool_in_the_workflow(client: Client):
+    """`submit_output()` can't reach the run from a tool's activity, but works from a tool opted out of one."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubmitOutputInActivityWorkflow, SubmitOutputInWorkflowWorkflow],
+        plugins=[AgentPlugin(submit_output_in_activity_agent), AgentPlugin(submit_output_in_workflow_agent)],
+    ):
+        output = await client.execute_workflow(
+            SubmitOutputInWorkflowWorkflow.run,
+            args=['Finish'],
+            id=SubmitOutputInWorkflowWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'submitted'
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                SubmitOutputInActivityWorkflow.run,
+                args=['Finish'],
+                id=SubmitOutputInActivityWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert isinstance(activity_error.cause, ApplicationError)
+    assert activity_error.cause.type == 'UserError'
+    assert 'in the same process as the run itself' in activity_error.cause.message
+
+
 async def test_durability_run_sync_in_workflow_fails_the_workflow(client: Client):
     """`agent.run_sync()` inside a workflow fails the workflow with a clear error instead of hanging.
 
@@ -412,6 +483,54 @@ async def test_durability_simple_agent_run_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'Echo: What is the capital of Mexico?'
+
+
+class _OverrideExtra(AbstractCapability[object]):
+    def get_instructions(self) -> str:
+        return 'extra'
+
+
+@workflow.defn
+class StackedOverrideDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, added: Literal['extra', 'instrumentation']) -> str:
+        extra = _OverrideExtra() if added == 'extra' else Instrumentation(InstrumentationSettings())
+        with simple_durable_agent.override(capabilities=[*simple_durable_agent.root_capability.capabilities, extra]):
+            return (await simple_durable_agent.run(prompt)).output
+
+
+async def test_durability_override_capabilities_in_workflow(client: Client):
+    """Inside a workflow, stacking onto `root_capability.capabilities` keeps the bound `TemporalDurability`.
+
+    Re-binding it there would raise, as it cannot register activities once the workflow runs. What the override
+    adds follows the per-run rules: `Instrumentation` is allowed, and a capability with no registered activities
+    fails the workflow.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StackedOverrideDurableAgentWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        output = await client.execute_workflow(
+            StackedOverrideDurableAgentWorkflow.run,
+            args=['What is the capital of Mexico?', 'instrumentation'],
+            id=f'{StackedOverrideDurableAgentWorkflow.__name__}_instrumentation',
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'Echo: What is the capital of Mexico?'
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                StackedOverrideDurableAgentWorkflow.run,
+                args=['What is the capital of Mexico?', 'extra'],
+                id=f'{StackedOverrideDurableAgentWorkflow.__name__}_extra',
+                task_queue=TASK_QUEUE,
+            )
+
+    assert 'Capabilities added per-run inside a Temporal workflow are not supported: _OverrideExtra.' in str(
+        exc_info.value.cause
+    )
 
 
 # --- Durability with the `ModelFallback` capability ---
@@ -1285,6 +1404,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
     if prompt.content == 'not_found':
         raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
+    if prompt.content == 'empty_response':
+        raise ModelEmptyResponseError('test-model', 'Streamed response ended without content or tool calls')
+    if prompt.content == 'invalid_response':
+        raise ModelInvalidResponseError('test-model', 'Invalid response', body='<html>Bad gateway</html>')
     if prompt.content == 'quota':
         raise ModelHTTPError.for_category(ModelQuotaExceededError, status_code=402, model_name='test-model')
     if prompt.content == 'request_timeout':
@@ -1365,6 +1488,21 @@ class NonRetryableModelErrorWorkflow:
             3,
             'ModelNotFoundError ModelHTTPError non_retryable=False',
             id='unlisted-rejection-category',
+        ),
+        pytest.param(
+            # An unusable response used to be a plain `UnexpectedModelBehavior`, which the framework adds to every
+            # retry policy. It still reports that name, so Temporal doesn't retry it, and the workflow gets the model
+            # error for a `ModelFallback` or retry capability to handle.
+            'empty_response',
+            1,
+            'ModelEmptyResponseError UnexpectedModelBehavior non_retryable=False',
+            id='empty-response',
+        ),
+        pytest.param(
+            'invalid_response',
+            1,
+            'ModelInvalidResponseError UnexpectedModelBehavior non_retryable=False',
+            id='invalid-response',
         ),
     ],
 )
@@ -2360,60 +2498,6 @@ async def test_durability_wrap_run_disables_threads(client: Client):
         assert output == 'Echo: test'
 
 
-# --- Durability wrap_run refuses external-event waits ---
-
-
-def _approval_needed_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
-
-
-def _ask_in_process(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
-    raise AssertionError('unreachable')  # pragma: no cover
-
-
-_external_event_agent = Agent(
-    FunctionModel(_approval_needed_fn),
-    name='external_event_test',
-    deps_type=type(None),
-    capabilities=[
-        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
-        HandleDeferredToolCalls[None](_ask_in_process),
-    ],
-)
-
-
-@_external_event_agent.tool_plain(name='delete', requires_approval=True)
-def _delete_needs_approval(path: str) -> str:
-    raise AssertionError('unreachable')  # pragma: no cover
-
-
-@workflow.defn
-class ExternalEventWaitWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await _external_event_agent.run(prompt)
-        return result.output  # pragma: no cover
-
-
-async def test_durability_wrap_run_refuses_external_event_waits(client: Client):
-    """A workflow can't record a wait for an external event yet, so the engine fails the workflow clearly instead of waiting in process."""
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[ExternalEventWaitWorkflow],
-        plugins=[AgentPlugin(_external_event_agent)],
-    ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
-            await client.execute_workflow(
-                ExternalEventWaitWorkflow.run,
-                args=['clean up'],
-                id=ExternalEventWaitWorkflow.__name__,
-                task_queue=TASK_QUEUE,
-            )
-
-    assert 'does not support waiting for external events yet' in str(exc_info.value.cause)
-
-
 # --- Durability validation ---
 
 
@@ -2469,6 +2553,85 @@ def test_durability_rejects_a_second_engine():
             name='duplicate_durability',
             capabilities=[TemporalDurability(), TemporalDurability()],
         )
+
+
+def test_durability_override_capabilities_must_keep_the_bound_durability():
+    """`override(capabilities=...)` refuses a list without the bound `TemporalDurability`, even outside a workflow.
+
+    The constructed `TemporalDurability` is not the bound copy the agent registered its activities with, so passing
+    it is refused too.
+    """
+    durability = TemporalDurability()
+    agent = Agent(_durability_fn_model, name='durability_override_keep', capabilities=[durability])
+    message = snapshot(
+        "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep, unchanged, the "
+        'item of `agent.root_capability.capabilities` that holds the bound `TemporalDurability` the agent '
+        'registered its durable activities with. A `TemporalDurability` you construct, or the bound one inside '
+        'another capability, would be bound again. Build the list from `agent.root_capability.capabilities`, for '
+        'example `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+    )
+
+    with pytest.raises(UserError) as dropped:
+        with agent.override(capabilities=[_OverrideExtra()]):
+            pass
+    assert str(dropped.value) == message
+
+    with pytest.raises(UserError) as unbound:
+        with agent.override(capabilities=[durability, _OverrideExtra()]):
+            pass
+    assert str(unbound.value) == message
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideExtra()]):
+        result = agent.run_sync('Hello')
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'extra'
+
+
+def test_durability_override_capabilities_keeps_a_wrapped_durability():
+    """A durability capability behind a wrapper is kept when the wrapper is passed through."""
+    agent = Agent(
+        _durability_fn_model,
+        name='durability_override_wrapped',
+        capabilities=[WrapperCapability(wrapped=TemporalDurability())],
+    )
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, _OverrideExtra()]):
+        pass
+
+    with pytest.raises(UserError, match='holds the bound `TemporalDurability`'):
+        with agent.override(capabilities=[_OverrideExtra()]):
+            pass
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
+def test_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(case: RebindCase):
+    """The bound `TemporalDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and register its activities a second time. Temporal keeps no registry to observe that in, so
+    the test counts `_bind_for_agent` calls.
+    """
+    durability = TemporalDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
+    )
+    bound = TemporalDurability.from_agent(agent)
+    assert bound is not None
+    capabilities = case.capabilities(agent, bound)
+
+    with patch.object(
+        TemporalDurability,
+        '_bind_for_agent',
+        autospec=True,
+        side_effect=TemporalDurability._bind_for_agent,  # pyright: ignore[reportPrivateUsage]
+    ) as bind_for_agent:
+        with pytest.raises(UserError, match='must keep, unchanged, the item'):
+            with agent.override(capabilities=capabilities):
+                pass
+    assert bind_for_agent.call_count == 0
 
 
 def test_durability_from_agent_rejects_duplicates():
@@ -2566,8 +2729,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 7
+    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset + the external-event `ask`
+    assert len(bound.temporal_activities) == 8
 
 
 def test_durability_temporal_registrations_before_binding():
@@ -2585,8 +2748,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for both function toolsets
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for both function toolsets + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_temporal_activities_rejects_omitting_child_workflows():
@@ -2666,8 +2829,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for <agent> and the shared toolset (once)
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for <agent> and the shared toolset (once) + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_activity_config_not_mutated():

@@ -42,7 +42,7 @@ from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
-# AoE only starts CLAI in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
+# AoE only starts Pax in a tmux pane on a POSIX system; the fakes and hook-file checks assume one too.
 pytestmark = pytest.mark.skipif(sys.platform == 'win32', reason='AoE and its hook files are POSIX-only')
 
 INSTANCE = 'abcd1234ef567890'
@@ -683,11 +683,11 @@ async def test_stop_tolerates_a_removed_directory(
 
 
 def test_commands_that_cannot_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    result = aoe.run_command('true')
+    assert result is not None and result.returncode == 0
     assert aoe.run_command('/nonexistent/aoe-binary') is None
     monkeypatch.setattr(aoe, '_COMMAND_TIMEOUT', 0.01)
     assert aoe.run_command('sleep', '1') is None
-    result = aoe.run_command('true')
-    assert result is not None and result.returncode == 0
 
 
 def test_state_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

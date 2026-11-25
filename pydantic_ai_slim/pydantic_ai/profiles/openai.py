@@ -33,7 +33,7 @@ _OPENAI_BASE_BUILTINS = frozenset(
 )
 """Builtin tool types OpenAI supports — the union of what `OpenAIChatModel` and
 `OpenAIResponsesModel` can handle. `ToolSearchTool` is gated per-model in the
-profile below."""
+profile below. `OpenAIProvider` adds `ComputerTool` for the models that OpenAI offers it on."""
 
 OpenAIReasoningEffort = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 """A `reasoning_effort` value accepted by the OpenAI API, from least to most reasoning."""
@@ -133,14 +133,15 @@ _CHAT_LATEST_REASONING = _ReasoningSupport(
 _GPT_5_PRO_EFFORTS: frozenset[OpenAIReasoningEffort] = frozenset(('medium', 'high', 'xhigh'))
 """The efforts GPT-5.2+ -pro models accept (live-verified for gpt-5.2-pro, gpt-5.4-pro and gpt-5.5-pro, 2026-10)."""
 
+_GPT_6_2_MODEL_PREFIXES = ('gpt-6.2-sol', 'gpt-6.2-astra')
+
 _GPT_6_MODEL_PREFIXES = (
     'gpt-6-astra',
     'gpt-6-sol',
     'gpt-6-luna',
     'gpt-6.1-sol',
     'gpt-6.1-terra',
-    'gpt-6.2-sol',
-    'gpt-6.2-astra',
+    *_GPT_6_2_MODEL_PREFIXES,
 )
 
 _GPT_6_ALWAYS_ON_REASONING = _ReasoningSupport(
@@ -354,6 +355,27 @@ class OpenAIModelProfile(ModelProfile, total=False):
     [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
     This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
 
+    openai_chat_streaming_repeats_usage_totals: bool
+    """Whether every streamed Chat Completions chunk repeats the running usage totals unprompted. Default: `False`.
+
+    When enabled, each chunk's usage replaces the usage recorded so far instead of adding to it, as
+    [`openai_continuous_usage_stats`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_continuous_usage_stats]
+    does, without sending `stream_options.continuous_usage_stats`.
+
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] enables it for `gemini*` model names, including
+    through a custom `base_url`. A server that serves these names and reports per-chunk deltas instead would have its
+    usage under-reported, so turn this off in the model's profile."""
+
+    openai_chat_completion_tokens_omit_reasoning: bool
+    """Whether Chat Completions `usage` leaves reasoning tokens out of `completion_tokens` and counts them only in `total_tokens`. Default: `False`.
+
+    When enabled and `usage` carries no `completion_tokens_details`, the amount by which `total_tokens` exceeds
+    `prompt_tokens + completion_tokens` counts as output and reasoning tokens, in each streamed chunk too.
+
+    [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] enables it for `gemini*` model names, including
+    through a custom `base_url`. A server that serves these names and counts anything else in that gap would have its
+    output tokens over-reported, so turn this off in the model's profile."""
+
     openai_chat_supports_web_search: bool
     """Whether the model supports web search in Chat Completions API. Default: `False`."""
 
@@ -555,6 +577,25 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_responses_stable_instructions_as_input: bool
+    """Whether the Responses API gets the instructions that keep the prompt prefix stable as leading input messages.
+    Default: `False`.
+
+    Those are the literal instructions and the [`on_change='append'`](../agent.md#appending-instruction-changes)
+    blocks, whose changes are appended to the history. The instructions that rewrite the prefix when they change stay
+    in the top-level `instructions` field, and with
+    [`openai_cache_instructions`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_cache_instructions]
+    too. All of them stay there on a request that sets a concrete `openai_previous_response_id` or
+    `openai_conversation_id`, continues a compacted history, has a dynamic system prompt, or uses the `'user'` system
+    prompt role. With `openai_previous_response_id='auto'` (which `openai_transport='websocket'` sets by default), they
+    lead the input when the chain starts or resends the history, and are left out while it continues: each response's
+    history digest records them, so a request with different ones resends the history.
+
+    Set by `OpenAIProvider` for `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level `instructions` after
+    `input` and bill them at the uncached rate on every request:
+    https://developers.openai.com/api/docs/guides/prompt-caching#how-prefix-matching-works.
+    """
+
     openai_responses_tool_choice_accepts_additional_tools: bool
     """Whether the Responses API accepts a `tool_choice` naming a tool that only an `additional_tools` input item
     declares. Default: `False`.
@@ -622,7 +663,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     openai_supports_input_token_counting: bool
     """Whether the provider exposes server-side input-token counting (`responses/input_tokens`). Default: `True`.
 
-    When `False`, `count_tokens()` raises a `UserError` instead of calling a missing endpoint.
+    When `False`, `count_tokens()` raises a `UserError` that is also a `NotImplementedError` instead of calling a
+    missing endpoint.
     """
 
     openai_supports_batch_api: bool
@@ -746,6 +788,18 @@ def is_openai_live_model(model_name: str) -> bool:
     return model_name.startswith('gpt-live')
 
 
+def is_openai_computer_use_model(model_name: str) -> bool:
+    """Whether OpenAI offers its native computer tool on this model.
+
+    GPT-5.4 (with mini and pro), GPT-5.5 (with pro), GPT-5.6 and GPT-6 accept it. GPT-5.4 nano, GPT-5.3 Codex and
+    GPT-5.2 reject it, though they accept tool search. A new model family gets the `computer` function tool until it
+    is added here.
+    """
+    return model_name.startswith(
+        ('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES)
+    ) and not model_name.startswith('gpt-5.4-nano')
+
+
 def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
     """Get the realtime model profile for an OpenAI GPT-Live model.
 
@@ -766,6 +820,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_system_messages': True,
         'supports_seeding_images': False,
         'supports_seeding_audio': False,
+        # The agent's instructions are the backend's; the voice model's own prompt can be added to mid-session.
+        'supports_appending_voice_instructions': True,
         # A server relays the browser's offer and attaches a sideband. Live has no client secrets.
         'supports_webrtc': True,
         # Speech and delegated work run independently: the Live model can keep the conversation going

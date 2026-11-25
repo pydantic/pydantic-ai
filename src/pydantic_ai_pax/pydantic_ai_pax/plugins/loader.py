@@ -121,7 +121,7 @@ class PluginEntry(Generic[DepsT]):
 
     @property
     def shipped(self) -> bool:
-        """Declared by CLAI or the project file, so `add` replaces it and `remove` restores it."""
+        """Declared by Pax or the project file, so `add` replaces it and `remove` restores it."""
         return self.builtin or self.project
 
     @property
@@ -207,10 +207,10 @@ class SessionPlugins(Generic[DepsT]):
         resolve_model: Callable[[str], Awaitable[Model | str]] | None = None,
         model_settings: Callable[[str], ModelSettings | None] | None = None,
     ) -> None:
-        """Join `process`, the plugins every live session of this CLAI shares.
+        """Join `process`, the plugins every live session of this Pax shares.
 
         Without one, the session gets a process of its own over `store`, with `builtin` as the
-        declarations shipped with CLAI, as a host with one session does. `project` comes from the
+        declarations shipped with Pax, as a host with one session does. `project` comes from the
         session's `.clai/settings.json`; the store overrides it and the built-ins.
 
         `enabled=False` lists and loads no plugins at all, without changing anything saved.
@@ -251,7 +251,7 @@ class SessionPlugins(Generic[DepsT]):
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
         # Capabilities that rejected their configuration while a run was set up, by plugin, until it loads again.
         self._suspended: dict[str, list[object]] = {}
-        # The capability CLAI built from a `module:Class` declaration's settings, by plugin.
+        # The capability Pax built from a `module:Class` declaration's settings, by plugin.
         self._from_settings: dict[str, AbstractCapability[DepsT]] = {}
         self._guards: dict[str, PluginGuard[DepsT]] = {}
         # Plugins unloaded while a turn runs, with their `session_end` reasons; `None` between turns.
@@ -291,7 +291,7 @@ class SessionPlugins(Generic[DepsT]):
 
     @property
     def process(self) -> ProcessPlugins[DepsT]:
-        """The plugins every live session of this CLAI shares."""
+        """The plugins every live session of this Pax shares."""
         return self._process
 
     @property
@@ -321,15 +321,19 @@ class SessionPlugins(Generic[DepsT]):
         for name, previous in self._entries.items():
             if name not in refreshed and previous.loaded is not None:
                 refreshed[name] = previous
-        includes = {
-            name: _includes(entry.declaration.factory, entry.loaded)
-            for name, entry in refreshed.items()
-            if entry.loaded is not None
-        }
+        self._entries = refreshed
+        includes = self._loaded_includes()
         for entry in refreshed.values():
             entry.included_in = included_by(entry.declaration.factory, includes)
-        self._entries = refreshed
         return list(refreshed.values())
+
+    def _loaded_includes(self) -> dict[str, frozenset[str]]:
+        """Each loaded plugin's name, with the factories it includes, from this session's own entries."""
+        return {
+            name: _includes(entry.declaration.factory, entry.loaded)
+            for name, entry in self._entries.items()
+            if entry.loaded is not None
+        }
 
     def _registration_order(self) -> list[PluginEntry[DepsT]]:
         """Shipped plugins first, in declaration order, then everything else by name.
@@ -357,7 +361,7 @@ class SessionPlugins(Generic[DepsT]):
     def run_capabilities(self) -> list[AgentCapability[DepsT]]:
         """`capabilities()` as a run binds them, with settings-built capabilities guarded.
 
-        Only a capability CLAI built itself from a `module:Class` declaration's saved settings is
+        Only a capability Pax built itself from a `module:Class` declaration's saved settings is
         guarded, and only when nothing in it is a `Hooks`: there a setup `UserError` can only mean
         those settings are wrong. Capabilities a plugin's `get_capabilities` returns, and any policy hook, stay
         unguarded, so whatever they raise still fails closed every turn.
@@ -423,7 +427,7 @@ class SessionPlugins(Generic[DepsT]):
     async def load_all(self, *, fresh: bool = False) -> None:
         """Load enabled plugins, re-importing after a shell reload so host event types match.
 
-        A declaration whose own module is not installed, such as a built-in saved by another CLAI
+        A declaration whose own module is not installed, such as a built-in saved by another Pax
         version, is skipped quietly: `/plugins list` still shows the failure. Loading it explicitly
         with `/plugins enable`, `add`, or `reload` still raises.
         """
@@ -457,8 +461,12 @@ class SessionPlugins(Generic[DepsT]):
 
     def _loads_at_start(self, entry: PluginEntry[DepsT]) -> bool:
         """Whether `load_all` loads `entry`: enabled, not loaded yet, and not included in a loaded plugin."""
-        # Read afresh: a plugin loaded earlier in this loop may include this one.
-        return entry.declaration.enabled and entry.loaded is None and self._entry(entry.name).included_in is None
+        # From what is loaded now: a plugin loaded earlier in this loop may include this one.
+        return (
+            entry.declaration.enabled
+            and entry.loaded is None
+            and included_by(entry.declaration.factory, self._loaded_includes()) is None
+        )
 
     async def load(self, name: str, *, fresh: bool = False) -> None:
         """Import, build the plugin, collect its contributions, and fire `session_start`.
@@ -570,7 +578,8 @@ class SessionPlugins(Generic[DepsT]):
 
     async def _unload_included(self, entry: PluginEntry[DepsT], loaded: LoadedPlugin[DepsT]) -> None:
         included = _includes(entry.declaration.factory, loaded)
-        for other in self.entries():
+        # Only loaded plugins are unloaded, and `_entries` holds every one, so the declarations need no new read.
+        for other in list(self._entries.values()):
             if other.loaded is not None and other.declaration.factory in included:
                 await self.unload(other.name)
 
@@ -627,7 +636,7 @@ class SessionPlugins(Generic[DepsT]):
         if staged is not None:
             self._process.staged[entry.name] = staged.model_copy(update=update)
             return
-        # The declaration saved now, not at load: another CLAI process may have replaced it since.
+        # The declaration saved now, not at load: another Pax process may have replaced it since.
         stored = self._process.stored(entry.name)
         if stored is None:
             store.save_plugin(entry.declaration.model_copy(update=update), requires=host.requirements)
@@ -737,7 +746,7 @@ class SessionPlugins(Generic[DepsT]):
     async def restart(self, *, project: Sequence[PluginSettings]) -> None:
         """Load every session-scoped plugin again, with `project` as the project file's declarations.
 
-        As CLAI starting in another directory would: what a plugin read from `host.workspace`
+        As Pax starting in another directory would: what a plugin read from `host.workspace`
         is read again. Process-scoped plugins, which no session's directory decides, stay loaded
         (so `web` keeps its page, and `observability` what it read at launch, such as the Git email),
         and their capabilities come after the others'.
@@ -808,7 +817,7 @@ class SessionPlugins(Generic[DepsT]):
         await self._load_released(entry)
 
     def _report(self, name: str, error: BaseException, event: type[HostEvent]) -> None:
-        """Show a plugin handler's failure, which CLAI carries on from, and record it as a handled error."""
+        """Show a plugin handler's failure, which Pax carries on from, and record it as a handled error."""
         self._console.print(str(PluginError(name, error)), style=theme.color(theme.ERROR), markup=False)
         telemetry.handled_error('Plugin {plugin!r} failed handling {event}', error, plugin=name, event=event.__name__)
 

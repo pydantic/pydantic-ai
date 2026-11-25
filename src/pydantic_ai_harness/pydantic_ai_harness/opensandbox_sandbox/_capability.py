@@ -20,6 +20,7 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     reject_defer_loading,
 )
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
 from pydantic_ai_harness.opensandbox_sandbox._backend import (
     NETWORK_POLICY_CONFLICT,
     PROVIDER,
@@ -131,6 +132,11 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
     See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
 
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`. The first use installs the display's programs with `apt-get` when the
+    image's user is root; passwordless `sudo` works only where the server allows it."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('OpenSandbox', self.defer_loading)
         # Checked here rather than at the first workspace operation, so a bad value fails where it is written.
@@ -138,6 +144,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
         check_path_authority(self.path_authority)
         check_integer('sandbox_timeout', self.sandbox_timeout, optional=True)
         check_env(self.env)
+        checked_desktop_size(self.desktop)
         if self.network_policy is not None and not self.allow_internet_access:
             raise UserError(NETWORK_POLICY_CONFLICT)
 
@@ -156,6 +163,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
         env: Mapping[str, str] | None = None,
         authority: Authority = 'operator',
         path_authority: Mapping[str, Authority] | None = None,
+        desktop: bool | tuple[int, int] = False,
         **kwargs: Any,
     ) -> OpenSandbox[Any]:
         """Build from an agent spec using fields expressible in JSON.
@@ -176,6 +184,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
             **kwargs,
             authority=authority,
             path_authority=path_authority,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> OpenSandboxBackend:
@@ -186,6 +195,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
             working_dir=self.working_dir,
             env=self.env,
             sandbox_timeout=self.sandbox_timeout,
+            desktop=self.desktop,
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -215,6 +225,7 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
             network_policy=self.network_policy,
             secure_access=self.secure_access,
             sandbox_timeout=self.sandbox_timeout,
+            desktop=self.desktop,
         )
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:

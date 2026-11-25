@@ -328,6 +328,7 @@ Google image-model landmines:
 
 - `MoonshotAIModelName` in `providers/moonshotai.py` is a local literal, independent of the OpenAI SDK's model enum. Update it and `models/_known_model_names.py` together, then refresh `tests/test_capability_spec.py::test_model_json_schema_with_capabilities`.
 - The `kimi-k3` prefix already covers `kimi-k3.1-pro` and `kimi-k3.1-pro-highspeed` in both family and provider profiles. Probe before adding another prefix or changing profile flags.
+- `OpenRouterProvider.model_profile` sets `supports_json_schema_output` for OpenRouter's `moonshotai/kimi-k3*` routes. Leave `moonshotai_model_profile` without it: other hosts share that profile, and each host needs its own live `NativeOutput` recording first.
 - Verify the API at `https://api.moonshot.ai/v1`. The separate Kimi Code subscription uses different model IDs. Read the [canonical API guide](https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart) and compare live behavior with the nearest sibling; do not transfer subscription semantics.
 
 ### Others

@@ -44,7 +44,7 @@ dependencies = [
     # dropped. Without PyYAML the `coder` plugin, which imports `pydantic_ai_harness.skills`, fails to load.
     "pyyaml>=6.0.2",
     # Speculative execution runs CodeMode's Monty sandbox. Pinned directly rather than via
-    # `pydantic-ai-harness[code-mode]`, which also pulls a web-search client CLAI does not use.
+    # `pydantic-ai-harness[code-mode]`, which also pulls a web-search client Pax does not use.
     "pydantic-monty>=1.5.0,<2",
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
     "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
@@ -76,7 +76,7 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.65b0",
 ]
 
-# Providers whose SDK CLAI does not install by default. `/model` names the extra when it is missing.
+# Providers whose SDK Pax does not install by default. `/model` names the extra when it is missing.
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 # `/sandbox PROVIDER`: each installs the harness backend for that provider.
@@ -105,7 +105,7 @@ pydantic-ai-pax = "pydantic_ai_pax.__main__:main"
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai_pax"]
 
-# The docs `read_clai_docs` serves; `clai_docs._CLAI_DOCS` lists them. An editable install reads them from the checkout.
+# The docs `read_pax_docs` serves; `pax_docs._PAX_DOCS` lists them. An editable install reads them from the checkout.
 [tool.hatch.build.targets.wheel.force-include]
 "README.md" = "pydantic_ai_pax/_docs/README.md"
 "PLUGINS.md" = "pydantic_ai_pax/_docs/PLUGINS.md"

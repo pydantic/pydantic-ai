@@ -114,7 +114,7 @@ def test_accounts_find_existing_logins_and_their_state(tmp_path: Path) -> None:
 def test_a_login_an_older_clai_kept_in_the_keyring_is_listed_and_pooled(tmp_path: Path) -> None:
     store = store_at(tmp_path)
     save_codex_credentials(account='openai-codex@work', value=CODEX)
-    keyring.set_password('pydantic-clai2', 'openai-codex', CODEX)  # how CLAI stored logins before files
+    keyring.set_password('pydantic-clai2', 'openai-codex', CODEX)  # how Pax stored logins before files
     assert [item.login for item in accounts(store)] == ['openai-codex', 'openai-codex@work']
     assert [item.profile for item in pool(store, 'openai-codex')] == [None, 'work']
     assert keyring.get_password('pydantic-clai2', 'openai-codex') is None, 'it moved into its file'

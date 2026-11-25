@@ -323,7 +323,7 @@ async def test_naming_keeps_where_an_imported_session_came_from(tmp_path: Path) 
         ),
         messages=[ModelRequest(parts=[UserPromptPart('fix renderer')])],
     )
-    # A fork of an import has an ID of its own, so it is CLAI's, whatever tag it copied.
+    # A fork of an import has an ID of its own, so it is Pax's, whatever tag it copied.
     native = await store.save(
         summary=ConversationSummary(workspace='/a', title='Fallback', tags=('claude',)),
         messages=[ModelRequest(parts=[UserPromptPart('ask claude')])],

@@ -629,14 +629,14 @@ class _Output(io.StringIO):
         self.ready = anyio.Event()
 
     def write(self, s: str) -> int:
-        if 'Press Ctrl-C to quit.' in s:
+        if 'Press Ctrl+C to quit.' in s:
             self.ready.set()
         return super().write(s)
 
 
 @pytest.mark.parametrize('resume', [False, True])
 async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`pax --web` loads `web` for this launch unless it is enabled already, starts it, and quits on Ctrl-C."""
+    """`pax --web` loads `web` for this launch unless it is enabled already, starts it, and quits on Ctrl+C."""
     opened: list[str] = []
     monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', opened.append)
 
@@ -665,7 +665,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
             group.cancel_scope.cancel()
     text = output.getvalue()
     assert len(opened) == 1
-    assert 'Web UI running at http://127.0.0.1:' in text and 'Press Ctrl-C to quit.' in text
+    assert 'Web UI running at http://127.0.0.1:' in text and 'Press Ctrl+C to quit.' in text
     assert ('Resumed Saved' in text) is resume
     assert [plugin.enabled for plugin in store.plugins() if plugin.id == 'web'] == ([True] if resume else []), (
         'nothing saved'
@@ -740,7 +740,7 @@ async def test_run_web_reports_an_unknown_session(tmp_path: Path) -> None:
             resume='00000000-0000-0000-0000-000000000000',
         )
     assert raised.group_contains(LookupError, match='No saved session')
-    assert 'not applied until you approve them with /project approve in a CLAI session: permissions' in (
+    assert 'not applied until you approve them with /project approve in a Pax session: permissions' in (
         output.getvalue()
     ), 'the launch names the project settings it leaves out'
 
@@ -814,7 +814,7 @@ def test_web_flag_reads_a_private_token_file(
     token = tmp_path / 'token'
     token.write_text('a' * 40 + '\n')
     token.chmod(0o600)
-    # Relative to where CLAI was started, though `--worktree` changes directory before the file is read.
+    # Relative to where Pax was started, though `--worktree` changes directory before the file is read.
     monkeypatch.chdir(tmp_path)
     elsewhere = tmp_path / 'checkout'
     elsewhere.mkdir()
@@ -850,7 +850,7 @@ def test_web_flag_reads_a_private_token_file(
 async def test_run_web_on_a_launchers_port_and_token(
     launcher_token: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A launcher's port replaces the saved one; with its token, CLAI listens on loopback whatever the saved address,
+    """A launcher's port replaces the saved one; with its token, Pax listens on loopback whatever the saved address,
     prints the address without the token, and opens no browser."""
     store = SettingsStore(tmp_path / 'config.db')
     saved: dict[str, JsonValue] = {'host': 'localhost', 'port': 1}
@@ -874,7 +874,7 @@ async def test_run_web_on_a_launchers_port_and_token(
                     token=token,
                 )
             )
-            while 'Press Ctrl-C' not in output.getvalue():
+            while 'Press Ctrl+C' not in output.getvalue():
                 await anyio.sleep(0.01)
             async with httpx.AsyncClient(trust_env=False) as client:
                 headers = {HEADER: token or 'wrong'}

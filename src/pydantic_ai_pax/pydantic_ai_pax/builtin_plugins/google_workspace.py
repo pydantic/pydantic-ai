@@ -42,7 +42,7 @@ class GoogleWorkspaceSettings(BaseModel):
         description='Workspace products to connect; the token must carry their scopes.',
     )
     read_only: bool = Field(
-        default=True, description='Keep only the tools Google marks as read-only; CLAI runs tools without approval.'
+        default=True, description='Keep only the tools Google marks as read-only; Pax runs tools without approval.'
     )
     include_instructions: bool = Field(
         default=True, description="Pass the Google servers' own instructions to the agent."
@@ -139,7 +139,7 @@ class SettingsSource(Generic[DepsT]):
                 default='true',
                 choices=_BOOLEAN,
                 allow_custom=False,
-                description='Keep only the tools Google marks as read-only. CLAI runs tools without asking, so '
+                description='Keep only the tools Google marks as read-only. Pax runs tools without asking, so '
                 'false lets the agent send, change, and delete.',
             ),
             FieldRow(

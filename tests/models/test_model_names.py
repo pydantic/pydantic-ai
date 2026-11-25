@@ -226,16 +226,8 @@ class SdkModelLiteral:
 
 
 SDK_MODEL_LITERALS = [
-    SdkModelLiteral(
-        'openai', 'openai', AllModels, OpenAIModelName, frozenset({'gpt-6.1-terra', 'gpt-6.2-sol', 'gpt-6.2-astra'})
-    ),
-    SdkModelLiteral(
-        'openai-image',
-        'openai',
-        ImageModel,
-        LatestOpenAIImageModelNames,
-        frozenset({'gpt-image-2.6-flare', 'gpt-image-2.6-sunburst'}),
-    ),
+    SdkModelLiteral('openai', 'openai', AllModels, OpenAIModelName, frozenset({'gpt-6.2-sol', 'gpt-6.2-astra'})),
+    SdkModelLiteral('openai-image', 'openai', ImageModel, LatestOpenAIImageModelNames),
     SdkModelLiteral('openai-embedding', 'openai', EmbeddingModel, LatestOpenAIEmbeddingModelNames),
     SdkModelLiteral('anthropic', 'anthropic', ModelParam, AnthropicModelName, frozenset({'claude-fable-5-2'})),
     SdkModelLiteral('xai', 'xai-sdk', ChatModel, XaiModelName, frozenset({'grok-4.7'})),
@@ -326,9 +318,12 @@ SDK_MODEL_IDS: dict[str, list[str]] = {
             'gpt-5.6-sol',
             'gpt-5.6-terra',
             'gpt-6-astra',
+            'gpt-6-cyber',
             'gpt-6-luna',
+            'gpt-6-rosalind',
             'gpt-6-sol',
             'gpt-6.1-sol',
+            'gpt-6.1-terra',
             'gpt-audio-mini',
             'gpt-audio-mini-2025-12-15',
             'gpt-daybreak-blue-latest',
@@ -370,6 +365,8 @@ SDK_MODEL_IDS: dict[str, list[str]] = {
             'gpt-image-2.5-flare-2026-09-08',
             'gpt-image-2.5-sunburst',
             'gpt-image-2.5-sunburst-2026-09-08',
+            'gpt-image-2.6-flare',
+            'gpt-image-2.6-sunburst',
         ]
     ),
     'openai-embedding': snapshot(['text-embedding-3-large', 'text-embedding-3-small', 'text-embedding-ada-002']),

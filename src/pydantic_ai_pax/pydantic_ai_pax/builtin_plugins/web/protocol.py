@@ -1,4 +1,4 @@
-"""What the browser sees of a CLAI session: transcript items, the messages that change them, and how events become them.
+"""What the browser sees of a Pax session: transcript items, the messages that change them, and how events become them.
 
 Pure translation, with no server or plugin in it. Wire payloads are kw-only dataclasses, serialized by
 `dump` with Pydantic; the browser's `web-ui/src/protocol.ts` mirrors these shapes.
@@ -83,7 +83,7 @@ class Diff:
 
 @dataclass(kw_only=True)
 class SubCall:
-    """A tool `run_code` called from inside its sandbox, as CLAI's code mode reports it."""
+    """A tool `run_code` called from inside its sandbox, as Pax's code mode reports it."""
 
     id: str
     name: str
@@ -263,11 +263,11 @@ class StatusInfo:
     run: Usage | None = None
     """What the running turn's model requests have reported so far; it grows as each request completes."""
     code_mode: bool | None = None
-    """The `run.code_mode` setting; `None` without CLAI's settings."""
+    """The `run.code_mode` setting; `None` without Pax's settings."""
     speculation: bool | None = None
     """The `run.speculative_code_mode` setting, which turns code mode on for its runs too."""
     permissions: PermissionMode | None = None
-    """The `run.permissions` mode; `None` without CLAI's settings."""
+    """The `run.permissions` mode; `None` without Pax's settings."""
 
 
 @dataclass(kw_only=True)
@@ -338,14 +338,14 @@ def fork_entry(fork: ForkInfo) -> ForkEntry:
 
 @dataclass(frozen=True, kw_only=True)
 class UpdateInfo:
-    """`/update` installing a newer CLAI, as the page shows it until the install ends or CLAI is back."""
+    """`/update` installing a newer Pax, as the page shows it until the install ends or Pax is back."""
 
     target: str
     """The version, or on the `main` channel the short commit, being installed."""
     line: str = ''
     """The last line uv printed."""
     restarting: bool = False
-    """Installed: CLAI is restarting as the new build, and the page reconnects once it is back."""
+    """Installed: Pax is restarting as the new build, and the page reconnects once it is back."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -409,7 +409,7 @@ class Snapshot:
     follows_workspace: bool = False
     """Whether each session runs in its own directory, as under `pax --web`, so a new one asks where."""
     version: str = ''
-    """The running CLAI's version, or a `main` build's short commit; a new one after a reconnect means it updated."""
+    """The running Pax's version, or a `main` build's short commit; a new one after a reconnect means it updated."""
     update: UpdateInfo | None = None
     replaces: str | None = None
     """The conversation the session held before, when it switched to this one; its watchers watch this one now."""
@@ -687,7 +687,7 @@ class TaskChanged:
 
 @dataclass(kw_only=True)
 class UpdateChanged:
-    """`/update` started installing, uv printed a line, CLAI is restarting, or the install ended (`None`)."""
+    """`/update` started installing, uv printed a line, Pax is restarting, or the install ended (`None`)."""
 
     type: Literal['update'] = 'update'
     update: UpdateInfo | None
@@ -702,7 +702,7 @@ class PluginsChanged:
 
 @dataclass(frozen=True, kw_only=True)
 class SettingsChanged:
-    """A command ran, or a command's menu was edited, which may have changed CLAI's settings; open menus read them again."""
+    """A command ran, or a command's menu was edited, which may have changed Pax's settings; open menus read them again."""
 
     type: Literal['settings'] = 'settings'
 
@@ -713,7 +713,7 @@ LiveState = Literal['running', 'queued', 'asking', 'idle']
 
 @dataclass(frozen=True, kw_only=True)
 class LiveEntry:
-    """A session open in this CLAI, which the browser can watch and drive, named by its conversation ID."""
+    """A session open in this Pax, which the browser can watch and drive, named by its conversation ID."""
 
     id: str
     state: LiveState
@@ -735,7 +735,7 @@ class LiveChanged:
 class Watch:
     """From the browser: the live sessions it shows, replacing the ones it watched; each new one gets a `Snapshot`.
 
-    A connection that never sends one watches the default session, as before CLAI ran several.
+    A connection that never sends one watches the default session, as before Pax ran several.
     """
 
     type: Literal['watch'] = 'watch'
@@ -900,7 +900,7 @@ class SessionEntry:
     created_at: datetime
     """When it was first saved, which the sidebar orders by, so activity and renames never move a row."""
     state: SessionState
-    """`running`: a turn of a session live in this CLAI; `busy`: a turn another CLAI process is running."""
+    """`running`: a turn of a session live in this Pax; `busy`: a turn another Pax process is running."""
     owner_pid: int | None = None
     """The process running a `busy` session's turn."""
     messages: int
@@ -911,7 +911,7 @@ class SessionEntry:
     openable: bool
     """Whether it opens live, as `Transcript.openable` says, so a click opens it without fetching its transcript first."""
     source: str | None = None
-    """The agent it was imported from, `Claude Code` or `Codex`; `None` for CLAI's own sessions."""
+    """The agent it was imported from, `Claude Code` or `Codex`; `None` for Pax's own sessions."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -949,12 +949,12 @@ class Transcript:
     workspace: str
     items: list[Item]
     openable: bool
-    """Whether `/resume` can switch to it: saved here, or, while CLAI follows sessions' directories, in one that exists,
-    and no other CLAI runs it."""
+    """Whether `/resume` can switch to it: saved here, or, while Pax follows sessions' directories, in one that exists,
+    and no other Pax runs it."""
     missing: bool = False
-    """Whether CLAI would follow it, but its directory is gone, as with a deleted worktree."""
+    """Whether Pax would follow it, but its directory is gone, as with a deleted worktree."""
     owner_pid: int | None = None
-    """The process ID of another CLAI running it now, when it could otherwise be opened; opening it continues in a fork."""
+    """The process ID of another Pax running it now, when it could otherwise be opened; opening it continues in a fork."""
 
 
 @dataclass(kw_only=True)
@@ -991,7 +991,7 @@ class PluginRow:
     settings_menu: bool
     """Whether that menu is declared, so this page shows it; otherwise it opens in the terminal."""
     terminal: bool
-    """Whether this CLAI has a terminal for an undeclared menu to open in; `pax --web` has none."""
+    """Whether this Pax has a terminal for an undeclared menu to open in; `pax --web` has none."""
     form: PluginForm | None
     """Its settings while it is on, unless it declares a menu, takes none, or its model has no JSON Schema."""
     serving: bool

@@ -1,7 +1,7 @@
 """Open this session in your browser: a local web UI with streaming chat, tool cards, and a sessions sidebar.
 
 The built-in `web` plugin, off by default. `/web` starts the server and opens the browser; `pax --web`
-starts CLAI with only the browser to drive it. The terminal and the browser drive the same session.
+starts Pax with only the browser to drive it. The terminal and the browser drive the same session.
 """
 
 import html
@@ -140,7 +140,7 @@ class WebPlugin(Plugin[WebSettings]):
             if self.url is None:
                 return 'The web UI is not running.'
             if not self.host.console.is_terminal:
-                raise ValueError('The browser is the only way to drive this CLAI. Press Ctrl-C where it runs to quit.')
+                raise ValueError('The browser is the only way to drive this Pax. Press Ctrl+C where it runs to quit.')
             await self.stop()
             return 'Web UI stopped.'
         if args == ['status']:
@@ -218,6 +218,6 @@ def _launch_page(url: str) -> Path:
     with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
         file.write(
             f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(url)}">'
-            f'<a href="{html.escape(url)}">Open CLAI</a>'
+            f'<a href="{html.escape(url)}">Open Pax</a>'
         )
     return Path(name)

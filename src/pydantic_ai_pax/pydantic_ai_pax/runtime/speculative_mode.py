@@ -60,6 +60,7 @@ from pydantic_ai_harness.permissions import Permissions
 from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from pydantic_ai_pax.clai_docs import ClaiDocs
+from pydantic_ai_pax.pax_docs import PaxDocs
 from pydantic_ai_pax.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_ai_pax.runtime.repl_state import ReplStates
 from pydantic_ai_pax.runtime.sandbox_calls import (
@@ -80,16 +81,18 @@ SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
     'grep': FileSystem,
     'search_clai_docs': ClaiDocs,
     'read_clai_docs': ClaiDocs,
+    'search_pax_docs': PaxDocs,
+    'read_pax_docs': PaxDocs,
 }
 """Tools that are pure with respect to the workspace, so safe to start early, re-run, or discard,
 keyed to the capability that must provide them.
 
 A plugin or MCP tool can share one of these names when `Coder` is off, so the name alone does not
-vouch for it. CLAI's docs tools only read files shipped inside the installed packages.
+vouch for it. Pax's docs tools only read files shipped inside the installed packages.
 """
 
 NATIVE_TOOLS = frozenset({'write_file', 'edit_file'})
-"""CLAI's equivalents of Code Puppy's native `create_file` and `replace_in_file`."""
+"""Pax's equivalents of Code Puppy's native `create_file` and `replace_in_file`."""
 
 FOLDED_CODE_TOOLS = frozenset({'shell'})
 """Tools marked `code_arg_name` that fold in anyway, as Code Puppy's shell tool does.
@@ -428,7 +431,7 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """The run's `Permissions`, one or several; any of them in `read-only` mode mounts the directory read-only, as the guidance then says."""
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
-        """Code Puppy's guidance, with CLAI's tool and argument names, the run's actual mount, and its REPL's lifetime."""
+        """Code Puppy's guidance, with Pax's tool and argument names, the run's actual mount, and its REPL's lifetime."""
 
         def describe(ctx: RunContext[AgentDepsT]) -> str:
             local = self.mount is None or _is_local(ctx.workspace)

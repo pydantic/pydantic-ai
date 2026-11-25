@@ -3,7 +3,7 @@
 Once a process receives a memory pressure event, macOS's allocator loads its stack logging library. From then on
 the child half of every `fork()` reports `python(PID) MallocStackLogging: can't turn off malloc stack logging
 because it was not enabled.` on standard error, before the child sets up its own streams and starts the program.
-That standard error is still CLAI's, the terminal, so every subprocess (a shell tool call, `git`, a notification)
+That standard error is still Pax's, the terminal, so every subprocess (a shell tool call, `git`, a notification)
 prints a line through the live display. No environment variable is involved, and a child's own `stderr=PIPE`
 cannot catch it.
 
@@ -45,7 +45,7 @@ def terminal_stderr() -> int | None:
     """The terminal's standard error while `relay_stderr` holds file descriptor 2, else `None`.
 
     Pass it as a subprocess's `stderr` when the child must draw on the terminal itself, such as a progress bar.
-    `None` keeps the default of inheriting CLAI's standard error.
+    `None` keeps the default of inheriting Pax's standard error.
     """
     return _terminal
 
@@ -79,7 +79,7 @@ def relay_stderr() -> Generator[None]:
     source, sink = os.pipe()
     os.dup2(sink, 2)
     os.close(sink)
-    copier = threading.Thread(target=_copy, args=(source, os.dup(terminal)), name='clai-stderr', daemon=True)
+    copier = threading.Thread(target=_copy, args=(source, os.dup(terminal)), name='pax-stderr', daemon=True)
     copier.start()
     _terminal = terminal
     try:
