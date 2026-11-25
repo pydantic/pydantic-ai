@@ -7002,6 +7002,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::TemporalWrapperToolset.__aexit__"
       ]
     },
+    "AbstractToolset._executes_tools": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.is_non_executing"
+      ]
+    },
     "AbstractToolset._explicit_id": {
       "engines": [
         "dbos",
@@ -7315,17 +7326,6 @@
     }
   },
   "pydantic_ai_slim/pydantic_ai/toolsets/external.py": {
-    "ExternalToolset": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "import"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
-      ]
-    },
     "TOOL_SCHEMA_VALIDATOR": {
       "engines": [
         "durable_exec"

@@ -5767,6 +5767,28 @@ async def test_per_run_capability_with_executing_toolset_rejected_inside_workflo
         await run_with_toolset_capability()
 
 
+class _CustomNonExecutingToolset(_CustomExecutingToolset):
+    """A custom toolset that leaves its tools to be run elsewhere, like `ExternalToolset`."""
+
+    _executes_tools = False
+
+
+async def test_per_run_capability_with_custom_non_executing_toolset_allowed_inside_workflow(dbos: DBOS) -> None:
+    """A toolset class that opts out with `_executes_tools = False` can come from a per-run capability."""
+    assert AbstractToolset._executes_tools  # pyright: ignore[reportPrivateUsage]
+    assert _CustomExecutingToolset._executes_tools  # pyright: ignore[reportPrivateUsage]
+
+    agent = Agent(
+        _durability_fn_model, name='durability_per_run_non_executing_toolset', capabilities=[DBOSDurability()]
+    )
+
+    @DBOS.workflow()
+    async def run_with_toolset_capability() -> str:
+        return (await agent.run('Hello', capabilities=[Toolset(_CustomNonExecutingToolset())])).output
+
+    assert await run_with_toolset_capability() == snapshot('Echo: Hello')
+
+
 async def test_per_run_hooks_only_capability_allowed_inside_workflow(dbos: DBOS) -> None:
     class _HooksOnlyInstrumentation(Instrumentation):
         _safe_at_runtime = False

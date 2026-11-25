@@ -31,7 +31,7 @@ import anyio
 from opentelemetry.trace import get_current_span
 from pydantic_core import PydanticSerializationError
 
-from pydantic_ai import ExternalToolset, FunctionToolset, ToolsetTool
+from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._instrumentation import ContentPolicy, open_request_policy, request_policy_scope
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args, is_str_dict
@@ -933,7 +933,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         def is_non_executing(leaf: AbstractToolset[AgentDepsT]) -> bool:
             # Default-deny: only leaves known not to execute tools in the workflow are allowed.
-            if isinstance(leaf, ExternalToolset | CapabilityOwnedToolset):
+            if not leaf._executes_tools:  # pyright: ignore[reportPrivateUsage]
                 return True
             return (
                 isinstance(leaf, FunctionToolset)
