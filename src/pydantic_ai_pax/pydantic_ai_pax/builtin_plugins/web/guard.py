@@ -1,7 +1,7 @@
 """The access check in front of Pax's loopback web servers: the web UI and the desktop viewer.
 
 Each server binds to loopback with a per-launch token. `Guard` refuses a request without that token, one naming
-another host (which DNS rebinding would send), and one from another site's page.
+another host (which DNS rebinding would send), and a WebSocket opened by another site's page.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ HEADER = 'x-clai-token'
 
 
 class Guard:
-    """Refuse any request without the token, for another host name, or, for the WebSocket and `/api/`, from another origin.
+    """Refuse any request without the token, for another host name, or, for the WebSocket, from another origin.
 
     `header` names the header an `/api/` request carries the token in.
     """
@@ -59,9 +59,7 @@ class Guard:
         if kind == 'websocket':
             return headers.get('origin') in self.origins and self._valid(query.get('token', [''])[0])
         if path.startswith('/api/'):
-            # A browser sends `Origin` with a cross-site request, so one from another page never reaches the API.
-            origin = headers.get('origin')
-            return (origin is None or origin in self.origins) and self._valid(headers.get(self.header, ''))
+            return self._valid(headers.get(self.header, ''))
         if path.startswith('/assets/'):
             return True
         return self._valid(query.get('token', [''])[0])

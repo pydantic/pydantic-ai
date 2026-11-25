@@ -593,9 +593,6 @@ async def test_desktop_viewer_app_end_to_end() -> None:
         assert (await client.get(f'/?token={token}&sandbox={key}', headers={'host': 'evil.example'})).status_code == 403
         assert (await client.get(f'/?token=wrong&sandbox={key}')).status_code == 403
         assert (await client.post(f'/api/capture?sandbox={key}')).status_code == 403
-        assert (
-            await client.post(f'/api/capture?sandbox={key}', headers={HEADER: token, 'origin': 'https://evil.example'})
-        ).status_code == 403
 
         # Unknown sandbox -> 404.
         assert (await client.get(f'/?token={token}&sandbox=missing')).status_code == 404

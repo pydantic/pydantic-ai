@@ -64,17 +64,14 @@ from pydantic_ai_pax.gh_cli import gh_token, gh_user
 from pydantic_ai_pax.models.profiles import KEY_NAME
 from pydantic_ai_pax.plugins import NoSettings, PanelView, Plugin, PluginHost, SessionEnd, SidePanel
 from pydantic_ai_pax.plugins.keys import choose_key
-from pydantic_ai_pax.runtime.imported_history import imported_context, imported_kind
+from pydantic_ai_pax.runtime.imported_history import imported_context
 from pydantic_ai_pax.runtime.session import ConversationWorkspace, ShellLineWorkspace
 from pydantic_ai_pax.ui.browser import open_browser
 from pydantic_ai_pax.ui.menus.dialogs import RUNNERS, TerminalDialogs
 from pydantic_ai_pax.ui.rendering.status import StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
-__all__ = (
-    'SandboxPlugin',
-    'imported_kind',
-)
+__all__ = ('SandboxPlugin',)
 
 
 def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
