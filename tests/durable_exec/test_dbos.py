@@ -5767,10 +5767,22 @@ async def test_per_run_capability_with_executing_toolset_rejected_inside_workflo
         await run_with_toolset_capability()
 
 
-class _CustomNonExecutingToolset(_CustomExecutingToolset):
+class _CustomNonExecutingToolset(AbstractToolset[Any]):
     """A custom toolset that leaves its tools to be run elsewhere, like `ExternalToolset`."""
 
     _executes_tools = False
+
+    @property
+    def id(self) -> str | None:
+        return None
+
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        return {}
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:  # pragma: no cover
+        return None
 
 
 async def test_per_run_capability_with_custom_non_executing_toolset_allowed_inside_workflow(dbos: DBOS) -> None:
@@ -5781,10 +5793,12 @@ async def test_per_run_capability_with_custom_non_executing_toolset_allowed_insi
     agent = Agent(
         _durability_fn_model, name='durability_per_run_non_executing_toolset', capabilities=[DBOSDurability()]
     )
+    toolset = _CustomNonExecutingToolset()
+    assert toolset.id is None
 
     @DBOS.workflow()
     async def run_with_toolset_capability() -> str:
-        return (await agent.run('Hello', capabilities=[Toolset(_CustomNonExecutingToolset())])).output
+        return (await agent.run('Hello', capabilities=[Toolset(toolset)])).output
 
     assert await run_with_toolset_capability() == snapshot('Echo: Hello')
 
