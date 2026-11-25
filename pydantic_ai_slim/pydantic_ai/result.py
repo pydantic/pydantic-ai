@@ -736,11 +736,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             record, start = self._full_history_from or (appended, 0)
             if record.full and record.messages is not None:
                 # The run kept its full history when it ended, with the streamed response, which the run commits
-                # itself, but not the request with the tool returns the stream added to its copy after it.
+                # itself, but not the request with the tool returns the stream added to its copy after it. Content
+                # queued at a deferred pause is in both, recorded before the run committed the response, so the
+                # copy's order is kept for it.
                 added = [
                     message for message in self._all_messages[start:] if isinstance(message, _messages.ModelRequest)
                 ]
-                appended = AppendedMessages([*record.messages, *added], record.new_message_index, full=True)
+                in_copy = {id(message) for message in added}
+                kept = [message for message in record.messages if id(message) not in in_copy]
+                appended = AppendedMessages([*kept, *added], record.new_message_index, full=True)
             result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,

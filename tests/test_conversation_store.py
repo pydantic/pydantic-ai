@@ -734,6 +734,46 @@ async def test_a_run_whose_capability_trims_its_history_mid_run_saves_every_mess
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_failed_run_whose_capability_trims_its_history_mid_run_saves_every_message_it_added() -> None:
+    """A failed run's `error.conversation` keeps what a capability dropped, as a finished run's `conversation` does."""
+    store = InMemoryConversationStore()
+    model = _LookUp()
+    agent = _trimming_agent(model)
+    for prompt in ['first', 'second']:
+        conversation = await store.load('trimmed') or Conversation(conversation_id='trimmed')
+        await store.save(await agent.run(prompt, conversation=conversation))
+
+    loaded = await store.load('trimmed')
+    assert loaded is not None
+    model.calls = 3
+    # Allows the three requests that call the tool, so the run fails on the one after the last result.
+    limits = UsageLimits(request_limit=loaded.usage.requests + 3)
+    with pytest.raises(UsageLimitExceeded) as exc_info:
+        await agent.run('third', conversation=loaded, usage_limits=limits)
+    failed = exc_info.value.conversation
+    assert failed is not None
+    await store.save(failed)
+
+    stored = await store.load('trimmed')
+    assert stored is not None
+    assert conversation_view(stored.messages) == snapshot(
+        [
+            'user-prompt: first',
+            'text: done',
+            'user-prompt: second',
+            'text: done',
+            'user-prompt: third',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'call call-3',
+            'return call-3: fact 3',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_a_new_conversation_trimmed_in_its_first_run_is_saved_whole() -> None:
     store = InMemoryConversationStore()
     result = await _trimming_agent(_LookUp(calls=3)).run('look it up')
@@ -1225,6 +1265,46 @@ async def test_a_streamed_run_whose_capability_trims_its_history_and_that_pauses
             'call call-3',
             'return call-3: fact 3',
             'call call-4',
+        ]
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_streamed_run_that_trims_its_history_keeps_content_queued_at_its_deferred_pause_once() -> None:
+    """Content queued at the pause is in both the run's record and the stream's copy, and is kept once, in order."""
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='note', json_args='{}', tool_call_id='call-note')}
+        yield {1: DeltaToolCall(name='gated', json_args='{}', tool_call_id='call-gated')}
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_fn),
+        output_type=[str, DeferredToolRequests],
+        capabilities=[ProcessHistory(lambda messages: messages[-1:])],
+    )
+
+    @agent.tool
+    def note(ctx: RunContext[object]) -> str:
+        ctx.enqueue('noted at the pause')
+        return 'noted'
+
+    @agent.tool_plain(requires_approval=True)
+    def gated() -> str:  # pragma: no cover
+        return 'done'
+
+    earlier = (await Agent(TestModel()).run('earlier')).conversation
+    async with agent.run_stream('Hello', conversation=earlier) as stream:
+        assert isinstance(await stream.get_output(), DeferredToolRequests)
+
+    assert conversation_view(stream.result.conversation.messages) == snapshot(
+        [
+            'user-prompt: earlier',
+            'text: success (no tool calls)',
+            'user-prompt: Hello',
+            'call call-note',
+            'call call-gated',
+            'return call-note: noted',
+            'user-prompt: noted at the pause',
         ]
     )
 

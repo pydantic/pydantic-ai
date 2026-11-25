@@ -4395,7 +4395,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         submission = ctx.deps.run_submission
         assert submission is not None and submission.status == 'accepted'
         # No response will answer this step's request-scoped prompts.
-        _drop_unanswered_request_scoped_prompts(ctx.state.message_history)
+        _drop_unanswered_request_scoped_prompts(ctx.state)
         self._result = SetFinalResult(result.FinalResult(cast(NodeRunEndT, submission.output)))
         return self._result
 
