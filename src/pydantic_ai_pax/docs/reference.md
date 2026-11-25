@@ -1224,9 +1224,10 @@ A turn that finishes ends with a muted `Done in 12s` row; an interrupted one wit
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold and every row after its first (wrapped or
 its own line) indented under the text. This keeps your prompts apart from answers.
-Steering messages, commands entered during a turn, prompts restored by `/resume`, and
-answers you type to a question look the same. Under a bundled palette they also sit on
-a grey background; see [Themes](#themes).
+Steering messages, commands entered during a turn, and prompts restored by `/resume`
+look the same. An answer you type to a question gets the same marker and bold text,
+without the indent. Under a bundled palette all of these also sit on a grey background;
+see [Themes](#themes).
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders, so they cannot drift out of alignment.
