@@ -18,6 +18,7 @@ from typing_extensions import TypedDict
 from . import _utils
 from ._framing import (
     _NOTE_IDENTIFIER,  # pyright: ignore[reportPrivateUsage]
+    ADVISORY_SCOPE,
     CAPABILITY_DATA_TAG,
     NO_AUTHORITY,
     LookalikeSource,
@@ -224,8 +225,8 @@ def _note(part: CapabilityPart, authority: Authority, frame: str) -> str | None:
     """The note in the application's voice that goes with a framed part, or `None` when it has none.
 
     It qualifies the content and never vouches for it: it says who wrote it, unless that's the application. Without a
-    note of the kind's own, it then says the content has no authority (`NO_AUTHORITY`); a kind's own note says what
-    the content is for instead.
+    note of the kind's own, it then says the content has no authority (`NO_AUTHORITY`). A kind's own note says what
+    its content is for, such as advice to follow, so it's followed by what such advice can do (`ADVISORY_SCOPE`).
     """
     if authority == 'user':
         return (
@@ -240,9 +241,10 @@ def _note(part: CapabilityPart, authority: Authority, frame: str) -> str | None:
         return None if part.rendering.note is None else part.rendering.note.replace(_FRAME_PLACEHOLDER, frame)
     if part.rendering.note is None:
         return f'The accompanying {frame} {_attribution(part.source, author)}, so {NO_AUTHORITY}'
-    # A kind's own note says what its content is for, such as advice to follow, which "no authority" would contradict.
+    # A kind's own note says what its content is for, such as advice to follow, which "no authority" would contradict,
+    # so it says what that advice can do instead.
     note = part.rendering.note.replace(_FRAME_PLACEHOLDER, frame)
-    return f'{note} The {frame} {_attribution(part.source, author)}.'
+    return f'{note} The {frame} {_attribution(part.source, author)}. {ADVISORY_SCOPE}'
 
 
 def _attribution(source: CapabilityPartSource, author: str) -> str:

@@ -112,6 +112,7 @@ class JudgeFeedbackPart(
     name='feedback',
     tag='judge_feedback',
     attributes=('judge', 'ref'),
+    note="The accompanying {frame} is a trajectory judge's course correction.",
 ):
     """A trajectory judge's course correction, as the judge model wrote it.
 
