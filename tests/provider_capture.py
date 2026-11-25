@@ -1,7 +1,8 @@
 """What each provider model sends for a history, captured offline, and which voice each piece of text lands in.
 
 `capture` runs a history through a real provider model's `prepare_messages`, then its `request`, answers the HTTP
-request with a 400 so nothing leaves the process, and returns the request body as the model built it. It doesn't
+request with a 400 (or, for Bedrock, stops before botocore builds one) so nothing leaves the process, and returns the
+request body as the model built it. It doesn't
 normalize the history first the way the agent graph does, so pass it a history an agent run ended with.
 `voices_of` reads that body back, so a test can ask which voice a marker string reached the model in without knowing
 each provider's wire format.
@@ -45,6 +46,16 @@ with try_import() as cohere_available:
     from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.providers.cohere import CohereProvider
 
+with try_import() as bedrock_available:
+    import boto3
+
+    from pydantic_ai.models.bedrock import BedrockConverseModel
+    from pydantic_ai.providers.bedrock import BedrockProvider
+
+with try_import() as openrouter_available:
+    from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
+
 Voice: TypeAlias = Literal['system', 'developer', 'user', 'data', 'assistant', 'tool']
 """The voice a piece of text reaches the model in, normalized across providers.
 
@@ -52,7 +63,9 @@ The role that carries it, except that text framed in a tag in the user turn is `
 is `'system'` whatever role carries it.
 """
 
-CapturedProvider: TypeAlias = Literal['anthropic', 'openai-chat', 'openai-responses', 'google', 'mistral', 'cohere']
+CapturedProvider: TypeAlias = Literal[
+    'anthropic', 'openai-chat', 'openai-responses', 'google', 'mistral', 'cohere', 'bedrock', 'openrouter'
+]
 
 CAPTURED_PROVIDERS: tuple[CapturedProvider, ...] = (
     'anthropic',
@@ -61,8 +74,10 @@ CAPTURED_PROVIDERS: tuple[CapturedProvider, ...] = (
     'google',
     'mistral',
     'cohere',
+    'bedrock',
+    'openrouter',
 )
-"""The providers `capture` can build offline. Bedrock, xAI (gRPC), Groq and Hugging Face aren't wired up yet."""
+"""The providers `capture` can build offline. xAI (gRPC), Groq and Hugging Face aren't wired up yet."""
 
 
 _INSTALLED: dict[CapturedProvider, Callable[[], bool]] = {
@@ -72,7 +87,13 @@ _INSTALLED: dict[CapturedProvider, Callable[[], bool]] = {
     'google': google_available,
     'mistral': mistral_available,
     'cohere': cohere_available,
+    'bedrock': bedrock_available,
+    'openrouter': openrouter_available,
 }
+
+
+class _Captured(Exception):
+    """Raised in place of sending a Bedrock request, once its parameters are recorded."""
 
 
 @dataclass
@@ -94,6 +115,18 @@ class _Capture:
         """A client on the legacy `httpx`, for a provider whose SDK still takes one."""
         return httpx.AsyncClient(transport=httpx.MockTransport(self.handle_legacy))
 
+    def handle_bedrock(self, params: dict[str, Any], **_: Any) -> None:
+        self.bodies.append(json.dumps(params, default=str).encode())
+        raise _Captured()
+
+    def bedrock_client(self) -> Any:
+        """A Bedrock Runtime client that records each call's parameters before botocore builds the request."""
+        client = boto3.client(
+            'bedrock-runtime', region_name='us-east-1', aws_access_key_id='test', aws_secret_access_key='test'
+        )
+        client.meta.events.register('before-parameter-build.bedrock-runtime', self.handle_bedrock)
+        return client
+
 
 def _model(provider: CapturedProvider, capture: _Capture) -> Model:
     client = capture.client()
@@ -107,6 +140,15 @@ def _model(provider: CapturedProvider, capture: _Capture) -> Model:
         return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test', http_client=client))
     if provider == 'mistral':
         return MistralModel('mistral-large-latest', provider=MistralProvider(api_key='test', http_client=client))
+    if provider == 'bedrock':
+        return BedrockConverseModel(
+            'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+            provider=BedrockProvider(bedrock_client=capture.bedrock_client()),
+        )
+    if provider == 'openrouter':
+        return OpenRouterModel(
+            'anthropic/claude-sonnet-4.5', provider=OpenRouterProvider(api_key='test', http_client=client)
+        )
     return CohereModel('command-r', provider=CohereProvider(api_key='test', http_client=capture.legacy_client()))
 
 
@@ -118,7 +160,8 @@ class CapturedRequest:
     def voices_of(self, marker: str, frames: Collection[str] | None = None) -> list[Voice]:
         """The voices of the pieces of text in the request that contain `marker`.
 
-        Tool call arguments aren't text in a voice, so they're left out. A model without inline system messages gets
+        Tool definitions, their descriptions and parameter schemas, are the application's voice: `'system'`. Tool
+        call arguments aren't text in a voice, so they're left out. A model without inline system messages gets
         the application's voice as a `<system>` frame in the user turn, so text in such a frame counts as `'system'`.
         Text in another frame in the user turn is `'data'`. Either kind of frame may come in one piece or as an
         opening tag, the body and a closing tag.
@@ -138,6 +181,9 @@ class CapturedRequest:
         open_frame: str | None = None
         # The pieces of a frame that hasn't closed yet: framed once it closes, unframed user text if it never does.
         pending: list[str] = []
+        pieces.extend(
+            ('system', text, None) for text in _strings([self.body.get('tools'), self.body.get('toolConfig')])
+        )
         for voice, text in _VOICE_READERS[self.provider](self.body):
             stripped = text.strip()
             if open_frame is not None and voice != 'user':
@@ -169,16 +215,21 @@ class CapturedRequest:
         return pieces
 
 
-async def capture(provider: CapturedProvider, messages: Sequence[ModelMessage]) -> CapturedRequest:
-    """The request body `provider`'s model builds for `messages`, through its `prepare_messages` and `request`."""
+async def capture(
+    provider: CapturedProvider, messages: Sequence[ModelMessage], params: ModelRequestParameters | None = None
+) -> CapturedRequest:
+    """The request body `provider`'s model builds for `messages`, through its `prepare_messages` and `request`.
+
+    `params` are the request parameters a run sent, so the tools it offered are on the wire too.
+    """
     if not _INSTALLED[provider]():
         pytest.skip(f'the {provider} extra is not installed')
     recorder = _Capture()
     model = _model(provider, recorder)
-    params = model.customize_request_parameters(ModelRequestParameters())
+    params = model.customize_request_parameters(params or ModelRequestParameters())
     try:
         await model.request(model.prepare_messages(list(messages), params), None, params)
-    except ModelHTTPError:
+    except (ModelHTTPError, _Captured):
         pass
     assert len(recorder.bodies) == 1, f'{provider} sent {len(recorder.bodies)} requests'
     return CapturedRequest(provider, json.loads(recorder.bodies[0]))
@@ -287,6 +338,20 @@ def _google_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
                     yield role, text
 
 
+def _bedrock_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
+    for text in _texts(body.get('system', [])):
+        yield 'system', text
+    for message in body['messages']:
+        role = _role_voice(message['role'])
+        for block in message['content']:
+            if 'toolResult' in block:
+                for text in _strings(block['toolResult'].get('content')):
+                    yield 'tool', text
+            else:
+                for text in _texts(block):
+                    yield role, text
+
+
 _VOICE_READERS: dict[CapturedProvider, Callable[[dict[str, Any]], Iterator[tuple[Voice, str]]]] = {
     'anthropic': _anthropic_voices,
     'openai-chat': _chat_voices,
@@ -294,4 +359,6 @@ _VOICE_READERS: dict[CapturedProvider, Callable[[dict[str, Any]], Iterator[tuple
     'google': _google_voices,
     'mistral': _chat_voices,
     'cohere': _chat_voices,
+    'bedrock': _bedrock_voices,
+    'openrouter': _chat_voices,
 }

@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness.background_tools import BackgroundToolResultPart
@@ -105,6 +106,13 @@ class Observer(AbstractCapability[None]):
 
     ran: list[str] = field(default_factory=list[str])
     histories: list[list[ModelMessage]] = field(default_factory=list[list[ModelMessage]])
+    params: list[ModelRequestParameters] = field(default_factory=list[ModelRequestParameters])
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.params.append(request_context.model_request_parameters)
+        return request_context
 
     async def before_tool_execute(
         self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
@@ -159,6 +167,8 @@ class RouteRun:
     messages: list[ModelMessage]
     ran: list[str]
     """The tools the calls executed, in order, leaving out the route's own dispatchers."""
+    params: ModelRequestParameters | None = None
+    """The parameters of the run's last model request, such as the tools it offered."""
 
 
 def lowered(calls: Calls, directory: Path) -> list[AbstractCapability[None]]:
@@ -184,7 +194,7 @@ async def run_native(calls: Calls, directory: Path) -> RouteRun:
     capabilities, observer = await build_lowered(calls, directory)
     agent = Agent(Script(calls.made).model, deps_type=type(None), capabilities=[*capabilities, observer])
     result = await agent.run('go', event_stream_handler=drain_events)
-    return RouteRun(result.all_messages(), tools_ran(calls, observer))
+    return RouteRun(result.all_messages(), tools_ran(calls, observer), observer.params[-1])
 
 
 def case_calls(name: str) -> Calls:
