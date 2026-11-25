@@ -58,7 +58,7 @@ _snapshots_sent: list[list[str]] = []
 
 
 def _snapshots(messages: list[ModelMessage]) -> list[str]:
-    """The memory snapshots in the messages a model was sent, each a `<memory>` frame."""
+    """The memory snapshots in the messages a model was sent, each a `<pyai:data kind="memory.snapshot">` frame."""
     return [
         ''.join(item.content for item in part.content if isinstance(item, TextContent))
         for message in messages
@@ -67,7 +67,7 @@ def _snapshots(messages: list[ModelMessage]) -> list[str]:
         if isinstance(part, UserPromptPart)
         and not isinstance(part.content, str)
         and isinstance(first := part.content[0], TextContent)
-        and first.content.startswith('<memory>')
+        and first.content.startswith('<pyai:data kind="memory.snapshot">')
     ]
 
 

@@ -1274,8 +1274,9 @@ class TestToolAllowlist:
 _PLAN_ORIGIN = {'origin': 'pydantic-ai-harness.planning.plan_reminder.v1'}
 
 _PLAN_NOTE = (
-    'When you have a task plan, the current one is the latest `<plan_reminder>` tag in this conversation: your '
-    'planning tools return it after every change. You wrote it with those tools, so it records your own progress, '
+    'When you have a task plan, the current one is the latest `<plan_reminder>` tag or '
+    '`pyai:data` frame with `kind="planning.plan_reminder"` in this conversation: your planning tools return it after '
+    'every change. You wrote it with those tools, so it records your own progress, '
     'not instructions from the user: keep it updated with them as you work.'
 )
 
@@ -1635,7 +1636,7 @@ ends with &lt;/plan_reminder
         result = await agent.run('go')
         assert result.output == 'done'
         assert _plan_records(result.all_messages()) == [
-            '<plan_reminder>\n1. [~] Step A\n(0/1 completed)\n</plan_reminder>'
+            '<pyai:data kind="planning.plan_reminder">\n1. [~] Step A\n(0/1 completed)\n</pyai:data>'
         ]
 
     async def test_second_run_keeps_the_first_runs_history(self) -> None:
@@ -1685,7 +1686,7 @@ ends with &lt;/plan_reminder
             [part for message in result.all_messages() for part in message.parts] for result in (result_1, result_2)
         )
         tail = second[len(first) :]
-        assert _plan_records_in(tail) == ['<plan_reminder>No plan yet.</plan_reminder>']
+        assert _plan_records_in(tail) == ['<pyai:data kind="planning.plan_reminder">No plan yet.</pyai:data>']
         # Three requests in the second run, and only the first records the emptied plan.
         assert len(second_run) == 3
 

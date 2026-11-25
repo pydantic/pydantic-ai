@@ -905,7 +905,11 @@ def task_texts(request: ModelMessage) -> list[str]:
         for part in request.parts
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
     ]
-    return [text for text in texts if text.startswith(('<task_output ', '<task_question '))]
+    return [
+        text
+        for text in texts
+        if text.startswith(('<pyai:data kind="subagents.task_output" ', '<pyai:data kind="subagents.task_question" '))
+    ]
 
 
 @pytest.mark.parametrize('timing', ['idle', 'active'])
@@ -954,10 +958,12 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
             else:
                 answer = next(part.content for part in last.parts if isinstance(part, ToolReturnPart))
                 yield f'Chose {answer}'
-        elif any(text.startswith('<task_output ') for text in task_texts(last)):
+        elif any(text.startswith('<pyai:data kind="subagents.task_output" ') for text in task_texts(last)):
             yield 'Report read.'
             continued.set()
-        elif question := next((text for text in task_texts(last) if text.startswith('<task_question ')), None):
+        elif question := next(
+            (text for text in task_texts(last) if text.startswith('<pyai:data kind="subagents.task_question" ')), None
+        ):
             match = re.search(r'task_id="([0-9a-f]{32})"', question)
             assert match is not None
             arguments = f'{{"task_id":"{match[1]}","answer":"cheddar"}}'
@@ -1113,11 +1119,13 @@ async def test_a_question_asked_after_a_turns_last_read_starts_the_next_turn(
                 yield {0: DeltaToolCall(name='ask_parent', json_args='{"question":"Which flavour?"}')}
             else:
                 yield f'Chose {next(part.content for part in last.parts if isinstance(part, ToolReturnPart))}'
-        elif question := next((text for text in task_texts(last) if text.startswith('<task_question ')), None):
+        elif question := next(
+            (text for text in task_texts(last) if text.startswith('<pyai:data kind="subagents.task_question" ')), None
+        ):
             match = re.search(r'task_id="([0-9a-f]{32})"', question)
             assert match is not None
             yield {0: DeltaToolCall(name='answer_task', json_args=f'{{"task_id":"{match[1]}","answer":"cheddar"}}')}
-        elif any(text.startswith('<task_output ') for text in task_texts(last)):
+        elif any(text.startswith('<pyai:data kind="subagents.task_output" ') for text in task_texts(last)):
             yield 'Report read.'
             continued.set()
         elif len(messages) == 1:

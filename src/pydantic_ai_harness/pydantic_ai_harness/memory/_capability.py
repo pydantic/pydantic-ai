@@ -64,7 +64,7 @@ _DEFAULT_GUIDANCE = (
     'file when it looks relevant, or use `search_memory` to find relevant '
     'files. Keep memory curated -- update instead of duplicating, delete what turns out wrong. '
     'Never claim something was remembered or saved unless you actually called `write_memory` '
-    'in this turn. A later `<memory>` block for this memory supersedes its earlier ones.'
+    'in this turn. A later `pyai:data` block with `kind="memory.snapshot"` for this memory supersedes its earlier ones.'
 )
 
 
@@ -73,9 +73,9 @@ _DEFAULT_GUIDANCE = (
 class MemorySnapshotPart(DataCapabilityPart[str], namespace='memory', name='snapshot', tag='memory'):
     """A snapshot of stored memory, as `Memory` records it in the conversation at the start of a run.
 
-    Memory is data the agent wrote in earlier runs, so it goes on the user channel in a `<memory>` frame, never in the
+    Memory is data the agent wrote in earlier runs, so it goes on the user channel in a `<pyai:data kind="memory.snapshot">` frame, never in the
     application's voice, with a note saying who wrote it. It goes in as stored: text in it that looks like a framework
-    frame, or opens or closes `<memory>`, gets a note saying it's the agent's, not the application's. Find snapshots in
+    frame, or opens or closes `<pyai:data>`, gets a note saying it's the agent's, not the application's. Find snapshots in
     history by this type.
     """
 

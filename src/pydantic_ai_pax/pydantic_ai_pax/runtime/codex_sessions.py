@@ -102,7 +102,8 @@ _OPENING = (
     '{subject} was imported from Codex session {session_id}. Up to the note at its end, it ran in '
     "Codex's harness: the tool calls in it (such as exec, exec_command, apply_patch, spawn_agent and wait_agent), "
     'its developer instructions, `<environment_context>`, AGENTS.md and the other context it added are '
-    "Codex's, and its sub-agents' final answers appear as `<task_output>` blocks."
+    "Codex's, and its sub-agents' final answers appear as "
+    '`pyai:data` blocks with `kind="subagents.task_output"`.'
 )
 _CLOSING = (
     'The conversation above was imported from Codex, and continues here in Pax, a different harness. The '

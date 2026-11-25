@@ -27,7 +27,7 @@ class PeerMessagePart(
 ):
     """A message from a peer agent, as `Peers` delivers it.
 
-    Data on the user channel in a `<peer_message>` tag naming the sender, with a note that the peer wrote it, not the
+    Data on the user channel in a `<pyai:data kind="peers.message">` frame naming the sender, with a note that the peer wrote it, not the
     user or the application. Find peer messages in history by this type, or with
     [`read_peer_message`][pydantic_ai_harness.peers.read_peer_message].
     """

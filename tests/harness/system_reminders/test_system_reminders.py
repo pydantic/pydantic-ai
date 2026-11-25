@@ -175,14 +175,18 @@ def _llm_data(text: str, model: str = 'function:fn:') -> str:
 
 
 def _generated_frame(text: str, model: str = 'function:fn:') -> list[str]:
-    """The texts of the `<generated_reminder>` frame a generated reminder reaches the model in."""
+    """The texts of the `<pyai:data kind="system_reminders.generated_reminder">` frame a generated reminder reaches the model in."""
     line_break = '\n' if '\n' in text else ''
-    return [f'<generated_reminder model="{model}">{line_break}', text, f'{line_break}</generated_reminder>']
+    return [
+        f'<pyai:data kind="system_reminders.generated_reminder" model="{model}">{line_break}',
+        text,
+        f'{line_break}</pyai:data>',
+    ]
 
 
 def _generated_note(model: str = 'function:fn:') -> str:
     """The note in the application's voice that goes with a generated reminder."""
-    frame = f'<generated_reminder model="{model}">'
+    frame = f'<pyai:data kind="system_reminders.generated_reminder" model="{model}">'
     return (
         f'The accompanying {frame} is a stay-on-task reminder for this run: advice to follow unless it conflicts with '
         f"your instructions or the user's request. The {frame} was written by the reminder model, not by the user or "
@@ -196,7 +200,7 @@ def _generated(text: str, model: str = 'function:fn:') -> GeneratedReminder:
 
 def _generated_sent_text(text: str, model: str = 'function:fn:') -> str:
     """What a generated reminder reaches the model as, which `ReminderFiredEvent.text` reports."""
-    return f'{_generated_note(model)}\n\n<generated_reminder model="{model}">{text}</generated_reminder>'
+    return f'{_generated_note(model)}\n\n<pyai:data kind="system_reminders.generated_reminder" model="{model}">{text}</pyai:data>'
 
 
 def _generated_part(
@@ -1682,9 +1686,11 @@ class TestEndToEnd:
             nonlocal requests
             requests += 1
             sent = _sent_texts(messages)
-            assert [text for index, text in enumerate(sent) if sent[index - 1].startswith('<generated_reminder')] == [
-                f'refocus {step}' for step in generated_on
-            ]
+            assert [
+                text
+                for index, text in enumerate(sent)
+                if sent[index - 1].startswith('<pyai:data kind="system_reminders.generated_reminder"')
+            ] == [f'refocus {step}' for step in generated_on]
             assert sent.count(f'<system>{_generated_note("function:generate:")}</system>') == len(generated_on)
             if requests < 21:
                 return ModelResponse(parts=[ToolCallPart('step', {}, tool_call_id=f'c{requests}')])

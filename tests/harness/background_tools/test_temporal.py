@@ -49,13 +49,14 @@ def _model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> Mod
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                # The model sees the result framed in its `<tool_result>` tag naming the call.
+                # The model sees the result framed in its `<pyai:data kind="background_tools.tool_result">` tag naming the call.
                 if (
                     isinstance(part, UserPromptPart)
                     and not isinstance(part.content, str)
                     and any(
                         isinstance(item, TextContent)
-                        and item.content == '<tool_result tool_name="research" tool_call_id="research-call">'
+                        and item.content
+                        == '<pyai:data kind="background_tools.tool_result" tool_name="research" tool_call_id="research-call">'
                         for item in part.content
                     )
                 ):

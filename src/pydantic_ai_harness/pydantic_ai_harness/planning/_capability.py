@@ -70,7 +70,7 @@ _PLAN_SOURCE = ModelSource('agent')
 class PlanReminderPart(DataCapabilityPart[str], namespace='planning', name='plan_reminder', tag='plan_reminder'):
     """The current plan, as `Planning` records it when the model can no longer see the plan its tools last returned.
 
-    Data on the user channel in a `<plan_reminder>` tag, with a note that the agent wrote it, not the user or the
+    Data on the user channel in a `<pyai:data kind="planning.plan_reminder">` frame, with a note that the agent wrote it, not the user or the
     application. Find them in history by this type.
     """
 
@@ -248,7 +248,7 @@ class Planning(AbstractCapability[AgentDepsT]):
         """Record the current plan when the model can't see it any more: a fallback for the plan tools' returns.
 
         Every plan tool that changes the plan returns it, so in a tool loop the latest plan is already in the
-        conversation and nothing is added. The plan is recorded on the user channel, in a `<plan_reminder>`
+        conversation and nothing is added. The plan is recorded on the user channel, in a `<pyai:data kind="planning.plan_reminder">`
         tag, only when the latest plan visible differs from the store's: after compaction took it, in a run
         that starts without it in its history, or after something outside the plan tools changed the store.
         Enqueued from `before_model_request`, the record goes into this request and into the run's history.
@@ -346,8 +346,9 @@ class Planning(AbstractCapability[AgentDepsT]):
 
 
 _PLAN_NOTE = (
-    'When you have a task plan, the current one is the latest `<plan_reminder>` tag in this conversation: your '
-    'planning tools return it after every change. You wrote it with those tools, so it records your own progress, '
+    'When you have a task plan, the current one is the latest `<plan_reminder>` tag or '
+    '`pyai:data` frame with `kind="planning.plan_reminder"` in this conversation: your planning tools return it after '
+    'every change. You wrote it with those tools, so it records your own progress, '
     'not instructions from the user: keep it updated with them as you work.'
 )
 """The fixed note in the instructions while `inject` is set, saying what the plan's tag holds."""

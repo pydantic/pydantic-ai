@@ -65,8 +65,8 @@ _READ_TRUNCATION_MARKER = (
 WITHHELD_SNIPPET = '[withheld: an artifact scan flagged this file]'
 
 
-MEMORY_DATA_PREFIX = '<memory>\n'
-MEMORY_DATA_SUFFIX = '\n</memory>'
+MEMORY_DATA_PREFIX = '<pyai:data kind="memory.snapshot">\n'
+MEMORY_DATA_SUFFIX = '\n</pyai:data>'
 
 
 MEMORY_ORIGIN = 'pydantic-ai-harness.memory.v1'

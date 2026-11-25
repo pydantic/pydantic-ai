@@ -107,7 +107,7 @@ class GeneratedReminderPart(
 ):
     """A reminder a model generated, as a `SystemReminders` firing enqueues it.
 
-    Data on the user channel in a `<generated_reminder model="...">` tag, as the model wrote it, behind a note in the
+    Data on the user channel in a `<pyai:data kind="system_reminders.generated_reminder" model="...">` frame, as the model wrote it, behind a note in the
     application's voice saying what it is and that the reminder model wrote it, not the user or the application.
     Find them in history by this type.
     """
@@ -125,7 +125,7 @@ class GeneratedReminder:
     """Reminder text a model generated, which `SystemReminders` never sends in system voice.
 
     `LLMReminder` returns one. `SystemReminders` sends it as a lasting `GeneratedReminderPart`: `text` as data on the
-    user channel in a `<generated_reminder>` tag, behind a note saying a reminder model wrote it. A plain `str` a
+    user channel in a `<pyai:data kind="system_reminders.generated_reminder">` frame, behind a note saying a reminder model wrote it. A plain `str` a
     dynamic reminder returns is operator text, sent in system voice as written, so this is a distinct type rather
     than a `str`: string operations can't drop its provenance and promote it.
     """
