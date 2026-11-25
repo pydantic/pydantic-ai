@@ -1,0 +1,5 @@
+{
+  "against": "v2.74.0",
+  "reason": "No compatibility impact: `AWSLambdaDurability.engine_spec` gains the private `_suspend_ends_run=True`, read only by `RunContext.in_flight`, which this PR adds, to refuse in-flight work a suspend would stop. Every existing field keeps its value.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13217"
+}

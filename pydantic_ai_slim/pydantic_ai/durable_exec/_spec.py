@@ -106,6 +106,14 @@ class DurabilityEngineSpec:
     cancelling the run at an unrecorded point. An ordinary asyncio loop doesn't qualify.
     """
 
+    _suspend_ends_run: bool = False
+    """Private: whether the engine suspends a run, at a durable sleep or a wait for an external event, by ending it.
+
+    In-process work running alongside such a run is stopped by the suspend and not restarted, so
+    [`ctx.in_flight`][pydantic_ai.tools.RunContext.in_flight] refuses it. To be replaced by the engine-spec signal
+    for runs that suspend by ending (#13274), after which #14493 may relax the refusal.
+    """
+
     def __post_init__(self) -> None:
         errors: list[str] = []
         if not self.durable_unit_noun:

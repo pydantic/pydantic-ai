@@ -100,6 +100,8 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
         sequential_tools_in_durable_context=True,
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         tool_config_key=_TOOL_CONFIG_KEY,
+        # A callback wait or a durable sleep suspends the execution by ending the invocation.
+        _suspend_ends_run=True,
     )
 
     def __init__(

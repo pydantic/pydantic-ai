@@ -64,6 +64,8 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         # The first MCP step connects, so a replay whose MCP steps are all checkpointed never does.
         toolset_lifecycles={'function': 'enter-always', 'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
+        # A durable sleep, like a model error's `retry_after` wait, suspends the task by ending the run.
+        _suspend_ends_run=True,
     )
     # pgtask has no non-retryable error type, so a serialization failure retries until `max_attempts` runs out.
 
