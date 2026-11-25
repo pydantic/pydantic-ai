@@ -1491,12 +1491,32 @@ async def test_operations_called_from_a_nested_runs_for_run_and_wrap_run_run_dir
     assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot([])
 
 
+class ResolvesAmbientlyInSessionSetup(ResolvesAmbientlyInForRun):
+    """Also calls it from its toolset's `for_run` and from a native tool factory, which a session resolves at setup."""
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        capability = self
+
+        class ResolvingToolset(FunctionToolset[Any]):
+            async def for_run(self, ctx: RunContext[Any]) -> FunctionToolset[Any]:
+                await capability.resolve()
+                return self
+
+        return ResolvingToolset(tools=[])
+
+    def get_native_tools(self) -> list[Callable[[RunContext[Any]], Awaitable[None]]]:
+        async def no_native_tool(ctx: RunContext[Any]) -> None:
+            await self.resolve()
+
+        return [no_native_tool]
+
+
 async def test_operations_called_from_a_nested_realtime_sessions_setup_run_directly() -> None:
     """A realtime session started from a tool starts as a top-level one does, like a nested run."""
     from ..realtime.test_session import FakeRealtimeConnection, FakeRealtimeModel
 
     outer = ResolvesAmbientlyInForRun()
-    inner = ResolvesAmbientlyInForRun()
+    inner = ResolvesAmbientlyInSessionSetup()
     inner_agent = Agent(name='inner_realtime', capabilities=[inner])
     agent = Agent(TestModel(), name='outer_of_realtime', capabilities=[outer, RecordingDurability()])
 
@@ -1508,8 +1528,8 @@ async def test_operations_called_from_a_nested_realtime_sessions_setup_run_direc
 
     await agent.run('test')
 
-    # Each one's `for_run` and `wrap_run`, each on its own instance.
-    assert (outer.calls, inner.calls) == (2, 2)
+    # The outer `for_run` and `wrap_run`; the inner ones plus its toolset's `for_run` and native tool factory.
+    assert (outer.calls, inner.calls) == (2, 4)
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot([])
