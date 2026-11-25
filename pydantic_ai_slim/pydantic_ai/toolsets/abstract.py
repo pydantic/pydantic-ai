@@ -97,9 +97,10 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     _executes_tools: ClassVar[bool] = True
     """Whether this toolset executes its tools itself, rather than leaving them to be run elsewhere.
 
-    Internal. A toolset class that sets this to `False`, like `ExternalToolset`, can be contributed by a
-    capability added per-run when a durability capability is bound, as it needs no durable unit registered
-    when the agent is built.
+    Internal. A leaf toolset class that sets this to `False`, like `ExternalToolset`, can be contributed by
+    a capability added per-run when a durability capability is bound, as it needs no durable unit registered
+    when the agent is built. A wrapper that sets it, like `CapabilityOwnedToolset`, only vouches for itself:
+    the toolsets it wraps are still judged on their own.
     """
 
     @property

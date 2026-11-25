@@ -303,8 +303,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
-    Internal, in-tree only. Built-in capabilities that need nothing registered when the agent is built,
-    like [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], set this to `True`. When it's `True`, the bundled
+    Internal, in-tree only. Built-in capabilities that need nothing registered when the agent is
+    built, like [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], set this to `True`.
+    When it's `True`, the bundled
     `durable_exec` integrations skip their structural check of a per-run capability (whether it
     contributes executing toolsets or `@durable_operation` methods, or chooses or wraps the model)
     and always allow it.
