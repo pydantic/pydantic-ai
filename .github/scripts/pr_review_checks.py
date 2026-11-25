@@ -73,7 +73,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(_ssrf\.py|common_tools/web_fetch\.py'
             r'|capabilities/(web_fetch|file_understanding)\.py)'
-            r'|src/pydantic_ai_harness/pydantic_ai_harness/(playwright|browser_use)/.*'
+            r'|src/pydantic_ai_harness/pydantic_ai_harness/(_browser_egress\.py|(playwright|browser_use|cdp_browser)/.*)'
             r'|tests/test_(ssrf|web_fetch)\.py'
         ),
         diff_tokens=re.compile(
