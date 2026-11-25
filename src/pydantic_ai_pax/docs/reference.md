@@ -1226,8 +1226,8 @@ accent colour, with the prompt text in bold and every row after its first (wrapp
 its own line) indented under the text. This keeps your prompts apart from answers.
 Steering messages, commands entered during a turn, and prompts restored by `/resume`
 look the same. An answer you type to a question gets the same marker and bold text,
-without the indent. Under a bundled palette, on a terminal with 24-bit colour, all of
-these also sit on a grey background; see [Themes](#themes).
+without the indent. Under a bundled palette, on a terminal that advertises 24-bit
+colour, all of these also sit on a grey background; see [Themes](#themes).
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders, so they cannot drift out of alignment.
