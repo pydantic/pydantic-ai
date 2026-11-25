@@ -90,6 +90,7 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server.dependencies import get_http_request
+    from fastmcp.server.middleware import Middleware
 
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
@@ -787,6 +788,46 @@ class TestMCPToolsetIntegration:
             assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_tools_list_changed_during_list_tools_is_not_lost(self):
+        """A tools `list_changed` notification that arrives while `tools/list` is in flight isn't overwritten.
+
+        The response was produced before the change, so caching it would keep the old tool list until the
+        next notification. The next `list_tools()` fetches the changed list instead.
+        """
+        server: FastMCP[None] = FastMCP('list_changed_server')
+        list_produced = asyncio.Event()
+        release_list = asyncio.Event()
+
+        class HoldListTools(Middleware):
+            async def on_list_tools(self, context: Any, call_next: Any) -> Any:
+                tools = await call_next(context)
+                # Hold only the first listing: the server also lists its tools to handle the tool call below.
+                if not list_produced.is_set():
+                    list_produced.set()
+                    await release_list.wait()
+                return tools
+
+        server.add_middleware(HoldListTools())
+
+        @server.tool
+        async def add_tool(ctx: Context) -> str:
+            @server.tool
+            def added_tool() -> str:
+                return 'added'  # pragma: no cover
+
+            await ctx.send_notification(mcp_types.ToolListChangedNotification())
+            return 'done'
+
+        toolset = MCPToolset(server)
+        async with toolset:
+            in_flight = asyncio.create_task(toolset.list_tools())
+            await list_produced.wait()
+            assert await toolset.direct_call_tool('add_tool', {}) == 'done'
+            release_list.set()
+            assert [tool.name for tool in await in_flight] == ['add_tool']
+
+            assert [tool.name for tool in await toolset.list_tools()] == ['add_tool', 'added_tool']
 
     async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
         """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are hidden from the model."""

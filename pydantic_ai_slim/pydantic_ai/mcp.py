@@ -930,6 +930,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _server_capabilities: ServerCapabilities | None
     _instructions: str | None
     _cached_tools: list[mcp_types.Tool] | None
+    _tools_cache_generation: int = 0
+    """Bumped by each tools `list_changed` notification, so a `tools/list` response in flight when it arrived isn't cached."""
     _cached_resources: list[Resource] | None
     _cached_prompts: list[Prompt] | None
     _running_count: int
@@ -1355,6 +1357,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
 
     def _invalidate_tools_cache(self) -> None:
         self._cached_tools = None
+        self._tools_cache_generation += 1
 
     def _invalidate_resources_cache(self) -> None:
         self._cached_resources = None
@@ -1483,9 +1486,11 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         """
         if self.cache_tools and self._cached_tools is not None:
             return self._cached_tools
+        generation = self._tools_cache_generation
         async with self._connected():
             tools = await self.client.list_tools()
-            if self.cache_tools:
+            # A `list_changed` notification that arrived while the request was in flight makes this list stale.
+            if self.cache_tools and generation == self._tools_cache_generation:
                 self._cached_tools = tools
             return tools
 
