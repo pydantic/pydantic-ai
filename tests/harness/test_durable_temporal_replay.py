@@ -75,9 +75,8 @@ def _failure(error: WorkflowFailureError) -> BaseException:
             return UserError(cause.message)
         messages.append(f'{type(cause).__name__}: {cause}')  # pragma: lax no cover - only a broken cell fails so
         cause = cause.__cause__ or getattr(cause, 'cause', None)
-    return RuntimeError(
-        f'the workflow fails: {" <- ".join(messages)}'
-    )  # pragma: lax no cover - only a broken cell fails so
+    chain = ' <- '.join(messages)  # pragma: lax no cover - only a broken cell fails so
+    return RuntimeError(f'the workflow fails: {chain}')  # pragma: lax no cover - only a broken cell fails so
 
 
 @dataclass
