@@ -109,7 +109,8 @@ execution). Sandboxes, containers, SSH hosts and other workspaces ship as capabi
 [supported workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#supported-workspaces) table lists
 them. To add one, [write a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)
 and check it by subclassing `pydantic_ai.workspaces.conformance.WorkspaceBackendSuite` and providing its
-`backend` fixture. Return `Unsupported(reason)` from an optional factory fixture the backend can't provide.
+`backend` fixture. [Checking a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#checking-a-backend)
+lists the optional fixtures and how to declare one the backend can't provide.
 
 Exception contract a backend must follow: `WorkspaceUnavailableError` when the environment is gone
 or unreachable (ends the run; never reaches the model); `WorkspaceTimeoutError` for a command over

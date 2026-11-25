@@ -1493,7 +1493,7 @@ so Pax forwards the Ctrl-C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
 background jobs and programs that ignore Ctrl-C. Only a process that detaches
 on purpose with `setsid()`, as daemons do, outlives the command. When the system
-refuses a signal to that process group, Pax still kills the shell itself, and
+refuses a signal to that process group, Pax still tries to kill the shell itself, and
 reports that the command may still be running instead of interrupted. Detached jobs
 should redirect stdout and stderr: Pax stops collecting their output shortly
 after the shell exits. On Windows the console

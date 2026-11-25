@@ -190,7 +190,7 @@ class WorkspaceBackendSuite:
     command-only backend is checked on the file operations derived through its shell. The first-use, reattach
     and destroy rules need the optional factory fixtures below: return
     [`Unsupported`][pydantic_ai.workspaces.conformance.Unsupported] from one the backend can't provide, and its
-    rules skip with that reason. A factory fixture left at its default skips its rules with a deprecation warning.
+    rules skip with that reason. A factory fixture that returns `None` skips its rules with a deprecation warning.
     """
 
     pytestmark = pytest.mark.anyio

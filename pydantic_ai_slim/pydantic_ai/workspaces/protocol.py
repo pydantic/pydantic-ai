@@ -155,8 +155,8 @@ class SupportsCommands(Protocol):
         The command starts in `working_dir()`. A missing argv program exits 127.
         If the environment is destroyed while the command runs, raise `WorkspaceUnavailableError`;
         a command killed by a signal in a live environment returns its exit code.
-        On timeout or cancellation, stop the foreground process tree on a best-effort basis;
-        background jobs may continue if they detach. Return when the direct command exits,
+        On timeout or cancellation, stop the command's process group, background children included,
+        on a best-effort basis. Return when the direct command exits,
         after at most a short output-drain grace even if a background child keeps stdout open.
         Never stop a process the command detached into its own session, neither when the command returns
         nor when a backend attaches by the same ref later; a provider's own idle pause or stop is separate.

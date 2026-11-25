@@ -251,9 +251,9 @@ Supply it from a capability's [`get_workspace`](#supplying-a-workspace-from-a-ca
 - Raise `WorkspaceUnavailableError` for a `ref` whose environment is gone, and never create a replacement.
 - Never destroy the environment when a run ends, and never stop a process a command detached into its own
   session. [`Shell`](harness/shell.md) background jobs rely on that.
-- On a timeout or a cancellation, stop the command and every child it started that stayed in its session.
-- Pass each argv item through unchanged, up to the system's limit on one argument (128 KiB on Linux). Quoting
-  an item for a shell twice multiplies its size past that limit.
+- On a timeout or a cancellation, stop the command's process group, background children included.
+- Pass each argv item through unchanged, and quote it for a shell at most once: quoting a quote-heavy item twice
+  can multiply it past the system's limit on one argument (128 KiB on Linux).
 - Return a non-zero exit as a result: 127 for a program that isn't found, 126 for one that isn't executable.
   Raise the builtin file error for a bad path, `OSError` for reading anything but a regular file, such as a
   FIFO or a device, `WorkspaceTimeoutError` for a timeout and `ValueError` for a timeout that isn't a positive
@@ -304,8 +304,9 @@ class TestMyBackend(WorkspaceBackendSuite):
     - `destroy_environment` and `destructive_backend`: a destroyed environment.
 - Return [`Unsupported`][pydantic_ai.workspaces.conformance.Unsupported] from a factory fixture your backend
   can't provide, with the reason: its rules skip with that reason, which `pytest -rs` lists.
-- A factory fixture left at its default still skips its rules, with a `PydanticAIDeprecationWarning`. From v3,
-  those rules fail.
+- A factory fixture that returns `None`, as `fresh_backend`, `attach_backend` and `destroy_environment` do by
+  default, still skips its rules, with a
+  [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]. From v3, those rules fail.
 - Four boolean fixtures, `True` by default, declare a known limit. Return `False` only for a limit you also
   document for users:
     - `can_detect_exit_with_inherited_output_pipes`: the provider reports a command's exit only after every
