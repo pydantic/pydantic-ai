@@ -159,11 +159,11 @@ def counting_requests(monkeypatch: pytest.MonkeyPatch, directory: Path) -> Calla
 
 def streaming_one_call_per_response(made: tuple[ToolCall, ...]) -> FunctionModel:
     """`one_call_per_response` that also streams, which a run with an event listener needs."""
-    model = one_call_per_response(made)
+    respond = one_call_per_response(made).function
+    assert respond is not None
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        assert model.function is not None
-        response = model.function(messages, info)
+        response = respond(messages, info)
         assert isinstance(response, ModelResponse)
         for part in response.parts:
             if isinstance(part, TextPart):
@@ -172,7 +172,7 @@ def streaming_one_call_per_response(made: tuple[ToolCall, ...]) -> FunctionModel
                 assert isinstance(part, ToolCallPart)
                 yield {0: DeltaToolCall(part.tool_name, json.dumps(part.args), tool_call_id=part.tool_call_id)}
 
-    return FunctionModel(model.function, stream_function=stream)
+    return FunctionModel(respond, stream_function=stream)
 
 
 _EVENTS: dict[str, list[str]] = {}
