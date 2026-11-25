@@ -68,7 +68,7 @@ from pydantic_ai_pax.runtime.imported_history import imported_context, imported_
 from pydantic_ai_pax.runtime.session import ConversationWorkspace, ShellLineWorkspace
 from pydantic_ai_pax.ui.browser import open_browser
 from pydantic_ai_pax.ui.menus.dialogs import RUNNERS, TerminalDialogs
-from pydantic_ai_pax.ui.rendering.status import StatusSegment
+from pydantic_ai_pax.ui.rendering.status import StatusLink, StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
 __all__ = ('SandboxPlugin',)
@@ -330,13 +330,26 @@ class SandboxPlugin(Plugin):
         )
 
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (self._segment,)
+        return (self._segment, self._watch_live)
 
     def _segment(self) -> str:
         sandbox = self.current()
         if sandbox is None:
             return 'computer-use' if self._armed() else ''
-        return f'{sandbox.provider.name} sandbox{" (computer-use)" if self._on() else ""}'
+        return f'{sandbox.provider.name} sandbox{" (computer-use)" if self._on() and not self._live_url() else ""}'
+
+    def _watch_live(self) -> StatusLink | str:
+        url = self._live_url()
+        return StatusLink(text='watch live', url=url) if url else ''
+
+    def _live_url(self) -> str | None:
+        """The desktop viewer's URL while computer use is on and the viewer already shows its sandbox.
+
+        Read every frame, so it never starts the viewer: a `computer` row, `/computer-use view`, or the
+        desktop panel does.
+        """
+        sandbox = self.current()
+        return self._viewer.started_url(sandbox.ref) if sandbox is not None and self._on() else None
 
     def get_side_panels(self) -> Sequence[SidePanel]:
         return (SidePanel(id='desktop', title='Desktop', icon='panel', view=self._desktop_panel),)

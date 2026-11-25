@@ -1951,7 +1951,8 @@ It retains up to 10,000 items and four million characters, plus a bounded partia
 line. Old output is dropped at those limits; oversized Markdown parts keep their
 rendered tail instead of their source. `/clear` and `/new` forget earlier output,
 so neither the panel nor the exit printout shows it again. Hyperlinks are
-preserved in that printout; Termflow 1.0's live cells do not carry hyperlink metadata.
+preserved in that printout. On the full screen, a click on a link, such as
+`watch live ↗`, opens it in your browser.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
 The status row follows Code Puppy's styling: muted surrounding text, an accented
@@ -1960,8 +1961,10 @@ context warnings keep the warning colour. The same styling applies while idle
 and working.
 
 A plugin can contribute its own fragment from `get_status_segments`, such
-as a branch name. Fragments are muted, grouped under the configurable `plugins`
-field, and dropped when the plugin unloads. See [PLUGINS.md](../PLUGINS.md) for the method and its cost
+as a branch name, or a link that ends in `↗` and opens when clicked. The
+`sandbox` plugin shows `watch live ↗` while computer use is on. Fragments are
+muted, grouped under the configurable `plugins` field, and dropped when the
+plugin unloads. See [PLUGINS.md](../PLUGINS.md) for the method and its cost
 rules.
 
 ### Themes

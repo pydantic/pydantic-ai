@@ -349,6 +349,10 @@ class DesktopViewer:
             f'http://127.0.0.1:{port}/?token={quote(self._token, safe="")}&sandbox={quote(sandbox_key(ref), safe="")}'
         )
 
+    def started_url(self, ref: WorkspaceRef) -> str | None:
+        """The viewer URL for `ref` once the loopback server runs and has its session, never starting the server."""
+        return self.url(ref) if self._server is not None and sandbox_key(ref) in self._sessions else None
+
     def try_url(self, ref: WorkspaceRef) -> str | None:
         """Like `url(ref)`, returning `None` if the loopback server cannot bind a port."""
         try:

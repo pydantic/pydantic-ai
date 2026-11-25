@@ -39,8 +39,10 @@ from pydantic_ai_pax.ui.prompt.image_input import ImageInput
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_ai_pax.ui.prompt.prompt_completion import CompletionWorker
+from pydantic_ai_pax.ui.prompt.prompt_selection import hyperlink
 from pydantic_ai_pax.ui.prompt.prompt_surface import ENTER, KEYS_ON, LEAVE, MODES_OFF, WHEEL_ROWS
 from pydantic_ai_pax.ui.rendering import theme
+from pydantic_ai_pax.ui.rendering.status import Status, StatusLink
 from tests.conftest import no_leaked_tasks
 from tests.pax.surface_terminal import SurfaceTerminal
 
@@ -976,6 +978,31 @@ async def test_wheel_reports_arrive_through_the_decoder() -> None:
         with anyio.fail_after(2):
             while live.output.view.anchor is not None:  # pyright: ignore[reportUnnecessaryComparison] -- changed by input
                 await anyio.sleep(0.01)
+
+
+@pytest.mark.parametrize('inline', [False, True])
+async def test_clicking_a_status_row_link_opens_it(inline: bool) -> None:
+    """Full screen, a click opens it; inline, the mouse is the terminal's, so the row carries an OSC 8 hyperlink."""
+    url = 'http://127.0.0.1:8/?token=t'
+    status = Status(
+        model='m',
+        fields=lambda: ('plugins',),
+        status_segments=(lambda: 'docker sandbox', lambda: StatusLink(text='watch live', url=url)),
+    )
+    terminal = SurfaceTerminal(width=80, height=24)
+    async with editor(output=terminal, toolbar=status.toolbar, inline=inline) as (live, _, _):
+        opened: list[str] = []
+        live.output.open_url = opened.append
+        live.paint()
+        if inline:
+            assert hyperlink('watch live ↗', url=url) in terminal.getvalue()
+            return
+        footer = terminal.lines()[-1]
+        assert footer.strip() == 'docker sandbox | watch live ↗'
+        column = footer.index('watch') + 1
+        live.feed('mouse', f'\x1b[<0;{column};24M')
+        live.feed('mouse', f'\x1b[<0;{column};24m')
+        assert opened == [url]
 
 
 async def test_a_mouse_drag_copies_the_transcript_without_touching_the_draft() -> None:

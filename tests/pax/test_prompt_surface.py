@@ -715,6 +715,24 @@ def test_clicking_a_url_opens_it() -> None:
     assert len(screen.opened) == 3, 'a drag over a URL selects it instead'
 
 
+def test_clicking_a_hyperlink_opens_its_target() -> None:
+    """Painted cells drop OSC 8 hyperlinks, so the frame keeps which cells each one covers, as a computer row's link."""
+    screen = Screen(width=60, height=10)
+    screen.surface.paint(ROWS)
+    row = Text('2 actions · ')
+    row.append('watch live ↗', style='link http://127.0.0.1:8/?token=t')
+    row.append(' · ')
+    row.append('notes', style='link file:///etc/hosts')
+    Console(file=screen.surface, force_terminal=True, color_system='truecolor', width=60).print(row)
+    screen.now += FRAME_INTERVAL
+    screen.surface.refresh()
+    assert screen.lines()[0] == '2 actions · watch live ↗ · notes'
+    assert click(screen, 13, 1) == ['http://127.0.0.1:8/?token=t'], 'the first cell'
+    assert click(screen, 24, 1) == ['http://127.0.0.1:8/?token=t'], 'the arrow'
+    assert click(screen, 25, 1) == []
+    assert click(screen, 28, 1) == [], 'other schemes open only through the terminal'
+
+
 def test_clicking_a_url_wrapped_across_rows_opens_all_of_it() -> None:
     url = 'https://github.com/pydantic/pydantic-ai/pull/9936/files'
     screen = Screen(width=20, height=12)

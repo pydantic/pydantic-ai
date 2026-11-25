@@ -14,7 +14,17 @@ from termflow.live import Rect, ScreenBuffer, render_diff
 from termflow.tui.layout import truncate
 
 from pydantic_ai_pax.ui.browser import open_browser
-from pydantic_ai_pax.ui.prompt.prompt_selection import LEFT, WHEEL_DOWN, WHEEL_UP, Selection, mouse_report, url_at
+from pydantic_ai_pax.ui.prompt.prompt_selection import (
+    LEFT,
+    WHEEL_DOWN,
+    WHEEL_UP,
+    PaintedLink,
+    Selection,
+    link_at,
+    mouse_report,
+    paint_row,
+    url_at,
+)
 from pydantic_ai_pax.ui.prompt.prompt_transcript import MarkdownBlock, Render, TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.text_clipboard import copy_text
 from pydantic_ai_pax.ui.prompt.transcript_view import SCROLLED_HINT, TranscriptView
@@ -107,6 +117,8 @@ class PromptSurface(io.StringIO):
         self.selection = Selection()
         self._frame: ScreenBuffer | None = None
         """The cells last painted, which a selection copies from."""
+        self._links: list[PaintedLink] = []
+        """The hyperlinks last painted, in the transcript and the pinned rows, which a click opens."""
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript."""
         self._hint_on_transcript = False
@@ -247,7 +259,7 @@ class PromptSurface(io.StringIO):
         Reporting the wheel stops most terminals from selecting text themselves, so a left-button
         drag highlights cells here and its release copies them to the clipboard. It also stops them
         opening links on Cmd/Ctrl+click, and mouse reports cannot say Cmd was held, so a click
-        without a drag on a URL opens it here.
+        without a drag on a hyperlink, such as a status row link, or on a transcript URL opens it here.
         """
         if key != 'mouse':
             self.scroll(self.page if key == 'pageup' else -self.page)
@@ -276,7 +288,9 @@ class PromptSurface(io.StringIO):
 
     def _url_at(self, cell: tuple[int, int]) -> str | None:
         assert self._frame is not None
-        return url_at(self._frame, cell, rows=self._transcript_rows - self._hint_on_transcript, joins=self.view.joins())
+        return link_at(self._links, cell) or url_at(
+            self._frame, cell, rows=self._transcript_rows - self._hint_on_transcript, joins=self.view.joins()
+        )
 
     def _paint_soon(self) -> None:
         """Paint once the event loop finishes the current callback, or now outside one.
@@ -371,13 +385,15 @@ class PromptSurface(io.StringIO):
         bottom = height - len(rows)
         frame = ScreenBuffer(width, height)
         self.view.draw(frame.region(Rect(0, 0, width, bottom)), False)
+        links = [*self.view.links]
         for index, row in enumerate(rows):
-            frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
+            paint_row(frame.region(Rect(0, bottom + index, width, 1)), y=0, row=row, links=links)
         # A URL the hint covers part of is not opened.
         self._hint_on_transcript = self.view.anchor is not None and _show_scrolled_hint(frame, top=bottom)
         self.selection.highlight(frame, rows=height if self._select_pinned else bottom, previous=self._frame)
         parts.append(render_diff(self._previous, frame))
         self._previous = self._frame = frame
+        self._links = links
         self._transcript_rows = bottom
         self._dirty = False
         self._painted_at = self.clock()

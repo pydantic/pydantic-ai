@@ -77,6 +77,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.viewer import (
 from pydantic_ai_pax.builtin_plugins.web import server as web_server
 from pydantic_ai_pax.config import PERMISSIONS_SETTING
 from pydantic_ai_pax.plugins import SessionEnd, Transcript
+from pydantic_ai_pax.ui.rendering.status import StatusLink
 
 # `checkout`, `isolated_git_config`, `provider`, and `upstream` are fixtures shared with `/sandbox`'s tests.
 from tests.pax.test_sandbox import (
@@ -103,9 +104,19 @@ def display(provider: FakeProvider) -> FakeDisplay:
     return screen
 
 
+class StubServer:
+    """A viewer server that is running on `port` without binding it."""
+
+    def __init__(self, port: int) -> None:
+        self.port = port
+
+    async def stop(self) -> None:
+        pass
+
+
 def stub_viewer_port(monkeypatch: pytest.MonkeyPatch, plugin: SandboxPlugin, port: int) -> None:
     """Skip binding a real port; `test_desktop_viewer_app_end_to_end` serves the viewer for real."""
-    monkeypatch.setattr(plugin._viewer, 'ensure_started', lambda: port)  # pyright: ignore[reportPrivateUsage]
+    monkeypatch.setattr(plugin._viewer, '_server', StubServer(port))  # pyright: ignore[reportPrivateUsage]
 
 
 def viewer_frames(plugin: SandboxPlugin, ref: WorkspaceRef) -> list[DesktopFrame] | None:
@@ -249,14 +260,14 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     session.replace_messages([])
     armed = await plugin.computer_use_command([])
     assert 'Computer use is on' in armed
-    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use']
+    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use', '']
 
     started = await plugin.command(['fake'])
     assert 'Fake sandbox sbx-1' in started
     assert 'Computer use is on' in started
     assert provider.created == [GitHubCredential(login='Ada', token='gho_secret')]
     assert provider.created_desktop == [True]
-    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox (computer-use)']
+    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox (computer-use)', '']
     ref = history_sandbox(session.messages)
     assert ref is not None
     assert ref == WorkspaceRef(provider='fake', id='sbx-1')
@@ -275,15 +286,20 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     assert frame.summary == 'click (120, 240) · type "hi"'
     assert frame.markers == (ActionMarker(kind='click', points=((120, 240),), label='click (120, 240)'),)
 
-    # The `computer` result row links to the loopback viewer.
+    # The `computer` result row links to the loopback viewer, and so does the status row while the viewer runs.
     rendered = plugin.render(ActionsPerformedEvent(result=ComputerResult(performed=2)))
     assert rendered is not None
     assert '2 actions · screenshot · watch live ↗' in render_plain(rendered)
+    live_url = plugin._viewer.url(ref)  # pyright: ignore[reportPrivateUsage]
+    assert [segment() for segment in plugin.get_status_segments()] == [
+        'fake sandbox',
+        StatusLink(text='watch live', url=live_url),
+    ]
 
     # Toggling `/computer-use` off disables the `computer` tool while keeping the sandbox running, and survives resume and compaction.
     disabled = await plugin.computer_use_command([])
     assert 'Computer use is off' in disabled
-    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox']
+    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox', '']
     await session.prompt('without desktop')
     assert 'computer' not in seen_tools[-1]
 
@@ -291,7 +307,7 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     compacted_messages = session.messages[-2:]
     resumed_off_loaded = load(work, Transcript(messages=compacted_messages))
     resumed_off = plugin_of(resumed_off_loaded)
-    assert [segment() for segment in resumed_off.get_status_segments()] == ['fake sandbox']
+    assert [segment() for segment in resumed_off.get_status_segments()] == ['fake sandbox', '']
     resumed_off_session = Session(agent, deps=None, plugins=resumed_off_loaded.capabilities, workspace=work)
     resumed_off_session.replace_messages(list(compacted_messages))
     await resumed_off_session.prompt('still without desktop after compaction and restart')
@@ -351,9 +367,9 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert 'Computer use is on' in await plugin.computer_use_command(['on'])
     assert 'Computer use is off' in await plugin.computer_use_command(['off'])
     await plugin.computer_use_command(['on'])
-    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use']
+    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use', '']
     plugin.host.conversation = Transcript(conversation_id='c-2')
-    assert [segment() for segment in plugin.get_status_segments()] == ['']
+    assert [segment() for segment in plugin.get_status_segments()] == ['', '']
 
     # Retroactive attach (`desktop_at_create=False`): works immediately even after user turns have run, and survives resume.
     await plugin.command(['fake'])
@@ -372,7 +388,7 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert 'computer use on' in await plugin.command([])
     assert await on_screen_sandbox(plugin).screenshot() == PNG_A
     retro_resumed = plugin_of(load(work, Transcript(messages=plugin.host.conversation.messages)))
-    assert [segment() for segment in retro_resumed.get_status_segments()] == ['fake sandbox (computer-use)']
+    assert [segment() for segment in retro_resumed.get_status_segments()] == ['fake sandbox (computer-use)', '']
     assert await on_screen_sandbox(retro_resumed).screenshot() == PNG_A
     assert provider.reopened[-1] == WorkspaceRef(provider='fake', id='sbx-1') and provider.reopened_desktop[-1]
 
