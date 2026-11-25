@@ -589,8 +589,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         Each response is opened and closed by `_with_boundaries`.
         """
-        async for event in self._with_boundaries(self._live_model_events(), live=True):
-            yield event
+        async with aclosing(self._with_boundaries(self._live_model_events(), live=True)) as live_events:
+            async for event in live_events:
+                yield event
         if self._replacement_response is None:
             return
 
@@ -602,8 +603,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             self._raw_stream_response = models.CompletedStreamedResponse(
                 response, model_request_parameters=self._model_request_parameters, replay_events=True
             )
-            async for event in self._with_boundaries(self._replacement_events(), live=False):
-                yield event
+            async with aclosing(self._with_boundaries(self._replacement_events(), live=False)) as replacement_events:
+                async for event in replacement_events:
+                    yield event
 
     async def _live_model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """The model stream's events, until it ends or is abandoned for a replacement, stamped with their origin."""
@@ -650,6 +652,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             if started:
                 yield self._response_end_event('failed', error=error)
             raise
+        finally:
+            await _utils.aclose_if_supported(events)
         if started:
             cut_short = live and self._replacement_response is not None and not self._model_stream_finished
             interrupted = cut_short or self._raw_stream_response.get().state == 'interrupted'

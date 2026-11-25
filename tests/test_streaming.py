@@ -7896,7 +7896,15 @@ async def test_stream_response_state_incomplete_after_early_break():
     [
         pytest.param(
             None,
-            snapshot(['AgentStream._events_iter', 'AgentStream._model_events', 'dispatch_event_stream']),
+            snapshot(
+                [
+                    'AgentStream._events_iter',
+                    'AgentStream._live_model_events',
+                    'AgentStream._model_events',
+                    'AgentStream._with_boundaries',
+                    'dispatch_event_stream',
+                ]
+            ),
             id='no-limits',
         ),
         pytest.param(
@@ -7904,7 +7912,9 @@ async def test_stream_response_state_incomplete_after_early_break():
             snapshot(
                 [
                     'AgentStream._events_iter',
+                    'AgentStream._live_model_events',
                     'AgentStream._model_events',
+                    'AgentStream._with_boundaries',
                     '_get_usage_checking_stream_response.<locals>._usage_checking_iterator',
                     'dispatch_event_stream',
                 ]
