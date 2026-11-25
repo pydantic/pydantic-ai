@@ -32,7 +32,7 @@ class RecordsStated:
     signature stay as they are. The record is a plain attribute, not a field, so it is not in `repr`,
     equality, the agent spec or its schema. `copy` and `deepcopy` keep it. `dataclasses.replace()` and
     `from_spec` call the constructor, so they record what they pass: `from_spec` the spec's own arguments,
-    and `replace()` every field.
+    and `replace()` every field, so a `replace()`d copy counts every field as stated, on every Python version.
     """
 
     __dataclass_fields__: ClassVar[dict[str, Field[Any]]]

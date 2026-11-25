@@ -19,13 +19,13 @@ from pydantic_ai_harness.shell import Shell
 
 
 def _shell(*shells: Shell[None]) -> Shell[None]:
-    merged = Shell.combine(list(shells))
+    merged = Shell[None].combine(list(shells))
     assert isinstance(merged, Shell)
     return merged
 
 
 def _file_system(*file_systems: FileSystem[None]) -> FileSystem[None]:
-    merged = FileSystem.combine(list(file_systems))
+    merged = FileSystem[None].combine(list(file_systems))
     assert isinstance(merged, FileSystem)
     return merged
 
