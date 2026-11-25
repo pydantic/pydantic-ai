@@ -586,6 +586,31 @@ class TestDurableJob:
             await toolset.start_command(ctx, command)
         assert (shell_dir / 'side-effects.txt').read_text().splitlines() == ['one']
 
+    async def test_launcher_the_shell_cannot_start_is_not_a_pending_launch(self, shell_dir: Path) -> None:
+        """A shell exits 126 when it cannot start the launcher, as an SSH host's does for an argument over 128 KiB."""
+        toolset = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(_LauncherNotStarted(shell_dir)))
+        ctx.run_id = 'durable-run'
+        ctx.tool_call_id = 'launch-1'
+        with pytest.raises(
+            ModelRetry, match=r'^Shell supervisor exited with 126: sh: 1: exec: sh: Argument list too long$'
+        ):
+            await toolset.start_command(ctx, 'echo one')
+
+
+class _LauncherNotStarted(LocalWorkspaceBackend):
+    """A backend whose shell cannot start the launcher, the one command the test runs."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        return CommandResult(exit_code=126, stdout='', stderr='sh: 1: exec: sh: Argument list too long\n')
+
 
 class TestDurableCwd:
     async def test_run_cwd_rehydrates_from_workspace_without_leaking(
@@ -2672,7 +2697,7 @@ class _WindowsCommandsBackend:
     workspace_platform = 'windows'
 
     async def working_dir(self) -> str:
-        raise NotImplementedError
+        return 'C:\\project'
 
     async def run(
         self,

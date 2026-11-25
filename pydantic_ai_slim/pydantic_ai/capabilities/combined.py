@@ -43,6 +43,7 @@ from .abstract import (
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
     _combination_roots,  # pyright: ignore[reportPrivateUsage]
+    _LoweredInstructionSource,  # pyright: ignore[reportPrivateUsage]
     _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 from .wrapper import WrapperCapability
@@ -375,10 +376,25 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         is answered by its children rather than routed back into its own override.
         """
         instructions: list[SourcedInstruction[AgentDepsT]] = []
+        lowered = {id(source.capability) for source in self._lowered_instruction_sources()}
         for capability in self._ordered_instruction_sources():
-            if capability.defer_loading is not True:
+            # A capability below operator authority states its instructions in history instead.
+            if capability.defer_loading is not True and id(capability) not in lowered:
                 instructions.extend(capability._collect_instructions())
         return instructions
+
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
+        # Each source is judged on its own: `with_authority` lowers a container's children too. A container whose
+        # subclass took `get_instructions` over decides what it says instead of its lowered children, whose toolsets'
+        # instructions are still stated; below operator authority, what it says is a block of its own.
+        children = [
+            source
+            for capability in self._ordered_instruction_sources()
+            for source in capability._lowered_instruction_sources()
+        ]
+        if type(self).get_instructions is CombinedCapability.get_instructions:
+            return children
+        return [*super()._lowered_instruction_sources(), *self._replace_lowered_instructions(children)]
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
         # Collect settings in order, preserving each capability's position in the merge chain.

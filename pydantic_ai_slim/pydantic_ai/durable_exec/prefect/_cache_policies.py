@@ -12,7 +12,14 @@ from pydantic import BaseModel
 
 from pydantic_ai import ToolsetTool
 from pydantic_ai._utils import TOOL_CALL_ID_PREFIX
-from pydantic_ai.messages import CapabilityPart, CapabilitySource
+from pydantic_ai.messages import (
+    AgentInstructionSource,
+    CapabilityInstructionSource,
+    CapabilityPart,
+    CapabilitySource,
+    RunInstructionSource,
+    ToolsetInstructionSource,
+)
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 _NON_SERIALIZABLE = '<non-serializable>'
@@ -181,6 +188,16 @@ _CAPABILITY_PART_EXCLUDED_FIELDS = frozenset({'timestamp', 'record_id'})
 Excluded on every kind, which is usually defined outside `pydantic_ai`; the kind's own fields stay in the key.
 """
 
+_INSTRUCTION_SOURCE_EXCLUDED_FIELDS = frozenset({'kind'})
+"""An instruction source's type tag, left out so the keys of instruction ids stay what they were before it was added."""
+
+_INSTRUCTION_SOURCE_TYPES = (
+    AgentInstructionSource,
+    ToolsetInstructionSource,
+    CapabilityInstructionSource,
+    RunInstructionSource,
+)
+
 _SYNTHETIC_CAPABILITY_ID = re.compile(r'<[a-z0-9_]+:[0-9a-f]{6}>')
 """The key a run gives a capability with no `id`, which differs every run (`_synthetic_capability_id`)."""
 
@@ -202,6 +219,16 @@ def _normalized_field_value(obj: object, name: str, value: Any, *, is_framework:
     return value
 
 
+def _excluded_fields(obj: object, *, is_framework: bool) -> frozenset[str]:
+    """The fields of dataclass `obj` left out of its key."""
+    excluded_fields: frozenset[str] = _CACHE_EXCLUDED_FIELDS if is_framework else frozenset()
+    if isinstance(obj, CapabilityPart):
+        excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
+    elif isinstance(obj, _INSTRUCTION_SOURCE_TYPES):
+        excluded_fields |= _INSTRUCTION_SOURCE_EXCLUDED_FIELDS
+    return excluded_fields
+
+
 def _strip_cache_excluded_fields(
     obj: Any | dict[str, Any] | list[Any] | tuple[Any, ...],
 ) -> Any:
@@ -215,9 +242,7 @@ def _strip_cache_excluded_fields(
         result: dict[str, Any] = {}
         module = type(obj).__module__
         is_framework = module == 'pydantic_ai' or module.startswith('pydantic_ai.')
-        excluded_fields: frozenset[str] = _CACHE_EXCLUDED_FIELDS if is_framework else frozenset()
-        if isinstance(obj, CapabilityPart):
-            excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
+        excluded_fields = _excluded_fields(obj, is_framework=is_framework)
         for f in fields(obj):
             if f.name not in excluded_fields:
                 value = _normalized_field_value(obj, f.name, getattr(obj, f.name), is_framework=is_framework)
