@@ -67,7 +67,6 @@ from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import (
     render_computer_event,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.providers import (
-    PROVIDERS,
     GitHubCredential,
     boxd as boxd_provider,
     daytona as daytona_provider,
@@ -91,7 +90,6 @@ from pydantic_ai_pax.builtin_plugins.sandbox.viewer import (
     sandbox_key,
 )
 from pydantic_ai_pax.plugins import LoadedPlugin, PluginHost, SessionEnd, Transcript, load_plugin
-from tests.pax.dialog_script import Back, Pick, ScriptedDialogs
 from tests.pax.test_sandbox import git
 
 
@@ -172,6 +170,7 @@ class FakeDesktopProvider:
     token_in_sandbox: bool = False
     has_desktop_url: bool = False
     desktop_url_is_bearer: bool = False
+    desktop_at_create: bool = False
     requirement: str | None = None
     live_url_value: str | None = None
     live_url_error: Exception | None = None
@@ -236,11 +235,6 @@ def _gh_token(hostname: str) -> str:
 def _gh_user(hostname: str) -> str:
     del hostname
     return 'Ada'
-
-
-def _no_gh_token(hostname: str) -> None:
-    del hostname
-    return None
 
 
 @pytest.fixture(autouse=True)
@@ -378,8 +372,21 @@ def test_action_formatting_markers_and_rendering() -> None:
 
     ok_one = render_computer_event(ActionsPerformedEvent(result=ComputerResult(performed=1)))
     assert ok_one is not None and '1 action · screenshot' in render_plain(ok_one)
-    ok_many = render_computer_event(ActionsPerformedEvent(result=ComputerResult(performed=3)))
-    assert ok_many is not None and '3 actions · screenshot' in render_plain(ok_many)
+    ok_many = render_computer_event(
+        ActionsPerformedEvent(result=ComputerResult(performed=3)),
+        live_url='http://127.0.0.1:9999/?token=t&sandbox=s',
+        show_hint=True,
+    )
+    assert ok_many is not None
+    rendered_many = render_plain(ok_many)
+    assert '3 actions · screenshot · watch live ↗ (/computer-use view)' in rendered_many
+    ok_no_hint = render_computer_event(
+        ActionsPerformedEvent(result=ComputerResult(performed=2)),
+        live_url='http://127.0.0.1:9999/?token=t&sandbox=s',
+    )
+    assert ok_no_hint is not None
+    assert '2 actions · screenshot · watch live ↗' in render_plain(ok_no_hint)
+    assert '/computer-use view' not in render_plain(ok_no_hint)
     err = render_computer_event(ActionsPerformedEvent(result=ComputerResult(performed=0, error='bad\x1bkey')))
     assert err is not None and 'bad\\x1bkey' in render_plain(err)
 
@@ -388,16 +395,20 @@ def test_action_formatting_markers_and_rendering() -> None:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end `/computer-use` lifecycle, capability activation, resume & viewer
+# End-to-end `/computer-use` toggle, inline live view, resume & `/sandbox delete`
 # ---------------------------------------------------------------------------
 
 
-async def test_computer_use_end_to_end_and_resume(
-    checkout: tuple[Path, Path], desktop_provider: FakeDesktopProvider
+@pytest.mark.moves_cache_prefix(
+    reason='Toggles /computer-use off and back on mid-conversation, intentionally changing offered tools and instructions.'
+)
+async def test_computer_use_end_to_end_toggle_and_resume(
+    checkout: tuple[Path, Path], desktop_provider: FakeDesktopProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     work, _ = checkout
     loaded = load(work)
     plugin = plugin_of(loaded)
+    monkeypatch.setattr(plugin._viewer, 'ensure_started', lambda: 43219)  # pyright: ignore[reportPrivateUsage]
 
     seen_tools: list[list[str]] = []
 
@@ -417,19 +428,22 @@ async def test_computer_use_end_to_end_and_resume(
     await session.prompt('local turn')
     assert 'computer' not in seen_tools[-1]
 
-    # Start a desktop sandbox on a fresh conversation.
+    # Arm `/computer-use`, then start `/sandbox fake` — `/sandbox` creates it with `desktop=True`.
     session.replace_messages([])
-    started = await plugin.computer_use_command(['fake'])
-    assert 'Fake desktop sandbox sbx-1' in started
-    assert 'Desktop enabled (1280x800)' in started
-    assert '/computer-use view' in started
+    armed = await plugin.computer_use_command([])
+    assert 'Computer use enabled' in armed
+    assert plugin._segment() == 'computer-use'  # pyright: ignore[reportPrivateUsage]
+
+    started = await plugin.command(['fake'])
+    assert 'Fake sandbox sbx-1' in started
+    assert 'Computer use enabled (1280x800 desktop)' in started
     assert desktop_provider.created == [(GitHubCredential(login='Ada', token='gho_secret'), True)]
-    assert plugin._segment() == 'fake desktop'  # pyright: ignore[reportPrivateUsage]
+    assert plugin._segment() == 'fake sandbox · computer-use'  # pyright: ignore[reportPrivateUsage]
     ref = history_sandbox(session.messages)
     assert ref is not None
     assert ref == WorkspaceRef(provider='fake-desktop', id='sbx-1') and is_desktop_ref(ref)
 
-    # Now a turn receives `computer`, executes actions on the FakeDisplay, and records the frame in the viewer.
+    # Now a turn receives `computer`, starts the loopback viewer lazily, executes actions, and records the frame.
     result = await session.prompt('click and type')
     assert 'computer' in seen_tools[-1]
     assert result.response.workspace_ref == WorkspaceRef(provider='fake-desktop', id='sbx-1')
@@ -437,7 +451,8 @@ async def test_computer_use_end_to_end_and_resume(
     [first_req] = [m for m in result.new_messages() if isinstance(m, ModelRequest)][:1]
     assert 'graphical desktop' in (first_req.instructions or '')
 
-    viewer_session = plugin._viewer.get(sandbox_key(ref))  # pyright: ignore[reportPrivateUsage]
+    viewer_key = sandbox_key(WorkspaceRef(provider='fake', id='sbx-1'))
+    viewer_session = plugin._viewer.get(viewer_key)  # pyright: ignore[reportPrivateUsage]
     assert viewer_session is not None
     assert len(viewer_session.frames) == 1
     assert viewer_session.frames[0].png == PNG_A
@@ -446,11 +461,31 @@ async def test_computer_use_end_to_end_and_resume(
         ActionMarker(kind='click', points=((120, 240),), label='click (120, 240)'),
     )
 
-    # Render hook delegates to render_computer_event.
-    assert plugin.render(ActionsPerformedEvent(result=ComputerResult(performed=2))) is not None
+    # Render hook surfaces the inline `watch live ↗` link with a one-time `(/computer-use view)` hint.
+    first_render = plugin.render(ActionsPerformedEvent(result=ComputerResult(performed=2)))
+    assert first_render is not None
+    assert 'watch live ↗ (/computer-use view)' in render_plain(first_render)
+    second_render = plugin.render(ActionsPerformedEvent(result=ComputerResult(performed=1)))
+    assert second_render is not None
+    assert 'watch live ↗' in render_plain(second_render)
+    assert '/computer-use view' not in render_plain(second_render)
 
-    # Non-desktop ref is ignored by _record_frame, and _ObservedComputerUse handles missing actions/screenshots.
-    plugin._record_frame(WorkspaceRef(provider='fake', id='sbx-1'), PNG_A, (), None)  # pyright: ignore[reportPrivateUsage]
+    # Toggling `/computer-use` off disables the `computer` tool while keeping the sandbox running.
+    disabled = await plugin.computer_use_command([])
+    assert 'Computer use disabled' in disabled
+    assert plugin._segment() == 'fake sandbox'  # pyright: ignore[reportPrivateUsage]
+    await session.prompt('without desktop')
+    assert 'computer' not in seen_tools[-1]
+
+    # Toggling `/computer-use` back on re-enables immediately without recreating the sandbox.
+    reenabled = await plugin.computer_use_command([])
+    assert 'Computer use enabled' in reenabled
+    assert len(desktop_provider.created) == 1
+    await session.prompt('back with desktop')
+    assert 'computer' in seen_tools[-1]
+
+    # Non-desktop/unowned refs are ignored, and _ObservedComputerUse handles missing actions/screenshots.
+    plugin._record_frame(WorkspaceRef(provider='other', id='sbx-1'), PNG_A, (), None)  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai import FunctionToolResultEvent, RunContext
     from pydantic_ai.capabilities import AbstractCapability
     from pydantic_ai.computer_use import ComputerReturnPart
@@ -489,101 +524,78 @@ async def test_computer_use_end_to_end_and_resume(
     unrelated = plugin_of(load(work, Transcript(messages=[])))
     assert unrelated._viewer_session(unrelated.sandbox(ref)).frames == []  # pyright: ignore[reportPrivateUsage]
 
-    # `/computer-use delete` deletes the sandbox, removes its viewer session, and closes cleanly.
-    deleted = await plugin.computer_use_command(['delete'])
+    # `/sandbox delete` is the single delete command; it removes the viewer session and closes cleanly.
+    deleted = await plugin.command(['delete'])
     assert 'Deleted Fake sandbox sbx-1' in deleted
     assert desktop_provider.deleted == [ref]
-    assert plugin._viewer.get(sandbox_key(ref)) is None  # pyright: ignore[reportPrivateUsage]
+    assert plugin._viewer.get(viewer_key) is None  # pyright: ignore[reportPrivateUsage]
     await plugin.on_session_end(SessionEnd(reason='exit'))
     await resumed.on_session_end(SessionEnd(reason='exit'))
 
 
-async def test_computer_use_commands_picker_and_errors(
-    checkout: tuple[Path, Path], desktop_provider: FakeDesktopProvider, monkeypatch: pytest.MonkeyPatch
+async def test_computer_use_toggle_upgrade_and_errors(
+    checkout: tuple[Path, Path], desktop_provider: FakeDesktopProvider
 ) -> None:
     work, _ = checkout
-    # Non-terminal bare `/computer-use` lists providers.
     plugin = plugin_of(load(work))
-    assert list(plugin.computer_use_complete([])) == ['fake', 'view', 'delete']
-    assert list(plugin.computer_use_complete(['fake', ''])) == []
-    assert '/computer-use fake' in await plugin.computer_use_command([])
+    assert list(plugin.computer_use_complete([])) == ['on', 'off', 'view']
+    assert list(plugin.computer_use_complete(['on', ''])) == []
 
-    with pytest.raises(ValueError, match=r'^Usage: /computer-use \[fake \| view \| delete\]$'):
+    with pytest.raises(ValueError, match=r'^Usage: /computer-use \[on \| off \| view\]$'):
         await plugin.computer_use_command(['unknown'])
 
-    # Already has local messages -> refuses bare `/computer-use`.
-    busy = plugin_of(load(work, Transcript(messages=[ModelRequest.user_text_prompt('hi')])))
-    with pytest.raises(ValueError, match=r'Run /new, then /computer-use PROVIDER'):
-        await busy.computer_use_command([])
+    # Local conversation arm/disarm and automatic disarm when switching to another conversation.
+    assert 'already off' in await plugin.computer_use_command(['off'])
+    assert 'Computer use enabled' in await plugin.computer_use_command(['on'])
+    assert 'Computer use disabled' in await plugin.computer_use_command(['off'])
+    await plugin.computer_use_command(['on'])
+    assert plugin._segment() == 'computer-use'  # pyright: ignore[reportPrivateUsage]
+    plugin.host.conversation = Transcript(conversation_id='c-2')
+    assert plugin._segment() == ''  # pyright: ignore[reportPrivateUsage]
 
-    # Terminal bare `/computer-use` opens the interactive provider picker; Back cancels, Pick starts it.
-    unready = FakeDesktopProvider(
-        desktop_provider.root,
-        desktop_provider.upstream,
-        name='other',
-        title='Other',
-        requirement='Add OTHER_API_KEY in /keys.',
-        has_desktop_url=True,
+    # Retroactive attach (`desktop_at_create=False`): works immediately even after user turns have run.
+    await plugin.command(['fake'])
+    await plugin.host.conversation.commit_messages(
+        [*plugin.host.conversation.messages, ModelRequest.user_text_prompt('ran a turn')]
     )
-    monkeypatch.setattr(sandbox, 'PROVIDERS', {'fake': desktop_provider, 'other': unready})
+    assert 'already off' in await plugin.computer_use_command(['off'])
+    enabled = await plugin.computer_use_command(['on'])
+    assert 'Computer use enabled for Fake sandbox sbx-1' in enabled
+    assert 'already enabled' in await plugin.computer_use_command(['on'])
+    assert 'computer use on' in await plugin.command([])
+    assert await plugin.sandbox(WorkspaceRef(provider='fake-desktop', id='sbx-1')).capture_screen() == PNG_A
 
-    term_plugin = plugin_of(load(work, terminal=True))
-    back_dialogs = ScriptedDialogs([Back()])
-
-    def make_back(runners: object) -> ScriptedDialogs:
-        del runners
-        return back_dialogs
-
-    monkeypatch.setattr(sandbox, 'TerminalDialogs', make_back)
-    assert await term_plugin.computer_use_command([]) == ''
-    assert [(a.kind, a.title) for a in back_dialogs.asked] == [('choose', 'Start a computer-use desktop sandbox')]
-
-    pick_dialogs = ScriptedDialogs([Pick(value='fake')])
-
-    def make_pick(runners: object) -> ScriptedDialogs:
-        del runners
-        return pick_dialogs
-
-    monkeypatch.setattr(sandbox, 'TerminalDialogs', make_pick)
-    started = await term_plugin.computer_use_command([])
-    assert 'Fake desktop sandbox sbx-1' in started
-
-    # Bare `/computer-use`, bare `/sandbox`, and duplicate `/computer-use` on an active desktop sandbox.
-    assert 'Fake desktop sandbox sbx-1' in await term_plugin.computer_use_command([])
-    assert 'Fake desktop sandbox sbx-1' in await term_plugin.command([])
-    assert 'already runs in Fake desktop sandbox sbx-1' in await term_plugin.computer_use_command(['fake'])
-    with pytest.raises(ValueError, match='Run /new first'):
-        await term_plugin.computer_use_command(['other'])
-
-    # After delete, bare `/computer-use` and `/computer-use view` report deleted.
-    await term_plugin.computer_use_command(['delete'])
-    assert 'now deleted' in await term_plugin.computer_use_command([])
+    # Deleted sandbox refuses `/computer-use` and `/computer-use view`.
+    await plugin.command(['delete'])
     with pytest.raises(ValueError, match='was deleted'):
-        await term_plugin.computer_use_command(['view'])
+        await plugin.computer_use_command([])
+    with pytest.raises(ValueError, match='was deleted'):
+        await plugin.computer_use_command(['view'])
 
-    # Starting `/computer-use` when already in a plain `/sandbox` fails cleanly.
-    plain_plugin = plugin_of(load(work))
-    await plain_plugin.command(['fake'])
-    assert 'without a desktop' in await plain_plugin.computer_use_command([])
-    with pytest.raises(ValueError, match='without a desktop'):
-        await plain_plugin.computer_use_command(['fake'])
-    with pytest.raises(ValueError, match='has no computer-use desktop'):
-        await plain_plugin.computer_use_command(['view'])
+    # `desktop_at_create=True` on an UNUSED sandbox automatically restarts it with `desktop=True` (no `/new` needed).
+    desktop_provider.desktop_at_create = True
+    upgrade_plugin = plugin_of(load(work))
+    await upgrade_plugin.command(['fake'])
+    assert history_sandbox(upgrade_plugin.host.conversation.messages) == WorkspaceRef(provider='fake', id='sbx-2')
+    upgraded = await upgrade_plugin.computer_use_command([])
+    assert 'restarted unused Fake sandbox with a desktop (sbx-3)' in upgraded
+    assert history_sandbox(upgrade_plugin.host.conversation.messages) == WorkspaceRef(
+        provider='fake-desktop', id='sbx-3'
+    )
+    assert desktop_provider.deleted[-1] == WorkspaceRef(provider='fake', id='sbx-2')
+
+    # `desktop_at_create=True` on an ALREADY USED sandbox refuses safely without losing work.
+    used_plugin = plugin_of(load(work))
+    await used_plugin.command(['fake'])
+    await used_plugin.host.conversation.commit_messages(
+        [*used_plugin.host.conversation.messages, ModelRequest.user_text_prompt('prior work')]
+    )
+    with pytest.raises(ValueError, match=r'already has conversation work.*Run /new, /computer-use, then /sandbox fake'):
+        await used_plugin.computer_use_command(['on'])
+    with pytest.raises(ValueError, match='Computer use is not active'):
+        await used_plugin.computer_use_command(['view'])
     with pytest.raises(UserError, match='has no desktop display'):
-        await plain_plugin.sandbox(WorkspaceRef(provider='fake', id='sbx-2')).capture_screen()
-
-    # No-GitHub message mentions `/computer-use delete`.
-    monkeypatch.setattr(sandbox, 'gh_token', _no_gh_token)
-    no_gh_plugin = plugin_of(load(work))
-    started_no_gh = await no_gh_plugin.computer_use_command(['fake'])
-    assert 'Run /computer-use delete and gh auth login' in started_no_gh
-
-    # `/computer-use local` reports local engine options.
-    monkeypatch.setattr(sandbox, 'PROVIDERS', PROVIDERS)
-    monkeypatch.setattr(local_provider, 'find_spec', _not_installed)
-    local_msg = await plugin_of(load(work)).computer_use_command(['local'])
-    assert '/computer-use local smol (SmolVM)' in local_msg
-    assert 'SmolVM:' in local_msg
+        await used_plugin.sandbox(WorkspaceRef(provider='fake', id='sbx-4')).capture_screen()
 
 
 async def test_view_native_url_fallback_and_side_panel(
@@ -598,17 +610,18 @@ async def test_view_native_url_fallback_and_side_panel(
 
     monkeypatch.setattr(sandbox, 'open_browser', fake_open)
 
-    # Side panel before starting desktop returns instructional note.
+    # Side panel before enabling computer use returns instructional note.
     plugin = plugin_of(load(work, terminal=True))
     [panel] = plugin.get_side_panels()
     assert panel.id == 'desktop'
     note_view = await panel.view()
-    assert note_view.url is None and '/computer-use PROVIDER' in note_view.note
+    assert note_view.url is None and '/computer-use' in note_view.note
 
     # Provider with native live desktop URL -> `/computer-use view` opens it via a private redirect file (no token in argv).
     desktop_provider.has_desktop_url = True
     desktop_provider.live_url_value = 'https://console.example/desktop/sbx-1'
-    await plugin.computer_use_command(['fake'])
+    await plugin.computer_use_command(['on'])
+    await plugin.command(['fake'])
     msg = await plugin.computer_use_command(['view'])
     assert msg == 'Opened live desktop in your browser: https://console.example/desktop/sbx-1'
     assert len(opened) == 1 and opened[0].startswith('file://')
@@ -633,7 +646,8 @@ async def test_view_native_url_fallback_and_side_panel(
     desktop_provider.desktop_url_is_bearer = True
     bearer_plugin = plugin_of(load(work, terminal=True))
     monkeypatch.setattr(bearer_plugin._viewer, 'ensure_started', lambda: 43212)  # pyright: ignore[reportPrivateUsage]
-    await bearer_plugin.computer_use_command(['fake'])
+    await bearer_plugin.computer_use_command(['on'])
+    await bearer_plugin.command(['fake'])
     bearer_msg = await bearer_plugin.computer_use_command(['view'])
     assert bearer_msg.startswith('Opened desktop viewer in your browser: http://127.0.0.1:43212/?token=')
     await bearer_plugin.on_session_end(SessionEnd(reason='exit'))
@@ -644,7 +658,8 @@ async def test_view_native_url_fallback_and_side_panel(
     desktop_provider.display.fail_screenshot = WorkspaceError('display starting')
     headless = plugin_of(load(work, terminal=False))
     monkeypatch.setattr(headless._viewer, 'ensure_started', lambda: 43211)  # pyright: ignore[reportPrivateUsage]
-    await headless.computer_use_command(['fake'])
+    await headless.computer_use_command(['on'])
+    await headless.command(['fake'])
     headless_msg = await headless.computer_use_command(['view'])
     assert headless_msg.startswith('Desktop viewer: http://127.0.0.1:43211/?token=')
     assert len(opened) == 3
@@ -813,10 +828,18 @@ async def test_viewer_guard_and_server_lifecycle(monkeypatch: pytest.MonkeyPatch
     url_1 = viewer.url(ref)
     url_2 = viewer.url(ref)
     assert url_1 == url_2 and url_1.startswith('http://127.0.0.1:51234/?token=')
+    assert viewer.try_url(ref) == url_1
     assert len(built_apps) == 1
     viewer.remove(ref)  # Removing an unregistered ref is a no-op.
     await viewer.close()
     assert stopped == [51234]
+
+    def fail_serve(build: Callable[[int], object], *, host: str, port: int) -> _FakeServer:
+        del build, host, port
+        raise OSError('port blocked')
+
+    monkeypatch.setattr(web_server.WebServer, 'serve', staticmethod(fail_serve))
+    assert DesktopViewer().try_url(ref) is None
 
 
 # ---------------------------------------------------------------------------

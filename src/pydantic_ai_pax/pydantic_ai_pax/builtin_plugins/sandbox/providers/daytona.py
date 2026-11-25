@@ -52,6 +52,7 @@ class DaytonaProvider:
     token_in_sandbox: bool = False
     has_desktop_url: bool = True
     desktop_url_is_bearer: bool = True
+    desktop_at_create: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, daytona.AsyncDaytona]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'daytona.AsyncDaytona'],
         init=False,

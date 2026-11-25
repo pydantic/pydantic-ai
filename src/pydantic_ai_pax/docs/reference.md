@@ -51,7 +51,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/sandbox [local smol\|local boxlite\|e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a sandbox: `local smol` (SmolVM) and `local boxlite` (BoxLite) run a VM on this machine, the others are cloud sandboxes; `/sandbox local` asks which engine, and no argument says where this one runs. See [Sandboxes](#sandboxes-sandbox) |
-| `/computer-use [PROVIDER\|view\|delete]` | Start a new conversation in a sandbox with a graphical desktop so the model can see and control the screen; no argument opens a provider picker in a terminal (or shows status when already in a sandbox), and `view` opens the live desktop (works mid-turn). See [Computer use](#computer-use-computer-use) |
+| `/computer-use [on\|off\|view]` | Toggle computer use (desktop control) for `/sandbox` conversations, or open the live desktop view (`view` works mid-turn). See [Computer use](#computer-use-computer-use) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer Pax is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -3152,45 +3152,52 @@ not in the web UI.
 
 ### Computer use: `/computer-use`
 
-Run `/computer-use PROVIDER` in a new conversation, before its first prompt, to start a sandbox
-with a graphical desktop and give the model the `computer` tool (`ComputerUse`). Bare `/computer-use`
-in a terminal opens a provider picker showing which providers are ready and whether each offers an
-interactive live desktop or Pax's live screen viewer; once a desktop sandbox is running, bare
-`/computer-use` shows its status.
+`/sandbox` owns sandbox lifecycle (starting, inspecting, and deleting sandboxes). `/computer-use`
+toggles the `computer` tool (`ComputerUse`) on or off for sandboxed conversations:
 
-Every `/sandbox` provider supports `/computer-use`, with the same checkout seeding, GitHub login,
-`/resume`, `/fork`, and `/computer-use delete` (or `/sandbox delete`) lifecycle:
+- **Before `/sandbox`**: run `/computer-use` (or `/computer-use on`) to arm computer use, then
+  `/sandbox PROVIDER`. `/sandbox` creates the sandbox with `desktop=True` and enables the `computer`
+  tool immediately.
+- **Inside an existing `/sandbox`**: run `/computer-use` to toggle desktop control on or off at the
+  next turn (toggling is never applied mid-turn). On providers that attach a desktop retroactively
+  (`boxd`, `daytona`, `local smol`, `render`, `sprites`, `kubernetes`), enabling works immediately on
+  the running sandbox even after turns have run. On providers that need `desktop=True` at creation
+  time (`e2b`, `modal`, `local boxlite`, `opensandbox`), Pax automatically restarts an unused sandbox
+  with a desktop; if turns have already run in that sandbox, Pax asks you to run `/new`,
+  `/computer-use`, then `/sandbox PROVIDER` so no work is lost.
+- **Disabling**: `/computer-use` (or `/computer-use off`) hides the `computer` tool on subsequent
+  turns while keeping the sandbox running. `/sandbox delete` deletes the sandbox.
+- **Provider details**: `local smol` desktop requires `smolmachines` (`pydantic-ai-pax[local]` on
+  macOS Apple silicon or Linux; the Windows `smolvm` CLI fallback has no display). `local boxlite`
+  allocates a 4 GB disk for the desktop image. `opensandbox` with a `gh` login temporarily allows
+  `deb.debian.org` and `security.debian.org` to install the X11 display programs before any GitHub
+  credential enters the proxy vault, then removes those rules so egress stays restricted to GitHub
+  hosts.
+- **Persistence**: computer-use state is recorded on the conversation's `workspace_ref`
+  (`PROVIDER-desktop`), so `/resume`, `/fork`, and compaction preserve it.
 
-- `local smol` desktop requires the `smolmachines` package (`pydantic-ai-pax[local]` on macOS Apple
-  silicon or Linux); the Windows `smolvm` CLI fallback has no display.
-- `local boxlite` allocates a 4 GB disk for the desktop image.
-- `opensandbox` with a `gh` login temporarily allows `deb.debian.org` and `security.debian.org` to
-  install the X11 display programs before any GitHub credential enters the proxy vault, then removes
-  those rules so egress stays restricted to GitHub hosts.
-- Plain `/sandbox` conversations and local conversations do not expose the `computer` tool. Desktop
-  mode is recorded on the conversation's `workspace_ref` (`PROVIDER-desktop`), so `/resume`, `/fork`,
-  and compaction keep `ComputerUse` active.
+#### Watching what the model is doing: live view and `/computer-use view`
 
-#### Watching what the model is doing: `/computer-use view`
+Nothing starts until the model actually uses the `computer` tool (or you run `/computer-use view`):
 
-Run `/computer-use view` at any time, including while a turn is running, to see the sandbox desktop:
-
-- **`boxd`**: opens the machine's console Desktop view (`access.desktop_url`), protected by your
-  boxd console login.
-- **All other providers, including `daytona`** (and as a fallback if a `boxd` URL cannot be opened):
-  starts Pax's on-demand loopback live viewer (`http://127.0.0.1:<port>/?token=...&sandbox=...`) and
-  opens it via a private `0600` redirect page in your browser. The viewer receives every screenshot
-  the model takes in real time over Server-Sent Events, overlays subtle markers where clicks, pointer
-  moves, and drags landed, keeps the last 30 frames to scrub through, and provides **Refresh** and an
-  optional 2-second **Auto** snapshot poll.
-- **`daytona` interactive desktop**: because Daytona's noVNC preview URL is a passwordless bearer
-  link that grants full control of the desktop (including `git`/`gh` through the sandbox's GitHub
-  proxy), `/computer-use view` opens the loopback viewer by default instead of minting or printing
-  that link automatically. Click **Interactive desktop** in the viewer when you explicitly want
-  interactive control; Pax then mints a 5-minute signed preview URL on port `6080` on demand.
-
-In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), the `sandbox` plugin also adds a
-**Desktop** side panel that embeds the loopback viewer directly beside the transcript.
+- **Automatic inline link in the terminal**: on the first `computer` call, Pax lazily starts an
+  on-demand loopback live viewer (`127.0.0.1:0`) without stealing browser focus and appends a
+  clickable `watch live ↗` OSC-8 hyperlink to each `computer` result row (with a one-time
+  `(/computer-use view)` hint on the first call).
+- **Web UI**: in the [web UI](../PLUGINS.md#web-this-session-in-your-browser), the `sandbox` plugin
+  adds a **Desktop** side panel that embeds the loopback viewer beside the transcript.
+- **Opening in your browser (`/computer-use view`, works mid-turn)**:
+  - **`boxd`**: opens the machine's console Desktop view (`access.desktop_url`), protected by your
+    boxd console login (falling back to the loopback viewer if unavailable).
+  - **All other providers, including `daytona`**: opens Pax's loopback live viewer via a private
+    `0600` redirect page. The viewer streams every screenshot over Server-Sent Events, overlays
+    subtle markers where clicks, pointer moves, and drags landed, keeps the last 30 frames to scrub
+    through, and provides **Refresh** and an optional 2-second **Auto** snapshot poll.
+  - **`daytona` interactive desktop**: because Daytona's noVNC preview URL is a passwordless bearer
+    link that grants full control of the desktop (including `git`/`gh` through the sandbox's GitHub
+    proxy), `/computer-use view` opens the loopback viewer by default instead of minting or printing
+    that link automatically. Click **Interactive desktop** in the viewer when you explicitly want
+    interactive control; Pax then mints a 5-minute signed preview URL on port `6080` on demand.
 
 Everything on the sandbox screen, secrets included, reaches the model and its provider in
 screenshots, and text on the screen can steer the model like any tool output. The loopback viewer

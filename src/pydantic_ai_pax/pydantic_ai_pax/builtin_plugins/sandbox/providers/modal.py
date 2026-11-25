@@ -34,6 +34,7 @@ class ModalProvider:
     token_in_sandbox: bool = True
     has_desktop_url: bool = False
     desktop_url_is_bearer: bool = False
+    desktop_at_create: bool = True
 
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop

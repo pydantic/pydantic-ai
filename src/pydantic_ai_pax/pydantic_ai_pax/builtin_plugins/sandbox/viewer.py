@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import tempfile
@@ -49,6 +50,7 @@ HEADER = 'x-pax-desktop-token'
 MAX_FRAMES = 30
 """Maximum screenshots kept in memory per desktop sandbox."""
 _SUBSCRIBER_QUEUE_SIZE = 16
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -626,6 +628,14 @@ class DesktopViewer:
         return (
             f'http://127.0.0.1:{port}/?token={quote(self._token, safe="")}&sandbox={quote(sandbox_key(ref), safe="")}'
         )
+
+    def try_url(self, ref: WorkspaceRef) -> str | None:
+        """Like `url(ref)`, returning `None` if the loopback server cannot bind a port."""
+        try:
+            return self.url(ref)
+        except OSError:
+            _logger.warning('Could not start loopback desktop viewer for %s', ref, exc_info=True)
+            return None
 
     async def launch_url(self, url: str) -> str:
         """Return a private `file://` redirect URL for `url`, tracked for cleanup in `close`."""

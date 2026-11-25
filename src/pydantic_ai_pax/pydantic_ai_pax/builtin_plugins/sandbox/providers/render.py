@@ -45,6 +45,7 @@ class RenderProvider:
     token_in_sandbox: bool = True
     has_desktop_url: bool = False
     desktop_url_is_bearer: bool = False
+    desktop_at_create: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, RenderAsync]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'RenderAsync'], init=False, compare=False, repr=False
     )

@@ -147,8 +147,14 @@ def action_markers(actions: Sequence[ComputerToolAction]) -> tuple[ActionMarker,
     return tuple(markers)
 
 
-def render_computer_event(event: AgentStreamEvent) -> RenderableType | None:
-    """Render `computer` tool calls and `ActionsPerformedEvent`s as concise transcript rows."""
+def render_computer_event(
+    event: AgentStreamEvent, *, live_url: str | None = None, show_hint: bool = False
+) -> RenderableType | None:
+    """Render `computer` tool calls and `ActionsPerformedEvent`s as concise transcript rows.
+
+    When `live_url` is given, appends a clickable OSC-8 `watch live ↗` link on `ActionsPerformedEvent` rows
+    (and a short `(/computer-use view)` hint when `show_hint` is set) without popping a browser window.
+    """
     if isinstance(event, FunctionToolCallEvent) and isinstance(event.part, ComputerCallPart):
         summary = format_actions(event.part.actions or ())
         return tool_header(name='computer', argument=summary)
@@ -162,6 +168,11 @@ def render_computer_event(event: AgentStreamEvent) -> RenderableType | None:
             count = result['performed']
             noun = 'action' if count == 1 else 'actions'
             row.append(f'{count} {noun} · screenshot', style=muted)
+        if live_url is not None:
+            row.append(' · ', style=muted)
+            row.append('watch live ↗', style=f'{theme.color(theme.AQUA)} link {live_url}')
+            if show_hint:
+                row.append(' (/computer-use view)', style=muted)
         return row
     return None
 
@@ -183,9 +194,10 @@ def history_frames(
 
 @dataclass
 class _ObservedComputerUse(WrapperCapability[None]):
-    """Wraps harness `ComputerUse` to feed each screenshot and action batch to the desktop viewer."""
+    """Wraps harness `ComputerUse` to start the live viewer lazily and feed each screenshot to it."""
 
     on_frame: FrameCallback = field(repr=False)
+    on_start: Callable[[WorkspaceRef], None] | None = field(default=None, repr=False)
     _calls: dict[str, Sequence[ComputerToolAction]] = field(
         default_factory=dict[str, Sequence[ComputerToolAction]], init=False, repr=False
     )
@@ -194,6 +206,8 @@ class _ObservedComputerUse(WrapperCapability[None]):
         if isinstance(event, FunctionToolCallEvent) and isinstance(event.part, ComputerCallPart):
             if event.part.actions is not None:
                 self._calls[event.part.tool_call_id] = event.part.actions
+            if self.on_start is not None and (ref := ctx.workspace.ref) is not None:
+                self.on_start(ref)
         elif isinstance(event, FunctionToolResultEvent) and isinstance(event.part, ComputerReturnPart):
             actions = self._calls.pop(event.part.tool_call_id, ())
             if (screenshot := event.part.screenshot) is not None and (ref := ctx.workspace.ref) is not None:
@@ -202,16 +216,22 @@ class _ObservedComputerUse(WrapperCapability[None]):
 
 @dataclass
 class DesktopComputerUse(AbstractCapability[None]):
-    """Enables harness `ComputerUse` on any run whose workspace has a desktop display.
+    """Enables harness `ComputerUse` on runs whose workspace has a display and computer use is enabled.
 
     Does not override `get_workspace`, so Pax attaches the local folder as usual on non-desktop runs.
     """
 
     on_frame: FrameCallback = field(repr=False)
+    is_enabled: Callable[[WorkspaceRef], bool] | None = field(default=None, repr=False)
+    on_start: Callable[[WorkspaceRef], None] | None = field(default=None, repr=False)
     _computer_use: ComputerUse[None] = field(default_factory=ComputerUse[None], init=False, repr=False)
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
         backend = ctx.workspace.backend
-        if isinstance(backend, SupportsDisplay) and backend.display is not None:
-            return _ObservedComputerUse(await self._computer_use.for_run(ctx), on_frame=self.on_frame)
+        ref = ctx.workspace.ref
+        enabled = True if self.is_enabled is None else (ref is not None and self.is_enabled(ref))
+        if enabled and isinstance(backend, SupportsDisplay) and backend.display is not None:
+            return _ObservedComputerUse(
+                await self._computer_use.for_run(ctx), on_frame=self.on_frame, on_start=self.on_start
+            )
         return AbstractCapability[None]()

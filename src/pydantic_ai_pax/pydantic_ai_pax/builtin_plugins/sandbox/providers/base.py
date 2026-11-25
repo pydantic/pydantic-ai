@@ -98,6 +98,11 @@ class SandboxProvider(Protocol):
         """Whether `desktop_url` embeds a bearer credential (never minted or printed automatically on `/computer-use view`)."""
         ...
 
+    @property
+    def desktop_at_create(self) -> bool:
+        """Whether `desktop=True` must be set at `create()` time rather than attached to an already-running sandbox."""
+        ...
+
     def missing(self, *, desktop: bool = False) -> str | None:
         """What to do before a sandbox can be made, such as a key to add; `None` when nothing is missing."""
         ...
