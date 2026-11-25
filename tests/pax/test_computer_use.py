@@ -464,9 +464,13 @@ class LinkedProvider(FakeProvider):
     desktop_link_seconds: int | None = 3600
     links: list[str] = field(default_factory=list[str])
     fail: bool = False
+    booted: anyio.Event | None = None
+    """Set, a link waits for it, as one does for a sandbox and its desktop to boot."""
 
     async def desktop_url(self, backend: SandboxBackend) -> str | None:
         assert isinstance(backend, SupportsDisplay) and backend.display is not None and backend.ref is not None
+        if self.booted is not None:
+            await self.booted.wait()
         if self.fail:
             raise ConnectionError('the provider is down')
         link = f'https://desktop.example/{backend.ref.id}/vnc.html?token={len(self.links)}'
@@ -489,7 +493,9 @@ def linked(provider: FakeProvider, display: FakeDisplay, monkeypatch: pytest.Mon
     return linked
 
 
-async def test_the_status_row_links_to_the_desktop_while_it_is_on(checkout: Path, linked: LinkedProvider) -> None:
+async def test_the_status_row_links_to_the_desktop_while_it_is_on(
+    checkout: Path, linked: LinkedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
     loaded = load(checkout)
     plugin = plugin_of(loaded)
     await plugin.command(['fake'])
@@ -504,10 +510,16 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(checkout: Path
     await plugin.computer_use_command(['off'])
     assert row(plugin) == ['fake sandbox', '']
 
-    # A Pax resuming the conversation shows a link at once.
+    # A Pax resuming the conversation gets its prompt back at once, and the link shows once the desktop is up.
+    linked.booted = anyio.Event()
     resumed_loaded = load(checkout, Transcript(messages=[*loaded.host.conversation.messages[:-2]]))
     await resumed_loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+    await resumed_loaded.dispatch(ConversationChanged(conversation_id='resumed', title=None))
+    assert row(plugin_of(resumed_loaded)) == ['fake sandbox (computer-use)', '']
+    linked.booted.set()
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin_of(resumed_loaded)) == ['fake sandbox', watch(1)]
+    assert len(linked.links) == 2, 'one mint at a time'
     await plugin.on_session_end(SessionEnd(reason='exit'))
     await plugin_of(resumed_loaded).on_session_end(SessionEnd(reason='exit'))
 

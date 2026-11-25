@@ -2838,59 +2838,8 @@ class TestCompaction:
         assert working_dirs[-1] == str(provider.folder(ref))
 
 
-@pytest.mark.skipif(find_spec('opensandbox') is None, reason='opensandbox not installed')
-async def test_opensandbox_desktop_bootstraps_before_github_vault(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
-
-    events: list[str] = []
-
-    class _FakeVault:
-        async def create(self, **kwargs: object) -> None:
-            del kwargs
-            events.append('vault_create')
-
-    class _FakeSbx:
-        id = 'osb-1'
-        credential_vault = _FakeVault()
-
-        async def patch_egress_rules(self, rules: list[object]) -> None:
-            events.append(f'patch:{len(rules)}')
-
-        async def delete_egress_rules(self, targets: list[str]) -> None:
-            events.append(f'delete:{",".join(targets)}')
-
-    class _FakeDisplay:
-        async def display_size(self) -> tuple[int, int]:
-            events.append('display_size')
-            return (1280, 800)
-
-    fake_sbx = _FakeSbx()
-    fake_display = _FakeDisplay()
-
-    async def fake_get_sandbox(self: OpenSandboxBackend) -> _FakeSbx:
-        del self
-        return fake_sbx
-
-    async def fake_give_login(backend: object, github: GitHubCredential) -> None:
-        del backend, github
-        events.append('give_github_login')
-
-    monkeypatch.setenv(opensandbox_provider.DOMAIN_NAME, 'localhost:8080')
-    monkeypatch.setattr(OpenSandboxBackend, 'get_sandbox', fake_get_sandbox)
-    monkeypatch.setattr(OpenSandboxBackend, 'display', property(lambda self: fake_display))
-    monkeypatch.setattr(opensandbox_provider, 'give_github_login', fake_give_login)
-
-    prov = opensandbox_provider.OpenSandboxProvider()
-    ref, backend = await prov.create(github=GitHubCredential(login='Ada', token='gho_x'), desktop=True)
-    assert ref == WorkspaceRef(provider='opensandbox', id='osb-1')
-    assert events == [
-        'patch:2',
-        'display_size',
-        'delete:deb.debian.org,security.debian.org',
-        'vault_create',
-        'give_github_login',
-    ]
-    await prov.close(backend)
+def test_opensandbox_has_no_desktop() -> None:
+    assert 'no desktop' in (opensandbox_provider.OpenSandboxProvider().missing(desktop=True) or '')
 
 
 async def test_smol_missing_and_reached_display(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2963,13 +2912,6 @@ async def test_smol_missing_and_reached_display(monkeypatch: pytest.MonkeyPatch)
             marks=pytest.mark.skipif(find_spec('e2b') is None, reason='e2b not installed'),
         ),
         pytest.param(
-            opensandbox_provider.OpenSandboxProvider(),
-            'opensandbox',
-            'o1',
-            id='opensandbox',
-            marks=pytest.mark.skipif(find_spec('opensandbox') is None, reason='opensandbox not installed'),
-        ),
-        pytest.param(
             modal_provider.ModalProvider(),
             'modal',
             'mod1',
@@ -3030,5 +2972,5 @@ async def test_provider_reopen_desktop_wiring(
     )
     assert isinstance(backend, SupportsDisplay) and backend.display is not None, prov.name
     # Only these can't add a desktop to a running sandbox, so `/computer-use on` asks for a new one.
-    assert prov.desktop_at_create is (prov.name in {'e2b', 'modal', 'opensandbox', 'local boxlite'}), prov.name
+    assert prov.desktop_at_create is (prov.name in {'e2b', 'modal', 'local boxlite'}), prov.name
     await prov.close(backend)

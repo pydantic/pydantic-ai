@@ -3258,7 +3258,7 @@ not in the web UI.
 - **Before `/sandbox`**: run `/computer-use`, then `/sandbox PROVIDER`. The sandbox starts with a
   desktop.
 - **In a running sandbox**: `boxd`, `daytona`, `local smol`, `render`, `sprites` and `kubernetes`
-  add a desktop to the sandbox you have. `e2b`, `modal`, `local boxlite` and `opensandbox` can only
+  add a desktop to the sandbox you have. `e2b`, `modal` and `local boxlite` can only
   give a desktop to a new sandbox, so Pax asks you to run `/sandbox delete`, `/new`, `/computer-use`,
   then `/sandbox PROVIDER`. It never deletes the sandbox itself, since a fork or copy of the conversation
   may use it.
@@ -3267,8 +3267,7 @@ not in the web UI.
 - **Permissions**: the model gets the `computer` tool only under `/permissions full`, since the screen can
   change anything. Under another mode it is told the desktop needs `/permissions full`, and `/computer-use` says so too.
 - `local smol` needs `smolmachines` for a desktop (`pydantic-ai-pax[local]`, on macOS Apple silicon
-  or Linux), so not on Windows. With a `gh` login, `opensandbox` allows `deb.debian.org` and
-  `security.debian.org` while it installs the desktop, before your GitHub token reaches its proxy.
+  or Linux), so not on Windows. `opensandbox` has no desktop.
 
 The setting is saved in the conversation, so `/resume`, `/fork` and compaction keep it.
 

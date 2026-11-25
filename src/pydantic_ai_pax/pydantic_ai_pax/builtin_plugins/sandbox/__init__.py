@@ -16,6 +16,7 @@ to start a sandbox with one. The status row's `watch live ↗` opens the provide
 where it has one (`SupportsDesktopUrl`).
 """
 
+import asyncio
 import logging
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -306,6 +307,8 @@ class SandboxPlugin(Plugin):
         """Each sandbox this session made or opened."""
         self._armed_for: str | None = None
         """The conversation whose next `/sandbox PROVIDER` gets a desktop, as `/computer-use` ran before it."""
+        self._minting: asyncio.Task[None] | None = None
+        """The background mint a shown conversation starts, so resuming one does not wait for its desktop to boot."""
 
     def get_capabilities(self) -> Sequence[AbstractCapability[None]]:
         return (
@@ -376,13 +379,18 @@ class SandboxPlugin(Plugin):
             return
         sandbox.watch_url, sandbox.watch_expires = url, None if seconds is None else minted + seconds
 
+    def _mint_in_background(self) -> None:
+        """Mint without holding up the prompt; the idle row repaints each second, so the link shows once it arrives."""
+        if self._minting is None or self._minting.done():
+            self._minting = asyncio.create_task(self._mint_watch_link(), name='pax-watch-live')
+
     async def on_session_start(self, event: SessionStart) -> None:
         del event
-        await self._mint_watch_link()
+        self._mint_in_background()
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
         del event
-        await self._mint_watch_link()
+        self._mint_in_background()
 
     async def on_turn_start(self, event: TurnStart) -> None:
         del event
@@ -562,6 +570,9 @@ class SandboxPlugin(Plugin):
         return f'Deleted {sandbox.provider.title} sandbox {sandbox.ref.id}. Run /new to start another conversation.'
 
     async def on_session_end(self, event: SessionEnd) -> None:
+        if self._minting is not None:
+            self._minting.cancel()
+            await asyncio.wait([self._minting])
         # Only closed: a sandbox is deleted only when the user says so, as its conversation can be resumed.
         for sandbox in list(self._sandboxes.values()):
             with anyio.CancelScope(shield=True):
