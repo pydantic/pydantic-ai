@@ -861,12 +861,13 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         pending deferred tool requests continue, and its revision is carried to the result, so a
         [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can check the next save.
         Return the conversation with that `conversation_id`; any other raises `UserError`. When several
-        capabilities return one, the one listed last wins, so a capability passed to the run takes
-        precedence over the agent's.
+        capabilities return one, the last in the effective capability order wins. By default a capability
+        passed to the run comes after the agent's, so it takes precedence.
 
         `deps` are the run's dependencies: scope the load to the user they authorize, since a
-        `conversation_id` can come from a client. Like the other hooks called before the run is assembled,
-        it isn't asked of a deferred capability or of one that only `for_run()` or a
+        `conversation_id` can come from a client. Like [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model],
+        it isn't asked of a deferred capability. Like every hook called before the run is assembled, it
+        isn't asked of a capability that only `for_run()` or a
         [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] returns, and it runs before the run's
         `timeout=` starts and its cancellation token is watched. Not called for a realtime session. Under
         [durable execution](../durable_execution/overview.md) it runs where the run starts (in a Temporal
