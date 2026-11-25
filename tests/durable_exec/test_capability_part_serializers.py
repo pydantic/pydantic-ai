@@ -218,29 +218,11 @@ async def test_the_history_holds_every_kind_and_source(tmp_path: Path) -> None:
     assert {type(part) for part in parts} >= {ThirdPartyReportPart, ThirdPartyReminderPart}
 
 
-_INSTRUCTION_ID_UNTYPED = (
-    'https://github.com/pydantic/pydantic-ai/issues/14492: Temporal encodes a payload without its type, so an '
-    "`InstructionId`'s untagged `InstructionSource` decodes as the first union member that fits: a capability source "
-    'becomes a toolset source, and a run source the agent source'
-)
-
-
 @pytest.mark.parametrize(
     ('serializer', 'source'),
     [
         pytest.param(
-            serializer,
-            source,
-            id=f'{serializer}-{type(source).__name__}',
-            marks=[
-                *_serializer_marks(serializer),
-                *(
-                    [pytest.mark.xfail(strict=True, raises=AssertionError, reason=_INSTRUCTION_ID_UNTYPED)]
-                    if serializer == 'temporal'
-                    and isinstance(source, CapabilityInstructionSource | RunInstructionSource)
-                    else []
-                ),
-            ],
+            serializer, source, id=f'{serializer}-{type(source).__name__}', marks=_serializer_marks(serializer)
         )
         for serializer in SERIALIZERS
         for source in (
