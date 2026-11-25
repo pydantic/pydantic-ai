@@ -70,6 +70,7 @@ from pydantic_ai.capabilities import (
     SetToolMetadata,
     ToolSearch,
     WrapperCapability,
+    WrapRunHandler,
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -5999,6 +6000,46 @@ async def test_dbos_durability_override_capabilities_follow_the_per_run_rules(db
         ):
             await run_agent()
     assert added.calls == 1
+
+
+class _RecordsWhereItStarts(AbstractCapability[object]):
+    """A capability two agents share, by `id`, that calls a durable operation without a run context as each run starts."""
+
+    id = 'records_where_it_starts'
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        await self._record(where='for_run')
+        return self
+
+    async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        await self._record(where='wrap_run')
+        return await handler()
+
+    @durable_operation('record')
+    async def _record(self, *, where: str) -> None:
+        self.calls.append(where)
+
+
+async def test_dbos_nested_run_starts_without_the_enclosing_runs_context(dbos: DBOS) -> None:
+    """A run started from a tool doesn't run its `for_run` and `wrap_run` operations as the enclosing workflow's steps."""
+    outer, inner = _RecordsWhereItStarts(), _RecordsWhereItStarts()
+    inner_agent = Agent(TestModel(), name='nested_start_inner', capabilities=[inner])
+    agent = Agent(TestModel(), name='nested_start_outer', capabilities=[outer, DBOSDurability()])
+
+    @agent.tool_plain
+    async def delegate() -> str:
+        return (await inner_agent.run('Hello')).output
+
+    @DBOS.workflow()
+    async def run_agent() -> None:
+        await agent.run('Hello')
+
+    await run_agent()
+
+    assert (outer.calls, inner.calls) == snapshot((['for_run', 'wrap_run'], ['for_run', 'wrap_run']))
 
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])

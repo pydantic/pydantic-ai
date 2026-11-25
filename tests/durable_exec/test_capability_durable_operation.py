@@ -1146,6 +1146,31 @@ class ResolvesInForRun(AbstractCapability[Any]):
         return self.calls
 
 
+class ResolvesAmbientlyInForRun(AbstractCapability[Any]):
+    """Calls a durable operation that takes no context from `for_run` and from `wrap_run` before its handler.
+
+    Dispatch reads the ambient context there, since neither has the run's own context installed yet.
+    """
+
+    id = 'resolves_ambiently_in_for_run'
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        await self.resolve()
+        return self
+
+    async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        await self.resolve()
+        return await handler()
+
+    @durable_operation('resolve')
+    async def resolve(self) -> int:
+        self.calls += 1
+        return self.calls
+
+
 class TenantScopedOperation(AbstractCapability[str]):
     id = 'tenant_scoped_operation'
 
@@ -1437,6 +1462,30 @@ async def test_operation_called_from_for_run_runs_directly() -> None:
     await agent.run('test')
 
     assert capability.calls == snapshot(1)
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot([])
+
+
+async def test_operations_called_from_a_nested_runs_for_run_and_wrap_run_run_directly() -> None:
+    """A run started from a tool starts as a top-level run does: `for_run` and `wrap_run` don't dispatch through the enclosing run.
+
+    The tool runs inside the enclosing run, so its context is the ambient one; with a capability of the same `id` on
+    both agents, the nested run's operation would otherwise run on the enclosing run's capability, through its engine.
+    """
+    outer = ResolvesAmbientlyInForRun()
+    inner = ResolvesAmbientlyInForRun()
+    inner_agent = Agent(TestModel(), name='inner', capabilities=[inner])
+    agent = Agent(TestModel(), name='outer', capabilities=[outer, RecordingDurability()])
+
+    @agent.tool_plain
+    async def delegate() -> str:
+        return (await inner_agent.run('test')).output
+
+    await agent.run('test')
+
+    # Each one's `for_run` and `wrap_run`, each on its own instance.
+    assert (outer.calls, inner.calls) == (2, 2)
     durability = RecordingDurability.from_agent(agent)
     assert durability is not None
     assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot([])
