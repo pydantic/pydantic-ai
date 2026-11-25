@@ -644,6 +644,19 @@ def test_dragging_highlights_cells_and_releasing_copies_them() -> None:
     assert screen.lines()[:3] == ['first line here', 'second line', 'third'], 'selection never changes text'
 
 
+def test_a_drag_across_a_soft_wrap_copies_one_line() -> None:
+    """A row the panel wrapped onto is the same line, so the copy has no newline there; real line breaks stay."""
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    line = 'one two three four five six seven'
+    edge = 'aaaa bbbb cccc dddd eeee'  # Wraps right after a space, which the copy keeps.
+    screen.write(f'{line}\n{edge}\nnext\n')
+    assert screen.lines()[:5] == [line[:20], line[20:], edge[:19], edge[20:], 'next']
+    for report in (press(1, 1), drag(3, 5)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(3, 5)) == f'{line}\n{edge}\nnex'
+
+
 def test_double_clicking_a_word_selects_and_copies_it() -> None:
     screen = Screen(width=40, height=10)
     screen.surface.paint(ROWS)
