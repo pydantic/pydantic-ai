@@ -529,8 +529,13 @@ async def test_an_expiring_link_is_renewed_before_it_stops_opening(
     await loaded.dispatch(TurnStart(text='go'))
     assert row(plugin) == ['fake sandbox', watch(1)]
 
-    # Left idle past its hour, the row drops the link rather than offer one that no longer opens.
-    now[0] += 61 * 60
+    # A renewal that fails keeps the link it has while that still opens.
+    linked.fail = True
+    now[0] += 51 * 60
+    await loaded.dispatch(TurnStart(text='go'))
+    assert row(plugin) == ['fake sandbox', watch(1)]
+    # Past its hour, the row drops the link rather than offer one that no longer opens.
+    now[0] += 10 * 60
     assert row(plugin) == ['fake sandbox (computer-use)', '']
     await plugin.on_session_end(SessionEnd(reason='exit'))
 

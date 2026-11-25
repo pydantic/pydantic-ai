@@ -3266,7 +3266,8 @@ desktop on the provider's own website. Pax runs no viewer of its own.
   boxd account.
 - **`daytona`**: the desktop's noVNC page, on a signed link that works for 1 hour. Anyone holding the link
   can see the screen and use the mouse and keyboard until it expires. Pax gets a new link for the status
-  row before then, and a page opened earlier stays connected.
+  row when a turn starts, once the old one is over 50 minutes old, so in a turn longer than an hour the link
+  disappears until the next turn. A page opened earlier stays connected.
 - **Other providers** have no such link, so the status row shows no `watch live ↗`.
 
 Everything on the sandbox's screen, secrets included, goes to the model's provider in screenshots,

@@ -366,14 +366,14 @@ class SandboxPlugin(Plugin):
         expires = sandbox.watch_expires
         if sandbox.watch_url is not None and (expires is None or monotonic() < expires - MINT_AHEAD):
             return
-        sandbox.watch_url = sandbox.watch_expires = None
         seconds, minted = provider.desktop_link_seconds, monotonic()
         try:
-            sandbox.watch_url = await provider.desktop_url(sandbox.open())
+            url = await provider.desktop_url(sandbox.open())
         except Exception as exc:  # noqa: BLE001 -- the link is extra; the command or turn goes on without it.
+            # A link not yet expired keeps showing until it does.
             logger.warning('Could not get the link to watch the %s desktop: %s', provider.title, exc)
             return
-        sandbox.watch_expires = None if seconds is None else minted + seconds
+        sandbox.watch_url, sandbox.watch_expires = url, None if seconds is None else minted + seconds
 
     async def on_session_start(self, event: SessionStart) -> None:
         del event
