@@ -131,7 +131,7 @@ class Selection:
         """Show the selected cells in reverse video, or drop the selection if output moved them.
 
         The selection holds screen cells, not transcript rows, so new output that scrolls the
-        view, or a widget that redraws, must not leave it over text the user never dragged across.
+        view, or a widget that redraws, must not leave it over text the user never selected.
         """
         span = self.span(frame, rows=rows, joins=joins)
         if previous is not None and (
