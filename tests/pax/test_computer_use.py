@@ -49,7 +49,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, Display, SupportsDisplay
 from pydantic_ai_pax import Session
 from pydantic_ai_pax.builtin_plugins import sandbox
-from pydantic_ai_pax.builtin_plugins.sandbox import SandboxPlugin, history_sandbox
+from pydantic_ai_pax.builtin_plugins.sandbox import SandboxPlugin, _Sandbox, history_sandbox  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import (
     COMPUTER_USE,
     format_action,
@@ -62,9 +62,9 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers import (
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
 from pydantic_ai_pax.config import PERMISSIONS_SETTING, Settings
 from pydantic_ai_pax.plugins import ConversationChanged, SessionEnd, SessionStart, Transcript, TurnStart
+from pydantic_ai_pax.ui.rendering.status import StatusLink
 
 # `checkout`, `isolated_git_config`, `provider`, and `upstream` are fixtures shared with `/sandbox`'s tests.
-from pydantic_ai_pax.ui.rendering.status import StatusLink
 from tests.pax.test_sandbox import (
     FakeDisplay,
     FakeProvider,
@@ -87,7 +87,7 @@ def display(provider: FakeProvider) -> FakeDisplay:
     return screen
 
 
-def on_screen_sandbox(plugin: SandboxPlugin):
+def on_screen_sandbox(plugin: SandboxPlugin) -> _Sandbox:
     """The sandbox of the conversation `plugin` shows."""
     sandbox = plugin.current()
     assert sandbox is not None

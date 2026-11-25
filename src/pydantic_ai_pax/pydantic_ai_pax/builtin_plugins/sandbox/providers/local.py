@@ -242,16 +242,7 @@ class _ReachedDisplay:
     def __init__(self, owner: '_Reached', display: Display) -> None:
         self._owner = owner
         self._display = display
-
-    async def _call(self, op: Callable[[], Awaitable[_T]]) -> _T:
-        reached = True
-        try:
-            return await op()
-        except WorkspaceUnavailableError:
-            reached = False
-            raise
-        finally:
-            self._owner.reached = self._owner.reached or reached
+        self._call = owner.reaching
 
     async def display_size(self) -> tuple[int, int]:
         return await self._call(self._display.display_size)
@@ -292,16 +283,20 @@ class _Reached(WorkspaceBackend, SupportsCommands):
     def ref(self) -> WorkspaceRef | None:
         return self._backend.ref
 
-    async def working_dir(self) -> str:
+    async def reaching(self, op: Callable[[], Awaitable[_T]]) -> _T:
+        """Run `op` on the VM, recording that it was reached unless it could not be."""
         reached = True
         try:
-            return await self._backend.working_dir()
+            return await op()
         except WorkspaceUnavailableError:
             # It could not boot or attach to the VM, such as one deleted since.
             reached = False
             raise
         finally:
             self.reached = self.reached or reached
+
+    async def working_dir(self) -> str:
+        return await self.reaching(self._backend.working_dir)
 
     async def run(
         self,
@@ -311,11 +306,4 @@ class _Reached(WorkspaceBackend, SupportsCommands):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        reached = True
-        try:
-            return await self._backend.run(command, shell=shell, env=env, timeout=timeout)
-        except WorkspaceUnavailableError:
-            reached = False
-            raise
-        finally:
-            self.reached = self.reached or reached
+        return await self.reaching(lambda: self._backend.run(command, shell=shell, env=env, timeout=timeout))
