@@ -182,6 +182,8 @@ A function tool running in the workflow can load an [on-demand capability](../ca
 
 A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] applies its `sequential=True` and `defer_loading=True` to the [`Tool`][pydantic_ai.tools.Tool] instances it holds. Workflows started before Pydantic AI did so keep listing those tools without them, so that they recover with the steps they recorded: a run holding such a tool [patches](https://docs.dbos.dev/python/tutorials/upgrading-workflows) its workflow when it starts, and a workflow without the patch marker gets the old listing.
 
+A [custom toolset](../toolsets.md#building-a-custom-toolset) subclassing [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] isn't one of the types above, so its own `get_tools()` and `call_tool()` run in workflow code rather than in a step. That's fine if they perform no I/O and are deterministic. If they do perform I/O, either move that I/O into function tools on a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], each decorated with `@DBOS.step` as described above (DBOS otherwise runs function tools in workflow code), or return the toolset from a dynamic toolset or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], whose tool listing and tool calls both run inside steps. DBOS wraps neither a function toolset's listing nor its calls, so an overridden `get_tools()` or `call_tool()` is not covered either: the I/O belongs in tool functions decorated with `@DBOS.step`. See [Custom toolsets and durable execution](../toolsets.md#custom-toolsets-and-durable-execution).
+
 All other agents and toolsets are supported.
 
 ### Tools with Side Effects
