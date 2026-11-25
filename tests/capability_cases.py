@@ -179,8 +179,8 @@ class DurableSteps:
 
     The names are persisted: a workflow recorded by one release replays by them in the next, so `DURABLE_DBOS` and
     `DURABLE_TEMPORAL` fail when a case records anything else. The run's own model requests are left out, as
-    every case makes one per call, one per follow-up its calls' `follow_ups` counts, and one to answer. A case whose tools do no I/O through a durable unit records
-    nothing, which is checked too.
+    every case makes one per call, one per follow-up its calls' `follow_ups` counts, and one to answer. A case
+    whose tools do no I/O through a durable unit records nothing, which is checked too.
     """
 
     dbos: tuple[str, ...] = ()

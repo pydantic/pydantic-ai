@@ -56,9 +56,9 @@ def one_call_per_response(made: tuple[ToolCall, ...]) -> FunctionModel:
     """A model that makes the calls in order, one per response, then answers; call `i` gets the ID `call_{i}`.
 
     It doesn't stream, so a run makes one model request per call, one per follow-up its case's `follow_ups` counts,
-    and one to answer: every request past the calls gets the answer. A request whose first message
-    isn't the run's `PROMPT` gets the answer, and is counted in `REQUESTS`: it is a capability's own run on the
-    run's model, such as `BrowserUse`'s browser agent, whose requests recovery must not make again.
+    and one to answer: every request past the calls gets the answer. A request whose first message isn't the run's
+    `PROMPT` gets the answer, and is counted in `REQUESTS`: it is a capability's own run on the run's model, such as
+    `BrowserUse`'s browser agent, whose requests recovery must not make again.
     """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
