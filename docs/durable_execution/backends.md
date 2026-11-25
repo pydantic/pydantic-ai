@@ -364,7 +364,7 @@ stays a plain sleep.
 
 Some engines wait by ending the container's current attempt with an error, and run it again once
 the timer fires, replaying the journal up to the wait. List those errors in
-`DurabilityEngineSpec.suspension_error_types`: when one of them ends a wait, the job the run is
+`DurabilityEngineSpec.control_flow_error_types`: when one of them ends a wait, the job the run is
 waiting on is left running for the replayed run to continue, instead of being cancelled as on other
 errors. On such an engine, a nested agent run without a durability capability of its own, such as one
 in a tool, waits with a plain sleep too: its model requests aren't recorded, so a container woken
@@ -376,7 +376,7 @@ class MyEngineDurability(BaseDurabilityCapability):
         engine_name='My engine',
         durable_unit_noun='step',
         durable_container_noun='task',
-        suspension_error_types=(my_engine.Suspend,),  # (1)!
+        control_flow_error_types=(my_engine.Suspend,),  # (1)!
     )
 
     async def durable_sleep(self, seconds: float) -> None:

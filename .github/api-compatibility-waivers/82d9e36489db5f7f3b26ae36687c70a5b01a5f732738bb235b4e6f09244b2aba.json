@@ -1,5 +1,0 @@
-{
-  "against": "v2.70.0",
-  "reason": "Additive: `AbsurdDurability.engine_spec` gains `suspension_error_types`, the error its new `durable_sleep` suspends the container with; every existing field keeps its value.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13274"
-}

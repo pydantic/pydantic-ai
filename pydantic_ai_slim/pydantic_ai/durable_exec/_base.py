@@ -1266,10 +1266,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         batch submitted by `BatchModelRequests`, which can take hours. Override this with the engine's durable timer,
         so that the wait holds no process, and a recovered run doesn't wait again through time that already passed.
         An engine whose timer suspends the container by raising lists that error in
-        `DurabilityEngineSpec.suspension_error_types`.
+        `DurabilityEngineSpec.control_flow_error_types`.
 
         It's only called in container code: in a durable unit's body, the wait is a plain `anyio.sleep`. On an engine
-        that lists `suspension_error_types`, so is a wait in a nested agent run that inherited it, such as one in a
+        that lists `control_flow_error_types`, so is a wait in a nested agent run that inherited it, such as one in a
         tool: that run's model requests aren't recorded, so a container woken from a suspension would make them again.
         A nested run with a durability capability of its own waits with that capability's `durable_sleep`.
 
@@ -1288,12 +1288,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """
         current = get_current_run_context()
         other_run = current is not None and current.run_id != run_id
-        if in_durable_unit() or (other_run and self.engine_spec.suspension_error_types):
+        if in_durable_unit() or (other_run and self.engine_spec.control_flow_error_types):
             await anyio.sleep(max(seconds, 0))  # workflow-nondeterminism-ok: not this run's container code
             return
         try:
             await self.durable_sleep(seconds)
-        except self.engine_spec.suspension_error_types as error:
+        except self.engine_spec.control_flow_error_types as error:
             mark_run_suspended(error)
             raise
 

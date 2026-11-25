@@ -285,7 +285,7 @@ def _delayed_continuation_model() -> _DelayedContinuationModel:
 
 
 class SleepingJournalDurability(JournalDurability):
-    engine_spec = replace(JournalDurability.engine_spec, suspension_error_types=(_Suspended,))
+    engine_spec = replace(JournalDurability.engine_spec, control_flow_error_types=(_Suspended,))
 
     def __init__(self, *, error: Exception | None = None) -> None:
         super().__init__()

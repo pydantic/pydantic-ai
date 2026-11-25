@@ -102,7 +102,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
         sequential_tools_in_durable_context=True,
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         tool_config_key=_TOOL_CONFIG_KEY,
-        suspension_error_types=(SuspendExecution,),
+        control_flow_error_types=(SuspendExecution,),
     )
 
     def __init__(

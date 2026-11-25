@@ -66,7 +66,7 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         wrapped_toolset_kinds=frozenset({'function', 'mcp'}),
         toolset_lifecycles={'function': 'enter-never', 'mcp': 'enter-never'},
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
-        suspension_error_types=(SuspendTask,),
+        control_flow_error_types=(SuspendTask,),
     )
     # Absurd has no non-retryable error type, so a serialization failure retries under the task's `RetryStrategy`.
 

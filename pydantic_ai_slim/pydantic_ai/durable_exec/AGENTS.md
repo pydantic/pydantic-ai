@@ -42,7 +42,7 @@ journaling them.
 
 Override `durable_sleep` with the engine's durable timer, so the waits between polls of a background
 response or a batch hold no process and recovery doesn't repeat them. If the timer suspends the
-container by raising, list that error in `engine_spec.suspension_error_types`, so the job being
+container by raising, list that error in `engine_spec.control_flow_error_types`, so the job being
 waited on is left running for the replayed run. An engine without a durable timer doesn't override
 it and keeps plain in-process sleeps: say so in its docs, with what it costs (the process stays up,
 recovery waits again).
