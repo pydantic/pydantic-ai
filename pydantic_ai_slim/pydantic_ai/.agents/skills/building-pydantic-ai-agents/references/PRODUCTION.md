@@ -4,7 +4,7 @@ The questions teams ask before shipping an agent, with the short answer and wher
 lives. The agent you build runs in the user's own process: there is no Pydantic-hosted agent
 runtime, so "deploying" means deploying their Python application.
 
-The docs page this mirrors is [Going to Production](https://pydantic.dev/docs/ai/overview/production/).
+The docs page this mirrors is [Going to Production](https://pydantic.dev/docs/ai/production/).
 
 ## Start from how the run begins
 
@@ -28,26 +28,25 @@ Reach for more only when one of these is true:
 
 Then there are two levels, and they are not the same:
 
-- **`StepPersistence`** (Harness) continues from the last tool-call snapshot, with no engine to run.
-- **Durable execution** survives a crash partway through a step, on an engine the user operates:
-  `pydantic-ai-slim` with one engine's extra, such as `[dbos]` or `[temporal]`. See
-  [Orchestration and Integrations](./ORCHESTRATION-AND-INTEGRATIONS.md).
+- **`StepPersistence`** (Harness) continues from the last tool-call snapshot, with no engine to run. A tool call in the ledger that never finished has an unknown outcome, so check the external system before re-running it.
+- **Durable execution** replays completed model requests and journaled tool calls after a crash, and **re-runs the one that was in flight from its start**. So a tool with side effects has to be safe to repeat, for instance by passing an idempotency key to the API it calls. This is the point to get right: a crash mid-call is *not* covered for you. Runs on an engine the user operates, via `pydantic-ai-slim` with one engine's extra such as `[dbos]` or `[temporal]`. See [Orchestration and Integrations](./ORCHESTRATION-AND-INTEGRATIONS.md).
 
 ## Bound cost and runaway loops
 
 Both, and they answer different questions:
 
 - `UsageLimits` per run: this run cannot exceed N requests or tokens.
-- `SpendLimits` (Harness) per day, tenant or month: this tenant cannot exceed a budget.
+- `SpendLimits` (Harness) per day, tenant or month: this tenant cannot exceed a budget. Two caveats that only matter in production: its default store is in memory, so a budget resets on every restart and is not shared between worker processes, and it is a brake rather than a reservation, so concurrent runs can overshoot. See the Harness spend docs.
 
 A loop that never terminates is a cost incident, so set the per-run limit on every agent that runs
 unattended, not just the expensive ones.
 
 ## Survive a provider outage
 
-A fallback model, transport-level retries, or Gateway failover. Pick by what fails: a fallback model
-covers a provider being down, retries cover a flaky connection, and the Gateway covers both without
-the user's code changing.
+Inside an agent, the two capabilities are `RetryOnModelErrors`, which honors `Retry-After`, and `ModelFallback`, which moves to another model; they compose. See
+[Handle Provider Failures](./AGENTS-CORE.md#handle-provider-failures).
+
+Do not reach for a retrying HTTP transport here: that is for code outside an agent, and it stacks with the SDK's own retries. The Gateway can fail over between providers serving the same model, when they are configured as gateway endpoints, which is narrower than "it covers outages for you".
 
 ## Where API keys go
 
@@ -87,8 +86,10 @@ eval catches it. See [Testing and Debugging](./TESTING-AND-DEBUGGING.md).
 
 ## Serve it to a frontend
 
-AG-UI or Vercel AI, streaming from any ASGI app. See
-[Orchestration and Integrations](./ORCHESTRATION-AND-INTEGRATIONS.md).
+`AGUIAdapter` or `VercelAIAdapter`, streaming from any ASGI app. The skill content is in
+[Input and History](./INPUT-AND-HISTORY.md#correlate-runs-with-run_id-and-conversation_id).
+
+**The adapter endpoint is not an authentication boundary.** Run it inside the application's own authenticated route, because messages submitted by a client are untrusted. Mounting `dispatch_request` on a bare route hands anyone who finds it an agent run.
 
 ## Deploy it
 
@@ -99,7 +100,7 @@ ours runs anywhere else, which is usually the answer a platform team is looking 
 
 What leaves their infrastructure, which models they may use, approvals and audit trails, central
 model access and spending caps, and compliance or self-hosting are answered by
-[Pydantic AI for Enterprise](https://pydantic.dev/docs/ai/overview/enterprise/). Pydantic AI is
+[Pydantic AI for Enterprise](https://pydantic.dev/docs/ai/production/enterprise/). Pydantic AI is
 MIT-licensed and runs on Azure OpenAI, Amazon Bedrock and Google Vertex AI as well as on models the
 user hosts themselves.
 
