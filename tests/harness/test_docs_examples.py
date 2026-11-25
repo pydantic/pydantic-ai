@@ -27,7 +27,7 @@ followup = agent.run_sync('And again.', message_history=result.all_messages())
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai_harness.filesystem import FileSystem
+from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.shell import Shell
 
 Agent('openai:gpt-6', capabilities=[LocalWorkspace({root!r}), Shell()]).run_sync('Run something.')

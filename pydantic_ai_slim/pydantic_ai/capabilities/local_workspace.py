@@ -16,6 +16,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
 )
 from pydantic_ai.workspaces._authority_paths import merge_path_authority
+from pydantic_ai.workspaces._host import HostWorkspaceBackend
 
 from .abstract import AbstractCapability
 
@@ -48,7 +49,8 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     authority: Authority = 'operator'
     """The [authority][pydantic_ai.messages.Authority] of the directory's files: `'user'` for the user's own files,
     `'none'` for files nobody on the application's side wrote. Anything below `'operator'` wraps the workspace in an
-    [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+    [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]. As for any capability, it's also the most
+    what `LocalWorkspace` itself enqueues can carry."""
 
     path_authority: Mapping[str, Authority] | None = None
     """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
@@ -68,7 +70,7 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         # Pin a relative `working_dir` to today's directory, and surface an unusable platform where the
         # capability is written, not on the first run.
-        self.working_dir = LocalWorkspaceBackend(self.working_dir).ref.id
+        self.working_dir = self._backend().ref.id
         if self.path_authority:
             # Two spellings of one path, like `~/x` and `/home/me/x`, keep the lower level.
             self.path_authority = merge_path_authority(
@@ -81,8 +83,11 @@ class LocalWorkspace(AbstractCapability[AgentDepsT]):
         # `authority` or `path_authority` stated only on the replaced one never carries over.
         return capabilities[-1]
 
+    def _backend(self) -> HostWorkspaceBackend:
+        return LocalWorkspaceBackend(self.working_dir, env=self.env)
+
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        backend = LocalWorkspaceBackend(self.working_dir, env=self.env)
+        backend = self._backend()
         if ref is not None and ref != backend.ref:
             # A ref from history never redirects host access away from the configured backend.
             return None

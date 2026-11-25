@@ -30,6 +30,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import DeferredToolRequests
 
 from ._inline_snapshot import snapshot
+from ._timeouts import READINESS_WAIT_TIMEOUT
 from .conftest import try_import
 
 with try_import() as starlette_import_successful:
@@ -492,7 +493,7 @@ async def test_cache_read_and_write_do_not_overlap_on_windows(monkeypatch: pytes
     monkeypatch.setattr(app_module.os, 'replace', windows_replace)
     monkeypatch.setattr(app_module, '_CACHE_FILE_LOCK', InstrumentedLock())
 
-    with anyio.fail_after(1):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with anyio.create_task_group() as tg:
             tg.start_soon(anyio.to_thread.run_sync, app_module._read_cached_file, cache_file)  # pyright: ignore[reportPrivateUsage]
             await anyio.to_thread.run_sync(reader_open.wait)

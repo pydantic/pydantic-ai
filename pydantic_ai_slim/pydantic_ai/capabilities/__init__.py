@@ -1,6 +1,7 @@
 from typing import Any, TypeAlias
 
 from pydantic_ai._history_processor import HistoryProcessor
+from pydantic_ai._instructions import AgentInstructions, SourcedInstruction
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.native_tools._tool_search import (
     ToolSearchFunc as ToolSearchFunc,
@@ -10,6 +11,7 @@ from pydantic_ai.native_tools._tool_search import (
 )
 from pydantic_ai.output import OutputContext
 
+from ..toolsets._tool_search import keywords_search
 from ._dynamic import CapabilityFunc, DynamicCapability
 from ._on_event import on_event
 from ._tool_search import ToolSearch
@@ -60,6 +62,7 @@ from .process_history import ProcessHistory
 from .reinject_system_prompt import ReinjectSystemPrompt
 from .request_input import RequestInput  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RequestInput
 from .resolve_model_id import ModelIdResolver, ResolveModelId
+from .retry_on_model_errors import TRANSIENT_MODEL_ERRORS, RetryOnModelErrors
 from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
 from .thinking import Thinking
@@ -67,6 +70,7 @@ from .thread_executor import UseThreadExecutor
 from .toolset import Toolset
 from .web_fetch import WebFetch
 from .web_search import WebSearch
+from .windows_workspace import WindowsWorkspace
 from .wrapper import WrapperCapability
 from .x_search import XSearch
 
@@ -97,12 +101,14 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         PrepareTools,
         ProcessHistory,
         ReinjectSystemPrompt,
+        RetryOnModelErrors,
         SetToolMetadata,
         Thinking,
         ToolSearch,
         Toolset,
         WebFetch,
         WebSearch,
+        WindowsWorkspace,
         XSearch,
     )
     if (name := cls.get_serialization_name()) is not None
@@ -115,6 +121,7 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
 __all__ = [
     'AbstractCapability',
     'AgentCapability',
+    'AgentInstructions',
     'AgentModel',
     'AgentNode',
     'CapabilityDescription',
@@ -145,6 +152,7 @@ __all__ = [
     'Capability',
     'Citations',
     'CAPABILITY_TYPES',
+    'TRANSIENT_MODEL_ERRORS',
     'FileUnderstanding',
     'ImageGeneration',
     'Instrumentation',
@@ -159,19 +167,23 @@ __all__ = [
     'ProcessHistory',
     'ReinjectSystemPrompt',
     'ResolveModelId',
+    'RetryOnModelErrors',
     'ModelFallback',
     'SelectModel',
     'SetToolMetadata',
+    'SourcedInstruction',
     'Thinking',
     'ToolSearch',
     'ToolSearchFunc',
     'ToolSearchLocalStrategy',
     'ToolSearchNativeStrategy',
     'ToolSearchStrategy',
+    'keywords_search',
     'Toolset',
     'UseThreadExecutor',
     'WebFetch',
     'WebSearch',
+    'WindowsWorkspace',
     'WrapperCapability',
     'XSearch',
     'CombinedCapability',

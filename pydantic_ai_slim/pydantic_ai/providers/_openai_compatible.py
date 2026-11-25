@@ -1,4 +1,5 @@
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from typing import TypeAlias
 
 from openai import AsyncOpenAI
 
@@ -8,6 +9,9 @@ from pydantic_ai._http import (
     warn_if_legacy_httpx_client,
 )
 from pydantic_ai.providers import Provider
+
+OpenAIAPIKey: TypeAlias = str | Callable[[], Awaitable[str]]
+"""An OpenAI API key, or an async callable that returns one, which the OpenAI SDK calls before each request."""
 
 
 class _OpenAISDKProvider(Provider[AsyncOpenAI]):
@@ -40,7 +44,7 @@ class _OpenAISDKProvider(Provider[AsyncOpenAI]):
         self,
         *,
         base_url: str | None,
-        api_key: str | None,
+        api_key: OpenAIAPIKey | None,
         http_client: AsyncHTTPClient | None,
         default_headers: Mapping[str, str] | None = None,
     ) -> AsyncOpenAI:

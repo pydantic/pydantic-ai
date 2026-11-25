@@ -29,6 +29,7 @@ from ...messages import (
     BinaryContent,
     CachePoint,
     CapabilityLoadDeltaPart,
+    CapabilityPart,
     CompactionPart,
     DocumentUrl,
     FilePart,
@@ -599,6 +600,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             use_encrypted_value=parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION,
             preserve_file_data=preserve_file_data,
         )
+        chat_message_target: ModelMessage | None = None
         for msg in messages:
             checkpoint = builder.checkpoint()
             match msg:
@@ -636,11 +638,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             # message or the previous one extended, and some AG-UI messages add no parts at all, so ask the
             # builder rather than assume the tail. An AG-UI message lands in a request or a response, never
             # both (an `ActivityMessage` can be either), so whichever lookup answers is the one.
+            # An `ActivityMessage` never replaces the id a chat message kept on the same message, the rule
+            # `dump_messages` follows when it puts the id back.
             target = builder.last_modified(checkpoint, of_type=ModelRequest) or builder.last_modified(
                 checkpoint, of_type=ModelResponse
             )
-            if target is not None:
-                set_ui_message_id(target, msg.id)
+            if target is None or (isinstance(msg, ActivityMessage) and target is chat_message_target):
+                continue
+            set_ui_message_id(target, msg.id)
+            if not isinstance(msg, ActivityMessage):
+                chat_message_target = target
 
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
@@ -685,8 +692,10 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                     _dump_user_prompt_part(part, context)
                 case ToolReturnPart():
                     _dump_tool_return_part(part, context)
-                case InstructionDeltaPart() | InstructionBaselinePart():
-                    pass  # Operator instruction state stays in trusted server-side history.
+                case InstructionDeltaPart() | InstructionBaselinePart() | CapabilityPart():
+                    # Operator instruction state stays in trusted server-side history, and so do capability parts until
+                    # they have a carrier whose trust a client can't change (#11029).
+                    pass
                 case ModelSettingsDeltaPart():
                     _dump_request_activity(
                         context, MODEL_SETTINGS_DELTA_ACTIVITY_TYPE, model_settings_delta_payload(part)
@@ -780,7 +789,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           no trusted message-level carrier for framework or provider state; general client-controlled
           metadata must not be restored as server-side state. The one thing `load_messages` keeps in
           the reserved `__pydantic_ai__` namespace is the AG-UI message id, which comes back on the
-          last message dumped from each `ModelMessage`.
+          last chat message dumped from each `ModelMessage`. An activity message dumped beside a chat
+          message never takes it; a message that dumps to activity messages alone puts it on the last of them.
         - A response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] comes back,
           with its `provider_name`, only from a part that carries the response's `provider_name`: a
           `ThinkingPart`, a `CompactionPart`, or a `FilePart` with `preserve_file_data=True`. Its other
@@ -882,10 +892,16 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             else:
                 assert_never(msg)
             # `load_messages` kept the id of the last AG-UI message merged into `msg`, so it goes back on the
-            # last AG-UI message dumped from it. The others keep their fresh ids: several tool results in one
-            # request become several `ToolMessage`s, and those need distinct ids.
+            # last chat message dumped from it. The others keep their fresh ids: several tool results in one
+            # request become several `ToolMessage`s, and those need distinct ids. An `ActivityMessage` is
+            # skipped: it carries a framework record the run added after the client's message, such as the
+            # settings change behind a user prompt, and `@ag-ui/client` never sends it back, so the id has
+            # to stay on the message the client will resend for a regenerate or edit to find the stored turn
+            # (https://github.com/pydantic/pydantic-ai/issues/12691). A message that dumps to activities
+            # alone keeps the id on the last of them.
             if dumped and (ui_message_id := get_ui_message_id(msg)) is not None:
-                dumped[-1].id = ui_message_id
+                target = next((m for m in reversed(dumped) if not isinstance(m, ActivityMessage)), dumped[-1])
+                target.id = ui_message_id
             result.extend(dumped)
 
         return result
@@ -1064,7 +1080,7 @@ def _load_reasoning_message(reasoning_msg: ReasoningMessage, builder: MessagesBu
         metadata: dict[str, Any] = json.loads(reasoning_msg.encrypted_value) if reasoning_msg.encrypted_value else {}
         if not isinstance(metadata, dict):
             metadata = {}
-    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+    except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
         metadata = {}
     builder.add(
         ThinkingPart(

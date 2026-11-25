@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,10 @@ from pydantic_ai_harness.shell import Shell
 from .._tool_calls import call_tools
 from .fake_boxd import FakeBoxd, wait_until_gone
 
-pytestmark = pytest.mark.anyio(backends=['asyncio'])
+pytestmark = [
+    pytest.mark.anyio(backends=['asyncio']),
+    pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host'),
+]
 
 
 def _ctx() -> RunContext[None]:
@@ -66,6 +70,7 @@ def test_root_package_exports_the_capability_and_backend() -> None:
         ({'vcpu': '2'}, r"^vcpu must be 1, 2, 4, 8 or None, got '2'\.$"),
         ({'snapshot': 'golden', 'vcpu': 2}, r'^`snapshot` keeps the size it was saved at, so it cannot be combined'),
         ({'defer_loading': True, 'id': 'machine'}, 'does not support `defer_loading=True`'),
+        ({'secrets': 'GH_TOKEN'}, r"^`secrets` takes a list of secret names, such as \['GH_TOKEN'\], not a string\.$"),
     ],
 )
 def test_invalid_settings_fail_at_construction(settings: dict[str, Any], message: str) -> None:
@@ -94,8 +99,17 @@ async def test_capability_is_lazy_and_forwards_options(host: FakeBoxd, tmp_path:
         'isolated': True,
         'vcpu': 2,
         'auto_suspend_timeout': 300,
+        'spec': None,
     }
     assert await backend.working_dir() == directory
+
+
+async def test_capability_forwards_secrets_to_the_machine_spec(host: FakeBoxd) -> None:
+    capability = BoxdSandbox[None](secrets=['GH_TOKEN'])
+    backend = capability.get_workspace(_ctx(), ref=None)
+    assert isinstance(backend, BoxdSandboxBackend)
+    await backend.run(['true'])
+    assert host.only.create_kwargs['spec'] == {'version': 1, 'isolated': True, 'secrets': ['GH_TOKEN']}
 
 
 async def test_a_foreign_ref_is_declined() -> None:
@@ -231,12 +245,16 @@ async def test_fork_copies_a_machine_and_closes_the_client_it_opened(host: FakeB
 def test_agent_spec_schema_publishes_the_spec_expressible_fields() -> None:
     definitions = AgentSpec.model_json_schema_with_capabilities([BoxdSandbox])['$defs']
     assert sorted(definitions['spec_params_BoxdSandbox']['properties']) == [
+        'authority',
         'auto_suspend_timeout',
         'defer_loading',
         'description',
+        'desktop',
         'env',
         'id',
         'org',
+        'path_authority',
+        'secrets',
         'snapshot',
         'vcpu',
         'working_dir',
@@ -252,6 +270,8 @@ def test_from_spec_forwards_the_spec_fields(size: dict[str, Any]) -> None:
         'auto_suspend_timeout': 30,
         'working_dir': '/work',
         'env': {'FOO': 'bar'},
+        'secrets': ['GH_TOKEN'],
+        'desktop': (1280, 800),
         **size,
     }
     assert BoxdSandbox[None].from_spec(**spec_fields) == BoxdSandbox[None](**spec_fields)

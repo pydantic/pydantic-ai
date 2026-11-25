@@ -7,20 +7,30 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, Caching, LocalWorkspace, ValidatedToolArgs
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
+from pydantic_ai.capabilities import AbstractCapability, Caching, LocalWorkspace, ModelFallback, ValidatedToolArgs
+from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import CacheSetting, ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
-from pydantic_ai_harness.coder import Autonomy, Coder
+from pydantic_ai_harness.coder import Autonomy, BenchmarkInstructions, Coder
 from pydantic_ai_harness.coder._capability import MAX_FILE_TOOL_RETRIES
 from pydantic_ai_harness.coder._instructions import coder_instructions
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_ai_harness.subagents import TaskControl
+from pydantic_ai_harness.sub_agents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
@@ -28,6 +38,10 @@ from .._recording_durability import RecordingDurability
 from .._tool_calls import call_tool, call_tools
 
 _PLAN = 'Propose a plan and wait for approval before editing.'
+_DELEGATION_RULE = (
+    "Don't spawn sub-agents with `delegate_task` unless the user or AGENTS.md asks, "
+    'whatever other instructions say about delegating.'
+)
 _FINISH = 'You are running a delegated task. Choose sensible defaults and finish.'
 _MISREAD_TEXT = (
     'If inputs seem inconsistent or goals impossible, assume you misread. '
@@ -39,6 +53,31 @@ _MISREAD_MAX_TEXT = (
     'before settling for a partial answer. A result that leaves a stated criterion unmet means your '
     'interpretation is likely wrong, not that the answer is "none".'
 )
+
+
+@dataclass
+class _Sent:
+    """What a scripted model was sent: its instructions, and the system prompts in the request's last message."""
+
+    model: str
+    instructions: str | None
+    system: list[str]
+
+
+def _scripted(name: str, sent: list[_Sent], *, delegates: bool, fails: bool = False) -> FunctionModel:
+    """A model that logs what it's sent, then fails or answers with its name."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        last = messages[-1]
+        assert isinstance(last, ModelRequest)
+        system = [part.content for part in last.parts if isinstance(part, SystemPromptPart)]
+        sent.append(_Sent(name, info.instructions, system))
+        if fails:
+            raise ModelAPIError(model_name=name, message='down')
+        return ModelResponse(parts=[TextPart(name)])
+
+    profile: ModelProfile = {'supports_inline_system_prompts': True, 'delegates_unprompted': delegates}
+    return FunctionModel(respond, model_name=name, profile=profile)
 
 
 @dataclass
@@ -160,7 +199,7 @@ class TestCoder:
         )
         assert model.last_model_request_parameters is not None
         tools = [tool.name for tool in model.last_model_request_parameters.function_tools]
-        assert tools[-5:] == ['delegate_task', 'list_tasks', 'message_task', 'answer_task', 'cancel_task']
+        assert tools[-6:] == ['delegate_task', 'list_tasks', 'check_task', 'message_task', 'answer_task', 'cancel_task']
         with pytest.raises(ValueError, match='`task_control` requires `sub_agents=True`'):
             Coder(sub_agents=False, task_control=TaskControl())
 
@@ -239,11 +278,8 @@ class TestCoder:
         assert "Match the surrounding code's style, structure, and imports." in default
         assert 'Work until done. Ask only for credentials, approvals, or real ambiguity.' in default
         assert 'Read files with `read_file`, not batched `cat`.' in default
-        assert 'Deliverables may be used outside this workspace' in default
-        assert 'from a clean directory.' in default
         assert "Write checks from the task's stated behavior, not your code." in default
         assert 'go through each requirement and edge case the task states' in default
-        assert 'uses every field the provided data supplies' in default
         assert 'Measure results against any numeric target the task states.' in default
         assert 'assume you misread' in default
         assert 'Check behavior with heredocs for one-offs, not new files.' in default
@@ -272,17 +308,44 @@ class TestCoder:
         assert ask in text
         assert ('Measure results against any numeric target the task states.' in text) is targets
         assert ('Leave only the requested change; delete your scratch files.' in text) is cleanup
-        assert 'Deliverables may be used outside this workspace' in text
         assert 'go through each requirement and edge case the task states' in text
-        assert 'uses every field the provided data supplies' in text
         assert "Write checks from the task's stated behavior, not your code." in text
         assert (_MISREAD_MAX_TEXT in text) is cleanup
         assert (_MISREAD_TEXT in text) is not cleanup
 
     @pytest.mark.parametrize('autonomy', ['low', 'medium', 'high', 'max'])
+    @pytest.mark.parametrize('benchmark', [False, True])
+    async def test_benchmark_instructions_are_opt_in(self, tmp_path: Path, autonomy: Autonomy, benchmark: bool) -> None:
+        """The clean-directory and every-field sentences come only from `BenchmarkInstructions`, at every level."""
+        model = TestModel(call_tools=[])
+        coder = Coder(autonomy=autonomy, repo_context=False, sub_agents=False)
+        capabilities = [coder, BenchmarkInstructions()] if benchmark else [coder]
+        await Agent(model, capabilities=capabilities).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        texts = [part.content for part in parts if not part.dynamic]
+        assert sum('Deliverables may be used outside this workspace' in text for text in texts) == benchmark
+        assert sum('uses every field the provided data supplies' in text for text in texts) == benchmark
+        assert 'go through each requirement and edge case the task states' in texts[0]
+
+    async def test_a_delegate_gets_benchmark_instructions(self, tmp_path: Path) -> None:
+        seen: dict[str, str] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return _finish_or_delegate(seen, messages, info)
+
+        agent = Agent(
+            FunctionModel(respond),
+            capabilities=[LocalWorkspace(tmp_path), Coder(repo_context=False), BenchmarkInstructions()],
+        )
+        assert (await agent.run('Delegate it')).output == 'done'
+        assert 'from a clean directory' in seen['Delegate it']
+        assert 'from a clean directory' in seen['Run it']
+
+    @pytest.mark.parametrize('autonomy', ['low', 'medium', 'high', 'max'])
     def test_max_expands_the_misread_check_for_parent_and_delegate(self, autonomy: Autonomy) -> None:
         """A delegate follows its parent's autonomy for the misread check, as it does for cleanup."""
-        for text in coder_instructions(autonomy=autonomy, delegate_tool=None):
+        for text in coder_instructions(autonomy=autonomy):
             if autonomy == 'max':
                 assert _MISREAD_MAX_TEXT in text
                 assert _MISREAD_TEXT not in text
@@ -404,11 +467,18 @@ class TestCoder:
     @pytest.mark.parametrize('repo_context', [False, True])
     @pytest.mark.parametrize('sub_agents', [False, True])
     @pytest.mark.parametrize('extra_instructions', [None, 'Keep new files under 400 lines.'])
+    @pytest.mark.parametrize('delegates_unprompted', [False, True])
     async def test_instructions_follow_the_composition(
-        self, tmp_path: Path, repo_context: bool, sub_agents: bool, extra_instructions: str | None
+        self,
+        tmp_path: Path,
+        repo_context: bool,
+        sub_agents: bool,
+        extra_instructions: str | None,
+        delegates_unprompted: bool,
     ) -> None:
-        """The delegation rule comes with `delegate_task`, and extra guidance is appended, with or without `RepoContext`."""
-        model = TestModel(call_tools=[])
+        """The delegation rule comes with `delegate_task`, for models that delegate unprompted, and extra guidance is
+        appended, with or without `RepoContext`."""
+        model = TestModel(call_tools=[], profile={'delegates_unprompted': delegates_unprompted})
         coder = Coder(instructions=extra_instructions, repo_context=repo_context, sub_agents=sub_agents)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
@@ -416,13 +486,64 @@ class TestCoder:
         text = '\n'.join(part.content for part in parts)
         guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
         tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
-        assert (
-            "Don't spawn sub-agents with `delegate_task` unless the user or AGENTS.md asks, "
-            'whatever other instructions say about delegating.' in text
-        ) is sub_agents
+        assert (_DELEGATION_RULE in text) is (sub_agents and delegates_unprompted)
         assert ('delegate_task' in tools) is sub_agents
         if extra_instructions:
             assert guidance.endswith('\n' + extra_instructions)
+
+    async def test_delegation_rule_is_withdrawn_after_a_fallback_to_a_model_that_does_not_delegate_unprompted(
+        self, tmp_path: Path
+    ) -> None:
+        """A conversation that opened on GPT and falls back to Claude keeps the instructions it opened with, and
+        Claude is told after the new prompt that the delegation rule was withdrawn."""
+        sent: list[_Sent] = []
+        workspace = LocalWorkspaceBackend(tmp_path)
+        first = await Agent(_scripted('gpt', sent, delegates=True), capabilities=[Coder(repo_context=False)]).run(
+            'go', workspace=workspace
+        )
+        agent = Agent(
+            _scripted('gpt', sent, delegates=True, fails=True),
+            capabilities=[Coder(repo_context=False), ModelFallback(_scripted('claude', sent, delegates=False))],
+        )
+        result = await agent.run('continue', message_history=first.all_messages(), workspace=workspace)
+        assert result.output == 'claude'
+        opened_with = sent[0].instructions
+        assert opened_with is not None and _DELEGATION_RULE in opened_with
+        assert [(s.model, s.instructions == opened_with) for s in sent] == [
+            ('gpt', True),
+            ('gpt', True),
+            ('claude', True),
+        ]
+        assert [s.system for s in sent] == [
+            [],
+            [],
+            [
+                '<pyai:context id="capability:coder_instructions:delegation">\n'
+                'This context has been withdrawn.\n</pyai:context>'
+            ],
+        ]
+
+    @pytest.mark.parametrize('instrumented', [False, True])
+    async def test_fallback_model_gets_no_delegation_rule_and_a_warning(
+        self, tmp_path: Path, instrumented: bool
+    ) -> None:
+        """`FallbackModel` has no profile of its own, so even a GPT-first chain gets no rule, and the run still works.
+
+        `Coder` warns that `ModelFallback` would give each attempt its model's instructions, also when the
+        `FallbackModel` is instrumented (the run's `ctx.model` is then still the `FallbackModel`).
+        """
+        sent: list[_Sent] = []
+        fallback = FallbackModel(
+            _scripted('gpt', sent, delegates=True, fails=True), _scripted('claude', sent, delegates=False)
+        )
+        model = InstrumentedModel(fallback) if instrumented else fallback
+        with pytest.warns(UserWarning, match="`Coder` can't read model-specific instructions from `FallbackModel`"):
+            result = await Agent(model, capabilities=[Coder(repo_context=False)]).run(
+                'go', workspace=LocalWorkspaceBackend(tmp_path)
+            )
+        assert result.output == 'claude'
+        assert [s.model for s in sent] == ['gpt', 'claude']
+        assert all(s.instructions is not None and _DELEGATION_RULE not in s.instructions for s in sent)
 
     @pytest.mark.parametrize(
         ('unrestricted', 'files'),

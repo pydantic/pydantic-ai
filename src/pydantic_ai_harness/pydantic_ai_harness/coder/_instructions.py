@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Literal
 
+from pydantic_ai.messages import InstructionPart
+from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 Autonomy = Literal['low', 'medium', 'high', 'max']
@@ -43,7 +45,8 @@ _DELEGATION = (
 )
 """Overrides the instruction a `DelegationTasks` owner adds, which tells the model to delegate when it
 saves context. A delegate starts from a fresh context and re-explores the project, so unrequested
-delegation multiplies tool calls and cost."""
+delegation multiplies tool calls and cost. Sent only to models whose profile sets `delegates_unprompted`: other
+models don't delegate unasked, and keep the `DelegationTasks` guidance as it is."""
 
 _TARGETS = 'Measure results against any numeric target the task states.'
 """Wherever the agent decides on its own when the work is good enough: `'high'`, `'max'`, and every delegate."""
@@ -51,18 +54,20 @@ _TARGETS = 'Measure results against any numeric target the task states.'
 _CLEANUP = 'Leave only the requested change; delete your scratch files.'
 """At `'max'` only: nobody reviews the workspace before the result is used."""
 
-_DELIVER = (
+BENCHMARK_INSTRUCTIONS = (
     'Deliverables may be used outside this workspace, where only the files you were asked to produce are present. '
     'Make them self-contained, with no reliance on other workspace files, caches, or data you did not include, '
-    'and check that they still work when run from a clean directory.'
+    'and check that they still work when run from a clean directory. '
+    'Make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
 )
+"""Added by `BenchmarkInstructions`: a verifier grades only the requested files, in a clean directory,
+and benchmark data is built so that every field matters."""
 
 _CONFIRM = (
     'Before finishing, go through each requirement and edge case the task states and confirm each one explicitly.'
 )
 
 _EXACT = "Write checks from the task's stated behavior, not your code."
-_EVERY_FIELD = 'Make sure your solution uses every field the provided data supplies unless the task says to ignore it.'
 _MISREAD = (
     'If inputs seem inconsistent or goals impossible, assume you misread. '
     'Re-read, and try other interpretations before settling.'
@@ -85,26 +90,45 @@ _FINISHING = (
 def _checks(*, measure: bool, cleanup: bool, misread_max: bool) -> str:
     return ' '.join(
         [
-            _DELIVER,
             *([_TARGETS] if measure else []),
             _CONFIRM,
             _MISREAD_MAX if misread_max else _MISREAD,
             _EXACT,
-            _EVERY_FIELD,
             _HEREDOC,
             *([_CLEANUP] if cleanup else []),
         ]
     )
 
 
-def _compose(lead: str, *, context: Sequence[str], checks: str, delegation: Sequence[str], suffix: str) -> str:
-    return '\n\n'.join([_INTRO, lead, *context, _READING, *delegation, checks, _FINISHING]) + '\n' + suffix
+def _compose(lead: str, *, context: Sequence[str], checks: str, suffix: str) -> str:
+    return '\n\n'.join([_INTRO, lead, *context, _READING, checks, _FINISHING]) + '\n' + suffix
+
+
+def delegation_instruction(delegate_tool: str) -> Callable[[RunContext[AgentDepsT]], InstructionPart]:
+    """The rule against unrequested delegation, as a block for the models that delegate unprompted.
+
+    The block, `capability:coder_instructions:delegation`, is contributed from the first request, empty for a model
+    without `delegates_unprompted`, and appends its changes. It's resolved against the model handling each request, so
+    a conversation that moves to a model without the key keeps the instructions it started with and is told the rule
+    was withdrawn, and one that moves to a model with it is sent the rule as a change.
+    """
+    text = _DELEGATION.format(tool_name=delegate_tool)
+
+    def delegation(ctx: RunContext[AgentDepsT]) -> InstructionPart:
+        model: AbstractModel = ctx.model
+        try:
+            delegates = isinstance(model, Model) and model.profile.get('delegates_unprompted', False)
+        except NotImplementedError:
+            # `FallbackModel` picks its model per request, so no one profile speaks for it.
+            delegates = False
+        return InstructionPart(text if delegates else '', name='delegation', on_change='append')
+
+    return delegation
 
 
 def coder_instructions(
     *,
     autonomy: Autonomy,
-    delegate_tool: str | None,
     extra: str | None = None,
     repo_files: Sequence[str] | None = None,
     nested_instructions: bool = False,
@@ -119,15 +143,14 @@ def coder_instructions(
     is_max = autonomy == 'max'
     parent_checks = _checks(measure=autonomy in ('high', 'max'), cleanup=is_max, misread_max=is_max)
     delegate_checks = _checks(measure=True, cleanup=is_max, misread_max=is_max)
-    delegation = [_DELEGATION.format(tool_name=delegate_tool)] if delegate_tool is not None else []
     context = [
         *([_REPO_FILES.format(names=', '.join(repo_files))] if repo_files is not None else []),
         *([_NESTED_REPO_FILES] if nested_instructions else []),
     ]
     suffix = '\n' + extra if extra else ''
     return (
-        _compose(_AUTONOMY[autonomy], context=context, checks=parent_checks, delegation=delegation, suffix=suffix),
-        _compose(_DELEGATED, context=context, checks=delegate_checks, delegation=delegation, suffix=suffix),
+        _compose(_AUTONOMY[autonomy], context=context, checks=parent_checks, suffix=suffix),
+        _compose(_DELEGATED, context=context, checks=delegate_checks, suffix=suffix),
     )
 
 

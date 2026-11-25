@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx2
 import pytest
+from _pytest.mark import ParameterSet
 from dirty_equals import IsBytes
 from genai_prices.types import PriceCalculation
 from opentelemetry.trace import StatusCode
@@ -34,10 +35,17 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
     ModelHTTPError,
+    ModelNotFoundError,
+    ModelOverloadedError,
+    ModelQuotaExceededError,
     ModelRateLimitError,
+    ModelRequestRejectedError,
+    ModelServerError,
     ModelTimeoutError,
+    ModelUnavailableError,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -59,7 +67,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, google_user_agents, try_import
+from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, gave_up_on, google_user_agents, try_import
 
 pytestmark = [
     pytest.mark.usefixtures('allow_model_requests'),
@@ -1988,12 +1996,13 @@ async def test_google_image_generation_maps_non_http_api_error():
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
 @pytest.mark.parametrize(
-    ('status_code', 'headers', 'error', 'expected_retry_after'),
+    ('status_code', 'headers', 'error', 'expected_error', 'expected_retry_after'),
     [
         pytest.param(
             400,
             {'retry-after': '12'},
             {'code': 400, 'message': 'invalid image request', 'status': 'INVALID_ARGUMENT'},
+            ModelRequestRejectedError,
             12,
             id='retry-after-header',
         ),
@@ -2006,63 +2015,121 @@ async def test_google_image_generation_maps_non_http_api_error():
                 'status': 'RESOURCE_EXHAUSTED',
                 'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
             },
+            ModelRateLimitError,
             14.0,
             id='retry-info-body',
         ),
+        pytest.param(
+            429,
+            None,
+            {
+                'code': 429,
+                'message': 'You exceeded your current quota, please check your plan and billing details.',
+                'status': 'RESOURCE_EXHAUSTED',
+                'details': [
+                    {
+                        '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+                        'violations': [{'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'}],
+                    },
+                    {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'},
+                ],
+            },
+            ModelQuotaExceededError,
+            14.0,
+            id='daily-quota',
+        ),
+        pytest.param(
+            503,
+            None,
+            {'code': 503, 'message': 'The model is overloaded. Please try again later.', 'status': 'UNAVAILABLE'},
+            ModelOverloadedError,
+            None,
+            id='overloaded',
+        ),
+        pytest.param(
+            400,
+            None,
+            {
+                'code': 400,
+                'message': 'API key not valid. Please pass a valid API key.',
+                'status': 'INVALID_ARGUMENT',
+                'details': [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'API_KEY_INVALID'}],
+            },
+            ModelAuthenticationError,
+            None,
+            id='api-key-invalid',
+        ),
+        pytest.param(
+            404,
+            None,
+            {'code': 404, 'message': 'models/gemini-2.5-flash-image is not found.', 'status': 'NOT_FOUND'},
+            ModelNotFoundError,
+            None,
+            id='not-found',
+        ),
+        pytest.param(
+            504,
+            None,
+            {
+                'code': 504,
+                'message': 'Deadline expired before operation could complete.',
+                'status': 'DEADLINE_EXCEEDED',
+            },
+            ModelServerError,
+            None,
+            id='status-without-category',
+        ),
+        pytest.param(
+            502,
+            None,
+            {'code': 502, 'message': 'Bad Gateway'},
+            ModelServerError,
+            None,
+            id='no-status',
+        ),
     ],
 )
+@pytest.mark.parametrize('gave_up', [False, True])
 async def test_google_image_generation_status_error(
-    status_code: int, headers: dict[str, str] | None, error: dict[str, object], expected_retry_after: float
+    status_code: int,
+    headers: dict[str, str] | None,
+    error: dict[str, object],
+    expected_error: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelRequestRejectedError
+    ],
+    expected_retry_after: float | None,
+    gave_up: bool,
 ):
-    """A Gemini 4xx surfaces as `ModelHTTPError` keeping the status, body, and the wait the provider reported.
+    """A Gemini error status surfaces as its `ModelHTTPError` category, with Gemini's status and the reported wait.
 
-    Not a VCR test because a 4xx is easy to provoke but its wait is not: a `retry-after` header and a structured
-    error body both depend on Google's live quota state, and a recording would pin whatever that happened to be.
-    The responses here are fixed from Google's documented error format instead.
+    So does one a retrying transport gave up on, which `google.genai` never sees.
+
+    Not a VCR test because an error status is easy to provoke but its wait is not: a `retry-after` header and a
+    structured error body both depend on Google's live quota state, and a recording would pin whatever that happened to
+    be. The responses here are fixed from Google's documented error format instead.
     """
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:
-        return httpx2.Response(status_code, headers=headers, json={'error': error})
+        return httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
 
-    async with _mock_google_provider(handle_request) as provider:
+    async with _mock_google_provider(gave_up_on(handle_request) if gave_up else handle_request) as provider:
         model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
 
         with pytest.raises(ModelHTTPError) as exc_info:
             await model.generate('tiny robot')
 
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gemini-2.5-flash-image')
+    )
     assert exc_info.value.status_code == status_code
+    assert exc_info.value.provider_error_code == error.get('status')
     assert exc_info.value.body == {'error': error}
     assert exc_info.value.retry_after == expected_retry_after
-
-
-@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
-async def test_google_image_generation_gave_up_status_error():
-    """A status a retrying transport gave up on surfaces as a categorized `ModelHTTPError` with Gemini's wait.
-
-    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
-    """
-    error: dict[str, object] = {
-        'code': 429,
-        'message': 'Resource has been exhausted',
-        'status': 'RESOURCE_EXHAUSTED',
-        'details': [{'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '14s'}],
-    }
-
-    def handle_request(request: httpx2.Request) -> httpx2.Response:
-        response = httpx2.Response(429, json={'error': error}, request=request)
-        raise httpx2.HTTPStatusError('Client error 429', request=request, response=response)
-
-    async with _mock_google_provider(handle_request) as provider:
-        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
-
-        with pytest.raises(ModelHTTPError) as exc_info:
-            await model.generate('tiny robot')
-
-    assert isinstance(exc_info.value, ModelRateLimitError)
-    assert exc_info.value.status_code == 429
-    assert exc_info.value.body == {'error': error}
-    assert exc_info.value.retry_after == 14.0
-    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError) is gave_up
 
 
 @pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
@@ -4387,84 +4454,265 @@ async def test_openai_image_edit_rejects_unsupported_image_format(openai_mock_cl
     openai_mock_client.images.edit.assert_not_awaited()
 
 
-@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_edit_status_error(openai_mock_client: AsyncMock):
-    """A 5xx on the edit endpoint surfaces as `ModelHTTPError` with the status and body preserved.
+_OPENAI_IMAGE_STATUS_ERRORS: list[ParameterSet] = [
+    pytest.param(
+        429,
+        {'retry-after': '7'},
+        {'message': 'Rate limit reached', 'type': 'requests', 'code': 'rate_limit_exceeded'},
+        ModelRateLimitError,
+        7.0,
+        id='rate-limit',
+    ),
+    pytest.param(
+        429,
+        None,
+        {'message': 'You exceeded your current quota', 'type': 'insufficient_quota', 'code': 'insufficient_quota'},
+        ModelQuotaExceededError,
+        None,
+        id='quota',
+    ),
+    pytest.param(
+        503,
+        None,
+        {'message': 'Service Unavailable', 'type': 'server_error', 'code': None},
+        ModelUnavailableError,
+        None,
+        id='unavailable',
+    ),
+    pytest.param(
+        503,
+        {'retry-after': '2'},
+        {
+            'message': 'The server is overloaded, please try again later.',
+            'type': 'service_unavailable_error',
+            'code': 'server_is_overloaded',
+        },
+        ModelOverloadedError,
+        2.0,
+        id='overloaded',
+    ),
+    pytest.param(
+        500,
+        None,
+        {'message': 'The server had an error', 'type': 'server_error', 'code': None},
+        ModelServerError,
+        None,
+        id='server-error',
+    ),
+    pytest.param(
+        401,
+        None,
+        {'message': 'Incorrect API key provided', 'type': 'invalid_request_error', 'code': 'invalid_api_key'},
+        ModelAuthenticationError,
+        None,
+        id='invalid-api-key',
+    ),
+    pytest.param(
+        401,
+        None,
+        # An OpenAI-compatible proxy can forward the upstream error in `metadata.raw`; like `openai`, only the error's
+        # `message` is classified.
+        {
+            'message': 'Incorrect API key provided',
+            'type': 'invalid_request_error',
+            'code': 'invalid_api_key',
+            'metadata': {'raw': "This model's maximum context length is 8192 tokens."},
+        },
+        ModelAuthenticationError,
+        None,
+        id='invalid-api-key-metadata-raw-context-window',
+    ),
+    pytest.param(
+        403,
+        None,
+        {
+            'message': 'Your organization must be verified to use the model gpt-image-1',
+            'type': 'invalid_request_error',
+            'code': None,
+        },
+        ModelAuthenticationError,
+        None,
+        id='organization-not-verified',
+    ),
+    pytest.param(
+        404,
+        None,
+        {'message': 'The model does not exist', 'type': 'invalid_request_error', 'code': 'model_not_found'},
+        ModelNotFoundError,
+        None,
+        id='model-not-found',
+    ),
+    pytest.param(
+        400,
+        None,
+        {
+            'message': "Invalid value: '7x7'. Supported values are: '1024x1024'",
+            'type': 'invalid_request_error',
+            'code': 'invalid_value',
+        },
+        ModelRequestRejectedError,
+        None,
+        id='invalid-value',
+    ),
+    pytest.param(
+        409,
+        None,
+        {'message': 'conflict', 'type': 'invalid_request_error', 'code': None},
+        None,
+        None,
+        id='no-category',
+    ),
+]
+"""OpenAI image API error statuses, fixed from OpenAI's documented error format, and the category each raises."""
 
-    Not a VCR test because a deliberate 500 from the edit endpoint is not reproducible on demand, and
-    the structured error body a recording would capture depends on which OpenAI failure produced it.
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+@pytest.mark.parametrize(
+    ('status_code', 'headers', 'error', 'expected_error', 'expected_retry_after'), _OPENAI_IMAGE_STATUS_ERRORS
+)
+async def test_openai_image_generation_status_error(
+    status_code: int,
+    headers: dict[str, str] | None,
+    error: dict[str, object],
+    expected_error: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelRequestRejectedError
+    ]
+    | None,
+    expected_retry_after: float | None,
+    edit: bool,
+):
+    """An OpenAI error status surfaces as its `ModelHTTPError` category on both endpoints, as it does from embeddings.
+
+    Driven through the real `AsyncOpenAI` over a mock transport, so the SDK unwraps the `error` envelope that
+    `provider_error_code` and `provider_error_type` come from. `max_retries=0` keeps the SDK from waiting out the
+    `retry-after`. Not a VCR test because most of these statuses cannot be provoked on demand, and a rate limit's wait
+    depends on the org's live usage; the responses are fixed from OpenAI's documented error format instead.
     """
-    openai_mock_client.images.edit.side_effect = APIStatusError(
-        'test error',
-        response=httpx2.Response(
-            status_code=500, request=httpx2.Request('POST', 'https://example.com/v1/images/edits')
-        ),
-        body={'error': 'test error'},
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request)),
     )
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
-    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+    images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await model.generate('edit this image', images=[BinaryImage(data=TINY_PNG, media_type='image/png')])
+        await model.generate('tiny robot', images=images)
 
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.body == {'error': 'test error'}
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gpt-image-1')
+    )
+    assert exc_info.value.status_code == status_code
+    assert exc_info.value.body == error
+    assert exc_info.value.provider_error_code == error['code']
+    assert exc_info.value.provider_error_type == error['type']
+    assert exc_info.value.retry_after == expected_retry_after
+    assert isinstance(exc_info.value.__cause__, APIStatusError)
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_connection_error(openai_mock_client: AsyncMock):
-    """A connection failure surfaces as `ModelAPIError` rather than the SDK's own exception.
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+@pytest.mark.parametrize(
+    ('status_code', 'headers', 'error', 'expected_error', 'expected_retry_after'), _OPENAI_IMAGE_STATUS_ERRORS
+)
+async def test_openai_image_generation_gave_up_status_error(
+    status_code: int,
+    headers: dict[str, str] | None,
+    error: dict[str, object],
+    expected_error: type[
+        ModelRateLimitError
+        | ModelQuotaExceededError
+        | ModelUnavailableError
+        | ModelServerError
+        | ModelRequestRejectedError
+    ]
+    | None,
+    expected_retry_after: float | None,
+    edit: bool,
+):
+    """A status a retrying transport gave up on surfaces as the category `openai` raises for it, on both endpoints.
 
-    Not a VCR test because a transport failure cannot be provoked on demand, so the error is fixed
-    from the shape the SDK documents.
+    The error has the same `provider_error_code`, `provider_error_type` and `retry_after`; its `body` is the whole
+    response body, whose `error` envelope `openai` unwraps. Not a VCR test: the transport raises `HTTPStatusError`
+    itself, so there is no response to record.
     """
-    openai_mock_client.images.generate.side_effect = APIConnectionError(
-        message='connection failed', request=httpx2.Request('POST', 'https://example.com/v1/images/generations')
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, headers=headers, json={'error': error}, request=request)
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(gave_up_on(handle_request))),
     )
-    provider = OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
-    model = OpenAIImageGenerationModel('gpt-image-1', provider=provider)
-
-    with pytest.raises(ModelAPIError, match='connection failed'):
-        await model.generate('generate this image')
-
-
-@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_rate_limited(openai_mock_client: AsyncMock):
-    """A 429 rate-limit surfaces as `ModelHTTPError` with the status and body preserved.
-
-    Image models are rate-limited by images/min and images/day, and a Tier-1 org (~5 images/min) can hit
-    the limit before its first successful generation, so this is a common first-call failure, not an edge case.
-
-    See https://platform.openai.com/docs/guides/rate-limits.
-
-    Not a VCR test because a rate limit cannot be provoked on demand, so the response is fixed from
-    OpenAI's documented error format.
-    """
-    rate_limit_body = {'error': {'code': 'rate_limit_exceeded', 'type': 'requests', 'message': 'Rate limit reached'}}
-    openai_mock_client.images.generate.side_effect = APIStatusError(
-        'Rate limit reached',
-        response=httpx2.Response(
-            status_code=429,
-            headers={'retry-after': '30'},
-            request=httpx2.Request('POST', 'https://example.com/v1/images/generations'),
-        ),
-        body=rate_limit_body,
-    )
-    model = OpenAIImageGenerationModel(
-        'gpt-image-1', provider=OpenAIProvider(openai_client=cast(AsyncOpenAI, openai_mock_client))
-    )
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+    images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
 
     with pytest.raises(ModelHTTPError) as exc_info:
-        await model.generate('a robot')
+        await model.generate('tiny robot', images=images)
 
-    assert exc_info.value.status_code == 429
-    assert exc_info.value.body == rate_limit_body
-    assert exc_info.value.retry_after == 30
-    openai_mock_client.images.generate.assert_awaited_once()
+    assert type(exc_info.value) is type(
+        ModelHTTPError.for_category(expected_error, status_code=status_code, model_name='gpt-image-1')
+    )
+    assert exc_info.value.status_code == status_code
+    assert exc_info.value.body == {'error': error}
+    assert exc_info.value.provider_error_code == error['code']
+    assert exc_info.value.provider_error_type == error['type']
+    assert exc_info.value.retry_after == expected_retry_after
+    assert isinstance(exc_info.value.__cause__, httpx2.HTTPStatusError)
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
-async def test_openai_image_generation_moderation_blocked():
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+@pytest.mark.parametrize(
+    ('transport_error', 'expected', 'phase'),
+    [
+        pytest.param(httpx2.ConnectError, ModelConnectionError, 'connect', id='connect'),
+        pytest.param(httpx2.ReadTimeout, ModelTimeoutError, 'read', id='timeout'),
+    ],
+)
+async def test_openai_image_generation_transport_error(
+    transport_error: type[httpx2.TransportError], expected: type[ModelConnectionError], phase: str, edit: bool
+):
+    """A connection failure or timeout surfaces as its pydantic-ai category on both endpoints, as from embeddings.
+
+    Not a VCR test: the transport raises before any response exists, so there is no response to record.
+    """
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        raise transport_error('failed', request=request)
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request)),
+    )
+    model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+    images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
+
+    with pytest.raises(ModelConnectionError) as exc_info:
+        await model.generate('tiny robot', images=images)
+
+    assert type(exc_info.value) is expected
+    assert exc_info.value.phase == phase
+    assert isinstance(exc_info.value.__cause__, APIConnectionError)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='OpenAI not installed')
+@pytest.mark.parametrize('gave_up', [False, True], ids=['sdk', 'gave-up'])
+async def test_openai_image_generation_moderation_blocked(gave_up: bool):
     """A `moderation_blocked` 400 keeps its structured body and is never auto-retried.
 
     OpenAI returns HTTP 400 with an `error` object whose `code` is `moderation_blocked`, carrying a
@@ -4480,6 +4728,9 @@ async def test_openai_image_generation_moderation_blocked():
     what pins the unwrapped shape. Not a VCR test because provoking a real block means committing a
     policy-violating prompt to the repository, which the recorded request body would carry verbatim. The
     response is fixed from OpenAI's documented error format instead.
+
+    A retrying transport that gave up on the 400 raises it before `openai` sees it; the error object is unwrapped from
+    its body the same way.
     """
     requests: list[httpx2.Request] = []
 
@@ -4495,9 +4746,12 @@ async def test_openai_image_generation_moderation_blocked():
                     'moderation_details': {'moderation_stage': 'input', 'categories': ['violence', 'self-harm']},
                 }
             },
+            request=request,
         )
 
-    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+    http_client = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(gave_up_on(handle_request) if gave_up else handle_request)
+    )
     openai_client = AsyncOpenAI(api_key='test-api-key', base_url='https://example.com/v1', http_client=http_client)
     model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=openai_client))
 

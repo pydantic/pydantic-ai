@@ -24,8 +24,10 @@ _SpecialTokenRoute = Literal[
     'openai',
     'openai-compatible',
     'openrouter',
+    'otari',
     'ovhcloud',
     'sambanova',
+    'stav',
     'together',
     'vercel',
     'vllm',
@@ -54,6 +56,9 @@ _EVERY_MODEL: Final[frozenset[_SpecialTokenRoute]] = frozenset(
 A provider that isn't in `_SpecialTokenRoute` keeps the default: a lab's own API, or a host that has sent these tokens as
 text wherever we've checked. A host that starts tokenizing them only needs a line here.
 """
+
+_OTARI_SELF_HOSTED_BACKENDS: Final = frozenset({'llamacpp', 'llamafile', 'lmstudio'})
+"""Self-hosted servers Otari can route to that aren't Pydantic AI routes, so `_EVERY_MODEL` doesn't list them."""
 
 _CLOSED_MODEL_PREFIXES: Final = (
     # Served by the lab's own API, whichever route reaches it, which doesn't render a public chat template.
@@ -91,6 +96,11 @@ def _is_closed_model(model_name: str) -> bool:
 
 def special_token_route_profile(route: _SpecialTokenRoute, model_name: str) -> ModelProfile:
     """The `may_tokenize_special_tokens_in_content` setting for `model_name` on `route`."""
+    if route == 'otari':
+        # Otari names the backend first, as in `ollama/command-r`: an open-weight backend decides whatever the model.
+        backend = model_name.partition('/')[0].lower()
+        if backend in _EVERY_MODEL or backend in _OTARI_SELF_HOSTED_BACKENDS:
+            return ModelProfile(may_tokenize_special_tokens_in_content=True)
     return ModelProfile(
         may_tokenize_special_tokens_in_content=route in _EVERY_MODEL or not _is_closed_model(model_name)
     )
