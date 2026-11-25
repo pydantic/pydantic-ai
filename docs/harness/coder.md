@@ -267,7 +267,7 @@ on benchmarks is opt-in; see [Benchmarking](#benchmarking).
 | `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
 | `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. |
 
-At `'max'`, OpenAI's GPT models (not gpt-oss) get three sentences of their own, each sent to models whose profile sets
+At `'max'`, OpenAI's GPT models (not gpt-oss or the o-series) get three sentences of their own, each sent to models whose profile sets
 a flag for the behavior it corrects:
 
 - `reinterprets_malformed_inputs`: a refinement of the misread check: first look for a rule in the task that

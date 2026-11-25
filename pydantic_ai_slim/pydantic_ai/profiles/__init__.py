@@ -471,10 +471,10 @@ class ModelProfile(TypedDict, total=False):
     key, by reading it from the profile of the model handling the request: see
     [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does.
 
-    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series. Evidence: in a Terminal-Bench ablation of
-    `Coder`'s instructions (24 tasks, one trial each, November 2026), GPT-6.1 Terra without its instruction against
-    unrequested delegation delegated in all 24 tasks (524 `delegate_task` calls, against none with it), making about 9
-    times as many tool calls at about 5.5 times the cost. Claude Sonnet 5.5 didn't delegate with or without it.
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series. Evidence: in a Terminal-Bench
+    ablation of `Coder`'s instructions (24 tasks, one trial each, November 2026), GPT-6.1 Terra without its instruction
+    against unrequested delegation delegated in all 24 tasks (524 `delegate_task` calls, against none with it), making
+    about 9 times as many tool calls at about 5.5 times the cost. Claude Sonnet 5.5 didn't delegate with or without it.
     """
 
     reinterprets_malformed_inputs: bool
@@ -485,11 +485,11 @@ class ModelProfile(TypedDict, total=False):
     with this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI
     Harness `Coder` does, at `'max'` autonomy.
 
-    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with `omits_handoff_evidence` and
-    `ignores_stated_runtime_constraints`: the three were measured only together. Evidence: on Harness-Bench SWE81
-    with GPT-6.2 Sol at `'max'` autonomy, one run each (November 2026), `Coder` with the three instructions scored
-    53.2 against 51.0 without them (measured with the classify sentence in place of the shared misread check;
-    both are sent here), within that benchmark's single-run noise of about 5.6 points. So the evidence is
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `omits_handoff_evidence` and `ignores_stated_runtime_constraints`: the three were measured only together. Evidence:
+    on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each (November 2026), `Coder` with the three
+    instructions scored 53.2 against 51.0 without them (measured with the classify sentence in place of the shared
+    misread check; both are sent here), within that benchmark's single-run noise of about 5.6 points. So the evidence is
     weak, and the instructions are sent only at `'max'`, where nobody reviews the result before it's used.
     """
 
