@@ -7,6 +7,9 @@ default result serializer. A part that comes back as its base class, with anothe
 model in another voice after a replay than before it. Each serializer here round-trips one history that holds every
 kind of capability part, including a third-party kind registered only by its tag, and the event that delivers enqueued
 parts. In process: no workflow, worker or server runs. Not a VCR test: nothing here makes a provider request.
+
+`test_durable_exec_compat.py` checks that every part and event type round-trips through `JSON_CODEC`; this module checks
+what the model hears of each capability part across every engine's serializer.
 """
 
 from __future__ import annotations
