@@ -31,7 +31,6 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
@@ -87,9 +86,7 @@ def _place(part: ModelRequestPart) -> tuple[str, Authority]:
         return 'tool output', 'none'
     if isinstance(part, CapabilityPart):
         return f'`{part.kind}` part', part.source.authority
-    if isinstance(part, UserPromptPart):
-        return 'user part', 'user'
-    # A system part, or a place this test doesn't know: counted as the operator's voice, so it fails at `'none'`.
+    # Anything else, a user or system part included, is above data: only tool output and framed data may carry it.
     return type(part).__name__, 'operator'
 
 
@@ -198,7 +195,7 @@ def _sub_agents(directory: Path, authority: Authority, seen: _Seen) -> list[Agen
     child = _scripted(seen)
     if authority == 'operator':
         # The operator's own sub-agent: its instructions are the operator's, the control for the model-written ones.
-        helper = Agent(child, deps_type=object, name='helper', instructions=f'Helper rules {CANARY}.')
+        helper = Agent(child, name='helper', instructions=f'Helper rules {CANARY}.')
         return [SubAgents(agents=[SubAgent(helper)], agent_folders=None)]
     return [SubAgents(models={'child': child}, dynamic_agents=DynamicAgents(models=['child']), agent_folders=None)]
 
