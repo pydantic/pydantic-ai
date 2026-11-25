@@ -28,7 +28,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, get_args
 
 import pytest
 from _pytest.mark import ParameterSet
@@ -85,6 +85,19 @@ Transformation = Literal[
 ]
 
 
+Check = Literal['kept_unchanged', 'no_authority_gain', 'nothing_new']
+"""The three checks, each run by the test of the same name: `test_kept_parts_are_unchanged`, and so on."""
+
+CHECKS: tuple[Check, ...] = get_args(Check)
+
+
+@dataclass(frozen=True)
+class Known(Exempt):
+    """A case's finding that breaks only some checks, for `Transform.exempt`: the others run as usual."""
+
+    checks: frozenset[Check] = frozenset(CHECKS)
+
+
 @dataclass(frozen=True)
 class Transform:
     """One transformation of history, and what it may legitimately change."""
@@ -104,7 +117,12 @@ class Transform:
     is a `UserPromptPart`, like the prompts it keeps. When set, it replaces `creates` in telling a created part from a
     kept one, for the authority check and the nothing-new check."""
     exempt: Mapping[str, Exempt] = field(default_factory=dict[str, Exempt])
-    """Case name -> reason with issue link, as C1: the case's checks are a strict `xfail`."""
+    """Case name -> reason with issue link, as C1: the case's checks are a strict `xfail`.
+
+    Every check, unless the reason is a `Known` that names the checks it breaks."""
+    known: Mapping[Check, Exempt] = field(default_factory=dict[Check, Exempt])
+    """Check -> reason, for a finding the transformation has on every case: that check is a strict `xfail` for every
+    case and probe, and the other checks run as usual. Until the issue exists, the reason can be plain text."""
     functions: tuple[str, ...] = ()
     """The qualified names of the functions that make the transformation, which the registry guard finds."""
 
@@ -268,14 +286,22 @@ def _subjects() -> list[str]:
     return [*cases, *PROBES]
 
 
-def _matrix() -> Iterator[ParameterSet]:
+def _finding(transform: Transform, name: str, check: Check) -> Exempt | None:
+    """The known finding that makes `check` fail for case `name` under `transform`, if there is one."""
+    exempt = transform.exempt.get(name)
+    if exempt is not None and (not isinstance(exempt, Known) or check in exempt.checks):
+        return exempt
+    return transform.known.get(check)
+
+
+def _matrix(check: Check) -> Iterator[ParameterSet]:
     for name in _subjects():
         calls = PROBES.get(name) or CASES[name].calls
         assert calls is not None
         for transformation, transform in transforms().items():
             marks: list[pytest.MarkDecorator] = []
-            if (exempt := transform.exempt.get(name)) is not None:
-                marks.append(pytest.mark.xfail(strict=True, raises=AssertionError, reason=exempt.reason))
+            if (finding := _finding(transform, name, check)) is not None:
+                marks.append(pytest.mark.xfail(strict=True, raises=AssertionError, reason=finding.reason))
             if transformation in ('vercel_ai', 'ag_ui') and not ui_imports_successful():
                 marks.append(pytest.mark.skip(reason='the UI adapters are not installed'))
             if calls.moves_cache_prefix is not None:
@@ -327,8 +353,15 @@ class _Compared:
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     """Parametrize the checks at collection, once `c4_transforms_runlevel.py` and this module are both imported."""
-    if {'name', 'transformation'} <= set(metafunc.fixturenames):
-        metafunc.parametrize(('name', 'transformation'), list(_matrix()))
+    if (check := _CHECK_OF_TEST.get(metafunc.function.__name__)) is not None:
+        metafunc.parametrize(('name', 'transformation'), list(_matrix(check)))
+
+
+_CHECK_OF_TEST: dict[str, Check] = {
+    'test_kept_parts_are_unchanged': 'kept_unchanged',
+    'test_no_part_gains_authority': 'no_authority_gain',
+    'test_nothing_new_appears': 'nothing_new',
+}
 
 
 async def _compare(name: str, transformation: Transformation, directory: Path) -> _Compared:
@@ -592,6 +625,29 @@ def test_every_exemption_names_a_subject() -> None:
     """An exemption for a case that no longer has calls would hide the next finding there."""
     subjects = set(_subjects())
     assert [(t.name, case) for t in transforms().values() for case in t.exempt if case not in subjects] == []
+
+
+def test_a_known_finding_fails_only_its_checks() -> None:
+    """`known` marks one check for every case, and a case's `Known` only the checks it names."""
+    transform = Transform(
+        'summarizing',
+        _type_adapter,
+        exempt={'Memory': Known('the case', checks=frozenset({'kept_unchanged'}))},
+        known={'no_authority_gain': Exempt('every case')},
+    )
+    findings = {
+        (name, check): finding.reason if (finding := _finding(transform, name, check)) else None
+        for name in ('Memory', 'Slack')
+        for check in CHECKS
+    }
+    assert findings == {
+        ('Memory', 'kept_unchanged'): 'the case',
+        ('Memory', 'no_authority_gain'): 'every case',
+        ('Memory', 'nothing_new'): None,
+        ('Slack', 'kept_unchanged'): None,
+        ('Slack', 'no_authority_gain'): 'every case',
+        ('Slack', 'nothing_new'): None,
+    }
 
 
 def _receipt(part: ModelRequestPart) -> bool:
