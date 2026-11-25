@@ -282,7 +282,13 @@ def lowered_instruction_statement(
     if restated:
         author = _author_phrase(source)
         assert author is not None
-        parts.append(SystemPromptPart(f'The earlier instructions from {author} no longer apply.', timestamp=timestamp))
+        # Saying what replaces the earlier block keeps models from voiding the new block too; a withdrawal has none.
+        note = (
+            f'What {author} said earlier is replaced by the block below.'
+            if change.content is not None
+            else f'What {author} said earlier no longer applies.'
+        )
+        parts.append(SystemPromptPart(note, timestamp=timestamp))
     if change.content is not None:
         # Safe for text the operator didn't write: the part is never stored or enqueued, only rendered, and its source
         # is below operator authority, so it renders as framed data rather than in the application's voice.
