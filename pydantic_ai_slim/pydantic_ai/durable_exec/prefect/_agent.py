@@ -46,6 +46,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
+from .._utils import without_response_boundaries
 from .._workspace import RejectWorkspaceInContainer
 from ._model import PrefectModel
 from ._toolset import prefectify_toolset
@@ -209,7 +210,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
             await handler(ctx, streamed_response())
 
-        async for event in stream:
+        async for event in without_response_boundaries(stream):
             await event_stream_handler_task(event)
 
     @property

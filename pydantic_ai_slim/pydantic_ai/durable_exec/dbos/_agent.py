@@ -51,6 +51,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
+from .._utils import without_response_boundaries
 from .._workspace import RejectWorkspaceInContainer
 from ._function_toolset import gate_tool_instance_defaults
 from ._model import DBOSModel
@@ -350,7 +351,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         async def streamed_response(event: _messages.AgentStreamEvent):
             yield event
 
-        async for event in stream:
+        async for event in without_response_boundaries(stream):
             await handler(ctx, streamed_response(event))
 
     @property

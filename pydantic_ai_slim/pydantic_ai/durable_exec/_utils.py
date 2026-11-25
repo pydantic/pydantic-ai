@@ -25,7 +25,14 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    ModelMessage,
+    ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
+    ModelResponseStreamEvent,
+)
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models._request_timeout import RequestDeadline
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -94,6 +101,19 @@ def reject_serving_wrapper(
         f'`{agent_class}` does not support capabilities that wrap the model, such as `BatchModelRequests`. '
         f'Use `{durability_class}` instead.'
     )
+
+
+async def without_response_boundaries(stream: AsyncIterable[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
+    """Drop response start and end events from the workflow-side stream a deprecated durable agent hands its handler.
+
+    The deprecated agents run one activity, step or task per event, and their normal model path never sees these
+    events, since the handler gets the model's raw stream. Replayed paths (a `wrap_model_request` hook that skips
+    the model, an error-hook recovery, a replacement response) would otherwise add two units per response and
+    break replay of runs recorded before the events existed.
+    """
+    async for event in stream:
+        if not isinstance(event, ModelResponseStartEvent | ModelResponseEndEvent):
+            yield event
 
 
 def unwrap_model(model: Model) -> Model:

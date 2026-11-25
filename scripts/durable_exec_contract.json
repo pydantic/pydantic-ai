@@ -4051,6 +4051,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_operation.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._call_event_stream_handler_in_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._call_event_stream_handler_in_workflow.streamed_response",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
@@ -4568,6 +4569,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_event_stream.py::<module>"
       ]
     },
@@ -4717,6 +4719,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_event_stream.py::<module>"
       ]
     },

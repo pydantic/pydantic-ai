@@ -345,7 +345,14 @@ Each streamed model response is opened by a [`ModelResponseStartEvent`][pydantic
 
 A response that replaces an earlier attempt at the same request step, like the one a fallback moved on to or a hook streamed instead, has that attempt's `response_id` as its start's [`replaces`][pydantic_ai.messages.ModelResponseStartEvent.replaces].
 
-Every start is closed by one end. An error raised partway through a response, by the model or around its stream like an exceeded [usage limit](#usage-limits), first ends it as `'failed'`. The only exception is a consumer that stops reading the stream, or a [cancelled run](#cancelling-a-run), which closes the stream where no event can be sent anymore. An earlier durable execution that ends after its successor closed it as `'superseded'` sends a second end for the same origin, so apply the first end of each origin:
+An error raised partway through a response, by the model or around its stream like an exceeded [usage limit](#usage-limits), first ends it as `'failed'`. A start can still lack an end when the stream is torn down where no event can be sent anymore:
+
+- the consumer stops reading the stream, or the run is [cancelled](#cancelling-a-run) in process;
+- the run's [`timeout=`](timeouts.md#bounding-a-whole-run) expires;
+- a capability raises from its [`wrap_run_event_stream`][pydantic_ai.capabilities.AbstractCapability.wrap_run_event_stream] hook;
+- under [durable execution](durable_execution/overview.md), the engine cancels the model request: a Temporal cancellation with `TRY_CANCEL`, a [`request_timeout`](timeouts.md#model-request-deadlines) that Temporal enforces with a workflow timer cancelling the activity, or a cancelled DBOS workflow or Prefect flow. If a fallback then recovers, the next response's start has `replaces`, though the cancelled one never got an end.
+
+So treat a start with no end as cut short once the run finishes, or once a later start `replaces` it. Under durable execution, an attempt that failed before its first event still gets a `'superseded'` end from the next execution, with no start before it, and an earlier execution that ends after its successor closed it sends a second end for the same origin, so apply the first end of each origin:
 
 ```python {title="response_boundaries.py"}
 from pydantic_ai import ModelResponseEndEvent, ModelResponseOrigin
@@ -357,7 +364,7 @@ def on_end(event: ModelResponseEndEvent) -> None:
     ended.setdefault(event.origin, event)  # a later end of the same origin closes a response already closed
 ```
 
-Only an agent run's model stream emits these events, and only for a response that streams at least one part event: [`Model.request_stream()`][pydantic_ai.models.Model.request_stream] used directly doesn't. Under Temporal, a [Workflow Streams topic](durable_execution/temporal.md#choosing-what-to-publish) publishes them only when you opt in.
+Only an agent run's model stream emits these events, and only for a response that streams at least one part event: [`Model.request_stream()`][pydantic_ai.models.Model.request_stream] used directly doesn't, and neither do the deprecated `TemporalAgent`, `DBOSAgent` and `PrefectAgent` wrappers, whose event stream handler never receives them. Under Temporal, a [Workflow Streams topic](durable_execution/temporal.md#choosing-what-to-publish) publishes them only when you opt in.
 
 ### Custom Events
 

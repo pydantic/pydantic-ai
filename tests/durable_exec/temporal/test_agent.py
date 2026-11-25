@@ -37,6 +37,7 @@ from pydantic_ai import (
     FunctionToolset,
     ModelMessage,
     ModelRequest,
+    ModelRequestContext,
     ModelResponse,
     ModelResponseEndEvent,
     ModelResponseStartEvent,
@@ -69,6 +70,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     Instrumentation,
     ProcessHistory,
+    WrapModelRequestHandler,
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -844,6 +846,70 @@ async def test_temporal_agent_rejects_model_wrappers(client: Client) -> None:
         '`TemporalAgent` does not support capabilities that wrap the model, such as `BatchModelRequests`. '
         'Use `TemporalDurability` instead.'
     )
+
+
+_short_circuit_handled_event_kinds: list[str] = []
+
+
+async def _record_short_circuit_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _short_circuit_handled_event_kinds.append(event.event_kind)
+
+
+async def _short_circuit_model_request(
+    ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('from the hook')])
+
+
+_short_circuit_legacy_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        TestModel(),
+        name='temporal_short_circuit_agent',
+        capabilities=[Hooks(model_request=_short_circuit_model_request)],
+    ),
+    activity_config=BASE_ACTIVITY_CONFIG,
+    event_stream_handler=_record_short_circuit_events,
+)
+
+
+@workflow.defn
+class TemporalAgentShortCircuitWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _short_circuit_legacy_agent.run(prompt)).output
+
+
+async def test_temporal_agent_dispatches_no_response_boundaries(client: Client) -> None:
+    """The deprecated wrapper agent hands its handler no response start or end, so a run recorded before they existed replays.
+
+    A `wrap_model_request` hook that skips the model replays its response's events in the workflow, and the
+    wrapper runs one handler activity per event.
+    """
+    _short_circuit_handled_event_kinds.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalAgentShortCircuitWorkflow],
+        activities=_short_circuit_legacy_agent.temporal_activities,
+    ):
+        handle = await client.start_workflow(
+            TemporalAgentShortCircuitWorkflow.run,
+            args=['hello'],
+            id=f'{TemporalAgentShortCircuitWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        assert await handle.result() == 'from the hook'
+
+    history = await handle.fetch_history()
+    handler_activities = [
+        event.activity_task_scheduled_event_attributes.activity_type.name
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+        and 'event_stream_handler' in event.activity_task_scheduled_event_attributes.activity_type.name
+    ]
+    assert len(handler_activities) == len(_short_circuit_handled_event_kinds)
+    assert _short_circuit_handled_event_kinds == snapshot(['part_start', 'final_result', 'part_end'])
 
 
 _migration_agent: AbstractAgent[None, str] = _legacy_migration_agent
