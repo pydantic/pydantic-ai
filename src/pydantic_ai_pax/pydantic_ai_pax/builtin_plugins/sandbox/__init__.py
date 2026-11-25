@@ -76,6 +76,7 @@ from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.runtime.imported_history import imported_context
 from pydantic_ai_pax.runtime.session import ConversationWorkspace, ShellLineWorkspace
 from pydantic_ai_pax.ui.menus.dialogs import RUNNERS, TerminalDialogs
+from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.status import StatusLink, StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
@@ -496,6 +497,9 @@ class SandboxPlugin(Plugin):
             [*self.host.conversation.messages, ModelRequest(parts=[request]), response]
         )
 
+    def _progress(self, text: str) -> None:
+        self.host.console.print(text, style=theme.color(theme.MUTED), markup=False)
+
     async def _start(self, provider: SandboxProvider) -> str:
         current = self.current()
         if current is not None:
@@ -515,6 +519,8 @@ class SandboxPlugin(Plugin):
             raise ValueError(missing)
         github = await to_thread.run_sync(_github)
         checkout = await to_thread.run_sync(snapshot, self.host.workspace)
+        # A command runs with the editor and status row put away, so these lines are all the user sees meanwhile.
+        self._progress(f'Starting the sandbox in {provider.title}...')
         ref, backend = await _create(provider, github, desktop=desktop)
         try:
             # Saved before seeding, which can take minutes, so a Pax that dies meanwhile leaves a conversation
@@ -529,6 +535,7 @@ class SandboxPlugin(Plugin):
             if github is not None and provider.token_in_sandbox:
                 # After the commit, so a sandbox holding the token is named for `/sandbox delete` even if this fails.
                 await give_github_login(backend, github)
+            self._progress('Copying your checkout into it...')
             # Without a login the sandbox cannot clone from GitHub, so the whole history goes over in the bundle.
             await seed(backend, checkout if github is not None else replace(checkout, clone_url=None))
         except BaseException:
