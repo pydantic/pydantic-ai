@@ -190,6 +190,10 @@ class DurableSteps:
     """Temporal activity names, without the `agent__<agent name>__` prefix: `toolset__<toolset id>__call_tool` for a
     function tool, which runs in its activity, `capability__<id>__<operation>` for a `durable_operation` that
     workflow code calls, and `mcp_server__<toolset id>__<operation>` for an MCP server."""
+    streams: bool = False
+    """Whether the run's model requests are streamed units (`model.request_stream`, `model_request_stream`), as they
+    are when a capability listens for events. The unit's name is persisted like the others, so a case whose model
+    unit flips between the two fails."""
 
 
 @dataclass(frozen=True)

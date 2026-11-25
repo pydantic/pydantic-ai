@@ -186,7 +186,7 @@ async def _breaks(name: str, temporal: _Temporal, count_requests: Callable[[], C
     return breaks + journal_breaks(
         activities,
         prefix=f'agent__{_AGENTS[name].name}__',
-        model_requests=('model_request', 'model_request_stream'),
+        model_requests=('model_request_stream',) if calls.durable_steps.streams else ('model_request',),
         calls=len(calls.made),
         expected=calls.durable_steps.temporal,
         engine='temporal',

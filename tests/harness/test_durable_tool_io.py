@@ -142,7 +142,9 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
         try:
             output = await _WORKFLOWS[name]()
         except UserError as error:
-            # A capability that refuses the engine raises when the run starts, which its `refused` cell names.
+            # A capability that refuses the engine raises when the run starts, before any step is recorded, which its
+            # `refused` cell names.
+            assert not await dbos.list_workflow_steps_async(workflow_id)
             assert_cell_holds('dbos', DURABLE_DBOS, name, [f'the workflow fails: {error}'])
             return
     assert output == 'done'
@@ -160,7 +162,7 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
     breaks += journal_breaks(
         [step['function_name'] for step in steps],
         prefix=f'{_AGENTS[name].name}__',
-        model_requests=('model.request', 'model.request_stream'),
+        model_requests=('model.request_stream',) if calls.durable_steps.streams else ('model.request',),
         calls=len(calls.made),
         expected=calls.durable_steps.dbos,
         engine='dbos',

@@ -450,6 +450,7 @@ CASES: dict[str, CapabilityCase] = {
                 ('read_skill_file', {'skill': 'weather', 'path': 'references/guide.md'}),
             ),
             _skills_with_files,
+            # Not a measure of #14492 (capability instruction ids under Temporal): the calls only read files.
             durable_steps=DurableSteps(
                 dbos=_workspace_steps(16),
                 temporal=(*('capability__workspace__call',) * 6, 'toolset__skills__call_tool'),
@@ -801,6 +802,7 @@ CASES: dict[str, CapabilityCase] = {
             ),
             _workspace(Coder),
             durable_steps=DurableSteps(
+                streams=True,
                 dbos=_workspace_steps(36),
                 # `write_file` and `edit_file` run in the workflow, so their workspace calls are activities.
                 temporal=(*('capability__workspace__call',) * 31, 'toolset__file_system__call_tool'),
@@ -950,7 +952,9 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('read_file', {'path': 'src/app.py'}),),
             _nested_repo_context,
+            # Not a measure of #14492 (capability instruction ids under Temporal): the calls only read files.
             durable_steps=DurableSteps(
+                streams=True,
                 dbos=_workspace_steps(19),
                 temporal=(*('capability__workspace__call',) * 8, 'toolset__file_system__call_tool'),
             ),
@@ -1260,6 +1264,7 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('run_code', {'code': "await echo(text='hi')"}),),
             with_echo(CodeMode),
+            # Runs non-eager, as every durable engine turns eager execution off, so #14498 isn't measured here.
             durable_steps=ECHO_STEPS,
         ),
     ),
