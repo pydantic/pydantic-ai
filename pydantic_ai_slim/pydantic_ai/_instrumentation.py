@@ -624,8 +624,19 @@ def recorded_capability_ids(
     return [
         capability_id
         for capability_id in _recorded_classes(capabilities)
-        if capability_id not in url_ids and (include_content or capabilities[capability_id].id is not None)
+        if _records_id(capabilities, capability_id, url_ids, include_content=include_content)
     ]
+
+
+def _records_id(
+    capabilities: Mapping[str, AbstractCapability[Any]],
+    capability_id: str,
+    url_ids: Set[str],
+    *,
+    include_content: bool,
+) -> bool:
+    """Whether a trace may record the id a capability is registered under; see `recorded_capability_ids`."""
+    return capability_id not in url_ids and (include_content or capabilities[capability_id].id is not None)
 
 
 def capability_records(
@@ -639,12 +650,10 @@ def capability_records(
 
     Keyed by class so that a backend can index which classes a run used by key alone.
     """
-    recorded = set(recorded_capability_ids(capabilities, url_ids, include_content=include_content))
     records: dict[str, list[CapabilityRecord]] = {}
     for capability_id, cls in _recorded_classes(capabilities).items():
-        record = _component_record(
-            cls, capability_id if capability_id in recorded else None, include_content=include_content
-        )
+        recorded = _records_id(capabilities, capability_id, url_ids, include_content=include_content)
+        record = _component_record(cls, capability_id if recorded else None, include_content=include_content)
         records.setdefault(public_class_path(cls), []).append(
             {
                 **record,
