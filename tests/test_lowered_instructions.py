@@ -707,6 +707,7 @@ async def test_a_wrapper_that_replaces_its_lowered_childs_instructions_is_what_t
     ):
         agent = Agent(
             FunctionModel(model_fn, profile=INLINE),
+            deps_type=type(None),
             capabilities=[_ReplacingWrapper(wrapped=CombinedCapability[None]([child]), prefix='n')],
         )
         result = await agent.run('Hi')
