@@ -1135,6 +1135,24 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         raise NotImplementedError(f'`{self.__class__.__name__}` does not support batch requests.')
 
+    async def batch_results_iter(self, batch: Batch) -> AsyncGenerator[BatchResult]:
+        """Retrieve the results of a batch job that has ended, one at a time.
+
+        Yields the same [`BatchResult`][pydantic_ai.models.batch.BatchResult]s as
+        [`batch_results`][pydantic_ai.models.Model.batch_results], but a model that reads them from a stream hands
+        each one over as it arrives, so a caller that writes or decodes them one by one never holds them all in memory.
+        The order is not specified. A caller that stops early should close the iterator, for example with
+        `contextlib.aclosing`, to release the stream it reads from.
+
+        The checks `batch_results` makes, such as that `batch` has ended, run before the first result is yielded, and
+        errors from the provider are raised as iteration reaches them.
+
+        The default implementation yields the results of `batch_results`, so a model that only implements that method
+        supports this one too.
+        """
+        for result in await self.batch_results(batch):
+            yield result
+
     async def batch_cancel(self, batch: Batch) -> Batch:
         """Ask the provider to cancel a batch job, and return its updated state.
 

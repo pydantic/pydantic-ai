@@ -227,4 +227,4 @@ Extensibility entry points:
 
 Reach for these only when the built-in primitives are genuinely insufficient.
 
-For bulk model requests without an agent, use `pydantic_ai.direct.model_request_batch()`. To submit in one process and collect in another, use `model.batch_encode()`, `batch_create()`, `batch_status()`, `batch_results()`, `batch_cancel()` and `batch_decode()`, and store the returned `Batch` handle with the requests' settings and parameters.
+For bulk model requests without an agent, use `pydantic_ai.direct.model_request_batch()`. To submit in one process and collect in another, use `model.batch_encode()`, `batch_create()`, `batch_status()`, `batch_results()`, `batch_cancel()` and `batch_decode()`, and store the returned `Batch` handle with the requests' settings and parameters. `batch_results()` returns every result in a list; to handle a large batch without holding them all in memory, iterate `batch_results_iter()` (wrapped in `contextlib.aclosing` if you may stop early), which yields them one at a time in no particular order.

@@ -11,7 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import AsyncGenerator, Iterable, Sequence
+from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, cast, get_args
 
 from anthropic import AsyncAnthropic, Omit, omit as OMIT
@@ -150,16 +151,18 @@ async def batch_status(model: AnthropicModel, batch: Batch) -> Batch:
     return _to_batch(model, message_batch, batch.group)
 
 
-async def batch_results(model: AnthropicModel, batch: Batch) -> list[BatchResult]:
+async def batch_results_iter(model: AnthropicModel, batch: Batch) -> AsyncGenerator[BatchResult]:
     check_allow_model_requests()
     require_ended(batch)
     _validate_batch_group(model, batch.group, collecting=True)
-    results: list[BatchResult] = []
-    async for item in await _batch_client(model).beta.messages.batches.results(batch.id):
-        result = item.result
-        body = result.model_dump_json() if result.type in ('succeeded', 'errored') else None
-        results.append(BatchResult(custom_id=item.custom_id, status=result.type, body=body))
-    return results
+    async with AsyncExitStack() as stack:
+        # The decoder isn't an async context manager, so its `close` is registered to run however iteration ends.
+        stream = await _batch_client(model).beta.messages.batches.results(batch.id)
+        stack.push_async_callback(stream.close)
+        async for item in stream:
+            result = item.result
+            body = result.model_dump_json() if result.type in ('succeeded', 'errored') else None
+            yield BatchResult(custom_id=item.custom_id, status=result.type, body=body)
 
 
 async def batch_cancel(model: AnthropicModel, batch: Batch) -> Batch:

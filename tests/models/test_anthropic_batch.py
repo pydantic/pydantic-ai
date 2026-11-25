@@ -6,6 +6,8 @@ Submission and results are recorded in `test_anthropic_batch_vcr.py`.
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator, Callable
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -348,6 +350,21 @@ def _batch_json(batch_id: str, status: str = 'ended') -> dict[str, Any]:
     }
 
 
+class _LineStream(httpx2.AsyncByteStream):
+    """A response body sent a line at a time, which says when it was closed."""
+
+    def __init__(self, content: bytes, on_close: Callable[[], None]) -> None:
+        self._lines = content.splitlines(keepends=True)
+        self._on_close = on_close
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for line in self._lines:
+            yield line
+
+    async def aclose(self) -> None:
+        self._on_close()
+
+
 @dataclass
 class _FakeBatchAPI:
     """Serves Message Batches, answering each batch's requests with the next of `results` for their `custom_id`.
@@ -366,6 +383,8 @@ class _FakeBatchAPI:
     raw_creates: list[bytes] = field(default_factory=list[bytes])
     sent: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     create_status: int = 200
+    closed_results: int = 0
+    """How many results streams have been closed."""
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
         path = request.url.path
@@ -390,8 +409,11 @@ class _FakeBatchAPI:
         if path.endswith('/results'):
             results = self.results[int(batch_id.removeprefix('batch_')) - 1]
             lines = [json.dumps({'custom_id': custom_id, 'result': result}) for custom_id, result in results.items()]
-            return httpx2.Response(200, content='\n'.join(lines))
+            return httpx2.Response(200, stream=_LineStream('\n'.join(lines).encode(), self.close_results))
         return httpx2.Response(200, json=_batch_json(batch_id, self.status))
+
+    def close_results(self) -> None:
+        self.closed_results += 1
 
 
 def _fake_model(api: _FakeBatchAPI, model_name: str = 'claude-sonnet-4-5') -> AnthropicModel:
@@ -526,6 +548,40 @@ async def test_anthropic_batch_results_read_every_result_type(allow_model_reques
     for status in ('canceled', 'expired'):
         with pytest.raises(ModelAPIError, match=UNRUN_MESSAGES[status]):
             model.batch_decode(results[status], requests[status])
+
+
+async def test_anthropic_batch_results_iter_closes_the_stream_when_the_caller_stops_early(
+    allow_model_requests: None,
+) -> None:
+    """The results are read from a stream the caller can stop reading, which is then closed, not left open."""
+    ok = {'type': 'succeeded', 'message': _message([{'type': 'text', 'text': 'Hi!'}])}
+    api = _FakeBatchAPI(results=[{'one': ok, 'two': ok, 'three': ok}])
+    model = _fake_model(api)
+    batch = await model.batch_create(
+        [await model.batch_encode(_request(custom_id)) for custom_id in ('one', 'two', 'three')]
+    )
+    batch = await model.batch_status(batch)
+
+    async with aclosing(model.batch_results_iter(batch)) as results:
+        async for result in results:
+            assert result.custom_id == 'one'
+            break
+
+    assert api.closed_results == 1
+
+
+async def test_anthropic_batch_results_iter_yields_what_batch_results_collects(allow_model_requests: None) -> None:
+    ok = {'type': 'succeeded', 'message': _message([{'type': 'text', 'text': 'Hi!'}])}
+    api = _FakeBatchAPI(results=[{'one': ok, 'two': {'type': 'expired'}}])
+    model = _fake_model(api)
+    batch = await model.batch_create([await model.batch_encode(_request(key)) for key in ('one', 'two')])
+    batch = await model.batch_status(batch)
+
+    streamed = [result async for result in model.batch_results_iter(batch)]
+
+    assert [(result.custom_id, result.status) for result in streamed] == [('one', 'succeeded'), ('two', 'expired')]
+    assert streamed == await model.batch_results(batch)
+    assert api.closed_results == 2
 
 
 async def test_anthropic_batch_result_reports_inference_geo(allow_model_requests: None) -> None:

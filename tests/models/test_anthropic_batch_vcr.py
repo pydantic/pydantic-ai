@@ -182,7 +182,7 @@ async def test_anthropic_batch_mixes_successes_and_errors(
     missing = _request('batch-unknown-model')
     encoded = [await model.batch_encode(ok), await model.batch_encode(invalid), await unknown.batch_encode(missing)]
     batch = await wait_for_batch(model, await model.batch_create(encoded), vcr)
-    results = {result.custom_id: result for result in await model.batch_results(batch)}
+    results = {result.custom_id: result async for result in model.batch_results_iter(batch)}
     assert {custom_id: result.status for custom_id, result in results.items()} == {
         'batch-ok': 'succeeded',
         'batch-invalid-temperature': 'errored',

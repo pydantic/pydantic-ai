@@ -11,10 +11,12 @@ import json
 import re
 import sys
 from collections.abc import Callable
+from contextlib import aclosing
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import anyio
 import httpx2
 import pytest
 from inline_snapshot import snapshot
@@ -298,13 +300,18 @@ async def test_gemini_batch_handles_check_their_group_and_status(allow_model_req
         ({'state': 'JOB_STATE_SUCCEEDED'}, None),
     ],
 )
+@pytest.mark.parametrize('streaming', [False, True])
 async def test_gemini_batch_job_without_results_reports_why(
     allow_model_requests: None,
     monkeypatch: pytest.MonkeyPatch,
     job: dict[str, Any],
     expected: tuple[type[Exception], str] | None,
+    streaming: bool,
 ) -> None:
-    """A job that ended without a results file doesn't say which requests it held, so its own outcome stands for all."""
+    """A job that ended without a results file doesn't say which requests it held, so its own outcome stands for all.
+
+    The results stream raises it as iteration starts, and yields nothing for a job that succeeded without results.
+    """
     model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
     batch = Batch(
         id='batches/123',
@@ -321,12 +328,17 @@ async def test_gemini_batch_job_without_results_reports_why(
 
     monkeypatch.setattr(model.client.aio.batches, 'get', get)
 
+    async def collect() -> list[BatchResult]:
+        if streaming:
+            return [result async for result in model.batch_results_iter(batch)]
+        return await model.batch_results(batch)
+
     if expected is None:
-        assert await model.batch_results(batch) == []
+        assert await collect() == []
     else:
         error_type, message = expected
         with pytest.raises(error_type) as exc_info:
-            await model.batch_results(batch)
+            await collect()
         assert str(exc_info.value) == message
 
 
@@ -433,8 +445,8 @@ def _fake_jobs(
     async def get(*, name: str, config: Any = None) -> BatchJob:
         return BatchJob.model_validate({'name': name, **job})
 
-    async def download(*, file: str, config: Any = None) -> bytes:
-        return '\n'.join(json.dumps(row) for row in rows or []).encode()
+    async def download(*, file: str, destination: Any = None, config: Any = None) -> None:
+        await destination.write('\n'.join(json.dumps(row) for row in rows or []).encode())
 
     async def delete(*, name: str, config: Any = None) -> None:
         deleted.append(name)
@@ -509,6 +521,39 @@ async def test_gemini_partially_succeeded_job_returns_its_rows(
     with pytest.raises(ModelRateLimitError):
         model.batch_decode(results['failed'], requests['failed'])
     assert deleted == ['files/input']
+
+
+@pytest.mark.parametrize('stop_early', [False, True])
+async def test_gemini_batch_results_iter_removes_the_downloaded_file_however_iteration_ends(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, stop_early: bool
+) -> None:
+    """The results are downloaded to a temporary file and read from it a line at a time.
+
+    A caller that stops early or reads to the end leaves nothing behind.
+    """
+    model = GoogleModel('gemini-2.5-flash-lite', provider=GoogleProvider(api_key='test-key'))
+    rows = [{'key': key, 'response': _OK_RESPONSE} for key in ('one', 'two', 'three')]
+    _fake_jobs(monkeypatch, model, {'state': 'JOB_STATE_SUCCEEDED', 'dest': {'file_name': 'files/out'}}, rows)
+    destinations: list[anyio.Path] = []
+    download = model.client.aio.files.download
+
+    async def record_download(*, file: str, destination: Any = None, config: Any = None) -> None:
+        destinations.append(anyio.Path(destination.wrapped.name))
+        await download(file=file, destination=destination, config=config)
+
+    monkeypatch.setattr(model.client.aio.files, 'download', record_download)
+    batch = await model.batch_status(await model.batch_create([await model.batch_encode(_request('one'))]))
+
+    seen: list[str] = []
+    async with aclosing(model.batch_results_iter(batch)) as results:
+        async for result in results:
+            seen.append(result.custom_id)
+            assert await destinations[0].exists()
+            if stop_early:
+                break
+
+    assert seen == (['one'] if stop_early else ['one', 'two', 'three'])
+    assert not await destinations[0].exists()
 
 
 async def test_gemini_batch_results_only_delete_the_input_file_this_process_uploaded(
@@ -809,10 +854,10 @@ async def test_model_request_batch_keeps_other_jobs_results_when_one_fails(
             )
         return BatchJob(name=name, state=JobState.JOB_STATE_FAILED, error=JobError(code=8, message='Quota exceeded.'))
 
-    async def download(*, file: str, config: Any = None) -> bytes:
+    async def download(*, file: str, destination: Any = None, config: Any = None) -> None:
         key = json.loads(uploads[0])['key']
         response = {'candidates': [{'content': {'role': 'model', 'parts': [{'text': 'Hi!'}]}, 'finishReason': 'STOP'}]}
-        return json.dumps({'key': key, 'response': response}).encode()
+        await destination.write(json.dumps({'key': key, 'response': response}).encode())
 
     monkeypatch.setattr(files, 'upload', upload)
     monkeypatch.setattr(files, 'download', download)

@@ -15,10 +15,11 @@ import io
 import json
 import sys
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import suppress
 from typing import Any, NotRequired, cast
 
+import anyio
 import httpx2
 from google.genai import Client, errors
 from google.genai._common import (
@@ -217,7 +218,7 @@ async def batch_status(model: GoogleModel, batch: Batch) -> Batch:
     return _to_batch(model, job, batch.group, batch.request_count, batch.provider_details)
 
 
-async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
+async def batch_results_iter(model: GoogleModel, batch: Batch) -> AsyncGenerator[BatchResult]:
     check_allow_model_requests()
     require_ended(batch)
     _validate_batch_group(model, batch.group, collecting=True)
@@ -258,20 +259,24 @@ async def batch_results(model: GoogleModel, batch: Batch) -> list[BatchResult]:
                     body={'error': {'code': 4, 'message': 'The batch job expired before the model ran the request.'}},
                 )
             case _:
-                return []
-    content = await client.aio.files.download(file=job.dest.file_name)
-    results: list[BatchResult] = []
-    for line in content.splitlines():
-        item = _RESULT_LINE_ADAPTER.validate_json(line)
-        if 'response' in item:
-            results.append(
-                BatchResult(custom_id=item['key'], status='succeeded', body=to_json(item['response']).decode())
-            )
-        else:
-            results.append(
-                BatchResult(custom_id=item['key'], status='errored', body=to_json(item.get('error')).decode())
-            )
-    return results
+                return
+    # The SDK writes the download to the file in chunks, so the results are never in memory all at once. The file is
+    # written and read through `anyio`, which does the disk I/O in a thread, so the event loop isn't blocked. The
+    # directory holding it is removed however iteration ends.
+    async with anyio.TemporaryDirectory(prefix='pydantic-ai-batch-') as directory:
+        path = anyio.Path(directory) / 'results.jsonl'
+        async with await anyio.open_file(path, 'wb') as destination:
+            # The SDK awaits a destination's `write` when it returns an awaitable, but types the destination as `io.IOBase`.
+            await client.aio.files.download(file=job.dest.file_name, destination=destination)  # pyright: ignore[reportCallIssue, reportArgumentType]
+        async with await anyio.open_file(path, encoding='utf-8') as file:
+            async for line in file:
+                item = _RESULT_LINE_ADAPTER.validate_json(line)
+                if 'response' in item:
+                    yield BatchResult(
+                        custom_id=item['key'], status='succeeded', body=to_json(item['response']).decode()
+                    )
+                else:
+                    yield BatchResult(custom_id=item['key'], status='errored', body=to_json(item.get('error')).decode())
 
 
 async def batch_cancel(model: GoogleModel, batch: Batch) -> Batch:

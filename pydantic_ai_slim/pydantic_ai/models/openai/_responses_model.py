@@ -7,7 +7,7 @@ import functools
 import importlib
 import warnings
 from collections.abc import AsyncGenerator, Iterator, Mapping, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, aclosing, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
@@ -504,8 +504,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return await batch_module().batch_status(self, batch)
 
     async def batch_results(self, batch: Batch) -> list[BatchResult]:
+        return [result async for result in self.batch_results_iter(batch)]
+
+    async def batch_results_iter(self, batch: Batch) -> AsyncGenerator[BatchResult]:
         with map_api_errors(self.model_name, self._provider.model_id_namespace):
-            return await batch_module().batch_results(self, batch)
+            async with aclosing(batch_module().batch_results_iter(self, batch)) as results:
+                async for result in results:
+                    yield result
 
     async def batch_cancel(self, batch: Batch) -> Batch:
         with map_api_errors(self.model_name, self._provider.model_id_namespace):

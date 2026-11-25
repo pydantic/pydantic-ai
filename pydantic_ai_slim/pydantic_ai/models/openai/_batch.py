@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import OrderedDict
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -217,34 +217,40 @@ async def batch_status(model: OpenAIResponsesModel, batch: Batch) -> Batch:
     return to_batch(model, openai_batch, batch.group, batch.request_count)
 
 
-async def batch_results(model: OpenAIResponsesModel, batch: Batch) -> list[BatchResult]:
+async def batch_results_iter(model: OpenAIResponsesModel, batch: Batch) -> AsyncGenerator[BatchResult]:
     check_allow_model_requests()
     require_ended(batch)
     validate_batch_group(model, batch.group, collecting=True)
     client = batch_client(model)
     # The handle of an ended batch already names its final files, so they aren't looked up again.
     details = _DETAILS_ADAPTER.validate_python(batch.provider_details)
-    results: dict[str, BatchResult] = {}
-    for file_id in (details.get('output_file_id'), details.get('error_file_id')):
-        if not file_id:
-            continue
-        for line in (await client.files.content(file_id)).text.splitlines():
-            result = to_result(_OutputLine.model_validate_json(line))
-            results[result.custom_id] = result
     if details['status'] == 'completed':
         uploaded_key = (batch_credential(model), batch.id)
         if (uploaded := _UPLOADED_INPUT_FILES.get(uploaded_key)) is not None and uploaded.completed:
             del _UPLOADED_INPUT_FILES[uploaded_key]
-            # Every request ran, so the input file isn't needed again; OpenAI would otherwise keep it for 30 days.
+            # Every request ran, so the input file isn't needed again; OpenAI would otherwise keep it for 30 days. It's
+            # deleted before the first result is yielded, so a caller that stops early doesn't leave it behind.
             with suppress(APIError, httpx2.HTTPStatusError):
                 await client.files.delete(uploaded.file_id)
-    else:
+    # A request has a line in the output file if it succeeded and in the error file if it failed, never in both, and
+    # OpenAI requires the `custom_id`s of a batch to be unique, so each is yielded once.
+    yielded: set[str] = set()
+    for file_id in (details.get('output_file_id'), details.get('error_file_id')):
+        if not file_id:
+            continue
+        async with client.files.with_streaming_response.content(file_id) as response:
+            async for line in response.iter_lines():
+                result = to_result(_OutputLine.model_validate_json(line))
+                yielded.add(result.custom_id)
+                yield result
+    if details['status'] != 'completed':
         # The output and error files have no line for a request the batch didn't run, so the input file lists them.
-        lines = (await client.files.content(details['input_file_id'])).text.splitlines()
-        for line_number, line in enumerate(lines, start=1):
-            if (custom_id := _InputLine.model_validate_json(line).custom_id) not in results:
-                results[custom_id] = unrun_result(details, custom_id, line_number)
-    return list(results.values())
+        async with client.files.with_streaming_response.content(details['input_file_id']) as response:
+            line_number = 0
+            async for line in response.iter_lines():
+                line_number += 1
+                if (custom_id := _InputLine.model_validate_json(line).custom_id) not in yielded:
+                    yield unrun_result(details, custom_id, line_number)
 
 
 async def batch_cancel(model: OpenAIResponsesModel, batch: Batch) -> Batch:
