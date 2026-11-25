@@ -382,8 +382,8 @@ sideband tasks, since request metrics show an idle instance; and on shutdown, wa
 A realtime session holds one long-lived connection to the provider, and the model's speech can't be
 recorded and replayed the way a [durable execution](../durable_execution/overview.md) engine replays
 a workflow. So the engines in Pydantic AI and [Pydantic AI Harness](../harness/index.md) refuse to
-open a session in the code the engine replays (a workflow, flow, orchestration, or a durable handler
-or task), whether you use a durability capability such as `TemporalDurability` or a wrapper agent
+open a session in the code the engine replays (a workflow, flow or orchestration, an AWS Lambda
+durable handler, or an Absurd or pgtask task), whether you use a durability capability such as `TemporalDurability` or a wrapper agent
 such as `TemporalAgent`: it raises a [`UserError`][pydantic_ai.exceptions.UserError] before the provider is
 contacted. The same goes for the browser-call signaling,
 [`answer_webrtc_offer()`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer],
