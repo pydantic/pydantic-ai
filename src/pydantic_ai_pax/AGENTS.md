@@ -520,6 +520,19 @@ PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright src/pydantic_ai_pax te
 uv run --no-sync pytest -p no:cacheprovider tests/pax
 ```
 
+## Install extras
+
+Pax offers an extra for every `pydantic-ai-slim` extra not in `EXCLUDED` in
+`scripts/sync_provider_extras.py`, plus `all`. That script writes them into the generated block of
+`pyproject.toml` and mirrors every Pax extra in the `pydantic-clai2` shim; pre-commit runs it, and
+`tests/pax/test_provider_extras.py` fails until a new slim extra is mirrored or excluded with a reason:
+
+```bash
+python src/pydantic_ai_pax/scripts/sync_provider_extras.py
+```
+
+Then run `uv lock`. Edit the sandbox extras by hand; the script adds them to `all`, except `local`.
+
 ## Docs parity
 
 `README.md` is the product tour, `docs/reference.md` is the user reference,

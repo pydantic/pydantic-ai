@@ -50,6 +50,7 @@ crusoe = ["pydantic-ai-pax[crusoe]==0.{{ minor }}.{{ patch }}{% if distance %}.d
 cerebras = ["pydantic-ai-pax[cerebras]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 typesafe = ["pydantic-ai-pax[typesafe]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 huggingface = ["pydantic-ai-pax[huggingface]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+all = ["pydantic-ai-pax[all]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 boxd = ["pydantic-ai-pax[boxd]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 daytona = ["pydantic-ai-pax[daytona]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 e2b = ["pydantic-ai-pax[e2b]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
@@ -59,7 +60,6 @@ modal = ["pydantic-ai-pax[modal]==0.{{ minor }}.{{ patch }}{% if distance %}.dev
 opensandbox = ["pydantic-ai-pax[opensandbox]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 render = ["pydantic-ai-pax[render]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 sprites = ["pydantic-ai-pax[sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-all = ["pydantic-ai-pax[all]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax"
