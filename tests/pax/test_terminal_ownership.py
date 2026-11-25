@@ -170,6 +170,19 @@ def test_standard_error_rotates_the_log_like_its_records(tmp_path: Path, monkeyp
     assert b'Warnings and errors from this session are in' in b''.join(shown)
 
 
+def test_standard_error_reaches_the_log_byte_for_byte(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bytes that are not UTF-8, such as a child's Latin-1 output, reach the log as they came.
+
+    So do a character split across reads and one the session ended in the middle of.
+    """
+    monkeypatch.setattr(stderr_relay, '_CHUNK', 1)
+    log = tmp_path / 'telemetry.log'
+    with _terminal() as (console, _):
+        with telemetry_log(log, console=console):
+            os.write(2, b'\xe9t\xe9 \xc3\xa9t\xc3\xa9\n\xc3')
+    assert log.read_bytes() == b'\xe9t\xe9 \xc3\xa9t\xc3\xa9\n\xc3'
+
+
 def test_an_unwritable_log_loses_standard_error_quietly(tmp_path: Path) -> None:
     """Reporting the failure would write to standard error, which is the pipe the log could not take."""
     with _terminal() as (console, shown):

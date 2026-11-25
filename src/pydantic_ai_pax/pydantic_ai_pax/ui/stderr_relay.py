@@ -68,7 +68,7 @@ def _copy(source: int, terminal: int) -> None:
 
 def _copy_to(source: int, append: Callable[[str], None]) -> None:
     at_line_start = True
-    decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+    decoder = codecs.getincrementaldecoder('utf-8')(errors='surrogateescape')
     try:
         while data := os.read(source, _CHUNK):
             kept = drop_fork_notices(data, at_line_start=at_line_start)
@@ -86,8 +86,9 @@ def capture_stderr(append: Callable[[str], None]) -> Generator[None]:
     """Hand everything written to standard error to `append` as text, while it is a POSIX terminal.
 
     File descriptor 2 is a pipe for the block, so children started meanwhile write to it too; a thread decodes what
-    arrives, without `MallocStackLogging` fork notices. Elsewhere, or when standard error is not a terminal, this
-    does nothing. Under `relay_stderr`, the terminal is the one it holds.
+    arrives, without `MallocStackLogging` fork notices. Bytes that are not UTF-8 arrive as `surrogateescape` escapes,
+    so a file opened with that error handler gets them back unchanged. Elsewhere, or when standard error is not a
+    terminal, this does nothing. Under `relay_stderr`, the terminal is the one it holds.
     """
     global _terminal
     shown = _terminal

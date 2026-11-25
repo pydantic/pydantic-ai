@@ -107,7 +107,7 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     written to standard error goes to `path` too (`capture_stderr`), including what such a handler writes there.
     """
     # `delay` opens the file on the first record, so a session without problems creates nothing.
-    handler = _LogFile(path, maxBytes=_MAX_BYTES, backupCount=1, encoding='utf-8', delay=True)
+    handler = _LogFile(path, maxBytes=_MAX_BYTES, backupCount=1, encoding='utf-8', errors='surrogateescape', delay=True)
     handler.setLevel(logging.WARNING)
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
     handler.addFilter(_unhandled_below)
