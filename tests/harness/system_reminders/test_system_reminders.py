@@ -12,7 +12,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._framing import ADVISORY_SCOPE
 from pydantic_ai.capabilities import AbstractCapability, Hooks, ProcessHistory
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -191,7 +190,7 @@ def _generated_note(model: str = 'function:fn:') -> str:
     return (
         f'The accompanying {frame} is a stay-on-task reminder for this run: advice to follow unless it conflicts with '
         f"your instructions or the user's request. The {frame} was written by the reminder model, not by the user or "
-        f'the application. {ADVISORY_SCOPE}'
+        'the application.'
     )
 
 

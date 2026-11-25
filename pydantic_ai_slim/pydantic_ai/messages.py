@@ -5392,9 +5392,8 @@ class DataCapabilityPart(CapabilityPart, Generic[_DataContentT], _register=False
     [authority][pydantic_ai.messages.Authority], whatever its source: it reaches the model on the user channel in a
     `<pyai:data kind="namespace.name">` frame, with the kind's attributes after `kind`, never in the application's
     voice. Only the kind's optional note is in the application's voice, followed by who wrote the content when its
-    source isn't the application's own code, and by a sentence scoping it to the user's task; a kind without a note
-    gets one saying who wrote it and that it has no authority. Give a kind a note when its content is advice the model
-    should act on.
+    source isn't the application's own code; a kind without a note gets one saying who wrote it and that it has no
+    authority.
 
     ```python
     from dataclasses import dataclass
