@@ -1363,6 +1363,7 @@ async def test_no_content_reaches_telemetry_from_a_lowered_capabilitys_instructi
     lowered = Capability[None](id='sentinel_lowered_block', instructions=SECRETS['capability_instruction'])
     agent = Agent(
         FunctionModel(respond),
+        deps_type=type(None),
         capabilities=[lowered.with_authority('none'), Instrumentation(settings=settings)],
     )
     await agent.run(SECRETS['user_prompt'])
