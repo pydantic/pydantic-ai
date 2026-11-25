@@ -425,6 +425,15 @@ class OpenAIModelProfile(ModelProfile, total=False):
     See https://developers.openai.com/api/docs/guides/latest-model.
     Explicit `openai_reasoning_effort='minimal'` settings are still passed through unchanged.
 
+    `OpenAIProvider` also disables it for the GPT-5.1 through GPT-5.5 families, which OpenAI's API answers with a 400
+    for `minimal` (verified live on gpt-5.1, gpt-5.2, gpt-5.3-codex, gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.5
+    and their dated snapshots). gpt-5.5-cyber-preview and gpt-5.3-codex-spark are covered by the prefix only. The
+    `-pro` and `-chat` variants set `openai_reasoning_efforts`, which decides instead; the other ids under these
+    prefixes return 404 (shut down or nonexistent). `openai_model_profile` leaves it on,
+    because OpenRouter accepts `minimal` for these models. `OpenAIProvider(base_url=...)` keeps the flag off, as a
+    proxy to OpenAI should; for another server that serves these model names and accepts `minimal`, pass
+    `profile=OpenAIModelProfile(openai_supports_minimal_reasoning_effort=True)`.
+
     Ignored when `openai_reasoning_efforts` is set."""
 
     openai_reasoning_efforts: frozenset[OpenAIReasoningEffort]
@@ -440,7 +449,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `openai_supports_reasoning_effort_none` and `openai_supports_minimal_reasoning_effort`. When unset, unified
     levels map one-to-one (see `openai_supports_minimal_reasoning_effort`), and `thinking=False` sends nothing on a
     model that always reasons.
-    Explicit `openai_reasoning_effort` settings are passed through unchanged."""
+    Explicit `openai_reasoning_effort` settings are passed through unchanged.
+
+    `OpenAIProvider` sets an empty set for `gpt-5-search-api`, which OpenAI's API answers with a 400 for any
+    `reasoning_effort` (verified live, 2026-11). `openai_model_profile` keeps the `'gpt-5'` efforts, as the
+    restriction is unverified on the OpenAI-compatible endpoints that share it. `OpenAIProvider(base_url=...)` keeps
+    the empty set, as a proxy to OpenAI should; for another server that serves this model name and accepts an effort,
+    pass `profile=OpenAIModelProfile(openai_reasoning_efforts=...)` with the efforts it accepts."""
 
     openai_chat_supports_max_reasoning_effort: bool
     """Whether the Chat Completions API accepts `reasoning_effort='max'` for this model. Default: `False`.

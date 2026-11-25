@@ -475,6 +475,7 @@ def test_openai_gpt_5_4():
             'openai_supports_reasoning': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
+            'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_supports_max_reasoning_effort': False,
             'delegates_unprompted': True,
             'reinterprets_malformed_inputs': True,
