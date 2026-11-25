@@ -1733,6 +1733,10 @@ class TestDaytona:
         assert ref == backend.ref == WorkspaceRef(provider='daytona', id='sb-1')
         reopened = provider.reopen(ref)
         assert reopened.ref == ref
+        # Daytona adds a desktop to a sandbox already running, so a reopen asked for one has a display.
+        with_desktop = provider.reopen(ref, desktop=True)
+        assert isinstance(with_desktop, SupportsDisplay) and with_desktop.display is not None
+        await provider.close(with_desktop)
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
         await provider.close(reopened)
