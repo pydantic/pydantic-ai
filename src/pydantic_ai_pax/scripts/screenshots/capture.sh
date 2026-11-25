@@ -30,8 +30,8 @@ root=$(cd "$root" && pwd -P)
 if [ -n "${CLAI_SHOTS_KEEP:-}" ]; then echo "keeping $root"; else trap 'rm -rf "$root"' EXIT; fi
 home="$root/home"
 project="$home/code/weather"
-mkdir -p "$home/.config/pydantic-clai2/plugins" "$project" "$root/shots"
-cp "$here/demo_model.py" "$home/.config/pydantic-clai2/plugins/demo_model.py"
+mkdir -p "$home/.config/pydantic-ai-pax/plugins" "$project" "$root/shots"
+cp "$here/demo_model.py" "$home/.config/pydantic-ai-pax/plugins/demo_model.py"
 
 # A clean environment: only what the terminal, VHS, Git, and the checkout's `pax` need. Your own
 # Git configuration, API keys, and keychain stay out.
