@@ -745,6 +745,8 @@ def test_openrouter_gpt_6_2(model_name: str):
         ('bedrock-mantle', 'openai.gpt-5.6-sol', False),
         ('openrouter', 'openai/gpt-6.2-sol', True),
         ('openrouter', 'openai/gpt-6.1-sol', False),
+        ('vercel', 'openai/gpt-6.2-sol', True),
+        ('vercel', 'openai/gpt-6.1-sol', False),
     ],
 )
 def test_gpt_6_2_stable_instructions_as_input_beyond_openai(provider: str, model_name: str, expected: bool):
@@ -756,6 +758,7 @@ def test_gpt_6_2_stable_instructions_as_input_beyond_openai(provider: str, model
         'azure': AzureProvider,
         'bedrock-mantle': BedrockMantleProvider,
         'openrouter': OpenRouterProvider,
+        'vercel': VercelProvider,
     }[provider]
     profile = provider_class.model_profile(model_name)
     assert profile is not None

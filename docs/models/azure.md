@@ -169,6 +169,8 @@ model = OpenAIResponsesModel(
 )
 ```
 
+On `gpt-6.2-sol` and `gpt-6.2-astra` deployments, the static and [`on_change='append'`](../agent.md#appending-instruction-changes) instructions go out as leading input messages, [as on OpenAI](openai.md#prompt-caching), since these models read the top-level `instructions` after the conversation and never cache them. A stored response then keeps those instructions in its input, so seeding a request with a concrete `openai_previous_response_id` and no `message_history` sends them twice (see [Referencing earlier responses](openai.md#referencing-earlier-responses)). To keep all instructions in the top-level field, pass `profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=False)` to the model.
+
 This has been verified on the v1 API with `gpt-5.6-luna`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6.1-sol` and `gpt-6-astra`. It hasn't been verified with `gpt-6.1-terra`, `gpt-6.2-sol` or `gpt-6.2-astra`, which weren't available to test, or on `api-version`-based deployments.
 
 ## Grok tool schemas
