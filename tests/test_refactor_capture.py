@@ -906,7 +906,7 @@ COLLECTED = Agent(TestModel(), name='collected', capabilities=[TemporalDurabilit
 
 
 def test_durable_names():
-    Agent(TestModel(), name='dbos_agent', capabilities=[DBOSDurability()])
+    Agent(TestModel(), name='dbos_agent', capabilities=[DBOSDurability(register_legacy_workflows=True)])
     with pytest.warns(PydanticAIDeprecationWarning):
         PrefectAgent(Agent(TestModel(), name='prefect_agent'))
     activity.defn(name='by_the_test')(lambda: None)
@@ -2387,7 +2387,9 @@ n
 )
 # `DBOS` is one instance per process, which the DBOS test modules launch once per module on their worker.
 @pytest.mark.xdist_group(name='dbos')
-def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture, tmp_path: Path):
+def test_capture_records_durable_names_workflows_and_cache_keys(
+    run: RunCapture, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
     """Each name `pydantic_ai.durable_exec` registers, each Temporal workflow run's commands and DBOS workflow's
     operations, and each `compute_key` call on a Prefect cache policy.
 
@@ -2402,6 +2404,9 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
 
     The Prefect modules are imported before the capture starts, as a conftest can import them, so they hold the `task`
     decorator they imported, which the capture rebinds.
+
+    Compared with a capture of the Temporal and cache key tests carrying other text, the summary counts each durable
+    kind and its targets, and lists the tests whose durable records changed.
     """
     importlib.import_module('pydantic_ai.durable_exec.prefect')
     run(tmp_path, durable=True).assert_outcomes(passed=4)
@@ -2452,6 +2457,8 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
             ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.count_tokens', {}),
             ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request', {}),
             ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request_stream', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.workflow', 'dbos_agent.run', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.workflow', 'dbos_agent.run_sync', {}),
             ('test_capture_durable.py::test_durable_names', 'prefect.task', 'call_tool_task', {}),
             ('test_capture_durable.py::test_durable_names', 'prefect.task', 'cancel_suspended_response_task', {}),
             ('test_capture_durable.py::test_durable_names', 'prefect.task', 'request_stream_task', {}),
@@ -2605,6 +2612,58 @@ To resolve this, you can:
             },
         ]
     )
+
+    head = tmp_path / 'head'
+    run(head, '-k', 'temporal_commands or cache_keys', durable=True, text='goodbye').assert_outcomes(
+        passed=2, deselected=2
+    )
+    (head / SOURCE_FILE).write_text(json.dumps({'pydantic_ai': f'{head}/pydantic_ai/__init__.py'}))
+    capsys.readouterr()
+    assert compare(tmp_path, head) == 1
+    assert capsys.readouterr().out == snapshot("""\
+nodes: base 5, head 3
+records: base 35, head 21
+stream events: head 0
+requests: head 0
+ui records: head 0
+realtime records: head 0
+session records: head 0
+hook records: head 0
+exception records: head 1
+warning records: head 0
+temporal workflow run records: head 2
+dbos workflow records: head 0
+durable name records: head 9
+cache key records: head 9
+nodes per stream module, head:
+nodes per request target, head:
+nodes per ui target, head:
+nodes per realtime target, head:
+nodes per session target, head:
+nodes per hook target, head:
+nodes per temporal workflow run target, head:
+  First: 1
+  Second: 1
+nodes per dbos workflow target, head:
+nodes per durable name target, head:
+  temporalio.activity.defn: 1
+  temporalio.workflow.defn: 1
+nodes per cache key target, head:
+  prefect.cache_policies.CompoundCachePolicy.compute_key: 1
+  prefect.cache_policies.Inputs.compute_key: 1
+  prefect.cache_policies.RunId.compute_key: 1
+  prefect.cache_policies.TaskSource.compute_key: 1
+  pydantic_ai.durable_exec.prefect._cache_policies.PrefectAgentInputs.compute_key: 1
+  test_capture_durable.test_cache_keys.<locals>.Inherited.compute_key: 1
+nodes that recorded no request, realtime or session record, head: 2
+  test_capture_durable.py::test_cache_keys
+  test_capture_durable.py::test_temporal_commands
+only in base: 2, only in head: 0, differing: 2
+  only in base: test_capture_durable.py::test_dbos_workflow
+  only in base: test_capture_durable.py::test_durable_names
+  differing: test_capture_durable.py::test_cache_keys
+  differing: test_capture_durable.py::test_temporal_commands
+""")
 
 
 async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
