@@ -73,7 +73,6 @@ from pydantic_ai.result import AgentStream
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import DeferredToolRequests
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
-from pydantic_ai_harness import ReportRemainingBudget
 from pydantic_graph import End
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
@@ -84,6 +83,9 @@ with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
+with try_import() as harness_imports_successful:
+    from pydantic_ai_harness import ReportRemainingBudget
+
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
 pytestmark = []
@@ -92,6 +94,7 @@ pytestmark = []
 _ENQUEUED_REQUEST_INSTRUCTIONS = 'an enqueued `ModelRequest` carries instructions of its own'
 
 
+@pytest.mark.skipif(not harness_imports_successful(), reason='pydantic_ai_harness not installed')
 async def test_resume_with_report_remaining_budget_keeps_new_messages() -> None:
     calls = 0
 
