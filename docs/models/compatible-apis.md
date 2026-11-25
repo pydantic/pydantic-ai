@@ -527,6 +527,28 @@ agent = Agent(model)
 
 WaveSpeed names models `<vendor>/<model>`, so each model gets the profile of its family, as [Other endpoints](#other-endpoints) explains. `GET https://llm.wavespeed.ai/v1/models` [lists the current model IDs](https://wavespeed.ai/docs/supported-llm-models) without an API key.
 
+### Rapid-MLX {#rapid-mlx}
+
+[Rapid-MLX](https://rapidmlx.com) runs open models locally on Apple Silicon Macs and serves an [OpenAI-compatible Chat Completions API](https://rapidmlx.com/docs/openai-compatible-server) at `http://127.0.0.1:8000/v1`. Install it, start a model, and pass the alias you started as the model name; the server needs no API key by default:
+
+```bash
+curl -fsSL https://rapidmlx.com/install.sh | bash
+rapid-mlx serve qwen3.5-9b-4bit
+```
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+provider = OpenAICompatibleProvider('rapid-mlx', base_url='http://127.0.0.1:8000/v1')
+model = OpenAIChatModel('qwen3.5-9b-4bit', provider=provider)
+agent = Agent(model)
+...
+```
+
+`GET http://127.0.0.1:8000/v1/models` lists the model the server is serving. Aliases such as `qwen3.5-9b-4bit` are not `vendor/model` names, so they get the profile OpenAI-compatible APIs share, which is enough for tool calling and message history with the models in the [Rapid-MLX catalog](https://rapidmlx.com/models/). If the server was started with an API key, pass it as `api_key`. The [Rapid-MLX guide for Pydantic AI](https://rapidmlx.com/docs/pydantic-ai) has a complete multi-turn tool example.
+
 ## Non-standard finish reasons
 
 When an OpenAI-compatible API returns a `finish_reason` outside the five that OpenAI defines, `OpenAIChatModel` keeps the response, gives it a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `None`, and keeps the raw value in [`provider_details['finish_reason']`][pydantic_ai.messages.ModelResponse.provider_details].
