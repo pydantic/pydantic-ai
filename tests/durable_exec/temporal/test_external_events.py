@@ -30,6 +30,7 @@ from tests.temporal_utils import temporal_dev_server_cache_dir
 
 try:
     from temporalio import workflow
+    from temporalio.api.enums.v1 import EventType
     from temporalio.client import Client, WorkflowHandle
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
@@ -485,11 +486,24 @@ async def test_the_run_waits_to_end_for_drain_work_started_in_workflow_code(temp
         )
         assert await handle.result() == 'got it'
 
+    history = await handle.fetch_history()
+    completions = [
+        name
+        for event in history.events
+        if (name := EventType.Name(event.event_type))
+        in ('EVENT_TYPE_ACTIVITY_TASK_COMPLETED', 'EVENT_TYPE_TIMER_FIRED')
+    ]
+    # The work queued its result between the two model requests: after the first had ended the run, so it waited.
+    assert completions[-3:] == [
+        'EVENT_TYPE_ACTIVITY_TASK_COMPLETED',
+        'EVENT_TYPE_TIMER_FIRED',
+        'EVENT_TYPE_ACTIVITY_TASK_COMPLETED',
+    ]
     await Replayer(
         workflows=[InFlightEndWorkflow],
         workflow_runner=UnsandboxedWorkflowRunner(),
         data_converter=pydantic_data_converter,
-    ).replay_workflow(await handle.fetch_history())
+    ).replay_workflow(history)
 
 
 async def test_a_token_from_elsewhere_is_refused(temporal_env: WorkflowEnvironment) -> None:

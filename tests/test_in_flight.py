@@ -878,8 +878,8 @@ async def test_a_failing_cancel_callback_at_a_durable_wait_fails_the_run_without
 
 
 async def test_work_that_reaches_a_durable_wait_doesnt_wait_for_itself():
-    """Work that asks for an approval itself reaches the durable wait, which doesn't wait for that work to finish."""
-    handles: dict[str, InFlightWork[DeferredToolResults | None]] = {}
+    """Work that asks for approvals itself, here from tasks it starts, reaches the durable wait, which doesn't wait for it."""
+    handles: dict[str, InFlightWork[list[DeferredToolResults | None]]] = {}
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -895,20 +895,29 @@ async def test_work_that_reaches_a_durable_wait_doesnt_wait_for_itself():
     async def start(ctx: RunContext) -> str:
         tool_manager = ctx.tool_manager
         assert tool_manager is not None
-        requests = DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete', args={}, tool_call_id='call')])
 
-        async def ask_for_approval() -> DeferredToolResults | None:
-            return await tool_manager.resolve_deferred_tool_calls(requests)
+        async def ask_for_approvals() -> list[DeferredToolResults | None]:
+            return await asyncio.gather(
+                *(
+                    tool_manager.resolve_deferred_tool_calls(
+                        DeferredToolRequests(
+                            approvals=[ToolCallPart(tool_name='delete', args={}, tool_call_id=call_id)]
+                        )
+                    )
+                    for call_id in ('a', 'b')
+                )
+            )
 
-        handles['work'] = ctx.in_flight.start(ask_for_approval, kind='test', name='work', id='work')
+        handles['work'] = ctx.in_flight.start(ask_for_approvals, kind='test', name='work', id='work')
         return 'started'
 
     with no_leaked_tasks(), external_event_scope(_EngineWaiter()):
         await agent.run('go')
 
-    results = await handles['work'].result()
-    assert results is not None
-    assert list(results.approvals) == ['call']
+    assert [list(results.approvals) if results else None for results in await handles['work'].result()] == [
+        ['a'],
+        ['b'],
+    ]
 
 
 async def test_a_durable_wait_outside_a_run_has_no_work_to_apply():

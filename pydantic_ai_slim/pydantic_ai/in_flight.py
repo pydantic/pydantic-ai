@@ -232,7 +232,13 @@ class InFlightWork(Generic[T]):
             self._finish('succeeded', value=_utils.Some(task.result()))
 
 
-async def _call(fn: Callable[[], Awaitable[T]]) -> T:
+_current_work: ContextVar[InFlightWork[Any] | None] = ContextVar('_current_in_flight_work', default=None)
+"""The started work the current task runs, inherited by the tasks that work starts."""
+
+
+async def _call(fn: Callable[[], Awaitable[T]], started: list[InFlightWork[Any]]) -> T:
+    # `start()` adds the handle before the task first runs.
+    _current_work.set(started[0])
     return await fn()
 
 
@@ -368,7 +374,8 @@ class InFlightRegistry:
                 'it starts. Run work that should outlive the run yourself, and `register()` it.'
             )
         self._check_can_add(id, 'start')
-        task = _check_on_loop('start', self._loop).create_task(_call(fn), name=f'in_flight {kind} {id}')
+        started: list[InFlightWork[Any]] = []
+        task = _check_on_loop('start', self._loop).create_task(_call(fn, started), name=f'in_flight {kind} {id}')
         work = InFlightWork[T](
             id=id,
             kind=kind,
@@ -379,6 +386,7 @@ class InFlightRegistry:
             cancel=None,
             on_settled=self._settled,
         )
+        started.append(work)
         self._started.add(work)
         self._add(work)
         return work
@@ -600,11 +608,10 @@ class InFlightRegistry:
         engine refuses, raises straight away, and the run's end rule then handles the work as it would after any
         other step. Unlike the wait to end the run, this wait emits no events and opens no span.
         """
-        # Work that reaches the wait itself, like a call it makes that needs approval, is neither cancelled nor
-        # waited for: it would wait for itself.
-        current = asyncio.current_task()
-        own = {work for work in self._live.values() if work._task is current}  # pyright: ignore[reportPrivateUsage]
-        cancelling = [work for work in self._live.values() if work.on_end == 'cancel' and work not in own]
+        # Work that reaches the wait itself, from its own task or one it started, like a call it makes that needs
+        # approval, is neither cancelled nor waited for: it would wait for itself.
+        own = _current_work.get()
+        cancelling = [work for work in self._live.values() if work.on_end == 'cancel' and work is not own]
         # As at teardown, a failing `cancel` callback mustn't keep the rest of the work running.
         errors: list[Exception] = []
         for work in cancelling:
@@ -617,7 +624,7 @@ class InFlightRegistry:
         if errors:
             raise errors[0]
         yield
-        while any(work not in own for work in self._draining()):
+        while any(work is not own for work in self._draining()):
             await self._changed.wait()
 
     async def _close_on_exit(self, exc_type: type[BaseException] | None, *_: object) -> None:
