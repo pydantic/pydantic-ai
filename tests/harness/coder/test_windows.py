@@ -21,8 +21,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.windows import WindowsWorkspaceBackend
 from pydantic_ai_harness import Coder
 from pydantic_ai_harness.file_system import FileSystem
-from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.shell._toolset import ShellToolset
+from pydantic_ai_harness.shell import Shell, ShellToolset
 
 from .._tool_calls import call_tool, call_tools
 
