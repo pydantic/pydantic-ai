@@ -210,7 +210,7 @@ def after_exit_script(command: Sequence[str], *, pid: int, overrides: Path | Non
     """
     lines = [
         f'Wait-Process -Id {pid} -ErrorAction SilentlyContinue',
-        # The `clai2.exe` launcher exits just after the Python process it started.
+        # The `pax.exe` (or legacy `clai2.exe`) launcher exits just after the Python process it started.
         'Start-Sleep -Seconds 1',
         powershell(command),
         '$code = $LASTEXITCODE',
@@ -397,7 +397,7 @@ async def _print_line(line: bytes, output: Output) -> None:
 
 def _write_overrides(text: str) -> Path:
     # A private file, not a fixed name in a shared temporary folder another user could plant first.
-    descriptor, name = tempfile.mkstemp(prefix='clai2-overrides-', suffix='.txt')
+    descriptor, name = tempfile.mkstemp(prefix='pax-overrides-', suffix='.txt')
     with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
         file.write(text)
     return Path(name)
