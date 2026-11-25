@@ -1505,23 +1505,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> ModelSettings | None:
         """Drop the sampling settings the model rejects alone or with the rest of the request."""
         profile = self.profile
-        if profile.get('anthropic_disallows_sampling_settings', False) or self._client_api_rejects_sampling():
+        if profile.get('anthropic_disallows_sampling_settings', False) or self._api_version_rejects_sampling(
+            model_settings
+        ):
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered)
             return filtered or None
         thinking = request_thinking_type(profile, model_settings, model_request_parameters) is not None
         return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
-    def _client_api_rejects_sampling(self) -> bool:
-        """Whether the client's API version rejects `temperature`, `top_p` and `top_k` on every model.
+    def _api_version_rejects_sampling(self, model_settings: ModelSettings) -> bool:
+        """Whether the request's API version rejects `temperature`, `top_p` and `top_k` on every model.
 
         `anthropic>=2` sends `anthropic-version: 2026-10-21` by default, which rejects them even at their defaults.
+        The version is the client's `default_headers` entry, unless the request's `extra_headers` sets its own.
         The legacy Bedrock client pins its own version in the request body instead.
         """
         if isinstance(self.client, AsyncAnthropicBedrock):
             return False
         version = ''
-        for name, value in self.client.default_headers.items():
+        headers = [*self.client.default_headers.items(), *(model_settings.get('extra_headers') or {}).items()]
+        for name, value in headers:
             # The SDK folds header names case-insensitively, the last one winning, and drops one set to `omit`.
             if name.lower() == 'anthropic-version':
                 version = value if isinstance(value, str) else ''
