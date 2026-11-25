@@ -74,6 +74,8 @@ The directory includes the namespace. With file tools over the run's workspace, 
 
 Automatic injection is on by default. The usage guidance goes in the model instructions, and stored memory goes in a `<pyai:data kind="memory.snapshot">` block, a user-role part recorded with the user's prompt. The guidance, `MEMORY.md`, and the list of other files share `max_tokens` (default 2,000, estimated at four characters per token); the default guidance alone uses about 200 of them. `max_lines` also caps the `MEMORY.md` lines shown, and `max_memory_size` caps each backend read. The file listing is bounded by the same budget, so the capability never requests an unbounded file or listing. Whatever does not fit is left out, with a note pointing the model to `read_memory` (or `read_file`, where it replaces `read_memory`) or `search_memory`. When the guidance alone fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
 
+The budget counts the snapshot's frame, `<pyai:data kind="memory.snapshot">` and its closing tag, about 12 of those tokens. That frame is longer than the `<memory>` tag earlier versions used, so after upgrading, a snapshot under a tight `max_tokens` (a few dozen tokens) has that much less room and may show less of `MEMORY.md` or the file listing; raise `max_tokens` by about 8 to keep the same room for content.
+
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 
 ```python

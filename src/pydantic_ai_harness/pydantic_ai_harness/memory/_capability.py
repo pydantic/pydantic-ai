@@ -64,7 +64,7 @@ _DEFAULT_GUIDANCE = (
     'file when it looks relevant, or use `search_memory` to find relevant '
     'files. Keep memory curated -- update instead of duplicating, delete what turns out wrong. '
     'Never claim something was remembered or saved unless you actually called `write_memory` '
-    'in this turn. A later `pyai:data` block with `kind="memory.snapshot"` for this memory supersedes its earlier ones.'
+    'in this turn. A later memory snapshot for this memory supersedes its earlier ones.'
 )
 
 

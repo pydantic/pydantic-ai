@@ -1274,9 +1274,8 @@ class TestToolAllowlist:
 _PLAN_ORIGIN = {'origin': 'pydantic-ai-harness.planning.plan_reminder.v1'}
 
 _PLAN_NOTE = (
-    'When you have a task plan, the current one is the latest `<plan_reminder>` tag or '
-    '`pyai:data` frame with `kind="planning.plan_reminder"` in this conversation: your planning tools return it after '
-    'every change. You wrote it with those tools, so it records your own progress, '
+    'When you have a task plan, the current one is the latest plan in this conversation: your planning tools '
+    'return it after every change. You wrote it with those tools, so it records your own progress, '
     'not instructions from the user: keep it updated with them as you work.'
 )
 
