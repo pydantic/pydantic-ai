@@ -252,6 +252,8 @@ class Instrumentation(AbstractCapability[Any]):
         """Return a fresh copy for per-run state isolation."""
         inst = replace(self)
         inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
+        # Run-start boundary, kept as the fallback index for failed runs; successful runs derive
+        # `pydantic_ai.new_message_index` at span end from the run's own messages.
         inst._new_message_index = len(ctx.messages)
         # Usage this run's span is accountable for, credited by `_usage_attribution` for as long as
         # the span is open in `wrap_run`; see `_run_span_end_attributes`.
@@ -343,12 +345,14 @@ class Instrumentation(AbstractCapability[Any]):
                     # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
                     if result is not None:
                         message_history = result.all_messages()
+                        run_new_messages = result.new_messages()
                         metadata = result.metadata
                     else:
                         # On error, use the last messages seen during model requests.
                         message_history = self._last_messages or ctx.messages
+                        run_new_messages = None
                         metadata = ctx.metadata
-                    span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
+                    span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata, run_new_messages))
                     if result is not None:
                         # One O(history) pass per run: turn any silent staleness the per-request
                         # fragment cache may have recorded into a loud signal. Skipped when the run
@@ -371,10 +375,14 @@ class Instrumentation(AbstractCapability[Any]):
         ctx: RunContext[Any],
         message_history: list[ModelMessage],
         metadata: dict[str, Any] | None,
+        run_new_messages: list[ModelMessage] | None = None,
     ) -> dict[str, str | int | float | bool]:
-        """Compute the end-of-run span attributes."""
+        """Compute the end-of-run span attributes.
+
+        `run_new_messages` is the messages this run added; `None` (failed runs) falls back to the
+        run-start boundary snapshot.
+        """
         settings = self.settings
-        new_message_index = self._new_message_index
 
         last_instructions = get_instructions(message_history, self._last_model_request_parameters)
         mcp_url_ids = (
@@ -386,16 +394,24 @@ class Instrumentation(AbstractCapability[Any]):
                 )
             )
         )
+        converted_messages = settings.messages_to_otel_messages(
+            list(message_history), mcp_url_ids=mcp_telemetry_history_ids(message_history, mcp_url_ids)
+        )
         attrs: dict[str, Any] = {
-            'pydantic_ai.all_messages': safe_to_json(
-                settings.messages_to_otel_messages(
-                    list(message_history), mcp_url_ids=mcp_telemetry_history_ids(message_history, mcp_url_ids)
-                )
-            ).decode(),
+            'pydantic_ai.all_messages': safe_to_json(converted_messages).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }
 
-        if new_message_index > 0:
+        # The boundary is derived at span end in the same converted units as `pydantic_ai.all_messages`:
+        # each `ModelMessage` converts to one entry, so this run's first message sits at
+        # `len(all) - len(new)` even when a mid-run history merge shifted the run-start snapshot.
+        if run_new_messages is not None:
+            new_message_index = len(converted_messages) - len(
+                settings.messages_to_otel_messages(list(run_new_messages))
+            )
+        else:
+            new_message_index = self._new_message_index
+        if 0 < new_message_index < len(converted_messages):
             attrs['pydantic_ai.new_message_index'] = new_message_index
 
         if self._variable_instructions:

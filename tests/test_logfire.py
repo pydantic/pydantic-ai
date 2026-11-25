@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import json
 import warnings
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -5496,3 +5497,71 @@ def test_a_retry_past_the_budget_records_its_cause_alone(
     assert {key: value for key, value in tool_span.items() if '.retry.' in key} == {
         'pydantic_ai.tool.retry.cause': 'model_retry'
     }
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_span_new_message_index_matches_new_messages_multi_run(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    result1 = agent.run_sync('first')
+    result2 = agent.run_sync('second', message_history=result1.all_messages())
+
+    expected_index = len(result2.all_messages()) - len(result2.new_messages())
+
+    summary = get_logfire_summary()
+    run_span_attributes = summary.attributes[2]
+    index = run_span_attributes['pydantic_ai.new_message_index']
+    assert index == expected_index
+    converted = json.loads(run_span_attributes['pydantic_ai.all_messages'])
+    assert 0 < index < len(converted)
+    assert converted[index] == {'role': 'user', 'parts': [{'type': 'text', 'content': 'second'}]}
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_run_span_new_message_index_structured_output_multi_run(
+    get_logfire_summary: Callable[[], LogfireSummary],
+) -> None:
+    @dataclass
+    class MyOutput:
+        content: str
+
+    agent = Agent(model=TestModel(), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    result1 = agent.run_sync('first', output_type=MyOutput)
+    result2 = agent.run_sync('second', output_type=MyOutput, message_history=result1.all_messages())
+
+    assert result2.output == MyOutput(content='a')
+    assert len(result2.new_messages()) == 3  # this run's prompt, final_result tool call, tool return
+
+    summary = get_logfire_summary()
+    run_span_attributes = summary.attributes[2]
+    index = run_span_attributes['pydantic_ai.new_message_index']
+    converted = json.loads(run_span_attributes['pydantic_ai.all_messages'])
+    assert index == len(converted) - 3
+    assert converted[index] == {'role': 'user', 'parts': [{'type': 'text', 'content': 'second'}]}
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_failed_run_span_new_message_index_in_range(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise RuntimeError('boom')
+
+    agent = Agent(FunctionModel(boom), capabilities=[Instrumentation(settings=InstrumentationSettings())])
+
+    with pytest.raises(RuntimeError, match='boom'):
+        agent.run_sync(
+            'trigger',
+            message_history=[
+                ModelRequest(parts=[UserPromptPart(content='seed')]),
+                ModelResponse(parts=[TextPart(content='ok')]),
+            ],
+        )
+
+    summary = get_logfire_summary()
+    run_span_attributes = summary.attributes[0]
+    converted = json.loads(run_span_attributes['pydantic_ai.all_messages'])
+    index = run_span_attributes['pydantic_ai.new_message_index']
+    assert 0 < index < len(converted)
+    assert converted[index] == {'role': 'user', 'parts': [{'type': 'text', 'content': 'trigger'}]}
