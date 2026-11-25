@@ -66,7 +66,7 @@ from pydantic_ai.capabilities import (
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.durable_exec.conformance import Support
+from pydantic_ai.durable_exec.conformance import Recovery, Support
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -1065,6 +1065,22 @@ SCENARIO_RUNS: Mapping[Scenario, ScenarioRun] = {
 """The scenarios the D1 suites run, and what each must observe; the others are run by their capability's tests."""
 
 
+@dataclass(frozen=True)
+class EngineTable:
+    """An engine's support table, read from its `_conformance.py`."""
+
+    support: Mapping[str, Support]
+    recovery: Recovery
+
+
+def engine_table(engine: Engine) -> EngineTable:
+    """The support table of `engine`, from `ENGINE_SUPPORT_MODULES`. Importing it imports the engine's SDK."""
+    module = importlib.import_module(ENGINE_SUPPORT_MODULES[engine])
+    support: Mapping[str, Support] = module.SUPPORT
+    recovery: Recovery = module.RECOVERY
+    return EngineTable(support, recovery)
+
+
 class _EngineExemptions(Mapping[str, Exempt]):
     """The cases an engine's support table marks `refused` or `broken`, which its D1 contract exempts.
 
@@ -1078,10 +1094,9 @@ class _EngineExemptions(Mapping[str, Exempt]):
     @cached_property
     def _cells(self) -> dict[str, Exempt]:
         try:
-            table = importlib.import_module(ENGINE_SUPPORT_MODULES[self._engine])
+            cells = engine_table(self._engine).support
         except ImportError:  # pragma: lax no cover
             return {}
-        cells: Mapping[str, Support] = table.SUPPORT
         return {
             name: Exempt(cell.reason if cell.issue is None else f'{cell.reason}: {_ISSUES}{cell.issue}')
             for name, cell in cells.items()

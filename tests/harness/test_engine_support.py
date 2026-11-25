@@ -8,7 +8,6 @@ checks them: `TestDBOS` in `tests/harness/test_durable_tool_io.py`, `TestTempora
 from __future__ import annotations
 
 import ast
-import importlib
 import importlib.util
 import sys
 from collections.abc import Callable, Mapping
@@ -33,6 +32,8 @@ from ..capability_cases import (
     SCENARIOS,
     Contract,
     Engine,
+    EngineTable,
+    engine_table,
 )
 from ._contracts import CASES, PUBLIC
 from .capability_cases import HARNESS_CAPABILITY_PACKAGES
@@ -81,10 +82,10 @@ def _is_durability(name: str, module: str) -> bool:
     return any(isinstance(base, ast.Name) and base.id == 'BaseDurabilityCapability' for base in bases)
 
 
-def _table(engine: Engine) -> ModuleType:
+def _table(engine: Engine) -> EngineTable:
     """The support table of `engine`, skipped when its SDK, which its package imports, isn't installed."""
     try:
-        return importlib.import_module(ENGINE_SUPPORT_MODULES[engine])
+        return engine_table(engine)
     except ImportError as error:  # pragma: lax no cover
         pytest.skip(f'the {engine} SDK is not installed: {error}')
 
@@ -156,8 +157,8 @@ def test_every_cell_names_a_real_case_or_scenario(engine: Engine) -> None:
     It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     table = _table(engine)
-    cells: Mapping[str, Support] = table.SUPPORT
-    assert isinstance(table.RECOVERY, Recovery)
+    cells = table.support
+    assert isinstance(table.recovery, Recovery)
     for name, cell in cells.items():
         assert isinstance(cell, Support)
         assert cell.level != 'untested', f'{name}: an unlisted cell is what is untested'
@@ -173,7 +174,7 @@ def test_temporal_refuses_the_id_less_toolsets() -> None:
 
     It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
-    cells: Mapping[str, Support] = _table('temporal').SUPPORT
+    cells = _table('temporal').support
     refused = {name for name, cell in cells.items() if cell.issue == 9233}
     assert refused == set(ID_LESS_TOOLSETS)
 
@@ -185,7 +186,7 @@ def test_the_d1_exemptions_are_the_cases_a_table_refuses_or_breaks() -> None:
     """
     contracts: dict[Engine, Contract] = {'dbos': DURABLE_DBOS, 'temporal': DURABLE_TEMPORAL}
     for engine, contract in contracts.items():
-        cells: Mapping[str, Support] = _table(engine).SUPPORT
+        cells = _table(engine).support
         exempt = {name for name, cell in cells.items() if name in CASES and cell.level in ('refused', 'broken')}
         assert (set(contract.exempt), len(contract.exempt)) == (exempt, len(exempt))
     assert DURABLE_TEMPORAL.exempt['Planning'].reason.endswith('https://github.com/pydantic/pydantic-ai/issues/7971')

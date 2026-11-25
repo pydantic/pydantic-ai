@@ -6,7 +6,6 @@ does today, and its test fails once that changes, so the cell changes with it. O
 
 from __future__ import annotations
 
-import importlib
 import re
 import sys
 import uuid
@@ -23,8 +22,7 @@ import pytest
 
 from pydantic_ai import Agent, FunctionToolset, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
-from pydantic_ai.durable_exec._support import INLINE_ANSWER
-from pydantic_ai.durable_exec.conformance import EngineRun, Support
+from pydantic_ai.durable_exec.conformance import INLINE_ANSWER, EngineRun, Support
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -37,6 +35,7 @@ from tests.capability_cases import (
     UNTESTED_ISSUE,
     Engine,
     Scenario,
+    engine_table,
 )
 from tests.harness._temporal import ignore_source_reads_left_open
 
@@ -202,8 +201,7 @@ def _agent(durability: AbstractCapability[None], scenario: Scenario, name: str, 
 
 def _cells(engine: Engine) -> Mapping[str, Support]:
     """The engine's support table, imported once its SDK is known to be installed."""
-    cells: Mapping[str, Support] = importlib.import_module(ENGINE_SUPPORT_MODULES[engine]).SUPPORT
-    return cells
+    return engine_table(engine).support
 
 
 def _cell(scenario: Scenario, engine: Engine) -> Support:

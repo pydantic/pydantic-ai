@@ -41,16 +41,18 @@ from ..run import AgentRunResult
 from ..tools import RunContext
 from ..toolsets import AbstractToolset
 from ._base import BaseDurabilityCapability
-from ._support import EngineRun, Recovery, RecoveryMode, Support, SupportLevel
+from ._support import INLINE_ANSWER, EngineRun, Recovery, RecoveryMode, Support, SupportLevel, ran_in_foreground
 
 __all__ = (
     'DurableEngine',
     'DurableEngineSuite',
     'EngineRun',
+    'INLINE_ANSWER',
     'Recovery',
     'RecoveryMode',
     'Support',
     'SupportLevel',
+    'ran_in_foreground',
 )
 
 PROMPT = 'go'
@@ -337,11 +339,10 @@ class DurableEngineSuite:
 
         agent_name = re.sub(r'\W', '_', name) + '_agent'
         observer = None if observed is None else agent_name
-        # A script may write the files its stand-ins read, so it's built off the event loop.
-        built = await anyio.to_thread.run_sync(
-            script.build, directory
-        )  # workflow-nondeterminism-ok: the suite runs in the test, never in workflow code
         try:
+            # A script may write the files its stand-ins read, so it's built off the event loop. A capability that
+            # refuses the engine may already refuse when it's built, which the cell's level judges like any refusal.
+            built = await anyio.to_thread.run_sync(script.build, directory)  # workflow-nondeterminism-ok: test-side
             agent = _agent(agent_name, script.made, built, engine.durability(), observer=observer)
         except UserError as error:
             run = EngineRun('', error)

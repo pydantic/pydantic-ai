@@ -45,7 +45,7 @@ from pydantic_ai_harness.shell import Shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..append_only import skip_unless_installed
-from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS
+from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS, engine_table
 from ._contracts import CASES
 from ._durable_cases import BuiltInEngineSuite, build_case, suite_cases
 
@@ -53,7 +53,7 @@ from ._durable_cases import BuiltInEngineSuite, build_case, suite_cases
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
-    from pydantic_ai.durable_exec.dbos import DBOSDurability, _conformance as dbos_conformance
+    from pydantic_ai.durable_exec.dbos import DBOSDurability
     from pydantic_ai.durable_exec.prefect import PrefectDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos or prefect not installed', allow_module_level=True)
@@ -130,8 +130,8 @@ class DBOSEngine:
 
 
 class TestDBOS(BuiltInEngineSuite):
-    support = dbos_conformance.SUPPORT
-    recovery = dbos_conformance.RECOVERY
+    support = engine_table('dbos').support
+    recovery = engine_table('dbos').recovery
     cases = suite_cases(DURABLE_DBOS)
     durable_steps = 'dbos'
     model_request_units = ('model.request', 'model.request_stream')

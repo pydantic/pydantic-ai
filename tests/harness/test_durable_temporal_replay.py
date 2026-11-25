@@ -28,7 +28,7 @@ from pydantic_ai.exceptions import UserError
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
-from ..capability_cases import DURABLE_TEMPORAL
+from ..capability_cases import DURABLE_TEMPORAL, engine_table
 from ._durable_cases import BuiltInEngineSuite, suite_cases
 
 pytest.importorskip('temporalio')
@@ -41,12 +41,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai.durable_exec.temporal import (
-    AgentPlugin,
-    PydanticAIPlugin,
-    TemporalDurability,
-    _conformance as temporal_conformance,
-)
+from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalDurability
 
 # No 3.14 skip, unlike the sandboxed Temporal suites: the sandbox is what fails there, and this module runs unsandboxed.
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal')]
@@ -153,8 +148,8 @@ class TemporalEngine:
 
 
 class TestTemporal(BuiltInEngineSuite):
-    support = temporal_conformance.SUPPORT
-    recovery = temporal_conformance.RECOVERY
+    support = engine_table('temporal').support
+    recovery = engine_table('temporal').recovery
     cases = suite_cases(DURABLE_TEMPORAL)
     durable_steps = 'temporal'
     model_request_units = ('model_request', 'model_request_stream')
