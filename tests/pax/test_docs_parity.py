@@ -4,10 +4,13 @@ The page used to be generated from the README. It is a page in its own right now
 take over from the generator: the two surfaces tell one story, and only the markup each renderer
 needs may differ. See the "Pax front pages" section of `docs/AGENTS.md` for the contract.
 
-This lives in `tests/pax/` so that CI runs it on the changes it exists to catch: a change confined
-to `src/pydantic_ai_pax/` takes the pax-only path, which collects `tests/pax` alone, and a change
-to the page takes the harness tier, which collects `tests/harness tests/pax`. Nothing at the root
-of `tests/` runs in either case.
+CI reaches this file by two different routes, and it needs both. A change to pax's code takes the
+pax-only path, which collects `tests/pax`, and a change to the page takes the harness tier, which
+collects `tests/harness tests/pax`. But a change to the README alone is classified `content_only`,
+because `needs_docs_checks` in `.github/workflows/ci.yml` lists `src/pydantic_ai_pax/README.md`,
+and that skips the `test` job entirely: only `docs-only` runs. That job collects a fixed list, so
+this file is named in it. Editing the README without the page is the exact drift this test guards
+now that no generator does, so it has to run on a README-only change.
 """
 
 from __future__ import annotations as _annotations
