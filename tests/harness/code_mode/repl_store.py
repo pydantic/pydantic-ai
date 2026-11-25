@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import anyio
+
 from pydantic_ai import RunContext
 
 
@@ -21,6 +23,8 @@ class MemoryReplStore:
     """Raised by `load` while set, as a store whose storage cannot be read."""
     save_error: Exception | None = None
     """Raised by `save` while set, as a store whose storage cannot be written."""
+    save_hangs: bool = False
+    """Makes `save` wait until cancelled, as a store that stops responding."""
 
     async def load(self, ctx: RunContext[None]) -> bytes | None:
         assert ctx.conversation_id is not None
@@ -31,6 +35,8 @@ class MemoryReplStore:
 
     async def save(self, ctx: RunContext[None], state: bytes | None) -> None:
         assert ctx.conversation_id is not None
+        if self.save_hangs:
+            await anyio.sleep_forever()
         if self.save_error is not None:
             raise self.save_error
         self.saves.append((ctx.conversation_id, state is not None))
