@@ -1624,6 +1624,22 @@ async def test_realtime_session_with_durability_capability_in_flow() -> None:
     )
 
 
+async def test_realtime_with_per_call_durability_capability_in_flow() -> None:
+    """A durability capability passed for one call refuses in flow code too, though the agent has none."""
+    agent = Agent(TestModel(), name='realtime_per_call_durability')
+    realtime = agent.realtime(_FakeRealtimeModel(), capabilities=[PrefectDurability()])
+
+    @flow(name='test_realtime_with_per_call_durability_capability_in_flow')
+    async def call() -> None:
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
+            async with realtime.session():
+                pass  # pragma: no cover
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
+
+    await call()
+
+
 async def test_realtime_signaling_with_durability_capability_in_flow_and_task() -> None:
     """Signaling is refused in flow code but runs inside a task, where Prefect records its result."""
     agent = Agent(TestModel(), name='realtime_signaling_in_flow', capabilities=[PrefectDurability()])

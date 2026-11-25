@@ -34,9 +34,9 @@ durable unit.
 
 Every harness engine refuses a realtime session, and `answer_webrtc_offer()`, `create_client_secret()` and
 `hang_up()`, with a `UserError` in its handler, task, orchestration or workflow code: a live provider connection
-can't be replayed. Inside a step or activity Pydantic AI runs, such as a tool call's, it runs as usual; a step you
-create yourself in that code is still refused. Outside that code the session runs but isn't durable; open it in the call-handling process and
-start durable work from its tools. See https://pydantic.dev/docs/ai/realtime/deployment/#durable-execution.
+can't be replayed. Inside a step, activity or task that Pydantic AI runs, such as a tool call's, they run as
+usual (a retry re-runs the whole call); one you create yourself in that code is still refused. Outside that code
+the session runs but isn't durable; open it in the call-handling process and start durable work from its tools. See https://pydantic.dev/docs/ai/realtime/deployment/#durable-execution.
 
 ## ModelRouter
 

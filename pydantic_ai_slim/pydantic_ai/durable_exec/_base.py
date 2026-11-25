@@ -854,8 +854,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         are registered with the worker. Walks the agent's capability chain and returns the single
         match or `None`, raising a `UserError` if multiple instances are attached.
         """
+        return cls._find_in(agent.root_capability)
+
+    @classmethod
+    def _find_in(cls, root: AbstractCapability[Any]) -> Self | None:
+        """Return the instance of this durability capability in a capability tree, as `from_agent` does for an agent's."""
         found: list[Self] = []
-        for capability in leaf_capabilities(agent.root_capability):
+        for capability in leaf_capabilities(root):
             while isinstance(capability, WrapperCapability):
                 capability = capability.wrapped
             if isinstance(capability, cls):

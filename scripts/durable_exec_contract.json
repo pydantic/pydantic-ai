@@ -3293,8 +3293,8 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._find_in",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_override_capabilities",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.from_agent",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_has_retry_on_model_errors.visit"
       ]
     }

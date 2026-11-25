@@ -5,7 +5,6 @@ import contextvars
 import dataclasses
 import functools
 import inspect
-import sys
 import warnings
 import weakref
 from collections.abc import (
@@ -86,7 +85,12 @@ from .._cancel import (
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions
 from .._output import OutputToolset
-from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
+from .._run_context import (
+    RealtimeEventBuffer,
+    check_realtime_durability,
+    dispatch_event_stream,
+    set_current_run_context,
+)
 from .._run_conversation import failed_run_conversation
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
@@ -187,7 +191,6 @@ if TYPE_CHECKING:
     from pydantic_graph import Graph, GraphRunContext
 
     from .. import result as _result
-    from ..durable_exec._base import BaseDurabilityCapability
     from ..realtime import (
         AudioRetention,
         KnownRealtimeModelName,
@@ -4161,14 +4164,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         `_resolve_realtime_session` calls this first, and `hang_up` calls it directly, so every realtime
         entry point is checked before any configuration is resolved or the provider is contacted.
         """
-        # Looked up through `sys.modules` like `RunContext._durability`: without the module, no durability
-        # capability exists.
-        durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
-        durability: BaseDurabilityCapability[object] | None = (
-            durable_exec.BaseDurabilityCapability.from_agent(self) if durable_exec is not None else None
-        )
-        if durability is not None:
-            durability._check_realtime()  # pyright: ignore[reportPrivateUsage]
+        check_realtime_durability([self.root_capability])
 
     @asynccontextmanager
     async def _resolve_realtime_session(  # noqa: C901
@@ -4197,6 +4193,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         and is not itself a run.
         """
         self._check_realtime_signaling()
+        # A durability capability passed for this session isn't the agent's, so the check above doesn't see it.
+        run_capabilities = wrap_capability_funcs(capabilities)
+        check_realtime_durability(run_capabilities)
         from ..realtime import RealtimeModel, infer_realtime_model
         from ..realtime._utils import session_instructions
 
@@ -4243,7 +4242,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
         # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
         # the user already supplied an `Instrumentation` capability (agent- or call-level).
-        extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
+        extra_capabilities = self._bind_run_capabilities(run_capabilities)
         instrumentation_settings = self._resolve_instrumentation_settings()
         instrumentation_cap = (
             InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
