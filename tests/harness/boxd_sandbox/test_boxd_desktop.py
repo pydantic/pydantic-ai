@@ -32,6 +32,7 @@ from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.boxd_sandbox._desktop import INSTALL_PANEL, START_PANEL, WRITE_PANEL_SETTINGS
 from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..computer_use.display_fakes import full_display, look_click_then_finish
 from .fake_boxd import APIStatusError, FakeBoxd
@@ -321,9 +322,12 @@ def test_each_panel_button_opens_its_window_below_the_panel_with_the_keyboard(tm
     for program in ('xterm', 'agent-browser', 'xdotool', 'xwininfo'):
         (bin_dir / program).symlink_to('fake-desktop')
     env = {'HOME': str(tmp_path), 'PATH': f'{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin', 'DESKTOP_STATE': str(state)}
-    subprocess.run(['/bin/sh', '-c', WRITE_PANEL_SETTINGS], check=True, env=env)
+    subprocess.run(['/bin/sh', '-c', WRITE_PANEL_SETTINGS], check=True, env=env, timeout=READINESS_WAIT_TIMEOUT)
 
-    subprocess.run([str(tmp_path / '.config/pydantic-ai-desktop' / button)], check=True, env=env)
+    # Bounded, so a script that never gives the window the keyboard fails here instead of hanging the run.
+    subprocess.run(
+        [str(tmp_path / '.config/pydantic-ai-desktop' / button)], check=True, env=env, timeout=READINESS_WAIT_TIMEOUT
+    )
 
     assert {file.name: file.read_text() for file in state.iterdir()} == {
         'shown': '',
