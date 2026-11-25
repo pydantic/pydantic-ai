@@ -6,9 +6,10 @@ import os
 import sqlite3
 import sys
 import warnings
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import cast
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -32,6 +33,70 @@ def quiet_telemetry_logs() -> Generator[None]:
     finally:
         for logger in loggers:
             logger.removeHandler(handler)
+
+
+_PROACTOR_RESET_WINERROR = 10054
+
+
+def _finish_reset_proactor_transport(transport: object) -> None:
+    """Complete the socket close and server detach skipped when ``shutdown()`` raises WinError 10054."""
+    sock: object = getattr(transport, '_sock', None)
+    close = getattr(sock, 'close', None)
+    if callable(close):
+        try:
+            close()
+        except OSError:
+            pass
+    setattr(transport, '_sock', None)
+    server: object = getattr(transport, '_server', None)
+    detach = getattr(server, '_detach', None)
+    if callable(detach):
+        detach(transport)
+        setattr(transport, '_server', None)
+    setattr(transport, '_called_connection_lost', True)
+
+
+@contextmanager
+def quiet_windows_proactor_reset() -> Generator[None]:
+    """Silence CPython's Windows Proactor ``WinError 10054`` socket-teardown race.
+
+    On Windows, ``_ProactorBasePipeTransport._call_connection_lost`` calls ``self._sock.shutdown(SHUT_RDWR)``
+    in its ``finally`` block after a remote peer may already have reset the connection, printing a noisy
+    traceback over the live editor and skipping ``_sock.close()`` and ``_called_connection_lost = True``.
+    """
+    if sys.platform != 'win32':
+        yield
+        return
+
+    from asyncio import proactor_events
+
+    transport_cls = getattr(proactor_events, '_ProactorBasePipeTransport', None)
+    original = cast(
+        Callable[[object, BaseException | None], None] | None,
+        getattr(transport_cls, '_call_connection_lost', None),
+    )
+    if transport_cls is None or original is None:
+        yield
+        return
+
+    def wrapped(self: object, exc: BaseException | None) -> None:
+        try:
+            original(self, exc)
+        except ConnectionResetError as err:
+            if (
+                getattr(err, 'winerror', None) == _PROACTOR_RESET_WINERROR
+                and not getattr(self, '_called_connection_lost', True)
+                and getattr(self, '_sock', None) is not None
+            ):
+                _finish_reset_proactor_transport(self)
+                return
+            raise
+
+    setattr(transport_cls, '_call_connection_lost', wrapped)
+    try:
+        yield
+    finally:
+        setattr(transport_cls, '_call_connection_lost', original)
 
 
 def main() -> None:
@@ -66,7 +131,7 @@ def main() -> None:
     try:
         from pydantic_ai_pax.cli.cli import run
 
-        with warnings.catch_warnings(), quiet_telemetry_logs():
+        with warnings.catch_warnings(), quiet_telemetry_logs(), quiet_windows_proactor_reset():
             if not sys.warnoptions:
                 # Library warnings are advice for the developer who wired the agent, not the person at the
                 # prompt, and stderr output tears through the live display. Not every one is a `UserWarning`
