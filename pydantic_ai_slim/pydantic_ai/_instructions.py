@@ -767,9 +767,10 @@ class LoweredInstructions:
 def lowered_block_id(capability: AbstractCapability[Any]) -> str:
     """The id a capability below `'operator'` authority states its instructions under, as `capability:<id>`.
 
-    Its `id`, or for a capability without one, its class's name in snake case in angle brackets, which a capability's
-    `id` can't take: stable across runs, unlike the key a run registers such a capability under. Capabilities of one
-    class without an `id` share the block.
+    Its `id`, or for a capability without one, its class's name in snake case in angle brackets: stable across runs,
+    unlike the key a run registers such a capability under. Capabilities of one class without an `id` share the block.
+    So does a lowered capability whose `id` is spelled exactly like that placeholder, such as `'<capability>'`, which
+    an `id` may be: the blocks' instructions are then joined into one, at the lower of their authorities.
     """
     return capability.id if capability.id is not None else f'<{to_snake(type(capability).__name__)}>'
 
