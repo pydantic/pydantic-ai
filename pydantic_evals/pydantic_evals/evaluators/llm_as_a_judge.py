@@ -116,8 +116,8 @@ async def _run_grading_agent(
                 output_type=_binary_grading_output_type(context),
             )
         ).output.get('pass')
-        if not isinstance(verdict, bool):
-            raise ValueError(f'Judge returned an invalid verdict: {verdict!r}')
+        # `StructuredDict` validated the output against the schema, so the verdict is a boolean.
+        assert isinstance(verdict, bool)
         return _GradingResult(reason=None, pass_=verdict, score=float(verdict))
     output = (await agent.run(user_prompt, model=resolved_model, model_settings=model_settings)).output
     return _GradingResult(reason=output.reason, pass_=output.pass_, score=output.score)
@@ -556,8 +556,8 @@ async def _judge_g_eval(
                 output_type=_g_eval_output_type(score_range),
             )
         ).output.get('score')
-        if not isinstance(normalized, int) or isinstance(normalized, bool):
-            raise ValueError(f'Judge returned an invalid score: {normalized!r}')
+        # `StructuredDict` validated the output against the schema, so the score is one of the allowed integers.
+        assert isinstance(normalized, int)
         result = _GEvalResult(reason=None, score=normalized + score_range[0])
     else:
         output = (

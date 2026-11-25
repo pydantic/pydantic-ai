@@ -70,6 +70,8 @@ dependencies = [
     "typing-inspection>=0.4.0",
     # `genai-prices>=0.2.3` has Anthropic's fast mode price variants, which `provider_details['speed'] == 'fast'` selects.
     "genai-prices>=0.2.3",
+    # `StructuredDict` validates output against its JSON schema (#9270).
+    "jsonschema>=4.18",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]

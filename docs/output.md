@@ -493,9 +493,7 @@ Like function tools, [output tools](#tool-output) run concurrently. Under the `'
 
 If it's not feasible to define your desired structured output object using a Pydantic `BaseModel`, dataclass, or `TypedDict`, for example when you get a JSON schema from an external source or generate it dynamically, you can use the [`StructuredDict()`][pydantic_ai.output.StructuredDict] helper function to generate a `dict[str, Any]` subclass with a JSON schema attached that Pydantic AI will pass to the model.
 
-Note that Pydantic AI will not perform any validation of the received JSON object and it's up to the model to correctly interpret the schema and any constraints expressed in it, like required fields or integer value ranges.
-
-The output type will be a `dict[str, Any]` and it's up to your code to defensively read from it in case the model made a mistake. You can use an [output validator](#output-validator-functions) to reflect validation errors back to the model and get it to try again.
+Pydantic AI validates the model's output against the JSON schema, including constraints like required fields, `enum` values and integer ranges, and sends any mismatch back to the model to fix, like other [output validation errors](#output-validator-functions). Values aren't converted: the output type is a `dict[str, Any]` holding exactly the JSON the model sent, so `"42"` where the schema asks for an integer is an error rather than `42`. Validation uses the [`jsonschema`](https://python-jsonschema.readthedocs.io/) package, which follows the schema's `$schema` dialect (Draft 2020-12 when it doesn't declare one), and doesn't check string `format`s.
 
 Along with the JSON schema, you can optionally pass `name` and `description` arguments to provide additional context to the model:
 

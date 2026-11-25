@@ -2995,6 +2995,52 @@ def test_output_type_union_text_fallback_invalid_kind_exhausts_retries():
         agent.run_sync('What fruit is it?')
 
 
+def test_output_type_structured_dict_validates_against_schema():
+    """Output that doesn't match the `StructuredDict` schema is sent back to the model, which can then fix it."""
+    Verdict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'verdict': {'enum': ['pass', 'fail']},
+                'findings': {'type': 'array', 'items': {'type': 'object', 'properties': {'line': {'type': 'integer'}}}},
+            },
+            'required': ['verdict'],
+            'additionalProperties': False,
+        }
+    )
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args = {'totally': 'wrong', 'findings': [{'line': '7'}]}
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            args = {'verdict': 'pass', 'findings': [{'line': 7}]}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=Verdict)
+    result = agent.run_sync('Review this')
+
+    assert result.output == snapshot({'verdict': 'pass', 'findings': [{'line': 7}]})
+    assert retry_messages == snapshot(
+        [
+            '{"error":[{"type":"json_schema_mismatch","loc":[],"msg":"Output does not match the JSON schema: \'verdict\' is a required property; Additional properties are not allowed (\'totally\' was unexpected); at `findings.0.line`: \'7\' is not of type \'integer\'","input":{"totally":"wrong","findings":[{"line":"7"}]}}]}'
+        ]
+    )
+
+
+def test_output_type_structured_dict_does_not_convert_values():
+    """`StructuredDict` returns the JSON the model sent, so a string where the schema wants an integer is an error."""
+    Count = StructuredDict({'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count']})
+    agent = Agent(TestModel(custom_output_args={'count': '42'}), output_type=Count, retries=0)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        agent.run_sync('Count')
+
+
 def test_output_type_structured_dict_nested():
     """Test StructuredDict with nested JSON schemas using $ref - Issue #2466."""
     # Schema with nested $ref that pydantic's generator can't resolve

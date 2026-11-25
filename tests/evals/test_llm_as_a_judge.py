@@ -11,7 +11,7 @@ from ..conftest import BinaryContent, iter_message_parts, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai import Agent
-    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.exceptions import UnexpectedModelBehavior, UserError
     from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, ToolCallPart
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -235,14 +235,17 @@ async def test_the_verdict_question_names_only_the_sections_the_prompt_carries(
 
 
 async def test_a_verdict_that_is_not_a_boolean_is_refused():
-    """A judge that cannot write a reason still has to answer the one question it was asked."""
+    """A judge that cannot write a reason still has to answer the one question it was asked.
+
+    A verdict that isn't a boolean doesn't match the output schema, so the judge is asked again.
+    """
 
     async def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'pass': 'yes'})])
 
     model = FunctionModel(answer, profile={'supports_text_output': False})
-    with pytest.raises(ValueError, match="Judge returned an invalid verdict: 'yes'"):
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
         await _judge_output('Hello world', 'Content contains a greeting', model=model, allow_reasonless=True)
 
 
@@ -293,7 +296,7 @@ async def test_judge_g_eval_without_text_support_rejects_an_invalid_score():
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'score': 'high'})])
 
     model = FunctionModel(answer, profile={'supports_text_output': False})
-    with pytest.raises(ValueError, match="Judge returned an invalid score: 'high'"):
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
         await _judge_g_eval(
             'Clear output.', 'clarity', ['Read it.'], score_range=(1, 5), model=model, allow_reasonless=True
         )
