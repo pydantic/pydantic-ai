@@ -172,6 +172,11 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # GPT-5.1 through GPT-5.5 reject `reasoning_effort='minimal'` on every OpenAI API that serves them
+                # (verified live, 2026-11). Set here rather than in `openai_model_profile` because OpenRouter accepts
+                # it for these models.
+                openai_supports_minimal_reasoning_effort=profile.get('openai_supports_minimal_reasoning_effort', True)
+                and not model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5')),
                 supported_native_tools=supported_native_tools,
                 # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
                 # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
