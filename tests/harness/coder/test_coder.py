@@ -186,13 +186,13 @@ async def test_a_shell_beside_coder_raises_pointing_at_coder(tmp_path: Path, pla
     https://github.com/pydantic/pydantic-ai/issues/14515
     """
     shell = Shell(allowed_commands=['pytest'])
-    beside: dict[str, list[AbstractCapability[None]]] = {
+    beside: dict[str, list[AbstractCapability[object]]] = {
         'after': [Coder(), shell],
         'before': [shell, Coder()],
         'wrapped': [Coder(), PrefixTools(shell, prefix='pytest')],
         'run': [Coder()],
     }
-    agent = Agent(TestModel(call_tools=[]), capabilities=beside[placement])
+    agent = Agent[object](TestModel(call_tools=[]), capabilities=beside[placement])
     with pytest.raises(UserError, match="adds more command tools rather than narrowing `Coder`'s") as raised:
         await agent.run(
             'go',
