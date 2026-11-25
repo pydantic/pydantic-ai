@@ -186,7 +186,8 @@ CODER_DEFAULT_TOOLS = ['delegate_task', 'edit_file', 'grep', 'list_files', 'read
 
 async def _offered_tools(tmp_path: Path, *capabilities: AbstractCapability[None]) -> list[str]:
     model = TestModel(call_tools=[])
-    await Agent(model, capabilities=[LocalWorkspace(tmp_path), *capabilities]).run('go')
+    await Agent(model, deps_type=type(None), capabilities=[LocalWorkspace(tmp_path), *capabilities]).run('go')
+    assert model.last_model_request_parameters is not None
     return sorted(tool.name for tool in model.last_model_request_parameters.function_tools)
 
 
@@ -243,7 +244,7 @@ def test_a_shell_stating_the_default_timeout_beside_coder_lowers_coders() -> Non
 )
 def test_a_shell_option_coders_shell_tool_cannot_apply_raises(shell: Shell[None], field: str) -> None:
     with pytest.raises(UserError, match=f'does not support `{field}`'):
-        Agent(TestModel(), capabilities=[Coder(), shell])
+        Agent(TestModel(), deps_type=type(None), capabilities=[Coder[None](), shell])
 
 
 async def test_coder_read_file_returns_a_large_image_as_a_file(tmp_path: Path) -> None:
