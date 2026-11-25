@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
+    from pydantic_ai.conversation import Conversation
     from pydantic_ai.models import (
         KnownModelName,
         Model,
@@ -848,6 +849,24 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         Durable execution capabilities whose `run_id` is replay-stable can derive it with
         [`conversation_id_from_run_id()`][pydantic_ai.durable_exec.conversation_id_from_run_id],
         as the Temporal, DBOS and Prefect capabilities do.
+        """
+        return None
+
+    async def load_conversation(self, conversation_id: str, *, deps: AgentDepsT) -> Conversation | None:
+        """Return the conversation a run given only its `conversation_id` continues, or `None` to start it empty.
+
+        Called before the run is assembled, when it's started with `conversation_id=` but without
+        `conversation=` or `message_history=`. The run uses the returned conversation as if it were passed as
+        `conversation=`: its messages, usage and pending deferred tool requests continue, and its revision is
+        carried to the result, so a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can
+        check the next save. Return the conversation with that `conversation_id`; any other raises `UserError`.
+        When several capabilities return one, the one listed last wins, so a capability passed to the run takes
+        precedence over the agent's.
+
+        `deps` are the run's dependencies, to scope the load to their owner. Not called for a realtime
+        session. Under [durable execution](../durable_execution/overview.md) it's called where the run starts
+        (in a Temporal workflow, inside the workflow) and isn't a durable operation, so load through the engine's
+        own durable step.
         """
         return None
 
