@@ -101,6 +101,16 @@ class _Sandbox:
     """Whether `open` attaches the sandbox's desktop too, as `ComputerUse` needs."""
     backend: SandboxBackend | None = None
     deleted: bool = False
+    _detached: list[SandboxBackend] = field(default_factory=list[SandboxBackend], repr=False)
+    """Backends `add_desktop` replaced, which `close` closes."""
+
+    def add_desktop(self) -> None:
+        """Attach the desktop from the next `open` on, also when a history without one opened the sandbox first."""
+        if not self.desktop:
+            self.desktop = True
+            if self.backend is not None:
+                self._detached.append(self.backend)
+                self.backend = None
 
     def open(self) -> SandboxBackend:
         """The workspace, attached on first use; `UserError` when it cannot be, so the run fails closed."""
@@ -123,8 +133,9 @@ class _Sandbox:
 
     async def close(self) -> None:
         """Close what the provider opened for the workspace; the next `open` reopens it."""
-        if (backend := self.backend) is not None:
-            self.backend = None
+        backends = [*self._detached, *([self.backend] if self.backend is not None else [])]
+        self.backend, self._detached = None, []
+        for backend in backends:
             await self.provider.close(backend)
 
 
@@ -342,8 +353,9 @@ class SandboxPlugin(Plugin):
         if (sandbox := self._sandboxes.get(ref)) is None:
             provider = _owner(ref)
             assert provider is not None
-            desktop = computer_use_state(messages) is not None
-            sandbox = self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, desktop=desktop)
+            sandbox = self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref)
+        if computer_use_state(messages) is not None:
+            sandbox.add_desktop()
         return sandbox
 
     def current(self) -> _Sandbox | None:
@@ -442,9 +454,7 @@ class SandboxPlugin(Plugin):
             raise ValueError(missing)
         if sandbox.provider.desktop_at_create and computer_use_state(self.host.conversation.messages) is None:
             return await self._restart_with_desktop(sandbox)
-        if not sandbox.desktop:
-            await sandbox.close()  # The next `open` attaches the desktop too.
-            sandbox.desktop = True
+        sandbox.add_desktop()
         await self._record_computer_use(sandbox, on=True)
         return 'Computer use is on: the model can see and control the desktop. /computer-use view shows it.'
 

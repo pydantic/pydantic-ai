@@ -476,6 +476,43 @@ async def test_outside_full_permissions_the_model_only_looks(
     await plugin.on_session_end(SessionEnd(reason='exit'))
 
 
+async def test_a_history_without_the_desktop_opening_the_sandbox_first(
+    checkout: Path, provider: FakeProvider, display: FakeDisplay
+) -> None:
+    started_loaded = load(checkout)
+    started = plugin_of(started_loaded)
+    on_screen(started_loaded, checkout)
+    await started.computer_use_command(['on'])
+    await started.command(['fake'])
+    with_desktop = started.host.conversation.messages
+    await started.on_session_end(SessionEnd(reason='exit'))
+    ref = WorkspaceRef(provider='fake', id='sbx-1')
+
+    # A fork made before `/computer-use` opens the sandbox first, after a restart.
+    loaded = load(checkout, Transcript(messages=list(with_desktop)))
+    plugin = plugin_of(loaded)
+    fork = [
+        ModelRequest.user_text_prompt('before computer use'),
+        ModelResponse(parts=[TextPart('ok')], workspace_ref=ref),
+    ]
+    plugin.sandbox(ref, fork).open()
+
+    tools: list[str] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        del messages
+        tools.extend(tool.name for tool in info.function_tools)
+        yield 'done'
+
+    session = on_screen(loaded, checkout, model=FunctionModel(stream_function=respond))
+    session.replace_messages(list(with_desktop))
+    await session.prompt('look at the desktop')
+    assert 'computer' in tools
+    assert provider.reopened_desktop[-2:] == [False, True]
+    await plugin.on_session_end(SessionEnd(reason='exit'))
+    assert provider.closed[-2:] == [ref, ref]
+
+
 async def test_view_and_side_panel(
     checkout: Path, provider: FakeProvider, display: FakeDisplay, monkeypatch: pytest.MonkeyPatch
 ) -> None:
