@@ -3,7 +3,7 @@ from __future__ import annotations
 import warnings
 from abc import ABC
 from collections import Counter
-from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from itertools import chain
@@ -406,7 +406,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         reaches the provider.
 
         Only reached *within* one layer: a capability supplied for a run overrides its agent-level
-        namesake outright rather than composing with it.
+        namesake outright rather than composing with it. Never reached between a deferred capability (or
+        one inside a deferred group) and an always-on one: the combined capability is built with the agent,
+        so it can't take the deferred one's configuration only once that loads, and the agent raises instead.
 
         Args:
             capabilities: The two or more capabilities sharing an `id`, in application order.
@@ -1959,11 +1961,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
                 position += 1
             root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
 
-    visited: list[tuple[AbstractCapability[AgentDepsT], int, int]] = []
-    for root in _combination_roots(capability):
-        layer_index, leaf_positions = root_locations[id(root)].pop(0)
-        for leaf in leaf_capabilities(root):
-            visited.append((leaf, layer_index, leaf_positions[id(leaf)].pop(0)))
+    visited, deferred_owner = _visits(capability, root_locations)
 
     occurrence_counts, by_id = _occurrences_by_id(_outside_discarded_subtrees(visited))
     # Stable, so duplicates the application order does not distinguish keep their tree order.
@@ -2008,6 +2006,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
             _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
             if not _declares_default_id(type(combined_duplicate)):
                 raise UserError(_repeated_id_message(capability_id, surviving))
+            _reject_combining_across_deferred_loading(capability_id, duplicates, last_layer, deferred_owner)
             combined_duplicate = combined_duplicate.combine(surviving)
         replacements.update(
             {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
@@ -2028,6 +2027,82 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # Every duplicated id keeps one occurrence, so the tree can never be emptied.
     assert combined is not None, 'combining duplicate capabilities cannot empty the tree'
     return combined
+
+
+def _deferred_owners(
+    leaves: Sequence[AbstractCapability[AgentDepsT]],
+) -> list[AbstractCapability[AgentDepsT] | None]:
+    """For each of `leaves`, in `apply` order, the deferred capability it is part of: itself, its group, or `None`.
+
+    `apply` visits a deferred group before its subtree, and deferred capabilities can't nest.
+    """
+    owners: list[AbstractCapability[AgentDepsT] | None] = []
+    owner: AbstractCapability[AgentDepsT] | None = None
+    owned_left = 0
+    for leaf in leaves:
+        if owned_left:
+            owned_left -= 1
+        elif leaf.defer_loading is True:
+            owner, owned_left = leaf, len(leaf_capabilities(leaf)) - 1
+        else:
+            owner = None
+        owners.append(owner)
+    return owners
+
+
+def _visits(
+    capability: AbstractCapability[AgentDepsT],
+    root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]],
+) -> tuple[list[tuple[AbstractCapability[AgentDepsT], int, int]], dict[int, AbstractCapability[AgentDepsT]]]:
+    """Each leaf `capability` visits, with its layer and position, and the deferred capability each position is part of.
+
+    Consumes `root_locations`, which `_combine_duplicate_capabilities` built from the layers.
+    """
+    visited: list[tuple[AbstractCapability[AgentDepsT], int, int]] = []
+    deferred_owner: dict[int, AbstractCapability[AgentDepsT]] = {}
+    for root in _combination_roots(capability):
+        layer_index, leaf_positions = root_locations[id(root)].pop(0)
+        leaves = leaf_capabilities(root)
+        for leaf, owner in zip(leaves, _deferred_owners(leaves)):
+            position = leaf_positions[id(leaf)].pop(0)
+            visited.append((leaf, layer_index, position))
+            if owner is not None:
+                deferred_owner[position] = owner
+    return visited, deferred_owner
+
+
+def _reject_combining_across_deferred_loading(
+    capability_id: str,
+    duplicates: Sequence[_CapabilityOccurrence[Any]],
+    layer_index: int,
+    deferred_owner: Mapping[int, AbstractCapability[Any]],
+) -> None:
+    """Refuse to combine a capability that loads on demand with one that is always on.
+
+    `duplicates` are the occurrences sharing `capability_id`; those in `layer_index` are the ones to combine, and
+    `deferred_owner` maps a position to the deferred capability it is part of. The combined capability is built
+    once, when the agent is, so it can't take the deferred one's configuration only once that loads: it would apply
+    it from the start, or never.
+    """
+    occurrences = [
+        (duplicate.capability, deferred_owner.get(duplicate.position))
+        for duplicate in duplicates
+        if duplicate.layer_index == layer_index
+    ]
+    deferred = [(capability, owner) for capability, owner in occurrences if owner is not None]
+    always_on = [capability for capability, owner in occurrences if owner is None]
+    if not deferred or not always_on:
+        return
+    capability, owner = deferred[0]
+    inside = f'`{type(capability).__name__}`' + (
+        '' if owner is capability else f' inside deferred capability {owner.id!r}'
+    )
+    raise UserError(
+        f'{inside} and `{type(always_on[0]).__name__}` outside it share the id {capability_id!r}, so they would be '
+        "combined into one, but a capability can't be reconfigured when a deferred capability loads during a run. "
+        f'To keep both, give one of them its own `id` so they are not combined, or move `{type(always_on[0]).__name__}` '
+        'into the deferred capability (or the deferred one out of it).'
+    )
 
 
 def _repeated_id_message(capability_id: str, capabilities: Sequence[AbstractCapability[Any]]) -> str:

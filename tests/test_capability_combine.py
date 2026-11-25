@@ -127,6 +127,20 @@ def test_a_declared_id_merges_without_an_override() -> None:
     assert (merged.effort, merged.budget) == ('low', 10)
 
 
+@pytest.mark.parametrize('deferred_alone', [False, True], ids=['inside_a_deferred_group', 'deferred_itself'])
+def test_a_deferred_capability_does_not_combine_with_an_always_on_one(deferred_alone: bool) -> None:
+    """The combined capability is built with the agent, so it can't take a deferred one's settings only once loaded."""
+    deferred = (
+        Thinking(effort='low', defer_loading=True)
+        if deferred_alone
+        else CombinedCapability[Any]([Thinking(effort='low')], id='reasoning', defer_loading=True)
+    )
+    with pytest.raises(UserError, match="share the id 'thinking'") as raised:
+        Agent(TestModel(), capabilities=[deferred, Thinking(effort='high')])
+    assert ('inside deferred capability' in str(raised.value)) is not deferred_alone
+    assert 'give one of them its own `id`' in str(raised.value)
+
+
 async def test_one_instance_registered_twice_survives_once() -> None:
     """The same object on the agent and passed again for the run keeps exactly one occurrence.
 

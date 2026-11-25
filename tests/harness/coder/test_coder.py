@@ -10,7 +10,7 @@ from typing import NoReturn
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, local_workspace
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, LocalWorkspace, local_workspace
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
@@ -238,6 +238,36 @@ def test_a_shell_stating_the_default_timeout_beside_coder_lowers_coders() -> Non
     agent = Agent(TestModel(), capabilities=[Coder(), Shell(default_timeout=30.0)])
     [shell] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Shell)]
     assert (shell.default_timeout, list(shell.tools)) == (30.0, ['shell'])
+
+
+def _deferred_coder(*extra: AbstractCapability[None]) -> CombinedCapability[None]:
+    return CombinedCapability[None]([Coder[None](), *extra], id='coding', description='Coding.', defer_loading=True)
+
+
+def test_a_shell_beside_a_deferred_coder_raises_naming_both_and_the_remedies() -> None:
+    """`Coder`'s `Shell` can't be reconfigured when `coding` loads, so it isn't combined with one outside it."""
+    with pytest.raises(UserError) as raised:
+        Agent(TestModel(), deps_type=type(None), capabilities=[_deferred_coder(), Shell(allowed_commands=['pytest'])])
+    message = str(raised.value)
+    assert "`Shell` inside deferred capability 'coding' and `Shell` outside it share the id 'shell'" in message
+    assert 'give one of them its own `id`' in message and 'move `Shell` into the deferred capability' in message
+
+
+def test_a_shell_with_its_own_id_leaves_a_deferred_coders_shell_alone() -> None:
+    agent = Agent(
+        TestModel(),
+        deps_type=type(None),
+        capabilities=[_deferred_coder(), Shell(id='pytest_shell', allowed_commands=['pytest'])],
+    )
+    shells = {leaf.id: leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Shell)}
+    assert (list(shells['shell'].tools), list(shells['shell'].allowed_commands)) == (['shell'], [])
+    assert list(shells['pytest_shell'].allowed_commands) == ['pytest']
+
+
+def test_a_shell_inside_the_deferred_group_narrows_its_coder() -> None:
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[_deferred_coder(Shell(allowed_commands=['pytest']))])
+    [shell] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Shell)]
+    assert (list(shell.tools), list(shell.allowed_commands)) == (['shell'], ['pytest'])
 
 
 @pytest.mark.parametrize(
