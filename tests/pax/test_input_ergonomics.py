@@ -455,7 +455,7 @@ async def test_visible_queue_edit_keeps_id_order_and_entire_earlier_draft() -> N
         assert 'e Edit | d Remove | s Steer' in '\n'.join(live.frame())
         live.feed('down')
         live.feed('e')
-        assert [entry.id for entry in live.queued_prompts()] == [first.id]
+        assert [entry.id for entry in live.runnable_prompts()] == [first.id]
         assert await live.read() == 'first'
         live.buffer.replace('edited second')
         live.feed('enter')
@@ -649,11 +649,11 @@ async def test_editing_is_not_pending_and_cancel_preserves_reserved_id_and_image
         live.buffer.replace('changed without image')
         live.images.retain(live.drafts)
         assert live.images.resolve(second.text)[1] == [image]
-        assert live.queued_prompts() == [first, third]
+        assert live.runnable_prompts() == [first, third]
         frame = Text.from_ansi('\n'.join(live.frame())).plain
-        assert "Editing - not queued; won't send until saved" in frame
+        assert "Editing - won't send while you edit it" in frame
         assert 'queued: 2' in frame and 'queued: 3' not in frame
-        assert 'Save/requeue' in frame and 'Cancel editing' in frame
+        assert 'Save/requeue' in frame and 'Stop editing' in frame
         assert await live.read() == 'first'
         live.feed('escape')
         assert live.buffer is earlier
@@ -831,7 +831,7 @@ async def test_checkpoint_mode_never_leapfrogs_queue_or_steers_a_saved_edit() ->
             live.edit_queue_entry(entry)
             live.buffer.replace('saved edit')
             live.feed('enter')
-            assert steered == [] and live.queued_messages == ('/help',)
+            assert steered == [] and [entry.text for entry in live.runnable_prompts()] == ['/help']
             assert live.buffer.text == 'saved edit'
             assert 'q Keep queue position: after turn' in '\n'.join(live.frame())
             await anyio.lowlevel.checkpoint()
@@ -932,7 +932,7 @@ async def test_mixed_checkpoint_delivery_needs_explicit_choice_without_losing_st
             assert steered == []
             assert live.buffer is draft and draft.text == 'direction'
             live.console.size = (40, 12)
-            assert live.queued_prompts() == ([first, third] if editing else [first, second, third])
+            assert live.runnable_prompts() == ([first, third] if editing else [first, second, third])
             assert 's Steer/promote: next checkpoint' in '\n'.join(live.frame())
             assert 'q Keep queue position: after turn' in '\n'.join(live.frame())
             live.console.size = (80, 24)
@@ -951,7 +951,7 @@ async def test_mixed_checkpoint_delivery_needs_explicit_choice_without_losing_st
                 else:
                     assert live.queued_prompts() == [first, second, third]
             elif choice == 's':
-                assert live.queued_prompts() == ([first, third] if editing else [first, second, third])
+                assert live.runnable_prompts() == ([first, third] if editing else [first, second, third])
                 if editing:
                     assert live.buffer is earlier and live.buffer.cursor == 3
                     assert live.images.resolve(live.buffer.text)[1] == [image]
@@ -1004,7 +1004,7 @@ async def test_held_edit_delivery_choice_survives_finish_and_restores_reserved_i
             live.edit_queue_entry(held)
             live.buffer.replace('edited')
             live.feed('enter')  # A held edit still requires the delivery choice even if work just ended.
-            assert live.queued_messages == ('older',)
+            assert [entry.text for entry in live.runnable_prompts()] == ['older']
             assert await live.read() == 'older'
             received: list[str] = []
 
@@ -1014,7 +1014,7 @@ async def test_held_edit_delivery_choice_survives_finish_and_restores_reserved_i
             async with anyio.create_task_group() as tasks:
                 tasks.start_soon(read_next)
                 await anyio.wait_all_tasks_blocked()
-                assert received == [] and live.queued_prompts() == []
+                assert received == [] and live.runnable_prompts() == []
                 assert 'q Keep queue position: separate turn' in '\n'.join(live.frame())
                 live.feed('s')  # No active run: must not silently enqueue or lose the edit.
                 assert received == [] and live.buffer.text == 'edited'
@@ -1148,7 +1148,7 @@ async def test_input_hints_fit_without_displacing_pinned_status_or_pending_work(
         if height >= 7:
             assert any(row.startswith('─') for row in frame)
             if editing:
-                assert "Editing - not queued; won't send until saved" in frame
+                assert "Editing - won't send while you edit it" in frame
         if height >= 12:
             assert frame[-2] == 'PINNED ROW'
             assert live.input_hint() in frame

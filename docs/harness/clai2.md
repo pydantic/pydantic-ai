@@ -105,7 +105,7 @@ A few keys to know:
 |---|---|
 | <kbd>Enter</kbd> | Send. While Pax works, <kbd>Enter</kbd> queues your message for after the current turn. |
 | <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> on [Windows](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#windows-terminal)) | Steer: send your message to the turn that is running now. |
-| <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
+| <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays, and queued messages run next, in order. |
 | <kbd>Up</kbd> | Edit a queued message. <kbd>Esc</kbd> stops editing; clear it to remove it. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>J</kbd> | Insert a newline, including when Shift+Enter arrives as plain Enter. On Windows it steers. |
@@ -125,10 +125,10 @@ F4 then `m` switches new busy prompts between **after turn** (the default) and
 **next checkpoint**, after current tool work and before the next feasible model
 request. With older queued entries or a saved edit, choose **Steer/promote** at the
 next checkpoint or **Keep queue position** for after-turn delivery. Nothing silently
-falls back; commands keep their own routing. Held edits say **Editing - not queued**,
-do not count as pending, and cannot run until you choose delivery.
+falls back; commands keep their own routing. Held edits say
+**Editing - won't send while you edit it** and do not count as pending.
 See [Prompt area](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#prompt-area)
-for queue ordering, Save/requeue, and Cancel editing.
+for queue ordering, Save/requeue, and Stop editing.
 
 Type `/` to see every command, or `/help` for the full list.
 

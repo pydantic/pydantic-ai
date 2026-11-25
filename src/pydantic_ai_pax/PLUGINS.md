@@ -3220,11 +3220,11 @@ active run and transcript, not the editable after-turn queue. Plugin `send_input
 and browser submissions keep their existing queue behavior. See
 [Prompt area](docs/reference.md#prompt-area).
 
-A held queue edit shows **Editing - not queued; won't send until saved** and is
-excluded from pending counts and the live-session queue. Save/requeue in after-turn
-mode, or Keep queue position in the delivery choice, restores its stable ID and
-reserved ordering slot. Cancel editing restores the unchanged entry, or removes
-it if cleared; explicit Steer/send is a different action.
+A held queue edit shows **Editing - won't send while you edit it** and is left out
+of the terminal's pending count; `LiveSession.queue` still lists it at its place.
+Save/requeue in after-turn mode, or Keep queue position in the delivery choice,
+restores its stable ID and reserved ordering slot. Stop editing (Esc) restores the
+unchanged entry, or removes it if cleared; explicit Steer/send is a different action.
 
 Alt+Enter (Option+Return with Mac labels; Ctrl+Enter on Windows) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
@@ -4190,9 +4190,9 @@ A `LiveSession` is one live session:
 | `wait_for_user(reason)` | mark a user wait, such as an approval dialog, until you call the idempotent function it returns; pair the call with `finally` so cancellation cannot leave a stale wait |
 | `setting(key)` | a Pax setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
-| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
-| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
-| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed |
+| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt. An input the terminal is editing (recalled with Up) keeps its place in the list but does not run until the edit ends, so the run takes the inputs around it; if nothing else is queued when the session goes idle, it leaves the queue and becomes the terminal's unsent draft |
+| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run, was removed, or became the terminal's draft, and `ValueError` for blank text |
+| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed. Removing one the terminal is editing ends the edit and leaves the edited text in the terminal's input, unsent |
 | `steer(text)` | send `text` to its running turn now, as steering at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |

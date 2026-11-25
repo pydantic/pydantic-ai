@@ -976,7 +976,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             show_task_models=lambda: self.context.settings.task_models,
         )
         self.status.subagent = self.tasks.focused
-        self.status.queued = lambda: self.queued
+        # The footer counts what can run: a prompt the terminal edits stays in the queue plugins see, not in the count.
+        self.status.queued = lambda: len(self.editor.runnable_prompts()) if self.editor is not None else self.queued
         self.status.updates = self.updates.segment
         self.status.live = self._live_segment
         self.forks = Forks(
