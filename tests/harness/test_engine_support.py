@@ -160,8 +160,9 @@ def test_the_d1_suites_run_every_run_context_scenario() -> None:
 def test_every_broken_scenario_cell_has_a_signature() -> None:
     """Every `broken` cell's issue has a signature, and a signature no cell uses is stale: the keys stay in sync.
 
-    The scenario's own tests match the signature against the observed outcome
-    (`tests/harness/background_tools/test_durable_engines.py`). It reads test tables, with no provider exchange to
+    The scenario's own tests match the signature against the observed outcome: the D1 suites
+    (`tests/harness/test_durable_tool_io.py` and `tests/harness/test_durable_temporal_replay.py`) for the `RunContext`
+    scenarios, and `tests/harness/background_tools/test_durable_engines.py` for the `BackgroundTools` ones. It reads test tables, with no provider exchange to
     record, so it isn't a VCR test.
     """
     broken = {cell.issue for cells in SCENARIO_SUPPORT.values() for cell in cells.values() if cell.level == 'broken'}
