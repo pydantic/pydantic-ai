@@ -59,7 +59,7 @@ from .._runtime_toolsets import (
 from .._workspace import RejectWorkspaceInContainer
 from ._function_toolset import gate_tool_instance_defaults
 from ._model import DBOSModel
-from ._utils import StepConfig, using_durable_sleep
+from ._utils import StepConfig, in_workflow_code, using_durable_sleep
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
@@ -1296,7 +1296,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 yield run
 
     def _check_realtime_signaling(self) -> None:
-        if DBOS.workflow_id is not None and DBOS.step_id is None:
+        if in_workflow_code():
             raise realtime_in_container_error(engine='DBOS', container_noun='workflow', unit_noun='step')
 
     @asynccontextmanager

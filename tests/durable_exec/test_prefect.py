@@ -1582,6 +1582,32 @@ async def test_realtime_signaling_in_task() -> None:
             await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
+async def test_realtime_session_in_task() -> None:
+    """Inside a task, where Prefect records the result, a session is delegated to the wrapped agent."""
+    with (
+        patch.object(FlowRunContext, 'get', return_value=object()),
+        patch.object(TaskRunContext, 'get', return_value=object()),
+    ):
+        async with simple_prefect_agent.realtime(_FakeRealtimeModel()).session() as session:
+            assert [event async for event in session] == []
+
+
+async def test_realtime_session_with_durability_capability_in_task() -> None:
+    """Inside a task, where Prefect records the result, `PrefectDurability` lets a session open."""
+    agent = Agent(TestModel(), name='realtime_durability_in_task', capabilities=[PrefectDurability()])
+
+    @task(cache_policy=NO_CACHE)
+    async def open_session() -> int:
+        async with agent.realtime(_FakeRealtimeModel()).session() as session:
+            return len([event async for event in session])
+
+    @flow(name='test_realtime_session_with_durability_capability_in_task')
+    async def run_session_task() -> int:
+        return await open_session()
+
+    assert await run_session_task() == 0
+
+
 async def test_realtime_session_with_durability_capability_in_flow() -> None:
     """`PrefectDurability` refuses a session in flow code, before the provider is contacted."""
     agent = Agent(TestModel(), name='realtime_durability_in_flow', capabilities=[PrefectDurability()])

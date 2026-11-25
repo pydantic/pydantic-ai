@@ -382,13 +382,15 @@ sideband tasks, since request metrics show an idle instance; and on shutdown, wa
 A realtime session holds one long-lived connection to the provider, and the model's speech can't be
 recorded and replayed the way a [durable execution](../durable_execution/overview.md) engine replays
 a workflow. So the engines in Pydantic AI and [Pydantic AI Harness](../harness/index.md) refuse to
-open a session in their workflow, flow or orchestration code, whether you use a durability
-capability such as `TemporalDurability` or a wrapper agent such as `TemporalAgent`: it raises a [`UserError`][pydantic_ai.exceptions.UserError] before the provider is
+open a session in the code the engine replays (a workflow, flow, orchestration, or a durable handler
+or task), whether you use a durability capability such as `TemporalDurability` or a wrapper agent
+such as `TemporalAgent`: it raises a [`UserError`][pydantic_ai.exceptions.UserError] before the provider is
 contacted. The same goes for the browser-call signaling,
 [`answer_webrtc_offer()`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer],
 [`create_client_secret()`][pydantic_ai.agent.AgentRealtime.create_client_secret] and
 [`hang_up()`][pydantic_ai.agent.AgentRealtime.hang_up], which send provider requests. Inside a durable
-unit (an activity, step or task), where the engine records the result, both run as usual.
+unit whose result the engine records, both run as usual: an activity, step or task that Pydantic AI
+runs, such as a tool call's, and on Temporal, DBOS and Prefect also one you create yourself.
 
 Outside a workflow, the same agent, with its durability capability, opens an ordinary session that
 isn't durable. You can use one agent for durable runs and for voice. To make a call's work durable:

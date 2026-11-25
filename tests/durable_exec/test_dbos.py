@@ -1456,6 +1456,22 @@ async def test_dbos_durability_realtime_session_in_workflow(dbos: DBOS) -> None:
         await open_session()
 
 
+async def test_dbos_durability_realtime_session_in_step(dbos: DBOS) -> None:
+    """Inside a step, where DBOS records the result, `DBOSDurability` lets a session open."""
+    agent = Agent(TestModel(), name='durability_realtime_session_in_step', capabilities=[DBOSDurability()])
+
+    @DBOS.step()
+    async def open_session() -> int:
+        async with agent.realtime(_FakeRealtimeModel()).session() as session:
+            return len([event async for event in session])
+
+    @DBOS.workflow()
+    async def run_session_step() -> int:
+        return await open_session()
+
+    assert await run_session_step() == 0
+
+
 async def test_dbos_durability_realtime_signaling_in_workflow_and_step(dbos: DBOS) -> None:
     """Signaling is refused in workflow code but runs inside a step, where DBOS records its result."""
     agent = Agent(TestModel(), name='durability_realtime_signaling', capabilities=[DBOSDurability()])

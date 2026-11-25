@@ -4164,7 +4164,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Looked up through `sys.modules` like `RunContext._durability`: without the module, no durability
         # capability exists.
         durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
-        durability: BaseDurabilityCapability[Any] | None = (
+        durability: BaseDurabilityCapability[object] | None = (
             durable_exec.BaseDurabilityCapability.from_agent(self) if durable_exec is not None else None
         )
         if durability is not None:
@@ -4196,10 +4196,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         asks for that: signaling only reads back the instructions and tools a session would advertise,
         and is not itself a run.
         """
+        self._check_realtime_signaling()
         from ..realtime import RealtimeModel, infer_realtime_model
         from ..realtime._utils import session_instructions
 
-        self._check_realtime_signaling()
         if not isinstance(model, RealtimeModel):
             model = infer_realtime_model(model)
 

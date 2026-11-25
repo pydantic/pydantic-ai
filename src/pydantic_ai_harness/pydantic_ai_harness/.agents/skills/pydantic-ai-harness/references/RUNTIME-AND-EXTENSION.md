@@ -32,6 +32,11 @@ the task, at most as many times per model request as the task has attempts left.
 task `Retry` applies. Set `model_settings={'max_retries': 0}` so the provider SDK doesn't also retry inside the
 durable unit.
 
+Every harness engine refuses a realtime session, and `answer_webrtc_offer()`, `create_client_secret()` and
+`hang_up()`, with a `UserError` in its handler, task, orchestration or workflow code: a live provider connection
+can't be replayed. Outside that code the session runs but isn't durable; open it in the call-handling process and
+start durable work from its tools. See https://pydantic.dev/docs/ai/realtime/deployment/#durable-execution.
+
 ## ModelRouter
 
 `ModelRouter` asks a Pydantic AI model to choose from named `ModelChoice` entries, then uses the
