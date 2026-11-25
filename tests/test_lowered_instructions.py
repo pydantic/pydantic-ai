@@ -297,7 +297,9 @@ async def test_a_capability_without_an_id_states_its_block_under_its_class():
 
     assert statements(second.all_messages()) == [
         InstructionDeltaPart(
-            id=InstructionId(CapabilityInstructionSource('<capability>')), content='Unnamed note.', authority='none'
+            id=InstructionId(CapabilityInstructionSource(''), name='capability'),
+            content='Unnamed note.',
+            authority='none',
         )
     ]
     # Stated once: the block's id is the same in the second run, which the capability's run key isn't.
@@ -715,3 +717,41 @@ def test_otel_gives_a_lowered_statement_the_user_role():
         )
     ]
     assert roles == ['system', 'user']
+
+
+async def test_an_unnamed_lowered_block_never_takes_over_a_loaded_capabilitys_block():
+    """An unnamed lowered capability's block can't share a key with any capability's `id`, loaded or lowered."""
+    pytest.importorskip('fastmcp.server')
+    from fastmcp import FastMCP
+
+    from pydantic_ai.capabilities import MCP
+
+    received = Received()
+    responses = [ModelResponse(parts=[ToolCallPart('load_capability', {'id': '<mcp>'}, tool_call_id='load')])]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.messages.append(messages)
+        return responses.pop(0) if responses else ModelResponse(parts=[TextPart('Done.')])
+
+    operator = Capability[None](id='<mcp>', defer_loading=True, description='Operator.', instructions='Operator note.')
+    server = FastMCP('docs-server', instructions='Always search the docs first.')
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
+        capabilities=[operator, MCP(local=server).with_authority('none')],
+    )
+    result = await agent.run('Hi')
+
+    assert sorted((str(delta.id), delta.content, delta.authority) for delta in statements(result.all_messages())) == [
+        ('capability::mcp', 'Always search the docs first.', 'none'),
+        ('capability:<mcp>', 'Operator note.', 'operator'),
+    ]
+    texts = [
+        part.content
+        for message in received.messages[-1]
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, SystemPromptPart)
+    ]
+    assert any('Operator note.' in text for text in texts)
+    assert not any('Always search the docs first.' in text for text in texts)

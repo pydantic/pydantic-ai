@@ -3323,6 +3323,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         )
         # Instructions below operator authority are delivered through history too, so hooks see them as loaded ones.
         lowered_parts, self._lowered_authorities = await _get_lowered_instructions(ctx, run_context)
+        # A lowered block's key is never a loaded capability's (`lowered_block_id`), so neither replaces the other.
+        assert not lowered_parts.keys() & self._resolved_loaded_parts.keys()
         self._resolved_loaded_parts |= lowered_parts
         self._native_tool_factories = []
         self._step_loaded_parts = [part for parts in self._resolved_loaded_parts.values() for part in parts]

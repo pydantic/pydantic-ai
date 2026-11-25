@@ -765,14 +765,24 @@ class LoweredInstructions:
 
 
 def lowered_block_id(capability: AbstractCapability[Any]) -> str:
-    """The id a capability below `'operator'` authority states its instructions under, as `capability:<id>`.
+    """The key a capability below `'operator'` authority states its instructions under; see `lowered_instruction_id`.
 
-    Its `id`, or for a capability without one, its class's name in snake case in angle brackets: stable across runs,
-    unlike the key a run registers such a capability under. Capabilities of one class without an `id` share the block.
-    So does a lowered capability whose `id` is spelled exactly like that placeholder, such as `'<capability>'`, which
-    an `id` may be: the blocks' instructions are then joined into one, at the lower of their authorities.
+    Its `id`, or for a capability without one, its class's name in snake case after a `:`, which no `id` can contain:
+    stable across runs, unlike the key a run registers such a capability under, and never the key of a capability with
+    an `id`, loaded or lowered. Capabilities of one class without an `id` share the block.
     """
-    return capability.id if capability.id is not None else f'<{to_snake(type(capability).__name__)}>'
+    return capability.id if capability.id is not None else f':{to_snake(type(capability).__name__)}'
+
+
+def lowered_instruction_id(block_id: str) -> InstructionId:
+    """The id of the block a capability below `'operator'` authority states its instructions as.
+
+    `capability:<id>` for a capability with an `id`, and `capability::<snake_class_name>` for one without, which renders
+    and loads back as the same id.
+    """
+    if block_id.startswith(':'):
+        return InstructionId(CapabilityInstructionSource(''), name=block_id[1:])
+    return loaded_instruction_id(block_id)
 
 
 def is_lowered_statement(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
@@ -801,7 +811,7 @@ def update_lowered_instruction_history(
         capability_id: authority for capability_id, authority in authorities.items() if capability_id not in loaded
     }
     current: dict[InstructionId, tuple[str, Authority]] = {
-        loaded_instruction_id(capability_id): (text, owned[capability_id])
+        lowered_instruction_id(capability_id): (text, owned[capability_id])
         for capability_id, text in _loaded_texts(
             [part for part in parts if loaded_part_capability_id(part) in owned]
         ).items()
