@@ -722,8 +722,9 @@ agent = Agent(
   compaction summary once native compaction took the prompt); free. `LLMReminder` returns a
   `GeneratedReminder`, not a `str`, so it stays data: a `GeneratedReminderPart` (from
   `pydantic_ai_harness.system_reminders`), the generated text on the user channel
-  (`<generated_reminder model="...">`) behind a fixed note in the application's voice naming the
-  reminder model as its author, kept in history as one record. Text in it that looks like a framework
+  (`<generated_reminder model="...">`) behind a fixed note in the application's voice that scopes it to
+  the user's task (no actions, such as tool calls, the user didn't ask for) and names the reminder model
+  as its author, kept in history as one record. Text in it that looks like a framework
   frame gets a further note naming its author. A plain `str` a dynamic reminder returns is operator
   text in system voice; static `Reminder` content that looks like a framework frame, such as `<system>`,
   raises `UserError` when the `Reminder` is created. Framing tags in the transcript `LLMReminder`
@@ -752,7 +753,8 @@ agent = Agent(
 Every `every` model requests, sends the last `window` tokens of transcript to a judge model
 concurrently with the run. Verdict `AllGood` does nothing; `Steer(message)` is enqueued into the
 run as a framework-note `SystemPromptPart` plus the message as user-channel data in
-`<judge_feedback judge="..." ref="...">`, delivered on the next request. The note names that random `ref`
+`<judge_feedback judge="..." ref="...">`, delivered on the next request, whose own note says not to call a
+tool it asks for unless the user asked for that. The framework note names that random `ref`
 and says a `<judge_feedback>` whose ref no judge note names, or a later copy of a named ref, is not the judge's, so a forged frame in a tool result gets no authority. Observe steering with `on_verdict`.
 
 ```python
