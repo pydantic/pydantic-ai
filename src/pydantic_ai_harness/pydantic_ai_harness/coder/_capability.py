@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavi
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai_harness._conjoin import state_defaults
+from pydantic_ai_harness._conjoin import state_all
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import (
@@ -190,7 +190,7 @@ def _file_system(*, unrestricted: bool, max_image_side: int | None) -> FileSyste
         # `/` is the filesystem root, or on Windows the working directory's drive.
         file_system = replace(file_system, root_dir='/', read_only_patterns=[])
     # Its defaults are part of what `Coder` gives, so a `FileSystem` added beside it can't drop them.
-    return state_defaults(file_system)
+    return state_all(file_system)
 
 
 @dataclass(init=False)
@@ -306,7 +306,7 @@ class Coder(CombinedCapability[AgentDepsT]):
             _CoderGuidance[AgentDepsT](guidance, delegated_guidance, tuple(project)),
             _file_system(unrestricted=unrestricted_filesystem, max_image_side=max_image_side),
             # Its defaults are part of what `Coder` gives, so a `Shell` added beside it can't drop them.
-            state_defaults(
+            state_all(
                 Shell[AgentDepsT](
                     denied_commands=[],
                     default_timeout=MAX_FOREGROUND_WAIT,

@@ -13,38 +13,24 @@ from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._conjoin import (
-    DefaultFloat,
-    DefaultInt,
-    DefaultStrs,
-    intersection,
-    is_stated,
-    merged_mapping,
-    smallest,
-    stated,
-    union,
-)
+from pydantic_ai_harness._conjoin import RecordsStated, intersection, merged_mapping, union
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT
 from pydantic_ai_harness.shell._toolset import PERSISTENT_TOOL_NAME, RUN_SCOPED_TOOL_NAMES, ShellToolset
 
-_DEFAULT_DENIED_COMMANDS: tuple[str, ...] = DefaultStrs(
-    (
-        'rm',
-        'rmdir',
-        'mkfs',
-        'dd',
-        'format',
-        'shutdown',
-        'reboot',
-        'halt',
-        'poweroff',
-        'init',
-    )
+_DEFAULT_DENIED_COMMANDS: tuple[str, ...] = (
+    'rm',
+    'rmdir',
+    'mkfs',
+    'dd',
+    'format',
+    'shutdown',
+    'reboot',
+    'halt',
+    'poweroff',
+    'init',
 )
-_NO_DENIED_COMMANDS: tuple[str, ...] = DefaultStrs()
-_DEFAULT_TOOLS: tuple[str, ...] = DefaultStrs(RUN_SCOPED_TOOL_NAMES)
 
 
 LLM_API_KEY_ENV_PATTERNS: tuple[str, ...] = (
@@ -68,7 +54,7 @@ treat it as a starting point. Not a default: opt in explicitly.
 
 
 @dataclass
-class Shell(AbstractCapability[AgentDepsT]):
+class Shell(RecordsStated, AbstractCapability[AgentDepsT]):
     """Shell command execution for agents.
 
     Commands run in the run's workspace (`ctx.workspace`), starting in its working directory.
@@ -80,11 +66,8 @@ class Shell(AbstractCapability[AgentDepsT]):
     whatever `FileSystem`'s `root_dir` says. Isolate untrusted work with a sandbox workspace.
 
     An agent has one `Shell` per `id`, `'shell'` by default. Two that share it, such as a `Shell`
-    added beside `Coder()`, are combined so that every restriction either states applies: allowed
-    commands intersect, denied commands, operators and env patterns add up, the smaller timeout and
-    output limits win, `allow_interactive` needs both, and only tools both register are kept. A field
-    an instance leaves at its default takes no part, so adding one only ever narrows. Give each its own
-    `id` to keep two apart.
+    added beside `Coder()`, are combined so that every restriction either states applies (see
+    `combine`), so adding one only ever narrows. Give each its own `id` to keep two apart.
     """
 
     cwd: str | Path | None = None
@@ -106,10 +89,10 @@ class Shell(AbstractCapability[AgentDepsT]):
     denied_operators: Sequence[str] = field(default_factory=list[str])
     """Shell operators that are blocked (e.g. '>', '>>', '|' for restrictive mode)."""
 
-    default_timeout: float = DefaultFloat(30.0)
+    default_timeout: float = 30.0
     """Default timeout in seconds for command execution."""
 
-    max_output_chars: int = DefaultInt(50_000)
+    max_output_chars: int = 50_000
     """Maximum characters of output returned to the model. Must be positive."""
 
     max_file_bytes: int | None = field(default=None, kw_only=True)
@@ -120,7 +103,7 @@ class Shell(AbstractCapability[AgentDepsT]):
     `shell` tool are rejected.
     """
 
-    max_log_bytes: int | None = field(default=DefaultInt(100_000_000), kw_only=True)
+    max_log_bytes: int | None = field(default=100_000_000, kw_only=True)
     """Size past which a background or `shell` command's log is emptied, leaving a notice. Must be positive.
 
     Checked once a second while the command runs, which keeps running, and once more when it ends. Bounds the disk a
@@ -162,7 +145,7 @@ class Shell(AbstractCapability[AgentDepsT]):
     persistent `shell` tool's events hold the raw output.
     """
 
-    tools: Sequence[str] = _DEFAULT_TOOLS
+    tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES
     """Which tools to register, from `SHELL_TOOL_NAMES`.
 
     The default is `run_command`, `start_command`, `check_command`, and
@@ -185,39 +168,40 @@ class Shell(AbstractCapability[AgentDepsT]):
         if self.cwd is not None:
             warn_argument_ignored('Shell', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE)
         if self.denied_commands is _DEFAULT_DENIED_COMMANDS:
-            # A copy, so that passing it back in states it, as passing any other list does.
-            self.denied_commands = (
-                _NO_DENIED_COMMANDS if self.allowed_commands else DefaultStrs(_DEFAULT_DENIED_COMMANDS)
-            )
+            self.denied_commands = [] if self.allowed_commands else list(_DEFAULT_DENIED_COMMANDS)
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Combine `Shell`s sharing an id so that every restriction any of them states applies.
 
-        A field an instance leaves at its default takes no part. `allow_interactive` has no unstated
-        default, so it is allowed only when every instance allows it.
+        Allowed commands and tools intersect; denied commands, operators and env patterns add up; the
+        smaller timeout and output, log and file limits win; `allow_interactive` needs every instance to
+        allow it; `env` and `secret_env` add up, and one name given two values raises.
+
+        Only the fields an instance was constructed with take part, so a `Shell(allowed_commands=['pytest'])`
+        added beside `Coder()` keeps `Coder`'s timeout, while `Shell(default_timeout=30.0)` lowers it. A copy
+        made with `dataclasses.replace()` counts every field as passed.
         """
         shells = [capability for capability in capabilities if isinstance(capability, Shell)]
         assert len(shells) == len(capabilities)
-        allowed, denied = _combined_commands(shells)
-        tool_lists = stated(shell.tools for shell in shells)
-        tools = intersection(tool_lists, owner='Shell', field='tools', empty_means_all=False)
+        allowed, denied = _combined_commands(shells, cls._stated_values(shells, 'denied_commands'))
+        tools = intersection(cls._stated_values(shells, 'tools'), owner='Shell', field='tools', empty_means_all=False)
         merged = replace(
             shells[-1],
             cwd=None,
             allowed_commands=allowed or [],
             denied_commands=denied,
             denied_operators=union(shell.denied_operators for shell in shells),
-            default_timeout=smallest([shell.default_timeout for shell in shells], default=DefaultFloat(30.0)),
-            max_output_chars=smallest([shell.max_output_chars for shell in shells], default=DefaultInt(50_000)),
-            max_file_bytes=smallest([shell.max_file_bytes for shell in shells], default=None),
-            max_log_bytes=smallest([shell.max_log_bytes for shell in shells], default=DefaultInt(100_000_000)),
+            default_timeout=cls._smallest(shells, 'default_timeout'),
+            max_output_chars=cls._smallest(shells, 'max_output_chars'),
+            max_file_bytes=cls._smallest(shells, 'max_file_bytes'),
+            max_log_bytes=cls._smallest(shells, 'max_log_bytes'),
             persist_cwd=any(shell.persist_cwd for shell in shells),
             allow_interactive=all(shell.allow_interactive for shell in shells),
             env=merged_mapping((shell.env for shell in shells), owner='Shell', field='env'),
             denied_env_patterns=union(shell.denied_env_patterns for shell in shells),
             secret_env=merged_mapping((shell.secret_env for shell in shells), owner='Shell', field='secret_env'),
-            tools=_DEFAULT_TOOLS if tools is None else tools,
+            tools=RUN_SCOPED_TOOL_NAMES if tools is None else tools,
         )
         _require_supported_by_the_persistent_tool(merged)
         return merged
@@ -260,23 +244,25 @@ class Shell(AbstractCapability[AgentDepsT]):
         )
 
 
-def _combined_commands(shells: Sequence[Shell[Any]]) -> tuple[list[str] | None, Sequence[str]]:
-    """The allowlist and denylist of `shells` combined: allowlists intersect, stated denylists add up.
+def _combined_commands(
+    shells: Sequence[Shell[Any]], denied_lists: list[Sequence[str]]
+) -> tuple[list[str] | None, list[str]]:
+    """The allowlist and denylist of `shells` combined: allowlists intersect, the stated `denied_lists` add up.
 
     `ShellToolset` takes an allowlist or a denylist, so with an allowlist a stated denied command leaves it
     instead; the built-in denylist gives way to an allowlist, as it does in one `Shell`.
     """
     allowed = intersection([shell.allowed_commands for shell in shells], owner='Shell', field='allowed_commands')
-    denied = union(stated(shell.denied_commands for shell in shells))
+    denied = union(denied_lists)
     if allowed is None:
-        return None, denied if any(is_stated(shell.denied_commands) for shell in shells) else _DEFAULT_DENIED_COMMANDS
+        return None, denied if denied_lists else list(_DEFAULT_DENIED_COMMANDS)
     allowed = [command for command in allowed if command not in denied]
     if not allowed:
         raise UserError(
             'These `Shell` capabilities share an id, and every command one allows another denies. '
             'State one policy, or give each `Shell` its own `id` to keep them apart.'
         )
-    return allowed, _NO_DENIED_COMMANDS
+    return allowed, []
 
 
 def _require_supported_by_the_persistent_tool(shell: Shell[Any]) -> None:

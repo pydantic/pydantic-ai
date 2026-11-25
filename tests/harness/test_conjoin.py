@@ -6,11 +6,15 @@ rule, the fields that can't combine, and that a field left at its default takes 
 
 from __future__ import annotations
 
+import copy
+from dataclasses import replace
+
 import pytest
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai_harness._conjoin import is_stated, smallest, state_defaults
-from pydantic_ai_harness.file_system import FileSystem
+from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness._conjoin import state_all
+from pydantic_ai_harness.file_system import DEFAULT_TOOL_NAMES, FileSystem
 from pydantic_ai_harness.shell import Shell
 
 
@@ -30,26 +34,50 @@ def test_both_declare_a_default_id() -> None:
     assert (Shell().id, FileSystem().id) == ('shell', 'file_system')
 
 
-def test_a_default_is_unstated_until_stated() -> None:
-    shell = Shell()
-    assert not is_stated(shell.default_timeout) and not is_stated(shell.tools) and not is_stated(shell.denied_commands)
-    assert shell.default_timeout == 30.0 and shell.max_output_chars == 50_000
-    stated = state_defaults(shell)
-    assert all(is_stated(value) for value in (stated.default_timeout, stated.max_output_chars, stated.tools))
-    assert (stated.default_timeout, stated.max_output_chars, stated.denied_commands) == (
-        shell.default_timeout,
-        shell.max_output_chars,
-        shell.denied_commands,
+def test_defaults_keep_their_plain_types() -> None:
+    shell, file_system = Shell(), FileSystem()
+    assert (shell.denied_commands, shell.tools, file_system.tools) == (
+        ['rm', 'rmdir', 'mkfs', 'dd', 'format', 'shutdown', 'reboot', 'halt', 'poweroff', 'init'],
+        ('run_command', 'start_command', 'check_command', 'stop_command'),
+        DEFAULT_TOOL_NAMES,
     )
+
+
+def test_a_field_is_stated_when_the_constructor_is_passed_it_even_at_its_default() -> None:
+    """`Shell(default_timeout=30.0)` is the class default, and still narrows a longer timeout."""
+    assert _shell(state_all(Shell(default_timeout=270.0)), Shell(default_timeout=30.0)).default_timeout == 30.0
+    assert _shell(state_all(Shell(default_timeout=270.0)), Shell()).default_timeout == 270.0
+    assert _shell(state_all(Shell(default_timeout=270.0)), Shell(None, ['pytest'])).allowed_commands == ['pytest']
+
+
+def test_every_construction_path_keeps_what_was_stated() -> None:
+    """`copy` and `deepcopy` keep the record; `from_spec` records the spec's arguments; `replace()` states all."""
+    coders = state_all(Shell(default_timeout=270.0))
+    assert _shell(coders, copy.copy(Shell())).default_timeout == 270.0
+    assert _shell(coders, copy.deepcopy(Shell(default_timeout=10.0))).default_timeout == 10.0
+    from_spec = Shell.from_spec(allowed_commands=['pytest'])
+    assert isinstance(from_spec, Shell)
+    assert _shell(coders, from_spec).default_timeout == 270.0
+    assert _shell(coders, replace(Shell(), allow_interactive=True)).default_timeout == 30.0
+
+
+def test_the_deprecated_read_only_name_is_stated_as_the_new_one() -> None:
+    with pytest.warns(HarnessDeprecationWarning):
+        old = FileSystem(protected_patterns=['docs/**'])
+    assert list(_file_system(state_all(FileSystem(read_only_patterns=[])), old).read_only_patterns) == ['docs/**']
 
 
 def test_shell_fields_left_at_their_default_take_no_part() -> None:
     merged = _shell(Shell(default_timeout=300.0, tools=['shell']), Shell(allowed_commands=['pytest']))
     assert (merged.default_timeout, list(merged.tools), list(merged.allowed_commands)) == (300.0, ['shell'], ['pytest'])
-    assert not is_stated(merged.max_output_chars) and not is_stated(merged.max_log_bytes)
+    assert (merged.max_output_chars, merged.max_log_bytes) == (50_000, 100_000_000)
 
     plain = _shell(Shell(), Shell())
-    assert not is_stated(plain.tools) and not is_stated(plain.denied_commands) and not is_stated(plain.default_timeout)
+    assert (plain.tools, plain.denied_commands, plain.default_timeout) == (
+        Shell().tools,
+        Shell().denied_commands,
+        30.0,
+    )
 
 
 def test_shell_lists_and_limits_conjoin() -> None:
@@ -145,8 +173,10 @@ def test_file_system_fields_conjoin() -> None:
         ['read_file'],
     )
     plain = _file_system(FileSystem(), FileSystem())
-    assert (
-        not is_stated(plain.read_only_patterns) and not is_stated(plain.tools) and not is_stated(plain.max_list_results)
+    assert (plain.read_only_patterns, plain.tools, plain.max_list_results) == (
+        FileSystem().read_only_patterns,
+        FileSystem().tools,
+        1000,
     )
 
 
@@ -179,5 +209,5 @@ def test_file_systems_that_cannot_conjoin_raise(first: FileSystem[None], second:
         _file_system(first, second)
 
 
-def test_smallest_with_only_unbounded_stated_is_unbounded() -> None:
-    assert smallest([None, None], default=5) is None
+def test_only_unbounded_limits_stated_stay_unbounded() -> None:
+    assert _shell(Shell(max_log_bytes=None), Shell(max_log_bytes=None)).max_log_bytes is None

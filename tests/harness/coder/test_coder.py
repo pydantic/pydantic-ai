@@ -230,6 +230,13 @@ def test_what_coder_widens_only_through_its_own_parameters() -> None:
     assert '**/.git' in files.read_only_patterns and 'docs/**' in files.read_only_patterns
 
 
+def test_a_shell_stating_the_default_timeout_beside_coder_lowers_coders() -> None:
+    """`30.0` is `Shell`'s class default, but it was passed, so it narrows `Coder`'s 270 seconds."""
+    agent = Agent(TestModel(), capabilities=[Coder(), Shell(default_timeout=30.0)])
+    [shell] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Shell)]
+    assert (shell.default_timeout, list(shell.tools)) == (30.0, ['shell'])
+
+
 @pytest.mark.parametrize(
     ('shell', 'field'),
     [(Shell(max_file_bytes=1_000_000), 'max_file_bytes'), (Shell(persist_cwd=True), 'persist_cwd')],

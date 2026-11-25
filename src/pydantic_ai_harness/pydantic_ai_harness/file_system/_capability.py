@@ -11,7 +11,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
-from pydantic_ai_harness._conjoin import DefaultInt, DefaultStrs, agreed, intersection, smallest, stated, union
+from pydantic_ai_harness._conjoin import RecordsStated, agreed, intersection, union
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import require_workspace, workspace_path
 from pydantic_ai_harness.file_system._content import require_pillow
@@ -22,26 +22,21 @@ from pydantic_ai_harness.file_system._toolset import (
     root_spelling,
 )
 
-_DEFAULT_READ_CHARS = DefaultInt(50_000)
-_DEFAULT_READ_LINES = DefaultInt(2000)
-_DEFAULT_MAX_RESULTS = DefaultInt(1000)
-_DEFAULT_TOOLS: tuple[str, ...] = DefaultStrs(DEFAULT_TOOL_NAMES)
+_DEFAULT_READ_CHARS = 50_000
 
-_DEFAULT_READ_ONLY: tuple[str, ...] = DefaultStrs(
-    (
-        '**/.git',
-        '**/.env',
-        '**/.env.*',
-        '*.pem',
-        '*.key',
-        '**/secrets*',
-        '**/.pydantic-ai-harness/**',
-    )
+_DEFAULT_READ_ONLY: tuple[str, ...] = (
+    '**/.git',
+    '**/.env',
+    '**/.env.*',
+    '*.pem',
+    '*.key',
+    '**/secrets*',
+    '**/.pydantic-ai-harness/**',
 )
 
 
 @dataclass
-class FileSystem(AbstractCapability[AgentDepsT]):
+class FileSystem(RecordsStated, AbstractCapability[AgentDepsT]):
     """File system access to the run's workspace, scoped to a root directory.
 
     Every operation goes through `ctx.workspace`, so attach a workspace to the
@@ -59,11 +54,8 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     real path is outside `root_dir`.
 
     An agent has one `FileSystem` per `id`, `'file_system'` by default. Two that share it, such as a
-    `FileSystem` added beside `Coder()`, are combined so that every restriction either states applies:
-    the innermost `root_dir` wins (`None` counting as the working directory), denied and read-only
-    patterns add up, the smaller limits win, `read_only` from either holds, and only tools both register
-    are kept. A field an instance leaves at its default takes no part, so adding one only ever narrows.
-    Give each its own `id` to keep two apart.
+    `FileSystem` added beside `Coder()`, are combined so that every restriction either states applies
+    (see `combine`), so adding one only ever narrows. Give each its own `id` to keep two apart.
     """
 
     root_dir: str | Path | None = None
@@ -104,7 +96,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     `denied_patterns`, these match regardless of case.
     """
 
-    max_read_lines: int = _DEFAULT_READ_LINES
+    max_read_lines: int = 2000
     """Most lines one `read_file` call returns, and the number it returns when it passes no `limit`."""
 
     max_read_chars: int | None = _DEFAULT_READ_CHARS
@@ -127,13 +119,13 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     without it raises an `ImportError`.
     """
 
-    max_list_results: int = _DEFAULT_MAX_RESULTS
+    max_list_results: int = 1000
     """Maximum number of entries returned by `list_directory`."""
 
-    max_search_results: int = _DEFAULT_MAX_RESULTS
+    max_search_results: int = 1000
     """Maximum number of matches returned by `search_files` and `grep`."""
 
-    max_find_results: int = _DEFAULT_MAX_RESULTS
+    max_find_results: int = 1000
     """Maximum number of matches returned by `find_files` and `list_files`."""
 
     read_only: bool = False
@@ -150,7 +142,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     coding agent, where they only add tokens to every read and write.
     """
 
-    tools: Sequence[str] = _DEFAULT_TOOLS
+    tools: Sequence[str] = DEFAULT_TOOL_NAMES
     """Which tools to register, from `FILE_SYSTEM_TOOL_NAMES`.
 
     The default is every tool that needs only the workspace's filesystem. Name
@@ -184,6 +176,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
                 raise TypeError('Pass `read_only_patterns` only: `protected_patterns` is its deprecated name.')
             warn_argument_renamed('FileSystem', 'protected_patterns', 'read_only_patterns', stacklevel=4)
             self.read_only_patterns, self.protected_patterns = self.protected_patterns, None
+            self._stated |= {'read_only_patterns'}
         root_spelling(None if self.root_dir is None else Path(self.root_dir))
         # Runtime validation: dataclass field annotations are advisory, not enforced.
         # A config-driven caller could pass a string that would otherwise propagate.
@@ -210,8 +203,15 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Combine `FileSystem`s sharing an id so that every restriction any of them states applies.
 
-        A field an instance leaves at its default takes no part. `root_dir=None` is the working
-        directory, itself a boundary, so it always takes part.
+        The innermost `root_dir` wins, `None` (the working directory) included; denied and read-only
+        patterns add up; the smaller limits win; `read_only` from any holds, `content_hashes` needs all;
+        only tools every instance registers are kept; `max_retries` must agree. Two different
+        `allowed_patterns` lists raise, since one `FileSystem` holds one list, and so do roots that can't
+        be compared before the workspace resolves them.
+
+        Only the fields an instance was constructed with take part, so a `FileSystem(allowed_patterns=[...])`
+        added beside `Coder()` keeps `Coder`'s limits and tools. A copy made with `dataclasses.replace()`
+        counts every field as passed.
         """
         file_systems = [capability for capability in capabilities if isinstance(capability, FileSystem)]
         assert len(file_systems) == len(capabilities)
@@ -223,9 +223,10 @@ class FileSystem(AbstractCapability[AgentDepsT]):
                 f'have to apply, but one `FileSystem` holds one list: {", ".join(map(repr, allowed))}. State one '
                 'list, or give each `FileSystem` its own `id` to keep them apart.'
             )
-        read_only_lists = stated(fs.read_only_patterns for fs in file_systems)
-        tool_lists = stated(fs.tools for fs in file_systems)
-        tools = intersection(tool_lists, owner='FileSystem', field='tools', empty_means_all=False)
+        read_only_lists = cls._stated_values(file_systems, 'read_only_patterns')
+        tools = intersection(
+            cls._stated_values(file_systems, 'tools'), owner='FileSystem', field='tools', empty_means_all=False
+        )
         return replace(
             file_systems[-1],
             cwd=None,
@@ -233,15 +234,15 @@ class FileSystem(AbstractCapability[AgentDepsT]):
             allowed_patterns=allowed[0] if allowed else [],
             denied_patterns=union(fs.denied_patterns for fs in file_systems),
             read_only_patterns=union(read_only_lists) if read_only_lists else _DEFAULT_READ_ONLY,
-            max_read_lines=smallest([fs.max_read_lines for fs in file_systems], default=_DEFAULT_READ_LINES),
-            max_read_chars=smallest([fs.max_read_chars for fs in file_systems], default=_DEFAULT_READ_CHARS),
-            max_image_side=smallest([fs.max_image_side for fs in file_systems], default=None),
-            max_list_results=smallest([fs.max_list_results for fs in file_systems], default=_DEFAULT_MAX_RESULTS),
-            max_search_results=smallest([fs.max_search_results for fs in file_systems], default=_DEFAULT_MAX_RESULTS),
-            max_find_results=smallest([fs.max_find_results for fs in file_systems], default=_DEFAULT_MAX_RESULTS),
+            max_read_lines=cls._smallest(file_systems, 'max_read_lines'),
+            max_read_chars=cls._smallest(file_systems, 'max_read_chars'),
+            max_image_side=cls._smallest(file_systems, 'max_image_side'),
+            max_list_results=cls._smallest(file_systems, 'max_list_results'),
+            max_search_results=cls._smallest(file_systems, 'max_search_results'),
+            max_find_results=cls._smallest(file_systems, 'max_find_results'),
             read_only=any(fs.read_only for fs in file_systems),
             content_hashes=all(fs.content_hashes for fs in file_systems),
-            tools=_DEFAULT_TOOLS if tools is None else tools,
+            tools=DEFAULT_TOOL_NAMES if tools is None else tools,
             max_retries=agreed([fs.max_retries for fs in file_systems], owner='FileSystem', field='max_retries'),
         )
 

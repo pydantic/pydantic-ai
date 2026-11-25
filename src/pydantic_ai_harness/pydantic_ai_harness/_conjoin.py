@@ -5,80 +5,71 @@ restrictions must all hold, whatever order they were listed in: an allowlist int
 unions, a limit takes the smaller value.
 
 Only what an instance *states* takes part, so that `Shell(allowed_commands=['pytest'])` beside `Coder()`
-narrows the commands without also cutting `Coder`'s timeout to `Shell`'s default. A field states its
-value unless the value is one of the marker types below: a default that is equal to the plain value and
-behaves like it, told apart only by type. A default of `None`, `[]`, `False` or `True` needs no marker
-where it is also the identity of the field's conjunction (no limit, nothing denied); the few that are not
-(`root_dir=None`, `allow_interactive=False`) conjoin as the value they mean, which can only narrow.
+narrows the commands without also cutting `Coder`'s timeout to `Shell`'s default. A field is stated when
+the constructor was passed it, whatever its value, as `RecordsStated` records. A default of `None`, `[]`,
+`False` or `True` that is also the identity of the field's conjunction (no limit, nothing denied) needs no
+such test; the few that are not (`root_dir=None`, `allow_interactive=False`) conjoin as the value they mean,
+which can only narrow.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
-from dataclasses import fields, replace
-from typing import Any, TypeVar
+from dataclasses import Field
+from typing import Any, ClassVar, Self, TypeVar
 
-from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 
 T = TypeVar('T')
-N = TypeVar('N', int, float)
-C = TypeVar('C', bound=AbstractCapability[Any])
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')
 
 
-class DefaultInt(int):
-    """An `int` default that no one stated."""
+class RecordsStated:
+    """A mixin for a dataclass capability that records which fields its constructor was passed.
 
-    __slots__ = ()
+    Recorded in `__new__`, which receives the constructor's arguments, so the dataclass `__init__` and its
+    signature stay as they are. The record is a plain attribute, not a field, so it is not in `repr`,
+    equality, the agent spec or its schema. `copy` and `deepcopy` keep it. `dataclasses.replace()` and
+    `from_spec` call the constructor, so they record what they pass: `from_spec` the spec's own arguments,
+    and `replace()` every field.
+    """
+
+    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
+    _stated: frozenset[str]
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
+        instance = super().__new__(cls)
+        positional = [field.name for field in cls.__dataclass_fields__.values() if field.init and not field.kw_only]
+        instance._stated = frozenset(positional[: len(args)]) | frozenset(kwargs)
+        return instance
+
+    @classmethod
+    def _stated_values(cls, capabilities: Iterable[RecordsStated], name: str) -> list[Any]:
+        """The values of field `name` that `capabilities` were passed, in order."""
+        return [getattr(capability, name) for capability in capabilities if name in capability._stated]
+
+    @classmethod
+    def _smallest(cls, capabilities: Sequence[RecordsStated], name: str) -> Any:
+        """The smallest stated value of field `name`, `None` meaning unbounded; the class default when none is."""
+        given = cls._stated_values(capabilities, name)
+        bounded = [value for value in given if value is not None]
+        if bounded:
+            return min(bounded)
+        return None if given else cls.__dataclass_fields__[name].default
 
 
-class DefaultFloat(float):
-    """A `float` default that no one stated."""
-
-    __slots__ = ()
+C = TypeVar('C', bound=RecordsStated)
 
 
-class DefaultStrs(tuple[str, ...]):
-    """A `tuple[str, ...]` default that no one stated."""
-
-    __slots__ = ()
-
-
-def is_stated(value: object) -> bool:
-    """Whether `value` was stated, rather than being a default marker."""
-    return not isinstance(value, (DefaultInt, DefaultFloat, DefaultStrs))
-
-
-def state_defaults(capability: C) -> C:
-    """`capability` with every default marker replaced by the plain value it equals, so all of it is stated.
+def state_all(capability: C) -> C:
+    """Count every field of `capability` as stated, defaults included, and return it.
 
     For a packaged harness's own instance: its defaults are part of what it promises, so an instance added
-    beside it must not drop them by leaving the same fields unstated.
+    beside it must not drop them by leaving the same fields unset.
     """
-    changes: dict[str, object] = {}
-    for field in fields(capability):
-        value = getattr(capability, field.name)
-        if field.init and not is_stated(value):
-            changes[field.name] = (
-                tuple(value) if isinstance(value, tuple) else float(value) if isinstance(value, float) else int(value)
-            )
-    return replace(capability, **changes)
-
-
-def stated(values: Iterable[T]) -> list[T]:
-    """The values that were stated, in order."""
-    return [value for value in values if is_stated(value)]
-
-
-def smallest(values: Sequence[N | None], *, default: N | None) -> N | None:
-    """The smallest stated value, `None` meaning unbounded; `default` when none is stated."""
-    given = stated(values)
-    bounded = [value for value in given if value is not None]
-    if bounded:
-        return min(bounded)
-    return None if given else default
+    capability._stated = frozenset(capability.__dataclass_fields__)  # pyright: ignore[reportPrivateUsage]
+    return capability
 
 
 def union(lists: Iterable[Sequence[str]]) -> list[str]:
