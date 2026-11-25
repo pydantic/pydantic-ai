@@ -859,6 +859,7 @@ class TestReadFile:
         ],
     )
     async def test_a_format_that_stays_described(self, tmp_path: Path, data: bytes) -> None:
+        """Local byte sniffing with no model request, so a unit test: a recording would add nothing."""
         # Only video `ftyp` brands on the allowlist and WebM's EBML DocType are sent as files, so Matroska and
         # the M4A, HEIC and AVIF `ftyp` brands are described. Audio and Office documents aren't sniffed at all:
         # some models whose profile admits the kind reject them, so FLAC and a ZIP guard that deferral.
@@ -869,6 +870,7 @@ class TestReadFile:
 
     @pytest.mark.parametrize('text', ['RIFF notes, not a WEBP.\n', '%PDF is a prefix.\n'])
     async def test_text_that_starts_like_a_signature_is_read_as_text(self, tmp_path: Path, text: str) -> None:
+        """Local byte sniffing with no model request, so a unit test: a recording would add nothing."""
         (tmp_path / 'notes.md').write_text(text)
         result = await _unhashed_toolset().read_file('notes.md', workspace=LocalWorkspaceBackend(tmp_path))
         assert result == f'[notes.md | 1 lines]\n     1\t{text}'
@@ -3285,6 +3287,23 @@ class TestUsedAsAToolset:
 
 
 class TestReadFileInARun:
+    async def test_a_video_reaches_a_model_that_reads_video_in_the_tool_result(self, tmp_path: Path) -> None:
+        mp4 = b'\x00\x00\x00\x18ftypisom\x00\x00\x02\x00'
+        (tmp_path / 'demo.mp4').write_bytes(mp4)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'demo.mp4'})])
+            return ModelResponse(parts=[TextPart('seen')])
+
+        agent = Agent(FunctionModel(model), capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()])
+        result = await agent.run('watch the demo')
+        request = result.all_messages()[2]
+        assert isinstance(request, ModelRequest)
+        tool_return = request.parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        assert tool_return.files == [BinaryContent(data=mp4, media_type='video/mp4')]
+
     async def test_a_file_the_model_cannot_read_becomes_a_note(self, tmp_path: Path) -> None:
         mp4 = b'\x00\x00\x00\x18ftypisom\x00\x00\x02\x00'
         (tmp_path / 'demo.mp4').write_bytes(mp4)
