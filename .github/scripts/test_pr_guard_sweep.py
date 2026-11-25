@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pr_guard_sweep
 import pytest
 import yaml
 from pr_guard_sweep import PullRequest, deciding_event, guard_env, sweep_start
@@ -126,3 +129,64 @@ def test_the_sweep_runs_default_branch_code_one_at_a_time() -> None:
     checkout = guard['steps'][0]['with']
     assert checkout['ref'] == '${{ github.event.repository.default_branch }}'
     assert checkout['sparse-checkout'].split() == ['.github/scripts/pr_guard.sh', '.github/scripts/pr_guard_sweep.py']
+
+
+def test_a_failed_check_leaves_the_rest_checked_and_fails_the_sweep(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One pull request's failed check does not stop the sweep, and the failed sweep leaves its window to the next."""
+    now = datetime.now(UTC)
+    last_sweep = now - timedelta(minutes=10)
+
+    def node(number: int, created: datetime) -> dict[str, object]:
+        return {
+            'number': number,
+            'state': 'OPEN',
+            'isDraft': False,
+            'createdAt': created.isoformat(),
+            'authorAssociation': 'CONTRIBUTOR',
+            'baseRefName': 'main',
+            'author': CONTRIBUTOR,
+            'userContentEdits': {'nodes': []},
+            'timelineItems': {'nodes': []},
+        }
+
+    def page(*nodes: dict[str, object]) -> dict[str, object]:
+        return {'data': {'search': {'pageInfo': {'hasNextPage': False, 'endCursor': None}, 'nodes': list(nodes)}}}
+
+    responses: dict[str, object] = {
+        'repos/pydantic/pydantic-ai': {'default_branch': 'main'},
+        'repos/pydantic/pydantic-ai/actions/workflows/pr-guard.yml/runs?status=success&branch=main&per_page=1': {
+            'workflow_runs': [{'run_started_at': last_sweep.isoformat()}]
+        },
+        # `--paginate --slurp` returns one object per search page.
+        'graphql': [
+            page(node(7, now - timedelta(minutes=2)), node(8, now - timedelta(days=2))),
+            page(node(9, now - timedelta(minutes=1))),
+        ],
+    }
+    searches: list[tuple[str, ...]] = []
+
+    def gh(*args: str) -> str:
+        if args[0] == 'graphql':
+            searches.append(args)
+        return json.dumps(responses[args[0]])
+
+    checked: list[str] = []
+
+    def run_guard(args: list[str], *, env: dict[str, str], check: bool) -> subprocess.CompletedProcess[str]:
+        number = env['GITHUB_EVENT_PULL_REQUEST_NUMBER']
+        checked.append(number)
+        assert env['DEFAULT_BRANCH'] == 'main'
+        return subprocess.CompletedProcess(args, returncode=1 if number == '7' else 0)
+
+    monkeypatch.setenv('REPO', 'pydantic/pydantic-ai')
+    monkeypatch.setattr(pr_guard_sweep, '_gh', gh)
+    monkeypatch.setattr(pr_guard_sweep.subprocess, 'run', run_guard)
+
+    assert pr_guard_sweep.main() == 1
+    # #8 had no event in the window, so the sweep did not check it.
+    assert checked == ['7', '9']
+    stamp = (last_sweep - timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%SZ')
+    assert f'q=repo:pydantic/pydantic-ai is:pr is:open updated:>={stamp}' in searches[0]
+    assert '::error::PR Guard could not check #7.' in capsys.readouterr().out

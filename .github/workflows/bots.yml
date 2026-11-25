@@ -476,7 +476,7 @@ jobs:
       # at the workspace root is what `claude-code-action` treats as the project:
       # its `CLAUDE.md` becomes the system prompt, its `.claude/` its settings.
       # Put the head there and the head writes the reviewer's instructions. So the
-      # BASE ref owns the root, and the untrusted head is confined to `pr-head/`,
+      # default branch owns the root, and the untrusted head is confined to `pr-head/`,
       # reachable only through `--add-dir` as material under review. This is the
       # pattern `claude-code-action` documents for untrusted code:
       # https://github.com/anthropics/claude-code-action/blob/main/docs/security.md
