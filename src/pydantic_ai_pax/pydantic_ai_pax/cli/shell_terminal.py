@@ -82,9 +82,9 @@ class TerminalText:
 
 @contextlib.contextmanager
 def ctrl_c_as_key(terminal: Terminal, interrupt: Callable[[], object]) -> Generator[None]:
-    """Read Ctrl-C as a key that calls `interrupt`, while a command that takes no input runs elsewhere.
+    """Read Ctrl+C as a key that calls `interrupt`, while a command that takes no input runs elsewhere.
 
-    The terminal stays in raw mode, so Ctrl-C never becomes SIGINT. Some SDK clients take SIGINT for
+    The terminal stays in raw mode, so Ctrl+C never becomes SIGINT. Some SDK clients take SIGINT for
     themselves: the Daytona SDK's socket.io client cancels every task and stops the loop. Other keys
     are dropped, as the command reads none.
     """
@@ -107,7 +107,7 @@ def ctrl_c_as_key(terminal: Terminal, interrupt: Callable[[], object]) -> Genera
 class PtyRun:
     """One command's pseudo-terminal, and the relay between it and Pax's terminal.
 
-    Until the command goes full screen, its output goes to `capture` and keys go to it, except Ctrl-C,
+    Until the command goes full screen, its output goes to `capture` and keys go to it, except Ctrl+C,
     which calls `interrupt` so Pax interrupts the command as it does any other. Once it goes full
     screen, `full_terminal()` takes Pax's display off the screen and the relay passes everything through.
     """
