@@ -44,9 +44,8 @@ from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage
 
+from ._timeouts import READINESS_WAIT_TIMEOUT
 from .conftest import no_leaked_tasks
-
-READINESS_WAIT_TIMEOUT = 10
 
 
 @dataclass
@@ -1025,6 +1024,9 @@ async def test_started_work_runs_under_an_eager_task_factory():
         registry = InFlightRegistry([])
 
         async def work() -> str:
+            # Runs inside `create_task()`, before `start()` has added the work, whose `id` is reserved already.
+            with pytest.raises(UserError, match="In-flight work 'work' is already running"):
+                registry.start(work, kind='test', name='again', id='work')
             return 'done'
 
         handle = registry.start(work, kind='test', name='work', id='work')

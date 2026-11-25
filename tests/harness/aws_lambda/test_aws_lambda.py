@@ -151,8 +151,8 @@ class TestDurableRun:
         """A durable execution runs tool calls sequentially, so no work can run alongside the run."""
         errors: list[str] = []
 
-        class StartsWork(AbstractCapability[Any]):
-            async def before_run(self, ctx: RunContext[Any]) -> None:
+        class StartsWork(AbstractCapability[None]):
+            async def before_run(self, ctx: RunContext[None]) -> None:
                 with pytest.raises(UserError) as exc_info:
                     _ = ctx.in_flight
                 errors.append(str(exc_info.value))

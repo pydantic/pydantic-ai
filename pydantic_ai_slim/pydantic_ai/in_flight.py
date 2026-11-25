@@ -6,7 +6,6 @@ See [Work that outlives a step](../capabilities/custom.md#in-flight-work).
 from __future__ import annotations
 
 import asyncio
-from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
@@ -329,8 +328,10 @@ class InFlightRegistry:
         self._failures: list[BaseException] = []
         self._changed = asyncio.Event()  # noqa: TID251  (set from loop callbacks, see `_done`)
         self._closed = False
-        self._in_wait: Counter[InFlightWork[Any]] = Counter()
-        """The work inside a durable wait, its own or one it waits for, counted once per wait it's in."""
+        self._in_wait: list[list[InFlightWork[Any]]] = []
+        """The work inside a durable wait, or waiting for work that is, as `start()` holders, once per wait."""
+        self._starting: set[str] = set()
+        """The IDs of work `start()` is adding, which an eager task factory may run before it's added."""
         self._waited: dict[InFlightWork[Any], None] | None = None
         """While the run waits to end, the draining work it waited for, including work started during the wait."""
 
@@ -380,21 +381,27 @@ class InFlightRegistry:
                 'it starts. Run work that should outlive the run yourself, and `register()` it.'
             )
         self._check_can_add(id, 'start')
+        loop = _check_on_loop('start', self._loop)
         started: list[InFlightWork[Any]] = []
-        task = _check_on_loop('start', self._loop).create_task(_call(fn, started), name=f'in_flight {kind} {id}')
-        work = InFlightWork[T](
-            id=id,
-            kind=kind,
-            name=name,
-            on_end=on_end,
-            durable=durable,
-            task=task,
-            cancel=None,
-            on_settled=self._settled,
-        )
-        started.append(work)
-        self._started.add(work)
-        self._add(work)
+        # Reserved until the work is added, as an eager task factory runs `fn` inside `create_task()`.
+        self._starting.add(id)
+        try:
+            task = loop.create_task(_call(fn, started), name=f'in_flight {kind} {id}')
+            work = InFlightWork[T](
+                id=id,
+                kind=kind,
+                name=name,
+                on_end=on_end,
+                durable=durable,
+                task=task,
+                cancel=None,
+                on_settled=self._settled,
+            )
+            started.append(work)
+            self._started.add(work)
+            self._add(work)
+        finally:
+            self._starting.discard(id)
         return work
 
     def register(
@@ -510,7 +517,7 @@ class InFlightRegistry:
     def _check_can_add(self, id: str, method: str) -> None:
         if self._closed:
             raise UserError(f'`ctx.in_flight.{method}()` is not available because the agent run has ended.')
-        if id in self._live:
+        if id in self._live or id in self._starting:
             raise UserError(
                 f'In-flight work {id!r} is already running in this run; give each piece of work its own `id`.'
             )
@@ -617,11 +624,15 @@ class InFlightRegistry:
         # Work that reaches the wait itself, from its own task or one it started, like a call it makes that needs
         # approval, is neither cancelled nor waited for: it would wait for itself.
         # That includes the work that started it and waits for it in turn.
-        own = Counter(work for started in _current_work.get() for work in started)
-        # Nor is other work that is in such a wait itself: two pieces would each wait for the other.
-        self._in_wait += own
+        # The chain is read as holders, filled in once `start()` has the handle: under an eager task factory, work
+        # can reach the wait before that. Other work that is in such a wait itself is excluded too: two pieces
+        # would each wait for the other.
+        chain = _current_work.get()
+        self._in_wait.extend(chain)
         try:
-            cancelling = [work for work in self._live.values() if work.on_end == 'cancel' and work not in self._in_wait]
+            cancelling = [
+                work for work in self._live.values() if work.on_end == 'cancel' and not self._is_in_wait(work)
+            ]
             # As at teardown, a failing `cancel` callback mustn't keep the rest of the work running.
             errors: list[Exception] = []
             for work in cancelling:
@@ -634,10 +645,14 @@ class InFlightRegistry:
             if errors:
                 raise errors[0]
             yield
-            while any(work not in self._in_wait for work in self._draining()):
+            while any(not self._is_in_wait(work) for work in self._draining()):
                 await self._changed.wait()
         finally:
-            self._in_wait -= own
+            for started in chain:
+                self._in_wait.remove(started)
+
+    def _is_in_wait(self, work: InFlightWork[Any]) -> bool:
+        return any(work in started for started in self._in_wait)
 
     async def _close_on_exit(self, exc_type: type[BaseException] | None, *_: object) -> None:
         """Close the registry as the run exits, raising a `cancel` callback's error only if the run itself didn't fail.

@@ -10,7 +10,7 @@ from __future__ import annotations
 import gc
 import weakref
 from collections.abc import AsyncIterable, AsyncIterator
-from typing import Any, Literal, Self
+from typing import Literal, Self
 
 import anyio
 import pytest
@@ -972,8 +972,8 @@ async def test_in_flight_is_refused(
     """pgtask identifies each step by the order it starts in, so either mode refuses."""
     errors: list[str] = []
 
-    class StartsWork(AbstractCapability[Any]):
-        async def before_run(self, ctx: RunContext[Any]) -> None:
+    class StartsWork(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
             with pytest.raises(UserError) as exc_info:
                 _ = ctx.in_flight
             errors.append(str(exc_info.value))
