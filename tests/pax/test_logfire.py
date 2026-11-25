@@ -226,9 +226,9 @@ async def test_included_content_images_tools_and_usage_are_traced(recorder: Reco
     assert agent.instrument is None
 
 
-@pytest.mark.parametrize('saved', [{}, {'service_name': 'pydantic-clai2'}, {'service_name': 'my-clai'}])
-async def test_a_saved_service_name_outlives_the_new_default(recorder: Recorder, saved: dict[str, JsonValue]) -> None:
-    """Pax now files traces under `pydantic-ai-pax`; a service name already saved keeps its Logfire data together."""
+@pytest.mark.parametrize('saved', [{}, {'service_name': 'my-clai'}])
+async def test_service_name_defaults_to_the_package_name(recorder: Recorder, saved: dict[str, JsonValue]) -> None:
+    """A saved `pydantic-clai2`, the old default, is migrated in the settings store; see `test_settings_compatibility`."""
     plugin = load_logfire(make_host(**saved))
     await close(plugin)
     assert [options['service_name'] for options in recorder.options] == [saved.get('service_name', 'pydantic-ai-pax')]

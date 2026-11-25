@@ -3653,8 +3653,8 @@ which are saved as plaintext.
 its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
-`service_name` (default `pydantic-ai-pax`; it was `pydantic-clai2`, which settings
-saved before the rename keep), `include_content` (default `false`),
+`service_name` (default `pydantic-ai-pax`; a saved `pydantic-clai2`, the old default,
+moves to it once, and any other saved name is kept), `include_content` (default `false`),
 `include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
 than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Traces carry Pax's
