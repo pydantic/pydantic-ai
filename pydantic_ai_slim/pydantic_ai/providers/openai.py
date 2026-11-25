@@ -219,6 +219,7 @@ class OpenAIProvider(_OpenAISDKProvider):
             # `reasoning_effort` on it with a 400, so unified `thinking` sends none; sampling parameters stay dropped,
             # as it rejects `temperature` too (verified live, 2026-11). Set here rather than in `openai_model_profile`
             # because the restriction is unverified on the OpenAI-compatible endpoints that share it.
+            # `OpenAIProvider(base_url=...)` keeps it, as a proxy to OpenAI should.
             OpenAIModelProfile(openai_reasoning_efforts=frozenset())
             if model_name.startswith('gpt-5-search-api')
             else OpenAIModelProfile(),
