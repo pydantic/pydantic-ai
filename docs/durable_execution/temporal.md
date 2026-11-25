@@ -607,6 +607,16 @@ TemporalDurability(
 
 The terminal `AgentRunResultEvent` is always published, as it's what ends a subscription.
 
+The [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] and [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] that open and close each [model response](../agent.md#response-boundaries) are published only with `response_boundaries=True`, as a subscriber on a version of Pydantic AI that doesn't know them can't decode them. Turn it on once every subscriber is on a version that does:
+
+```python {title="temporal_workflow_streams_boundaries.py" test="skip"}
+from pydantic_ai.durable_exec.temporal import TemporalDurability, WorkflowStreamTopic
+
+TemporalDurability(event_stream_topic=WorkflowStreamTopic('agent-events', response_boundaries=True))
+```
+
+A model-request activity that Temporal retries then starts by closing the previous execution's response with a `'superseded'` end, so a subscriber knows to drop what that execution streamed.
+
 Under the hood, the live model stream is published by [`workflow_stream_event_handler()`][pydantic_ai.durable_exec.temporal.workflow_stream_event_handler], which returns a regular `EventStreamHandler` you can compose or wrap yourself. Prefer `event_stream_topic`: it also publishes the run's workflow-side events from workflow code and the terminal event that ends a subscription, neither of which a handler on its own can do.
 
 !!! note "Caveats"

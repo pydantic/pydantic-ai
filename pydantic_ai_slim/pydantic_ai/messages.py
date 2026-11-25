@@ -8240,10 +8240,105 @@ class FinalResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False, kw_only=True)
+class ModelResponseStartEvent:
+    """An event indicating that a model response started streaming in an agent run.
+
+    It comes right before the response's first event, and a
+    [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] with the same
+    [`origin`][pydantic_ai.messages.ModelResponseStartEvent.origin] closes it. A response that streams no events,
+    like a request that fails before its first one, gets neither.
+
+    Only an agent run's model stream emits it, including a model request's durable unit under durable execution.
+    [`Model.request_stream`][pydantic_ai.models.Model.request_stream] used directly doesn't.
+    """
+
+    origin: ModelResponseOrigin = field(compare=False, repr=False)
+    """Which execution of which model response is starting.
+
+    Equality and `repr()` leave it out, as they do for the part events, so read it from the event.
+    """
+
+    model_name: str | None
+    """The name of the model producing the response.
+
+    Each response says which model produced it, since a fallback to another model can replace it.
+    """
+
+    provider_name: str | None
+    """The name of the provider producing the response."""
+
+    replaces: str | None = None
+    """The [`response_id`][pydantic_ai.messages.ModelResponseOrigin.response_id] of the earlier attempt at the same request step that this response replaces, if any.
+
+    Set when the request step made an earlier attempt, like one a fallback moved on from, or one a
+    `wrap_model_request` hook stopped to stream a response of its own. The replaced attempt may not have
+    streamed anything, like one that failed before its first event. A durable engine running the same
+    attempt again doesn't set it, as that's the same response: see
+    [`ModelResponseEndEvent.status`][pydantic_ai.messages.ModelResponseEndEvent.status].
+    """
+
+    event_kind: Literal['model_response_start'] = 'model_response_start'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+ModelResponseEndStatus: TypeAlias = Literal['complete', 'failed', 'interrupted', 'superseded']
+"""How a streamed model response ended, as [`ModelResponseEndEvent.status`][pydantic_ai.messages.ModelResponseEndEvent.status] records it."""
+
+
+@dataclass(repr=False, kw_only=True)
+class ModelResponseEndEvent:
+    """An event indicating that a model response stopped streaming in an agent run.
+
+    Each [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] is closed by an end
+    event with the same [`origin`][pydantic_ai.messages.ModelResponseEndEvent.origin]. A durable
+    engine's earlier execution can still send one after its successor's `'superseded'` end closed it,
+    so apply the first end for each origin and ignore any later one.
+    """
+
+    origin: ModelResponseOrigin = field(compare=False, repr=False)
+    """Which execution of which model response ended.
+
+    Equality and `repr()` leave it out, as they do for the part events, so read it from the event.
+    """
+
+    status: ModelResponseEndStatus
+    """How the response ended.
+
+    - `'complete'`: the model stream finished. The agent can still reject the response afterwards, for
+      example when a hook raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
+    - `'failed'`: the model stream raised [`error`][pydantic_ai.messages.ModelResponseEndEvent.error].
+      This is best effort: a process that crashes or times out can't send it.
+    - `'interrupted'`: the stream was stopped before it finished, by
+      [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel] or by a `wrap_model_request` hook
+      that stopped it to stream a response of its own.
+    - `'superseded'`: a durable execution engine ran the same attempt again, like a retried Temporal
+      activity. The new execution sends this end for the previous one before its own start, with the
+      previous [`execution_attempt`][pydantic_ai.messages.ModelResponseOrigin.execution_attempt] in `origin`.
+    """
+
+    response: ModelResponse | None
+    """The response as streamed, with a [`state`][pydantic_ai.messages.ModelResponse.state] that says whether it finished.
+
+    `None` for a `'superseded'` end, as the execution that sends it never saw the previous one's response.
+    """
+
+    error: str | None = None
+    """For a `'failed'` end, the error the stream raised, as `'ExceptionType: message'`."""
+
+    event_kind: Literal['model_response_end'] = 'model_response_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 ModelResponseStreamEvent = Annotated[
-    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
+    PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent | ModelResponseStartEvent | ModelResponseEndEvent,
+    pydantic.Discriminator('event_kind'),
 ]
-"""An event in the model response stream, starting a new part, applying a delta to an existing one, indicating a part is complete, or indicating the final result."""
+"""An event in the model response stream: a response starting or ending, a part starting, a delta to a part, a part ending, or the final result."""
 
 
 @dataclass(repr=False, kw_only=True)

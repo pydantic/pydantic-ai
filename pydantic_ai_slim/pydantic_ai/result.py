@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from . import _utils, exceptions, messages as _messages, models
 from ._context_size import context_input_tokens
 from ._genai_prices import best_effort_price
+from ._model_request_attempts import describe_error, ended_response, replaced_response_id
 from ._output import (
     BaseObjectOutputProcessor,
     BaseOutputProcessor,
@@ -549,18 +550,63 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 pass
         return True
 
-    def _with_origin(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
-        """The event, stamped with the origin of the response it came from."""
+    def _current_origin(self) -> _messages.ModelResponseOrigin:
+        """The origin of the response the stream is streaming now, built on first use for each attempt."""
         if (origin := self._origin) is None:
             run_id = self._run_ctx.run_id
             assert run_id is not None, 'An agent run always has a `run_id`.'
             origin = self._origin = _messages.ModelResponseOrigin(
                 run_id=run_id, run_step=self._run_ctx.run_step, attempt=self._attempt
             )
-        return replace(event, origin=origin)
+        return origin
+
+    def _with_origin(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
+        """The event, stamped with the origin of the response it came from."""
+        return replace(event, origin=self._current_origin())
+
+    def _response_start_event(self) -> _messages.ModelResponseStartEvent:
+        origin = self._current_origin()
+        response = self._raw_stream_response.get()
+        return _messages.ModelResponseStartEvent(
+            origin=origin,
+            model_name=response.model_name,
+            provider_name=response.provider_name,
+            replaces=replaced_response_id(origin),
+        )
+
+    def _response_end_event(
+        self, status: _messages.ModelResponseEndStatus, *, error: Exception | None = None
+    ) -> _messages.ModelResponseEndEvent:
+        return _messages.ModelResponseEndEvent(
+            origin=self._current_origin(),
+            status=status,
+            response=ended_response(self.response, status, self._run_ctx),
+            error=None if error is None else describe_error(error),
+        )
 
     async def _model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """The model stream's events, followed by its replacement's if the stream was abandoned, stamped with their origin."""
+        """The model stream's events, followed by its replacement's if the stream was abandoned, stamped with their origin.
+
+        Each response is opened and closed by `_with_boundaries`.
+        """
+        async for event in self._with_boundaries(self._live_model_events(), live=True):
+            yield event
+        if self._replacement_response is None:
+            return
+
+        response = await self._replacement_response()
+        if response is not None:
+            # The replacement is another response at the request step, streamed as its next attempt.
+            self._attempt += 1
+            self._origin = None
+            self._raw_stream_response = models.CompletedStreamedResponse(
+                response, model_request_parameters=self._model_request_parameters, replay_events=True
+            )
+            async for event in self._with_boundaries(self._replacement_events(), live=False):
+                yield event
+
+    async def _live_model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """The model stream's events, until it ends or is abandoned for a replacement, stamped with their origin."""
         events = aiter(self._raw_stream_response)
         while self._replacement_response is None:
             event: ModelResponseStreamEvent | None = None
@@ -577,16 +623,37 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 return
             yield self._with_origin(event)
 
-        response = await self._replacement_response()
-        if response is not None:
-            # The replacement is another response at the request step, streamed as its next attempt.
-            self._attempt += 1
-            self._origin = None
-            self._raw_stream_response = models.CompletedStreamedResponse(
-                response, model_request_parameters=self._model_request_parameters, replay_events=True
-            )
-            async for event in self._raw_stream_response:
-                yield self._with_origin(event)
+    async def _replacement_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """The events of the response that replaced an abandoned model stream, stamped with their origin."""
+        async for event in self._raw_stream_response:
+            yield self._with_origin(event)
+
+    async def _with_boundaries(
+        self, events: AsyncIterator[ModelResponseStreamEvent], *, live: bool
+    ) -> AsyncIterator[ModelResponseStreamEvent]:
+        """`events`, opened by a `ModelResponseStartEvent` and closed by a `ModelResponseEndEvent`.
+
+        `live` is whether `events` is the model stream itself, which is `'interrupted'` when it was abandoned.
+
+        The start comes right before the first event, so it carries the model and provider names the stream knows by
+        then. A stream with no events gets neither: it's a stand-in for a step that got no response, like a stream
+        that failed to open, or its events were streamed elsewhere, like in a durable unit whose own stream sent them.
+        """
+        started = False
+        try:
+            async for event in events:
+                if not started:
+                    started = True
+                    yield self._response_start_event()
+                yield event
+        except Exception as error:
+            if started:
+                yield self._response_end_event('failed', error=error)
+            raise
+        if started:
+            cut_short = live and self._replacement_response is not None and not self._model_stream_finished
+            interrupted = cut_short or self._raw_stream_response.get().state == 'interrupted'
+            yield self._response_end_event('interrupted' if interrupted else 'complete')
 
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a

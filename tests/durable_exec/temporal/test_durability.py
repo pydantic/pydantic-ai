@@ -3944,11 +3944,13 @@ async def test_durability_run_stream_in_workflow(client: Client) -> None:
     assert deltas == snapshot(['Streamed response'])
     assert _run_stream_handler_events == snapshot(
         [
+            ('ModelResponseStartEvent', True),
             ('PartStartEvent', True),
             ('FinalResultEvent', True),
             ('PartDeltaEvent', True),
             ('PartDeltaEvent', True),
             ('PartEndEvent', True),
+            ('ModelResponseEndEvent', True),
         ]
     )
 
@@ -4065,14 +4067,18 @@ async def test_durability_run_stream_events_in_workflow(client: Client) -> None:
 
     assert events == snapshot(
         [
+            'ModelResponseStartEvent',
             'PartStartEvent',
             'PartEndEvent',
+            'ModelResponseEndEvent',
             'FunctionToolCallEvent',
             'FunctionToolResultEvent',
             'ToolAvailabilityDeltaEvent',
+            'ModelResponseStartEvent',
             'PartStartEvent',
             'FinalResultEvent',
             'PartEndEvent',
+            'ModelResponseEndEvent',
             'AgentRunResultEvent',
         ]
     )
@@ -4840,6 +4846,9 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
+                                                    content='{"model_name": "gpt-4o-2024-08-06", "provider_name": "openai", "replaces": null, "event_kind": "model_response_start"}'
+                                                ),
+                                                BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
@@ -4856,6 +4865,11 @@ async def test_durability_complex_agent_logfire_span_tree(
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
+                                                ),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'\{"status": "complete", "response": .*"event_kind": "model_response_end"\}'
+                                                    )
                                                 ),
                                             ],
                                         )
@@ -4957,6 +4971,9 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
+                                                    content='{"model_name": "gpt-4o-2024-08-06", "provider_name": "openai", "replaces": null, "event_kind": "model_response_start"}'
+                                                ),
+                                                BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
@@ -4979,6 +4996,11 @@ async def test_durability_complex_agent_logfire_span_tree(
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
+                                                ),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'\{"status": "complete", "response": .*"event_kind": "model_response_end"\}'
+                                                    )
                                                 ),
                                             ],
                                         )
@@ -5037,6 +5059,9 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             content='RunActivity:agent__durability_complex_agent_logfire__model_request_stream',
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
+                                                BasicSpan(
+                                                    content='{"model_name": "gpt-4o-2024-08-06", "provider_name": "openai", "replaces": null, "event_kind": "model_response_start"}'
+                                                ),
                                                 BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
@@ -5165,6 +5190,11 @@ async def test_durability_complex_agent_logfire_span_tree(
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
+                                                ),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'\{"status": "complete", "response": .*"event_kind": "model_response_end"\}'
+                                                    )
                                                 ),
                                             ],
                                         )

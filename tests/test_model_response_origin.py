@@ -16,7 +16,9 @@ from pydantic_ai import (
     Agent,
     AgentStreamEvent,
     FinalResultEvent,
+    ModelResponseEndEvent,
     ModelResponseOrigin,
+    ModelResponseStartEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -40,13 +42,17 @@ async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
 
 
 async def _stream_events(agent: Agent[None, str]) -> tuple[list[AgentStreamEvent], str]:
-    """The run's model-stream events, and its `run_id`."""
+    """The run's part and final result events, and its `run_id`.
+
+    The response boundary events are tested in `tests/test_model_response_boundaries.py`.
+    """
     events: list[AgentStreamEvent] = []
     async with agent.run_stream_events('x') as stream:
         async for event in stream:
             if isinstance(event, AgentRunResultEvent):
                 return events, event.result.run_id
-            events.append(event)
+            if not isinstance(event, ModelResponseStartEvent | ModelResponseEndEvent):
+                events.append(event)
     raise AssertionError('the run ended without a result')  # pragma: no cover
 
 

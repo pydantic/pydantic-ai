@@ -13,6 +13,8 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Ins
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -100,6 +102,9 @@ class _Hold:
     Text and thinking parts are screened at their end event. Tool-call parts are screened when the
     stream ends, as a provider can still stream arguments to a call after another part started.
     A delta for a part already released is dropped, as the guard never saw it.
+
+    The response a `ModelResponseEndEvent` carries is released as screened too: each screened part as the guard
+    left it, and without a part the guard never saw complete.
     """
 
     screen: _Screen
@@ -107,15 +112,19 @@ class _Hold:
     streaming: set[int] = field(default_factory=set[int])
     calls: dict[int, ToolCallPart] = field(default_factory=dict[int, ToolCallPart])
     released: set[int] = field(default_factory=set[int])
+    screened: dict[int, StreamGuardrailPart] = field(default_factory=dict[int, StreamGuardrailPart])
+    """The current response's screened parts by index, as the guard left them."""
 
     async def feed(self, event: AgentStreamEvent) -> list[AgentStreamEvent]:
         """Take `event` and return the events that can be released now."""
-        if isinstance(event, PartStartEvent):
+        if isinstance(event, ModelResponseStartEvent):
+            self.screened.clear()
+        elif isinstance(event, PartStartEvent):
             self._start(event)
         elif isinstance(event, PartDeltaEvent) and not self._delta(event):
             return []
         if not (self.streaming or self.calls):
-            return [event]
+            return [self._as_screened(event)]
         self.held.append(event)
         if isinstance(event, PartEndEvent) and event.index in self.streaming and _is_part(event.part):
             self.streaming.discard(event.index)
@@ -159,12 +168,26 @@ class _Hold:
     async def _screen(self, index: int, part: StreamGuardrailPart) -> None:
         self.held = await self.screen(index, part, self.held)
         self.released.add(index)
+        end = next(event for event in reversed(self.held) if isinstance(event, PartEndEvent) and event.index == index)
+        assert _is_part(end.part)
+        self.screened[index] = end.part
 
     def _release(self) -> list[AgentStreamEvent]:
         if self.streaming or self.calls:
             return []
         released, self.held = self.held, []
-        return released
+        return [self._as_screened(event) for event in released]
+
+    def _as_screened(self, event: AgentStreamEvent) -> AgentStreamEvent:
+        """`event`, with the response a `ModelResponseEndEvent` carries made of the parts as screened."""
+        if not isinstance(event, ModelResponseEndEvent) or event.response is None:
+            return event
+        parts = [
+            self.screened[index] if _is_part(part) else part
+            for index, part in enumerate(event.response.parts)
+            if not _is_part(part) or index in self.screened
+        ]
+        return replace(event, response=replace(event.response, parts=parts))
 
 
 @dataclass

@@ -11,7 +11,9 @@ from enum import Enum
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
+from pydantic_ai import ModelResponseEndEvent, ModelResponseStartEvent
 
 if TYPE_CHECKING:
     from cassetter import Cassette
@@ -6120,6 +6122,7 @@ async def test_anthropic_model_thinking_part_redacted_stream(allow_model_request
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='claude-sonnet-4-5-20250929', provider_name='anthropic'),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -6196,6 +6199,7 @@ I'm Claude, an AI assistant created by Anthropic to be helpful, harmless, and ho
 """
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -6408,6 +6412,7 @@ I should add other practical tips too: staying visible with bright clothing at n
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='claude-sonnet-5-5', provider_name='anthropic'),
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
@@ -6609,6 +6614,7 @@ If you have a specific situation in mind, like a busy road with no crosswalk, te
 """
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -8422,6 +8428,7 @@ The page doesn't state the time it was retrieved, so the "now" reading may be a 
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='claude-sonnet-5-5', provider_name='anthropic'),
             PartStartEvent(
                 index=0,
                 part=NativeToolCallPart(
@@ -8934,6 +8941,7 @@ The page doesn't state the time it was retrieved, so the "now" reading may be a 
 """
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -11033,6 +11041,7 @@ async def test_anthropic_code_execution_tool_stream(
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='claude-sonnet-5-5', provider_name='anthropic'),
             PartStartEvent(
                 index=0,
                 part=NativeToolCallPart(
@@ -11145,6 +11154,7 @@ async def test_anthropic_code_execution_tool_stream(
 """
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -12180,6 +12190,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(
     )
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='claude-sonnet-5-5', provider_name='anthropic'),
             PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='')),
             PartDeltaEvent(
@@ -12348,6 +12359,7 @@ async def test_anthropic_text_editor_code_execution_tool_stream(
                     content='`/tmp/hello.txt` now exists. When I viewed it, it contained one line: `Hello, world!`'
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -12801,6 +12813,7 @@ async def test_anthropic_web_search_tool_stream(
     )
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='claude-sonnet-5-5', provider_name='anthropic'),
             PartStartEvent(
                 index=0,
                 part=NativeToolCallPart(
@@ -13923,6 +13936,7 @@ I can\
                 index=19,
                 part=TextPart(content=IsStr()),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 

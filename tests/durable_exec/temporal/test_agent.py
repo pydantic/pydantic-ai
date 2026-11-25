@@ -16,11 +16,12 @@ from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import anyio
 import httpx
 import pytest
+from dirty_equals import IsDatetime, IsStr
 from opentelemetry.trace import NoOpTracer
 from pydantic import TypeAdapter
 
@@ -37,6 +38,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelSettings,
     OutputToolCallEvent,
     OutputToolResultEvent,
@@ -1499,6 +1502,7 @@ async def test_complex_agent_run(allow_model_requests: None, complex_agent_mcp: 
     )
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gpt-4o-2024-08-06', provider_name='openai'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_country', args='', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
@@ -1523,6 +1527,44 @@ async def test_complex_agent_run(allow_model_requests: None, complex_agent_mcp: 
                 index=1,
                 part=ToolCallPart(
                     tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
+                ),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
+                        ToolCallPart(
+                            tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                        input_tokens=364,
+                        output_tokens=40,
+                        cost=Decimal('0.00131'),
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
+                    provider_details={
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                        'finish_reason': 'tool_calls',
+                    },
+                    provider_response_id='chatcmpl-C2QD1kGWsTW5OWiqAtOSFEAOfPfQH',
+                    finish_reason='tool_call',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ),
             FunctionToolCallEvent(
@@ -1551,6 +1593,7 @@ async def test_complex_agent_run(allow_model_requests: None, complex_agent_mcp: 
                     timestamp=IsDatetime(),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='gpt-4o-2024-08-06', provider_name='openai'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_weather', args='', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'),
@@ -1579,6 +1622,45 @@ async def test_complex_agent_run(allow_model_requests: None, complex_agent_mcp: 
                     tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
                 ),
             ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_weather',
+                            args='{"city":"Mexico City"}',
+                            tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
+                        )
+                    ],
+                    usage=RequestUsage(
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                        input_tokens=423,
+                        output_tokens=15,
+                        cost=Decimal('0.0012075'),
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
+                    provider_details={
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                        'finish_reason': 'tool_calls',
+                    },
+                    provider_response_id='chatcmpl-C2QD2NQfRbWW5ww5we2oDjS1mgHtK',
+                    finish_reason='tool_call',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
@@ -1593,6 +1675,7 @@ async def test_complex_agent_run(allow_model_requests: None, complex_agent_mcp: 
                     timestamp=IsDatetime(),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='gpt-4o-2024-08-06', provider_name='openai'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='final_result', args='', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
@@ -1763,6 +1846,45 @@ async def test_complex_agent_run(allow_model_requests: None, complex_agent_mcp: 
                     tool_name='final_result',
                     args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
                     tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                ),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"answers":[{"label":"Capital","answer":"The capital of Mexico is Mexico City."},{"label":"Weather","answer":"The weather in Mexico City is currently sunny."},{"label":"Product Name","answer":"The product name is Pydantic AI."}]}',
+                            tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn',
+                        )
+                    ],
+                    usage=RequestUsage(
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                        input_tokens=448,
+                        output_tokens=62,
+                        cost=Decimal('0.00174'),
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
+                    provider_details={
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                        'finish_reason': 'tool_calls',
+                    },
+                    provider_response_id='chatcmpl-C2QD4vblfNcSDeoXmULJR4umoKNqY',
+                    finish_reason='tool_call',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ),
             OutputToolCallEvent(
@@ -1952,6 +2074,7 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
         events = [event async for event in event_stream]
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gpt-4o-2024-08-06', provider_name='openai'),
             PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' capital')),
@@ -1962,6 +2085,35 @@ async def test_temporal_agent_run_stream_events(allow_model_requests: None):
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' City')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='.')),
             PartEndEvent(index=0, part=TextPart(content='The capital of Mexico is Mexico City.')),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                    usage=RequestUsage(
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                        input_tokens=14,
+                        output_tokens=8,
+                        cost=Decimal('0.000115'),
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    model_id='openai:gpt-4o',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_url='https://api.openai.com/v1/',
+                    canonical_system='openai',
+                    provider_details={'timestamp': IsDatetime(), 'service_tier': 'default', 'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-CMidXKdPxbospUp4AUR74aqBOfcdf',
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='The capital of Mexico is Mexico City.')),
         ]
     )

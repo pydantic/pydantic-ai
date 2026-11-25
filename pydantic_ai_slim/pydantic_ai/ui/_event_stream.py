@@ -28,6 +28,8 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -177,6 +179,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         default_factory=list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta]
     )
     """Deltas used to bring `_open_part` up to date only if a synthetic end event is needed."""
+    _response_tool_calls: dict[str, str] = field(default_factory=dict[str, str], init=False)
+    """The tool calls the current model response streamed, by `tool_call_id`, with their tool names.
+
+    Answered by `_end_response` when a `ModelResponseEndEvent` says the response failed or was interrupted, as
+    the run never executes them.
+    """
     _canonical_systems: dict[str, str | None] = field(default_factory=dict[str, str | None], init=False)
     """The `canonical_system` that applies to each provider's parts, from the last part event from that provider.
 
@@ -342,6 +350,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     ) -> AsyncGenerator[EventT, None]:
         """Fire the turn hooks `event` implies, and record what the error path needs, before `handle_event` sees it."""
         match event:
+            case ModelResponseStartEvent():
+                async for e in self._start_response():
+                    yield e
+            case ModelResponseEndEvent():
+                async for e in self._end_response(event):
+                    yield e
             case PartStartEvent():
                 # A republished start (e.g. a retried durable activity) can arrive while the previous part is still open.
                 async for e in self._end_open_part():
@@ -360,15 +374,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 async for e in self._turn_to('request'):
                     yield e
             case AgentRunResultEvent():
-                result = cast(AgentRunResult[OutputDataT], event.result)
-                self._result = result
-
-                async for e in self._turn_to(None):
+                async for e in self._finish_run(event, on_complete):
                     yield e
-
-                if on_complete is not None:
-                    async for e in self._dispatch_on_complete(on_complete, result):
-                        yield e
             case FinalResultEvent():
                 self._final_result_event = event
             case ToolResultEvent():
@@ -376,6 +383,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 self._pending_tool_calls.pop(tool_call_id, None)
             case _:
                 pass
+
+    async def _finish_run(
+        self, event: AgentRunResultEvent[Any], on_complete: OnCompleteFunc[EventT] | None
+    ) -> AsyncGenerator[EventT, None]:
+        result = cast(AgentRunResult[OutputDataT], event.result)
+        self._result = result
+
+        async for e in self._turn_to(None):
+            yield e
+
+        if on_complete is not None:
+            async for e in self._dispatch_on_complete(on_complete, result):
+                yield e
 
     def _record_tool_call(self, event: ToolCallEvent) -> None:
         tool_call_id = event.part.tool_call_id
@@ -393,6 +413,52 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             self._open_part = event.part
             self._open_part_index = event.index
             self._open_part_deltas.clear()
+        if isinstance(event.part, ToolCallPart):
+            self._response_tool_calls[event.part.tool_call_id] = event.part.tool_name
+
+    async def _start_response(self) -> AsyncGenerator[EventT, None]:
+        """Open a response turn for the model response a `ModelResponseStartEvent` starts.
+
+        Unlike `_turn_to`, this opens a new turn even when a response turn is already open, as each model
+        response is a turn of its own, like a response that replaces another one at the same request step.
+        """
+        async for e in self._end_open_part():
+            yield e
+        self._response_tool_calls.clear()
+        if self._turn == 'response':
+            async for e in self.after_response():
+                yield e
+            self._turn = None
+        async for e in self._turn_to('response'):
+            yield e
+
+    async def _end_response(self, event: ModelResponseEndEvent) -> AsyncGenerator[EventT, None]:
+        """Close what a model response that didn't complete left open, when its `ModelResponseEndEvent` arrives.
+
+        The open part is ended. A failed or interrupted response's tool calls are answered too, as the run won't
+        execute them: an `'interrupted'` result for an interrupted response, and a `'failed'` one for a failed
+        response, like the results the error path closes dispatched tool calls with. A superseded response's tool
+        calls are left alone: its successor streams the same attempt again.
+        """
+        if event.status == 'complete':
+            return
+        async for e in self._end_open_part():
+            yield e
+        if event.status == 'superseded':
+            return
+        tool_calls, self._response_tool_calls = self._response_tool_calls, {}
+        for tool_call_id, tool_name in tool_calls.items():
+            kind: Literal['function', 'output'] = 'function'
+            if self._final_result_event is not None and self._final_result_event.tool_call_id == tool_call_id:
+                kind = 'output'
+                self._final_result_event = None
+            self._pending_tool_calls.pop(tool_call_id, None)
+            async for e in self._turn_to('request'):
+                yield e
+            async for e in self._interrupted_tool_result(
+                tool_call_id, kind, tool_name, cancelled=event.status == 'interrupted'
+            ):
+                yield e
 
     async def _end_open_part(self) -> AsyncGenerator[EventT, None]:
         """End the message part tracked as open, if any, with a synthetic `PartEndEvent`.
@@ -602,6 +668,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 return self.handle_capability_event(event)
             case AgentRunResultEvent():
                 return self.handle_run_result(event)
+            case ModelResponseStartEvent() | ModelResponseEndEvent():
+                # The turn hooks and the closing of a response that didn't complete cover them: see `_before_handle_event`.
+                pass
             case (
                 RealtimeTurnCompleteEvent()
                 | RealtimeInputSpeechStartEvent()

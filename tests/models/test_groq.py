@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import httpx
 import pytest
@@ -27,6 +27,8 @@ from pydantic_ai import (
     ModelOverloadedError,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelRetry,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -1519,6 +1521,7 @@ search(What is the weather in San Francisco today?)
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='groq/compound', provider_name='groq'),
             PartStartEvent(index=0, part=ThinkingPart(content='<th')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ink')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='>\n')),
@@ -2134,6 +2137,7 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                     content='The weather in San Francisco today is partly cloudy with a temperature of 61°F (17°C) and high humidity. The current conditions include a wind speed of around 7-22 km/h and a humidity level of 90-94%.'
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -2366,6 +2370,7 @@ Enjoy your homemade Uruguayan alfajores!\
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='deepseek-r1-distill-llama-70b', provider_name='groq'),
             PartStartEvent(index=0, part=ThinkingPart(content='')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='\n')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Okay')),
@@ -3587,6 +3592,7 @@ Enjoy your homemade Uruguayan alfajores!\
 """
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -3736,6 +3742,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='deepseek-r1-distill-llama-70b', provider_name='groq'),
             PartStartEvent(index=0, part=ThinkingPart(content='Alright')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' so')),
@@ -5543,6 +5550,7 @@ By following these steps, you can create authentic Argentinian alfajores that sh
 """
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 

@@ -7202,6 +7202,8 @@ async def test_stream_failed_builtin_tool_return_outcome_roundtrip(
                 outcome='failed',
             )
         }
+        # Text output ends the run with this one response, rather than an output retry streaming a second one.
+        yield 'Done'
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
     events = await run_and_collect_events(
@@ -12515,3 +12517,108 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+@dataclass
+class _ReplaceStreamedResponse(AbstractCapability[Any]):
+    """Stops the model's stream once its first chunk arrived, and answers with a response of its own instead."""
+
+    first_chunk_sent: asyncio.Event
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+    ) -> ModelResponse:
+        handler_task = asyncio.create_task(handler(request_context))
+        await self.first_chunk_sent.wait()
+        handler_task.cancel()
+        await asyncio.gather(handler_task, return_exceptions=True)
+        return ModelResponse(parts=[TextPart(content='Replaced')])
+
+
+async def test_replaced_response_answers_its_tool_calls_and_gets_a_new_message():
+    """A response a hook stops mid-stream ends as interrupted: its tool call is ended and answered.
+
+    Without the result, a client like CopilotKit would run the frontend tool call once the run ends, although the
+    run never executes it. The replacement streams under a new message ID.
+    https://github.com/pydantic/pydantic-ai/issues/13260
+    """
+    first_chunk_sent = asyncio.Event()
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='show_map', json_args='{"city": "Paris"}', tool_call_id='call-1')}
+        first_chunk_sent.set()
+        await asyncio.Event().wait()
+        yield 'never'  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_function), capabilities=[_ReplaceStreamedResponse(first_chunk_sent)]
+    )
+    events = await run_and_collect_events(agent, create_input(UserMessage(id='msg-1', content='Show me Paris')))
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': IsStr(),
+                'runId': IsStr(),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (tool_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_END',
+                'timestamp': IsInt(),
+                'messageId': tool_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call-1',
+                'toolCallName': 'show_map',
+                'parentMessageId': tool_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'call-1',
+                'delta': '{"city": "Paris"}',
+            },
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call-1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': 'call-1',
+                'content': 'The tool call was interrupted before a result was produced.',
+                'role': 'tool',
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (text_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': text_message_id,
+                'delta': 'Replaced',
+            },
+            {
+                'type': 'TEXT_MESSAGE_END',
+                'timestamp': IsInt(),
+                'messageId': text_message_id,
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': IsStr(),
+                'runId': IsStr(),
+            },
+        ]
+    )
+    # The replacement is a response of its own, under a message ID other than the replaced response's.
+    assert events[7]['messageId'] != events[1]['messageId']

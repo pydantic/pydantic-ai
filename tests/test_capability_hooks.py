@@ -15,12 +15,23 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from types import NoneType
 from typing import Any, Literal, cast
+from unittest.mock import ANY
 
 import anyio
 import pytest
+from dirty_equals import IsDatetime
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import ModelResponseOrigin, RetryFeedbackPart, UsageLimitUnavailableWarning
+from pydantic_ai import (
+    ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseOrigin,
+    ModelResponseStartEvent,
+    RequestUsage,
+    RetryFeedbackPart,
+    TextPart,
+    UsageLimitUnavailableWarning,
+)
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, capture_run_messages
 from pydantic_ai.capabilities import (
@@ -48,11 +59,9 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     ModelMessage,
     ModelRequest,
-    ModelResponse,
     PartEndEvent,
     PartStartEvent,
     RetryInfo,
-    TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -72,7 +81,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
-from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_graph import End
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
@@ -87,7 +96,7 @@ from .capability_models import (
     tool_calling_model,
     tool_calling_stream_function,
 )
-from .conftest import IsDatetime, IsStr
+from .conftest import IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
@@ -1891,11 +1900,38 @@ class TestSkipModelRequestInteraction:
 
         assert events[:-1] == snapshot(
             [
+                ModelResponseStartEvent(origin=ANY, model_name='function::stream_function', provider_name=None),
                 PartStartEvent(index=0, part=TextPart(content='model ')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
+                ModelResponseEndEvent(
+                    origin=ANY,
+                    status='interrupted',
+                    response=ModelResponse(
+                        parts=[TextPart(content='model ')],
+                        usage=RequestUsage(input_tokens=50, output_tokens=1),
+                        model_name='function::stream_function',
+                        model_id='function:function::stream_function',
+                        timestamp=IsDatetime(),
+                        run_id=IsStr(),
+                        conversation_id=IsStr(),
+                        state='interrupted',
+                    ),
+                ),
+                ModelResponseStartEvent(origin=ANY, model_name=None, provider_name=None, replaces=IsStr()),
                 PartStartEvent(index=0, part=TextPart(content='replaced')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartEndEvent(index=0, part=TextPart(content='replaced')),
+                ModelResponseEndEvent(
+                    origin=ANY,
+                    status='complete',
+                    response=ModelResponse(
+                        parts=[TextPart(content='replaced')],
+                        model_id='function:function::stream_function',
+                        timestamp=IsDatetime(),
+                        run_id=IsStr(),
+                        conversation_id=IsStr(),
+                    ),
+                ),
             ]
         )
         assert isinstance(events[-1], AgentRunResultEvent)

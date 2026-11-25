@@ -160,6 +160,16 @@ event_stream = AGUIEventStream(thread_id='conversation-123', run_id='workflow-45
 
 Each defaults to a new UUID, minted every time the stream is constructed: a conversation that spans more than one run — a run resumed after a [tool approval](./ag-ui.md#tool-approval-interrupts) above all — has to pass its own `thread_id` for the frontend to correlate the runs. Constructing the stream inside replay-able [durable execution](../durable_execution/overview.md) workflow code makes that a determinism hazard too, as the defaults are re-minted on every replay, so pass an explicit `thread_id` and `run_id` there. Passing the [`conversation_id` and `run_id`](../message-history.md#correlating-runs-with-run_id-and-conversation_id) of the agent run itself lines the protocol's identity up with the run's traces. On the request path, [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] lines up the thread ID only: it maps the run input's thread ID onto the agent's `conversation_id`, while the protocol's run ID stays the one the client sent and is never wired to the agent run's `run_id`, so the two differ.
 
+### Model responses
+
+The event stream opens a turn for each model response when its [`ModelResponseStartEvent`](../agent.md#response-boundaries) arrives, so a response that replaces another one at the same request step, or one that follows an output retry, gets a turn of its own: a new step in Vercel AI, and a new assistant message ID in AG-UI. A stream without these events, like one you build by hand, still gets its turns from the parts and tool calls it carries.
+
+When a response's [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] says it didn't complete, the event stream closes what it left open, so the frontend doesn't keep it streaming:
+
+- the part being streamed is ended;
+- for a `'failed'` or `'interrupted'` response, each tool call it streamed gets a result saying the call was not run (`outcome='failed'` or `'interrupted'`), as the agent never executes the calls of a response that didn't complete. An AG-UI client, for instance, would otherwise run a frontend tool call that has no result once the run ends;
+- a `'superseded'` response's tool calls are left alone, as the next execution streams the same response again.
+
 ## Trust model for client-submitted messages
 
 UI adapter endpoints aren't authentication boundaries. Both the AG-UI and Vercel AI protocols are designed around the client transmitting the full conversation history on each request, so anything in `message_history` from the protocol — assistant messages, tool calls, file URLs, tool results — is under the caller's control. An AG-UI client also declares its own frontend tools, and their names, descriptions and argument schemas reach the model as the client sent them; see the [AG-UI trust model](./ag-ui.md#trust-model) for how to limit them. Treat the adapter endpoint as an internal backend service, running it inside your own authenticated route handler. See the [AG-UI security considerations](https://learn.microsoft.com/en-us/agent-framework/integrations/ag-ui/security-considerations) page for more on the deployment model both protocols assume.

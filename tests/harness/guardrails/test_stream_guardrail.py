@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponseEndEvent,
     NativeToolCallPart,
     PartDeltaEvent,
     PartEndEvent,
@@ -131,6 +132,7 @@ class TestStreamGuardrail:
 
         assert log == snapshot(
             [
+                'ModelResponseStartEvent',
                 'guard thinking',
                 "PartStartEvent 0 thinking 'look '",
                 'PartDeltaEvent 0',
@@ -143,12 +145,15 @@ class TestStreamGuardrail:
                 'guard tool-call',
                 'PartStartEvent 2 tool-call \'{"city": "Paris"}\'',
                 'PartEndEvent 2 tool-call \'{"city": "Paris"}\'',
+                'ModelResponseEndEvent',
                 'FunctionToolCallEvent',
                 'FunctionToolResultEvent',
+                'ModelResponseStartEvent',
                 'guard text',
                 "PartStartEvent 0 text 'Sunny'",
                 'FinalResultEvent',
                 "PartEndEvent 0 text 'Sunny'",
+                'ModelResponseEndEvent',
                 'AgentRunResultEvent',
             ]
         )
@@ -159,6 +164,7 @@ class TestStreamGuardrail:
 
         assert described == snapshot(
             [
+                'ModelResponseStartEvent',
                 "PartStartEvent 0 thinking 'look '",
                 'PartDeltaEvent 0',
                 "PartEndEvent 0 thinking 'look it up'",
@@ -167,12 +173,31 @@ class TestStreamGuardrail:
                 "PartEndEvent 1 text '[redacted]'",
                 'PartStartEvent 2 tool-call \'{"city": "Paris"}\'',
                 'PartEndEvent 2 tool-call \'{"city": "Paris"}\'',
+                'ModelResponseEndEvent',
                 'FunctionToolCallEvent',
                 'FunctionToolResultEvent',
+                'ModelResponseStartEvent',
                 "PartStartEvent 0 text 'Sunny'",
                 'FinalResultEvent',
                 "PartEndEvent 0 text 'Sunny'",
+                'ModelResponseEndEvent',
                 'AgentRunResultEvent',
+            ]
+        )
+
+    async def test_a_response_end_carries_the_parts_as_screened(self):
+        """The response a `ModelResponseEndEvent` carries doesn't leak what the guard replaced."""
+        async with _agent(StreamGuardrail(guard=_redact_ssn)).run_stream_events('weather?') as events:
+            ends = [event async for event in events if isinstance(event, ModelResponseEndEvent)]
+
+        assert [event.response.parts if event.response else None for event in ends] == snapshot(
+            [
+                [
+                    ThinkingPart(content='look it up'),
+                    TextPart(content='[redacted]'),
+                    ToolCallPart(tool_name='weather', args='{"city": "Paris"}', tool_call_id='call-1'),
+                ],
+                [TextPart(content='Sunny')],
             ]
         )
 
@@ -234,7 +259,12 @@ class TestStreamGuardrail:
                     seen.append(event)
 
         assert [_describe(event) for event in seen] == snapshot(
-            ["PartStartEvent 0 thinking 'look '", 'PartDeltaEvent 0', "PartEndEvent 0 thinking 'look it up'"]
+            [
+                'ModelResponseStartEvent',
+                "PartStartEvent 0 thinking 'look '",
+                'PartDeltaEvent 0',
+                "PartEndEvent 0 thinking 'look it up'",
+            ]
         )
 
     async def test_block_under_run_uses_the_default_message(self):
@@ -334,9 +364,10 @@ class TestStreamGuardrail:
         with pytest.raises(OutputBlocked, match='no SSNs'):
             async with agent.run_stream_events('weather?') as events:
                 async for event in events:
-                    seen.append(event)  # pragma: no cover
+                    seen.append(event)
 
-        assert seen == []
+        # Only the response's start, which carries no content, reached the caller.
+        assert [type(event).__name__ for event in seen] == ['ModelResponseStartEvent']
         assert screened == ['{"city": "SSN 123"}']
 
     async def test_a_closed_part_streamed_again_is_screened_again(self):

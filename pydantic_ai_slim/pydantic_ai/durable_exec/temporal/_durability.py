@@ -680,9 +680,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # free (no activity, no signal) and replay-safe, as replay rebuilds the log identically.
         try:
             async for event in events:
-                if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and (
-                    topic.events is None or topic.events(event)
-                ):
+                if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and topic._publishes(event):  # pyright: ignore[reportPrivateUsage]
                     publish_agent_event(topic.name, event)
                 yield event
         finally:

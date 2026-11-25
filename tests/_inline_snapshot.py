@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from inline_snapshot.plugin import (
         Builder as Builder,
         Custom as Custom,
+        ImportFrom as ImportFrom,
         customize as customize,
     )
 elif (
@@ -45,6 +46,7 @@ elif (
     from inline_snapshot.plugin import (
         Builder as Builder,
         Custom as Custom,
+        ImportFrom as ImportFrom,
         customize as customize,
     )
 else:
@@ -90,6 +92,9 @@ else:
         return func
 
     class Builder: ...
+
+    class ImportFrom:
+        def __init__(self, module: str, name: str) -> None: ...
 
     class Custom: ...
 

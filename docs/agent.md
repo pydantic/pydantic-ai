@@ -110,12 +110,27 @@ async def main():
     print(collected)
     """
     [
+        ModelResponseStartEvent(model_name='{{ openai:medium.name }}', provider_name=None),
         PartStartEvent(index=0, part=TextPart(content='The capital of ')),
         FinalResultEvent(tool_name=None, tool_call_id=None),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='Mexico is Mexico ')),
         PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='City.')),
         PartEndEvent(
             index=0, part=TextPart(content='The capital of Mexico is Mexico City.')
+        ),
+        ModelResponseEndEvent(
+            status='complete',
+            response=ModelResponse(
+                parts=[TextPart(content='The capital of Mexico is Mexico City.')],
+                usage=RequestUsage(
+                    cost=Decimal('0.00018'), input_tokens=50, output_tokens=8
+                ),
+                model_name='{{ openai:medium.name }}',
+                model_id='{{ openai:medium }}',
+                timestamp=datetime.datetime(...),
+                run_id='...',
+                conversation_id='...',
+            ),
         ),
         AgentRunResultEvent(
             result=AgentRunResult(output='The capital of Mexico is Mexico City.')
@@ -318,6 +333,31 @@ def is_current(origin: ModelResponseOrigin) -> bool:
 ```
 
 Check every event, not only the first of each origin: a superseded execution's events can still arrive after its successor's. `origin` is left out of event equality and `repr()`, so read it from the event.
+
+#### Response start and end {#response-boundaries}
+
+Each streamed model response is opened by a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent], which says which model and provider produce it, and closed by a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] with the same `origin`, which carries the response as streamed. A consumer can render or store each response when its end arrives, without assembling it from part events, and tell a response that completed from one that didn't by the end's [`status`][pydantic_ai.messages.ModelResponseEndEvent.status]:
+
+- `'complete'`: the model finished the response. The agent can still reject it afterwards, as when an output validator raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
+- `'failed'`: the model stream raised the end's `error` partway through. The run fails with that error, unless a capability recovers from it.
+- `'interrupted'`: the stream was stopped before the model finished. [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel] stopped it, or a `wrap_model_request` hook stopped it to stream a response of its own.
+- `'superseded'`: under durable execution, the engine ran the same attempt again, and the new execution closes the previous one's response before streaming it again. The end has no `response`.
+
+A response that replaces an earlier attempt at the same request step, like the one a fallback moved on to or a hook streamed instead, has that attempt's `response_id` as its start's [`replaces`][pydantic_ai.messages.ModelResponseStartEvent.replaces].
+
+Every start is closed by one end, unless the run itself stops partway through a response: a [cancelled run](#cancelling-a-run), or an exception raised outside the model stream, like an exceeded [usage limit](#usage-limits), ends the run instead. An earlier durable execution that ends after its successor closed it as `'superseded'` sends a second end for the same origin, so apply the first end of each origin:
+
+```python {title="response_boundaries.py"}
+from pydantic_ai import ModelResponseEndEvent, ModelResponseOrigin
+
+ended: dict[ModelResponseOrigin, ModelResponseEndEvent] = {}
+
+
+def on_end(event: ModelResponseEndEvent) -> None:
+    ended.setdefault(event.origin, event)  # a later end of the same origin closes a response already closed
+```
+
+Only an agent run's model stream emits these events, and only for a response that streams at least one part event: [`Model.request_stream()`][pydantic_ai.models.Model.request_stream] used directly doesn't. Under Temporal, a [Workflow Streams topic](durable_execution/temporal.md#choosing-what-to-publish) publishes them only when you opt in.
 
 ### Custom Events
 

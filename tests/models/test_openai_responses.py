@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
+from unittest.mock import ANY
 
 import httpx2
 import pytest
@@ -37,6 +38,8 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -3877,6 +3880,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gpt-5-2025-08-07', provider_name='openai'),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -4154,6 +4158,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 ),
                 canonical_system='openai',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -6620,8 +6625,10 @@ class _ToolCallStarted(Exception):
 
 
 async def _stop_at_tool_call(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
-    """Stop at the response's first event, which starts its function call."""
-    event = await anext(aiter(events))
+    """Stop at the response's first part event, which starts its function call."""
+    iterator = aiter(events)
+    assert isinstance(await anext(iterator), ModelResponseStartEvent)
+    event = await anext(iterator)
     assert isinstance(event, PartStartEvent) and isinstance(event.part, ToolCallPart)
     raise _ToolCallStarted
 
@@ -8348,6 +8355,7 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gpt-5-2025-08-07', provider_name='openai'),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -9648,6 +9656,7 @@ I\
                 ),
                 canonical_system='openai',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -10210,6 +10219,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
     )
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gpt-5-2025-08-07', provider_name='openai'),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -11612,6 +11622,7 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
                 ),
                 canonical_system='openai',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -11857,6 +11868,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
     )
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gpt-5-2025-08-07', provider_name='openai'),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -11933,6 +11945,7 @@ async def test_openai_responses_image_generation_stream(allow_model_requests: No
                 previous_part_kind='file',
                 canonical_system='openai',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -15489,6 +15502,7 @@ async def test_openai_responses_model_file_search_tool_stream(
 
         assert event_parts == snapshot(
             [
+                ModelResponseStartEvent(origin=ANY, model_name='gpt-4o-2024-08-06', provider_name='openai'),
                 PartStartEvent(
                     index=0,
                     part=NativeToolCallPart(
@@ -15562,6 +15576,7 @@ async def test_openai_responses_model_file_search_tool_stream(
                     ),
                     canonical_system='openai',
                 ),
+                ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
             ]
         )
 
@@ -18676,6 +18691,7 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
     # part, and the completed part carries it too.
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gpt-5.5', provider_name='openai'),
             PartStartEvent(
                 index=0,
                 part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
@@ -18687,6 +18703,7 @@ async def test_openai_responses_phase_streamed_without_deltas(allow_model_reques
                 part=TextPart(content='', provider_name='openai', provider_details={'phase': 'final_answer'}),
                 canonical_system='openai',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 

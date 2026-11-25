@@ -5,6 +5,7 @@ from __future__ import annotations as _annotations
 from datetime import UTC
 from decimal import Decimal
 from typing import TYPE_CHECKING
+from unittest.mock import ANY
 
 import pytest
 from inline_snapshot import snapshot
@@ -15,6 +16,8 @@ from pydantic_ai import (
     FinalResultEvent,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -146,6 +149,7 @@ print(result)\
     )
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-3-flash-preview', provider_name='google'),
             PartStartEvent(
                 index=0,
                 part=NativeToolCallPart(
@@ -220,6 +224,7 @@ print(result)\
                 ),
                 canonical_system='google',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 

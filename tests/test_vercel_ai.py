@@ -15246,3 +15246,75 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+@dataclass
+class _ReplaceStreamedResponse(AbstractCapability[Any]):
+    """Stops the model's stream once its first chunk arrived, and answers with a response of its own instead."""
+
+    first_chunk_sent: asyncio.Event
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+    ) -> ModelResponse:
+        handler_task = asyncio.create_task(handler(request_context))
+        await self.first_chunk_sent.wait()
+        handler_task.cancel()
+        await asyncio.gather(handler_task, return_exceptions=True)
+        return ModelResponse(parts=[TextPart(content='Replaced')])
+
+
+async def test_replaced_response_answers_its_tool_calls_and_streams_its_replacement_as_a_step():
+    """A response a hook stops mid-stream ends as interrupted: its tool call is answered, as the run never executes it.
+
+    The replacement then streams as a step of its own. https://github.com/pydantic/pydantic-ai/issues/13260
+    """
+    first_chunk_sent = asyncio.Event()
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='show_map', json_args='{"city": "Paris"}', tool_call_id='call-1')}
+        first_chunk_sent.set()
+        await asyncio.Event().wait()
+        yield 'never'  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_function), capabilities=[_ReplaceStreamedResponse(first_chunk_sent)]
+    )
+    event_stream = VercelAIEventStream()
+    async with agent.run_stream_events('Show me Paris') as events:
+        chunks = [
+            json.loads(event.removeprefix('data: '))
+            async for event in event_stream.encode_stream(event_stream.transform_stream(events))
+            if '[DONE]' not in event
+        ]
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'call-1', 'toolName': 'show_map'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call-1', 'inputTextDelta': '{"city": "Paris"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call-1',
+                'toolName': 'show_map',
+                'input': {'city': 'Paris'},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'call-1',
+                'output': 'The tool call was interrupted before a result was produced.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (text_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Replaced', 'id': text_id},
+            {'type': 'text-end', 'id': text_id},
+            {
+                'type': 'message-metadata',
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )

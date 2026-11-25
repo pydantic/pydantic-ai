@@ -20,7 +20,7 @@ from temporalio.service import RPCError
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.messages import AgentStreamEvent, ModelResponseEndEvent, ModelResponseStartEvent
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -85,11 +85,26 @@ class WorkflowStreamTopic:
     batch_interval: timedelta = _DEFAULT_BATCH_INTERVAL
     """How often a model-request activity flushes buffered events to the workflow."""
 
+    response_boundaries: bool = field(default=False, kw_only=True)
+    """Whether to publish the [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent] and
+    [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] that open and close each model response.
+
+    Off by default, because a subscriber running an older version of Pydantic AI than the workers fails to decode
+    an event kind it doesn't know. Turn it on once every subscriber runs a version that knows them. `events`
+    applies to them too.
+    """
+
     def __post_init__(self) -> None:
         if not self.name:
             raise UserError('A Workflow Stream topic needs a name.')
         if self.batch_interval <= timedelta(0):
             raise UserError('The Workflow Stream batch interval must be greater than zero.')
+
+    def _publishes(self, event: AgentStreamEvent) -> bool:
+        """Whether the topic publishes `event`, by `response_boundaries` and the `events` predicate."""
+        if not self.response_boundaries and isinstance(event, ModelResponseStartEvent | ModelResponseEndEvent):
+            return False
+        return self.events is None or self.events(event)
 
 
 def _coerce_workflow_stream_topic(topic: str | WorkflowStreamTopic) -> WorkflowStreamTopic:
@@ -294,7 +309,7 @@ def workflow_stream_event_handler(
 
         async def publishing(events: AsyncIterable[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
             async for event in events:
-                if topic.events is None or topic.events(event):
+                if topic._publishes(event):
                     topic_handle.publish(event)
                 yield event
 
