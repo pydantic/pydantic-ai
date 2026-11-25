@@ -140,7 +140,7 @@ class WebPlugin(Plugin[WebSettings]):
             if self.url is None:
                 return 'The web UI is not running.'
             if not self.host.console.is_terminal:
-                raise ValueError('The browser is the only way to drive this Pax. Press Ctrl-C where it runs to quit.')
+                raise ValueError('The browser is the only way to drive this Pax. Press Ctrl+C where it runs to quit.')
             await self.stop()
             return 'Web UI stopped.'
         if args == ['status']:
@@ -214,7 +214,7 @@ def _launch_page(url: str) -> Path:
 
     It is written through the descriptor `mkstemp` opened, never reopened by path, so it stays private.
     """
-    descriptor, name = tempfile.mkstemp(prefix='clai2-web-', suffix='.html')
+    descriptor, name = tempfile.mkstemp(prefix='pax-web-', suffix='.html')
     with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
         file.write(
             f'<!doctype html><meta http-equiv="refresh" content="0;url={html.escape(url)}">'

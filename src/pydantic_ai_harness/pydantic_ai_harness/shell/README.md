@@ -107,8 +107,9 @@ other failure the model can act on:
 - a working directory an earlier command deleted or replaced with a file
 - a command the operating system refuses to spawn because it holds a NUL byte or
   a character the operating system cannot encode
-- a command too long for the operating system to start (the model is asked to
-  write it to a file and run that instead)
+- a command too long for the operating system to start (on a local workspace the
+  model is asked to write it to a file and run that instead; a remote one passes
+  on the shell's own error)
 
 Failures the model can do nothing about abort the run:
 

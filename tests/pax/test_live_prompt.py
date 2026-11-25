@@ -1066,7 +1066,7 @@ async def test_windows_ctrl_enter_steers_and_shift_enter_inserts_a_newline(shift
         if windows:
             assert await live.read() == 'one\ntwo'
         else:
-            # Ctrl+Enter is Enter and Ctrl-J a newline, as before.
+            # Ctrl+Enter is Enter and Ctrl+J a newline, as before.
             assert await live.read() == 'steer'
             assert await live.read() == 'LF\none\ntwo'
     assert steered == (['steer', 'LF'] if windows else [])

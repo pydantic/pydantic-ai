@@ -33,7 +33,15 @@ from pydantic_ai.capabilities import (
     WindowsWorkspace,
     WrapperCapability,
 )
-from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
+from pydantic_ai.messages import (
+    Authority,
+    BinaryContent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputSpec
@@ -63,6 +71,7 @@ from pydantic_ai_pax.runtime.project_identity import ProjectIdentity, git_checko
 from pydantic_ai_pax.runtime.project_instructions import ProjectInstructions
 from pydantic_ai_pax.runtime.repl_state import ReplStates
 from pydantic_ai_pax.runtime.task_prompts import TASK_PROMPT, TaskPrompt
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 from pydantic_ai_pax.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -444,13 +453,17 @@ def _command_env() -> dict[str, str]:
 
 
 def local_workspace(
-    configured: Sequence[AgentCapability[DepsT]], directory: str | Path, messages: Sequence[ModelMessage] = ()
+    configured: Sequence[AgentCapability[DepsT]],
+    directory: str | Path,
+    messages: Sequence[ModelMessage] = (),
+    *,
+    authority: Authority = 'operator',
 ) -> AgentCapability[DepsT] | None:
     """The workspace at `directory` that Pax adds beside `configured`; `None` when it adds none.
 
-    That is a `LocalWorkspace`, or a `WindowsWorkspace` on Windows. None is added when a capability loaded
-    up front supplies the workspace of a run continuing `messages`, such as a sandbox. When only a capability
-    function might, the local one defers to it.
+    That is a `LocalWorkspace`, or a `WindowsWorkspace` on Windows, whose files have `authority`. None is
+    added when a capability loaded up front supplies the workspace of a run continuing `messages`, such as a
+    sandbox. When only a capability function might, the local one defers to it.
     """
     if _supplies_workspace(configured, include_dynamic=False, messages=messages):
         return None
@@ -461,9 +474,9 @@ def local_workspace(
     )
     if _supplies_workspace(configured):
         # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
-        fallback = fallback_type(directory, env=_command_env(), id=None)
+        fallback = fallback_type(directory, env=_command_env(), id=None, authority=authority)
         return DynamicCapability[DepsT](lambda ctx: fallback)
-    return local(directory, env=_command_env())
+    return local(directory, env=_command_env(), authority=authority)
 
 
 def interrupted_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -669,6 +682,13 @@ class Session(Generic[DepsT, OutputT]):
 
         A stock agent rebuilt for its plugins binds them too, so delegated tasks get them; otherwise each run
         gets them. Either way they are read on each request, so changing them does not rebuild the agent."""
+        self.trust: WorkspaceTrust | None = None
+        """Whether you trust `workspace`, which sets the `authority` of the `LocalWorkspace` Pax adds to each run.
+
+        `None` gives the folder's files `'operator'` authority, for a host that decides that itself.
+        """
+        self.resolve_trust: Callable[[Path], Awaitable[WorkspaceTrust]] | None = None
+        """Looks up the process-shared `WorkspaceTrust` when the session moves to another directory."""
         self.project_instructions: Callable[[], ProjectInstructions[DepsT] | None] = lambda: None
         """The project file's `instructions` you have not approved, added to each run as marked user-channel data."""
         self.resolve_model: ModelNameResolver = lambda name: name
@@ -1122,7 +1142,8 @@ class Session(Generic[DepsT, OutputT]):
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
         """Add Pax's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
         configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
-        if (local := local_workspace(configured, self.workspace, self._messages)) is None:
+        authority: Authority = 'operator' if self.trust is None else self.trust.authority
+        if (local := local_workspace(configured, self.workspace, self._messages, authority=authority)) is None:
             return False
         capabilities.append(local)
         return True

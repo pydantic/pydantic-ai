@@ -22,7 +22,8 @@ from pydantic_ai_pax.ui.rendering import theme
 
 @pytest.mark.parametrize('name', theme.names())
 @pytest.mark.parametrize('width', [46, 86])
-def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> None:
+def test_conversation_preview_uses_candidate_colours(name: str, width: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('COLORTERM', 'truecolor')
     console = Console()
     with theme.use(lambda: 'tokyo_night'):
         rendered = theme_preview(name, width=width)
@@ -48,6 +49,7 @@ def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> N
     assert header.bgcolor == (Color.parse(palette.bg) if palette is not None else None)
     with theme.use(lambda: name):
         keyword = theme.syntax_theme().get_style_for_token(Keyword).color
+        tint = theme.prompt_background()
     assert text.get_style_at_offset(console, text.plain.index('return')).color == (
         keyword if palette is not None else Color.parse('color(4)')
     )
@@ -57,6 +59,11 @@ def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> N
     assert text.get_style_at_offset(console, text.plain.index('Summarize')).color == (
         Color.parse(palette.fg) if palette is not None else None
     )
+    # The sample prompt has the palette's prompt tint, as the transcript does; `default` has none.
+    assert text.get_style_at_offset(console, text.plain.index('Summarize')).bgcolor == (
+        Color.parse(tint) if tint is not None else None
+    )
+    assert (tint is None) == (palette is None)
 
 
 @pytest.mark.parametrize('name', theme.names())
