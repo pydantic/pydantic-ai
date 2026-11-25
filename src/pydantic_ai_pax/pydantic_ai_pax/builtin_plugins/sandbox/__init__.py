@@ -70,7 +70,6 @@ from pydantic_ai_pax.plugins import (
     Plugin,
     PluginHost,
     SessionEnd,
-    SessionStart,
     TurnStart,
 )
 from pydantic_ai_pax.plugins.keys import choose_key
@@ -388,10 +387,6 @@ class SandboxPlugin(Plugin):
             return
         if self._minting is None or self._minting.done():
             self._minting = asyncio.create_task(self._mint_watch_link(), name='pax-watch-live')
-
-    async def on_session_start(self, event: SessionStart) -> None:
-        del event
-        self._mint_in_background()
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
         del event

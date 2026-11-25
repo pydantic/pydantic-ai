@@ -3275,7 +3275,7 @@ The setting is saved in the conversation, so `/resume`, `/fork` and compaction k
 
 While computer use is on, the status row shows `watch live ↗` next to the sandbox. Click it to open the
 desktop on the provider's own website. Pax runs no viewer of its own. In a resumed conversation the link
-appears once a turn or `/computer-use on` reaches the sandbox, since getting it would start a stopped one.
+appears once a turn reaches the sandbox, since getting it would start a stopped one.
 
 - **`boxd`**: the machine's Desktop view in boxd's console. It opens in a browser signed in to your
   boxd account.
