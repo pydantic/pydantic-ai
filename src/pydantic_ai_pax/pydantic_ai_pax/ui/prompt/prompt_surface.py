@@ -242,12 +242,13 @@ class PromptSurface(io.StringIO):
         self._paint_soon()
 
     def transcript_key(self, key: str, data: str = '') -> str | None:
-        """Page, wheel, drag-select, or click a URL for one of `TRANSCRIPT_KEYS`; return the text a drag copied.
+        """Page, wheel, select, or click a URL for one of `TRANSCRIPT_KEYS`; return the text a selection copied.
 
         Reporting the wheel stops most terminals from selecting text themselves, so a left-button
-        drag highlights cells here and its release copies them to the clipboard. It also stops them
-        opening links on Cmd/Ctrl+click, and mouse reports cannot say Cmd was held, so a click
-        without a drag on a URL opens it here.
+        drag, double-click, or triple-click highlights cells here and its release copies them to the
+        clipboard. It also stops them opening links on Cmd/Ctrl+click, and mouse reports cannot say
+        Cmd was held, so a click without a drag on a URL opens it here; the second click of a
+        double-click selects instead.
         """
         if key != 'mouse':
             self.scroll(self.page if key == 'pageup' else -self.page)
@@ -260,9 +261,11 @@ class PromptSurface(io.StringIO):
             return None
         with self._lock:
             clicked = report.released and report.button == LEFT and self.selection.held and self.selection.head is None
-            if self.selection.feed(report) and self._frame is not None:
+            if self.selection.feed(report, now=self.clock()) and self._frame is not None:
                 text = self.selection.text(
-                    self._frame, rows=self._frame.height if self._select_pinned else self._transcript_rows
+                    self._frame,
+                    rows=self._frame.height if self._select_pinned else self._transcript_rows,
+                    joins=self._wraps(),
                 )
                 if text.strip():
                     copy_text(text, output=self.output)
@@ -277,6 +280,13 @@ class PromptSurface(io.StringIO):
     def _url_at(self, cell: tuple[int, int]) -> str | None:
         assert self._frame is not None
         return url_at(self._frame, cell, rows=self._transcript_rows - self._hint_on_transcript, joins=self.view.joins())
+
+    def _wraps(self) -> tuple[bool, ...]:
+        """Which of the frame's transcript rows wrap on from the row above, for a selection.
+
+        Pinned rows never do, and neither does a row `SCROLLED_HINT` covers.
+        """
+        return self.view.joins()[: self._transcript_rows - self._hint_on_transcript]
 
     def _paint_soon(self) -> None:
         """Paint once the event loop finishes the current callback, or now outside one.
@@ -375,10 +385,12 @@ class PromptSurface(io.StringIO):
             frame.region(Rect(0, bottom + index, width, 1)).ansi(0, 0, row)
         # A URL the hint covers part of is not opened.
         self._hint_on_transcript = self.view.anchor is not None and _show_scrolled_hint(frame, top=bottom)
-        self.selection.highlight(frame, rows=height if self._select_pinned else bottom, previous=self._frame)
+        self._transcript_rows = bottom
+        self.selection.highlight(
+            frame, rows=height if self._select_pinned else bottom, joins=self._wraps(), previous=self._frame
+        )
         parts.append(render_diff(self._previous, frame))
         self._previous = self._frame = frame
-        self._transcript_rows = bottom
         self._dirty = False
         self._painted_at = self.clock()
         self._painted_as = (width, height, theme.name())
