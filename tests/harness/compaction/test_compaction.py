@@ -3492,7 +3492,10 @@ class TestPublicPath:
             summarizer_calls += 1
             return next(responses)
 
+        sent: list[list[ModelMessage]] = []
+
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            sent.append(messages)
             return ModelResponse(parts=[TextPart(content='ok')])
 
         history: list[ModelMessage] = []
@@ -3514,8 +3517,9 @@ class TestPublicPath:
         result = await agent.run('next', message_history=history)
 
         assert result.output == 'ok'
-        # The imitations were retried within the raised budget, not fatal.
+        # The imitations were retried within the raised budget, not fatal, and the summary was committed.
         assert summarizer_calls == 4
+        assert _summary_text(sent[-1]) == 'the summary'
 
     @pytest.mark.parametrize('summary_text', ['', ' \n'])
     @pytest.mark.parametrize('request_limit', [2, 3])
