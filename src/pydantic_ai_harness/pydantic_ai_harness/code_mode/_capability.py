@@ -169,8 +169,9 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     Pass an `AbstractOS` such as `OSAccess`, or a handler called with keyword arguments (see
     `pydantic_monty.OsHandler`). A plain function is called from a Monty thread, not the event
     loop's thread, with the run's contextvars set, so it must not touch asyncio objects; an `async`
-    handler is awaited on an event loop instead. Inside a Temporal workflow, clock, environment, and
-    randomness calls run on the workflow's own thread, so the handler can use `workflow.now()`.
+    handler is awaited on an event loop instead. Inside a Temporal workflow or an Azure Durable Task
+    orchestration, clock, environment, and randomness calls run on the orchestrator's own thread, so a
+    Temporal handler can use `workflow.now()`.
     The positional `(name, args, kwargs)` form is deprecated.
     """
 
