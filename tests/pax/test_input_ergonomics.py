@@ -40,6 +40,14 @@ from tests.pax.test_permissions import request as permission_request
 from tests.pax.test_steering import running
 
 
+class Steered(list[str]):
+    """A `LivePrompt.steer` that accepts and records every prompt steered into the running turn."""
+
+    def __call__(self, text: str) -> bool:
+        self.append(text)
+        return True
+
+
 def test_defaults_aliases_and_collisions() -> None:
     settings = Settings()
     assert (settings.keyboard_labels, settings.question_submit) == ('unset', 'ask')
@@ -68,13 +76,7 @@ async def test_remapped_composer_and_hints_use_effective_bindings() -> None:
         live.keyboard_labels = lambda: 'mac'
         pipe.send_text('one\rtwo\nthree\x13')
         assert await live.read() == 'one\ntwo\nthree'
-        steered: list[str] = []
-
-        def steer(text: str) -> bool:
-            steered.append(text)
-            return True
-
-        live.steer = steer
+        live.steer = steered = Steered()
         live.feed('paste', 'steering')
         live.feed('alt-s')
         assert steered == ['steering']
@@ -87,13 +89,7 @@ async def test_windows_ctrl_enter_follows_a_remapped_steer_binding(key: str) -> 
     async with editor() as (live, _, _):
         live.ctrl_enter_steers = True
         live.bindings = lambda: InputBindings(steer='alt-s')
-        steered: list[str] = []
-
-        def steer(text: str) -> bool:
-            steered.append(text)
-            return True
-
-        live.steer = steer
+        live.steer = steered = Steered()
         live.feed('paste', 'steering')
         live.feed(key)
         assert steered == ['steering']
@@ -394,13 +390,7 @@ async def test_visible_queue_edit_keeps_id_order_and_entire_earlier_draft() -> N
 
 async def test_visible_queue_remove_and_steer_cannot_execute_a_finished_entry() -> None:
     async with editor() as (live, _, _):
-        steered: list[str] = []
-
-        def steer(text: str) -> bool:
-            steered.append(text)
-            return True
-
-        live.steer = steer
+        live.steer = steered = Steered()
         live.submit('first')
         live.submit('second')
         live.buffer.insert('draft')
@@ -689,12 +679,7 @@ async def test_busy_delivery_waits_for_tools_and_reaches_next_feasible_model_req
 async def test_checkpoint_mode_never_smuggles_commands_or_shell_lines(text: str) -> None:
     async with editor() as (live, _, _):
         live.busy_delivery = lambda: 'next-checkpoint'
-        steered: list[str] = []
-
-        def steer(text: str) -> bool:
-            return steered.append(text) or True
-
-        live.steer = steer
+        live.steer = steered = Steered()
         started, release = anyio.Event(), anyio.Event()
 
         async def work() -> None:
@@ -715,12 +700,7 @@ async def test_checkpoint_mode_never_smuggles_commands_or_shell_lines(text: str)
 async def test_checkpoint_mode_never_leapfrogs_queue_or_steers_a_saved_edit() -> None:
     async with editor() as (live, _, _):
         live.busy_delivery = lambda: 'next-checkpoint'
-        steered: list[str] = []
-
-        def steer(text: str) -> bool:
-            return steered.append(text) or True
-
-        live.steer = steer
+        live.steer = steered = Steered()
         started, release = anyio.Event(), anyio.Event()
 
         async def work() -> None:
@@ -790,12 +770,7 @@ async def test_checkpoint_delivery_and_remembered_answer_never_approve_waiting_t
         async with editor() as (live, _, _):
             live.busy_delivery = lambda: 'next-checkpoint'
             live.questions.preference = lambda: 'answer'
-            steered: list[str] = []
-
-            def steer(text: str) -> bool:
-                return steered.append(text) or True
-
-            live.steer = steer
+            live.steer = steered = Steered()
             responses: list[AskUserResponse] = []
 
             answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
@@ -830,13 +805,7 @@ async def test_checkpoint_delivery_and_remembered_answer_never_approve_waiting_t
 async def test_mixed_checkpoint_delivery_needs_explicit_choice_without_losing_state(editing: bool, choice: str) -> None:
     async with editor() as (live, _, _):
         live.busy_delivery = lambda: 'next-checkpoint'
-        steered: list[str] = []
-
-        def steer(text: str) -> bool:
-            steered.append(text)
-            return True
-
-        live.steer = steer
+        live.steer = steered = Steered()
         live.submit('first')
         live.submit('second')
         live.submit('third')
@@ -898,13 +867,7 @@ async def test_mixed_checkpoint_delivery_needs_explicit_choice_without_losing_st
 async def test_delivery_choice_cannot_consume_paste_or_same_batch_typeahead() -> None:
     async with editor() as (live, _, _):
         live.busy_delivery = lambda: 'next-checkpoint'
-        steered: list[str] = []
-
-        def steer(text: str) -> bool:
-            steered.append(text)
-            return True
-
-        live.steer = steer
+        live.steer = steered = Steered()
         live.submit('older')
         async with running(live):
             live.feed('paste', 'draft')
@@ -958,13 +921,7 @@ async def test_held_edit_delivery_choice_survives_finish_and_restores_reserved_i
 async def test_delivery_choice_rechecks_eligibility_after_draft_changes() -> None:
     async with editor() as (live, _, _):
         live.busy_delivery = lambda: 'next-checkpoint'
-        steered: list[str] = []
-
-        def steer(text: str) -> bool:
-            steered.append(text)
-            return True
-
-        live.steer = steer
+        live.steer = steered = Steered()
         live.submit('older')
         async with running(live):
             live.feed('paste', 'eligible')
