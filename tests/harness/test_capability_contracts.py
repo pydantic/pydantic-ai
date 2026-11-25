@@ -135,14 +135,26 @@ async def _run_calls(
     )
 
 
+def _unprefixed(content: object, names: dict[str, str]) -> object:
+    if not isinstance(content, str):
+        return content
+    for prefixed, plain in names.items():
+        content = content.replace(prefixed, plain)
+    return content
+
+
 async def _tool_results(case: CapabilityCase, directory: Path, *, prefixed: bool) -> list[tuple[str, str, object]]:
     """How each call ended, and what it returned or the retry it asked for, as `_comparable` writes it."""
     result = await _run_calls(case, directory, prefixed=prefixed)
+    assert case.calls is not None
+    # A reply that quotes its tool by the name the model sees, as `BackgroundTools`' acknowledgement does, is the same
+    # reply under a prefix.
+    names = {f"'p_{name}'": f"'{name}'" for name, _ in case.calls.made} if prefixed else {}
     return [
         (
             part.tool_call_id,
             part.outcome,
-            _comparable(part.content, directory),
+            _comparable(_unprefixed(part.content, names), directory),
         )
         for message in result.all_messages()
         if isinstance(message, ModelRequest)

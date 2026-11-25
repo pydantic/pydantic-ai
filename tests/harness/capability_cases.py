@@ -34,10 +34,11 @@ from typing import TYPE_CHECKING
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, RawToolArgs
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, RawToolArgs, Toolset
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
     Advisor,
     ApprovalReviewer,
@@ -130,6 +131,7 @@ from ..capability_cases import (
     Narrows,
     Rejected,
     Unbuildable,
+    echo,
     with_echo,
 )
 from ..function_model_prefix import COMPACTION_REWRITES_HISTORY
@@ -366,6 +368,14 @@ def _check_tool_bridge(merged: ToolBridge[None]) -> None:
 
 def _check_advisor(merged: Advisor[None]) -> None:
     assert merged.max_tokens == 4096
+
+
+def _background_echo(_: Path) -> list[AbstractCapability[None]]:
+    """`BackgroundTools` with its default selector, beside an `echo` tool marked to run in the background.
+
+    Selecting by metadata rather than by name keeps the tool selected under a prefix.
+    """
+    return [BackgroundTools(), Toolset(FunctionToolset([echo], id='echo', metadata={'background': True}))]
 
 
 def _check_background_tools(merged: BackgroundTools[None]) -> None:
@@ -693,7 +703,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda: (BackgroundTools[None](tools=['first']), BackgroundTools[None](tools=['second'])),
             _check_background_tools,
         ),
-        calls=Calls(ECHO, with_echo(lambda: BackgroundTools(tools=['echo'])), durable_steps=ECHO_STEPS, follow_ups=1),
+        calls=Calls(ECHO, _background_echo, durable_steps=ECHO_STEPS, follow_ups=1),
     ),
     'BenchmarkInstructions': CapabilityCase(
         Combines(
