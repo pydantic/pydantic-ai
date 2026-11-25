@@ -224,11 +224,11 @@ def test_bedrock_converse_rejects_proprietary_openai() -> None:
 
 
 def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
-    # AWS serves GPT-5.6 Sol/Luna/Terra (#7793), GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol/Terra on the Converse API (see
-    # `test_bedrock_openai_converse`) — unlike every other proprietary GPT model, they construct on
+    # AWS serves GPT-5.6 Sol/Luna/Terra (#7793), GPT-6 Sol/Luna/Astra, GPT-6.1 Sol/Terra, and GPT-6.2 Sol on the
+    # Converse API (see `test_bedrock_openai_converse`) — unlike every other proprietary GPT model, they construct on
     # `BedrockConverseModel`. Converse rejects their sampling settings and takes their reasoning effort in the
-    # Responses API shape; GPT-6 Astra and GPT-6.1 Sol can't turn reasoning off. Bedrock documents a 30-minute
-    # prompt-cache TTL for all of them.
+    # Responses API shape; GPT-6 Astra, GPT-6.1 Sol, and GPT-6.2 Sol can't turn reasoning off. Bedrock documents a
+    # 30-minute prompt-cache TTL for all of them.
     for base_name in (
         'gpt-5.6-sol',
         'gpt-5.6-luna',
@@ -238,13 +238,14 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
         'gpt-6-astra',
         'gpt-6.1-sol',
         'gpt-6.1-terra',
+        'gpt-6.2-sol',
     ):
         assert BedrockProvider.model_profile(f'openai.{base_name}') == {
             'bedrock_disallows_sampling_settings': True,
             'bedrock_supports_stop_sequences': False,
             'bedrock_thinking_variant': 'openai_responses',
             'supports_thinking': True,
-            'thinking_always_enabled': base_name in ('gpt-6-astra', 'gpt-6.1-sol'),
+            'thinking_always_enabled': base_name in ('gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.2-sol'),
             # Converse takes video only on Nova.
             'supports_video_input': False,
             'default_cache_retention': timedelta(minutes=30),
@@ -267,9 +268,12 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
     BedrockConverseModel('global.openai.gpt-6.1-sol', provider=BedrockProvider(region_name='us-west-2'))
     assert isinstance(infer_model('bedrock:global.openai.gpt-6.1-terra'), BedrockConverseModel)
     BedrockConverseModel('global.openai.gpt-6.1-terra', provider=BedrockProvider(region_name='us-west-2'))
+    # GPT-6.2 Sol is served under both Converse routing prefixes.
+    assert isinstance(infer_model('bedrock:global.openai.gpt-6.2-sol'), BedrockConverseModel)
+    BedrockConverseModel('global.openai.gpt-6.2-sol', provider=BedrockProvider(region_name='us-west-2'))
 
 
-@pytest.mark.parametrize('model_name', ['us.openai.gpt-6.1-sol', 'us.openai.gpt-6.1-terra'])
+@pytest.mark.parametrize('model_name', ['us.openai.gpt-6.1-sol', 'us.openai.gpt-6.1-terra', 'us.openai.gpt-6.2-sol'])
 async def test_bedrock_converse_gpt_6_1_drops_sampling_settings(
     allow_model_requests: None, mocker: MockerFixture, model_name: str
 ) -> None:
