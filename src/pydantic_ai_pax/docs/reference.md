@@ -1934,8 +1934,10 @@ during the question still reach the first prompt. The logo keeps its brand colou
 
 Under a bundled palette, your prompts sit on a grey background: the palette's
 background moved a little towards its text colour, lighter on a dark palette and
-darker on a light one. Under `default`, prompts keep the bold text alone, on a light
-terminal background as on a dark one.
+darker on a light one. This needs a terminal that advertises 24-bit colour
+(`COLORTERM=truecolor`), since the nearest of 256 colours is often not grey; without
+it, prompts keep the bold text alone. Under `default` they keep the bold text alone
+too, on a light terminal background as on a dark one.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. Pax adds

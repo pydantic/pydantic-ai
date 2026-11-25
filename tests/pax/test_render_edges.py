@@ -225,8 +225,11 @@ async def test_echo_prompt_stands_apart_from_answers() -> None:
         pytest.param('github_light', '#f6f6f7', id='light-palette-darkens'),
     ],
 )
-async def test_echo_prompt_has_a_background_only_the_prompt_carries(name: str, tint: str) -> None:
+async def test_echo_prompt_has_a_background_only_the_prompt_carries(
+    name: str, tint: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The prompt's background, indented rows included, moves from the palette's towards its text; answers keep none."""
+    monkeypatch.setenv('COLORTERM', 'truecolor')
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system='truecolor', no_color=False, width=80)
     with theme.use(lambda: name):
@@ -244,6 +247,21 @@ async def test_echo_prompt_has_a_background_only_the_prompt_carries(name: str, t
         assert style.bgcolor.triplet.hex == tint.lower()
     assert first.bold and second.bold
     assert answer.bgcolor is None
+
+
+async def test_echo_prompt_has_no_tint_without_truecolor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rounded to 256 colours, `tokyo_night`'s tint would be teal, so the prompt keeps the bold text alone."""
+    monkeypatch.setenv('COLORTERM', '')
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='256', no_color=False, width=80)
+    with theme.use(lambda: 'tokyo_night'):
+        renderer = StreamRenderer(console, stop_loading=lambda: None)
+        await renderer.echo_prompt('first')
+        await renderer.finish()
+    echoed = Text.from_ansi(output.getvalue())
+    marker, first = (echoed.get_style_at_offset(Console(), offset) for offset in (0, 2))
+    assert marker.bgcolor is None and first.bgcolor is None
+    assert first.bold
 
 
 async def test_echo_prompt_wraps_under_its_text_at_every_width() -> None:

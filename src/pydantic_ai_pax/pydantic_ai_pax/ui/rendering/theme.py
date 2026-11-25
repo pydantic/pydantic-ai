@@ -177,12 +177,13 @@ def diff_renderer() -> DiffRenderer:
 def prompt_background() -> str | None:
     """The background of the user's own messages: the palette's, moved towards its text.
 
-    `None` under the default theme, whose prompts keep their bold text alone.
+    `None` under the default theme, whose prompts keep their bold text alone, and without `truecolor()`, the
+    signal `sgr()` uses: rounded to 256 colours, the tint is often not grey.
     """
     from termflow.themes.palette import blend_hex
 
     palette = current()
-    if palette is None:
+    if palette is None or not truecolor():
         return None
     # A darker tint stands out more than a lighter one, so a light background moves less.
     return blend_hex(palette.bg, palette.fg, 0.04 if _is_light(palette) else 0.12)

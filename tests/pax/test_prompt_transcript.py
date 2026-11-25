@@ -516,8 +516,9 @@ def test_palette_output_repaints_in_another_palette_or_the_default_theme() -> No
     ]
 
 
-def test_a_retained_prompt_background_repaints_in_the_theme_now_selected() -> None:
+def test_a_retained_prompt_background_repaints_in_the_theme_now_selected(monkeypatch: pytest.MonkeyPatch) -> None:
     """A palette's prompt tint becomes another palette's, and goes under the default theme, which has none."""
+    monkeypatch.setenv('COLORTERM', 'truecolor')
     with theme.use(lambda: 'tokyo_night'):
         buffer = _painted(_printed([Style(bold=True, bgcolor=theme.prompt_background())]))
     with theme.use(lambda: 'github_light'):

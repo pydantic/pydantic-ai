@@ -176,6 +176,7 @@ async def test_resumed_and_typed_prompts_carry_the_palette_tint(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Under a palette, prompts restored by `/resume` and prompts typed after it share its tint."""
+    monkeypatch.setenv('COLORTERM', 'truecolor')
     prior = saved_prior(tmp_path, monkeypatch)
     await prior.prompt('saved turn')
     surfaces: list[PromptSurface] = []
@@ -195,7 +196,7 @@ async def test_resumed_and_typed_prompts_carry_the_palette_tint(
         await chat(
             Agent(TestModel(call_tools=[], custom_output_text='fresh answer')),
             deps=None,
-            # Truecolour, as Rich otherwise reads `COLORTERM` and may round the tint to an ANSI slot.
+            # Truecolour, matching `COLORTERM` above.
             console=Console(file=io.StringIO(), force_terminal=True, color_system='truecolor', width=80, height=24),
             store=SettingsStore(tmp_path / 'settings.db'),
             settings=Settings(model=None, session_namer=False, theme='tokyo_night'),

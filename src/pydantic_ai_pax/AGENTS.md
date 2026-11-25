@@ -411,8 +411,9 @@ colours. On a dark or unknown background it is unchanged.
 (or the palette's own text contrast); `test_theme_preview.py` checks both for every palette.
 
 Echo the user's own text through `rendering.prompt_line`, which paints it on
-`theme.prompt_background()`: under a palette, its background moved towards its text. The
-default theme has no tint, on a light terminal background as on a dark one.
+`theme.prompt_background()`: under a palette, its background moved towards its text, on a truecolor
+terminal only (`theme.truecolor()`, as `theme.sgr` decides). The default theme has no tint, on a light
+terminal background as on a dark one.
 
 ## Source layout
 

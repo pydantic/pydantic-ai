@@ -676,7 +676,8 @@ async def test_custom_answer_reaches_model_through_inline_picker(question_pipe: 
     assert rendered.get_style_at_offset(Console(), answer - 2).color == Style.parse(theme.color(theme.ACCENT)).color
 
 
-def test_a_typed_answer_has_the_prompt_background_and_its_header_does_not() -> None:
+def test_a_typed_answer_has_the_prompt_background_and_its_header_does_not(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('COLORTERM', 'truecolor')
     with theme.use(lambda: 'github_light'):
         rendered = render_answer(
             AskUserAnsweredEvent(
