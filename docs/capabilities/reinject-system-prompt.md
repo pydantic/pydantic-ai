@@ -41,4 +41,4 @@ assert system_prompt.content == 'You are a helpful assistant.'
 
 _(This example is complete, it can be run "as is")_
 
-The [UI adapters](../ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capability with `replace_existing=True` in their `manage_system_prompt='server'` mode. They strip the client's system prompts themselves, so their reinjector replaces only the system prompts the history opens with and every rendering of the agent's dynamic system prompts, and keeps server-side history's other system prompts, such as one an earlier run enqueued.
+The [UI adapters](../ui/ag-ui.md) (AG-UI, Vercel AI) automatically add this capability with `replace_existing=True` in their `manage_system_prompt='server'` mode. They strip the client's system prompts themselves, so their reinjector replaces only the system prompts the history opens with, every rendering of the agent's dynamic system prompts and any copy of its configured prompt, and keeps server-side history's other system prompts, such as one an earlier run enqueued.

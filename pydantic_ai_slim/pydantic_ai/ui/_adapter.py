@@ -764,8 +764,9 @@ class _ServerSystemPromptReinjector(ReinjectSystemPrompt[AgentDepsT]):
     The adapter strips every system prompt from the client's messages, so the ones left in the history a run starts
     with came from the trusted `message_history` or `conversation_store`. Of those, it replaces the standing prompt
     that opens the history, which can be a stale copy of the agent's own, and every rendering of a dynamic system
-    prompt, which the agent renders again. A server-authored part in that standing prompt, like context right after
-    the agent's prompt, is replaced with it: nothing tells it apart from a stale prompt.
+    prompt, which the agent renders again. The base class also replaces any of the rest that repeats the agent's
+    configured prompt. A server-authored part in that standing prompt, like context right after the agent's prompt,
+    is replaced with it: nothing tells it apart from a stale prompt.
     """
 
     def _spared_history_parts(self, messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
@@ -881,8 +882,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
     In server-side history, a `message_history` passed to a run method or the
     [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store]'s, it replaces the
-    system prompt the history opens with, which can be a stale copy of the agent's own, and
-    keeps the history's other system prompts, such as one an earlier run enqueued. A system
+    system prompt the history opens with, which can be a stale copy of the agent's own, along
+    with any other copy or dynamic rendering of the agent's prompt, and keeps the history's other
+    system prompts, such as one an earlier run enqueued. A system
     prompt the server put right after the agent's, in the opening request, is replaced along
     with it.
     Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
@@ -1620,8 +1622,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             # default here would make a user reinjector supplied for this run a hard duplicate-id
             # error, and silently supersede an agent-level one. Server mode stays authoritative
             # either way: this instance always runs, deriving a distinct id when it has to. It replaces
-            # the history's standing prompt and keeps the server's other system prompts, since
-            # `sanitize_messages` already stripped the client's.
+            # the history's standing prompt and any other copy or rendering of the agent's own, and
+            # keeps the server's other system prompts, since `sanitize_messages` already stripped the
+            # client's.
             run_capabilities.append(_ServerSystemPromptReinjector(replace_existing=True, id=None))
         if capabilities:
             run_capabilities.extend(capabilities)
