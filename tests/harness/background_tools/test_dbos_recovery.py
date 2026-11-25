@@ -22,6 +22,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import BackgroundTools
 
+# DBOS launches once per process, like the other harness DBOS tests in this group.
+pytestmark = pytest.mark.xdist_group(name='harness-dbos')
+
 
 class _ProcessCrash(BaseException):
     """Stands in for the process dying: DBOS leaves the workflow `PENDING` for recovery."""
