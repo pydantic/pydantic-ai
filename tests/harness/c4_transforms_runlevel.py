@@ -32,6 +32,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness.compaction._receipts import is_receipt_part
 
 from ..append_only import drain_events
 from .test_capability_routes import RouteRun, _built, _Script  # pyright: ignore[reportPrivateUsage]
@@ -83,14 +84,16 @@ def _summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
 
 
 async def _summarizing(native: RouteRun, directory: Path) -> list[ModelMessage]:
-    """`SummarizingCompaction` keeping only the newest message."""
-    compaction = SummarizingCompaction[None](model=FunctionModel(_summarize), keep_messages=1)
+    """`SummarizingCompaction` keeping only the newest message, with a receipt for what it summarized."""
+    compaction = SummarizingCompaction[None](model=FunctionModel(_summarize), keep_messages=1, receipts=True)
     return await compaction.compact(list(native.messages), _context())
 
 
 async def _sliding_window(native: RouteRun, directory: Path) -> list[ModelMessage]:
-    """`SlidingWindowCompaction` keeping only the newest message."""
-    return await SlidingWindowCompaction[None](keep_messages=1).compact(list(native.messages), _context())
+    """`SlidingWindowCompaction` keeping only the newest message, with a receipt for what it dropped."""
+    return await SlidingWindowCompaction[None](keep_messages=1, receipts=True).compact(
+        list(native.messages), _context()
+    )
 
 
 # --- compaction_part -----------------------------------------------------------------------------------------------
@@ -140,7 +143,8 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
         'summarizing',
         _summarizing,
         drops=_standing,
-        creates=(CompactionPart,),
+        # The summary, and the receipt naming what it replaced: a `UserPromptPart` told apart from kept prompts.
+        creates_part=lambda part: isinstance(part, CompactionPart) or is_receipt_part(part),
         functions=(
             'pydantic_ai_harness.compaction._summarizing_compaction.without_legacy_summaries',
             'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction.compact',
@@ -154,6 +158,7 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
         'sliding_window',
         _sliding_window,
         drops=_standing,
+        creates_part=is_receipt_part,
         functions=(
             'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction.compact',
             'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._prepend_receipt',
