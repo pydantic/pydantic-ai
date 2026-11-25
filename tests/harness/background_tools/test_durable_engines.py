@@ -28,6 +28,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai_harness import BackgroundTools
 from tests.capability_cases import BROKEN_SIGNATURES, SCENARIO_SUPPORT, SCENARIOS, Engine, Scenario, Support
+from tests.harness._temporal import ignore_source_reads_left_open
 
 from ...conftest import try_import
 
@@ -44,7 +45,6 @@ with try_import() as temporal_imports:
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-    from tests.harness._temporal import ignore_source_reads_left_open
     from tests.temporal_utils import temporal_dev_server_cache_dir
 
     @workflow.defn
@@ -293,6 +293,7 @@ parametrize_scenarios = pytest.mark.parametrize('scenario', SCENARIOS, ids=lambd
 
 
 def test_an_untested_cell_skips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An `untested` cell skips its test with the issue that tracks it; a table check, so no request to record."""
     cells = {scenario: dict(SCENARIO_SUPPORT[scenario]) for scenario in SCENARIOS}
     cells['BackgroundTools.runs_in_background']['render'] = Support('untested', 'no harness', issue=12291)
     monkeypatch.setattr(sys.modules[__name__], 'SCENARIO_SUPPORT', cells)
