@@ -226,7 +226,7 @@ async def test_echo_prompt_stands_apart_from_answers() -> None:
     ],
 )
 async def test_echo_prompt_has_a_background_only_the_prompt_carries(name: str, tint: str) -> None:
-    """The prompt's background moves from the palette's towards its text; answers keep none."""
+    """The prompt's background, indented rows included, moves from the palette's towards its text; answers keep none."""
     output = io.StringIO()
     console = Console(file=output, force_terminal=True, color_system='truecolor', no_color=False, width=80)
     with theme.use(lambda: name):
@@ -235,11 +235,11 @@ async def test_echo_prompt_has_a_background_only_the_prompt_carries(name: str, t
         await renderer.on_stream_event(PartStartEvent(index=0, part=TextPart('answer')))
         await renderer.finish()
     echoed = Text.from_ansi(output.getvalue())
-    assert echoed.plain.startswith('> first\nsecond\n\nanswer')
-    marker, first, second, answer = (
-        echoed.get_style_at_offset(Console(), offset) for offset in (0, 2, 8, echoed.plain.index('answer'))
+    assert echoed.plain.startswith('> first\n  second\n\nanswer')
+    marker, first, indent, second, answer = (
+        echoed.get_style_at_offset(Console(), offset) for offset in (0, 2, 8, 10, echoed.plain.index('answer'))
     )
-    for style in (marker, first, second):
+    for style in (marker, first, indent, second):
         assert style.bgcolor is not None and style.bgcolor.triplet is not None
         assert style.bgcolor.triplet.hex == tint.lower()
     assert first.bold and second.bold
