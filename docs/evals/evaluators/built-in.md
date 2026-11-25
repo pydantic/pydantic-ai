@@ -361,9 +361,9 @@ dataset = Dataset(
 ### StructuredJudge
 
 Ask a judge typed questions about the output and report its answers: a yes or no as an assertion, one of a
-set of options as a label, or a 0-to-1 score. Several questions go out in one model request, one measure
-per question, named after the question. Where [`LLMJudge`](#llmjudge) grades against a rubric and
-explains its verdict, `StructuredJudge` reports the answers themselves, with no prose.
+set of options as a label, or a score, bounded by the type you pass. Several questions go out in one model
+request, one measure per question, named after the question. Where [`LLMJudge`](#llmjudge) grades against a
+rubric and explains its verdict, `StructuredJudge` reports the answers themselves, with no prose.
 
 ```python
 from typing import Literal
