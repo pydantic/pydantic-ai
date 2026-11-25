@@ -1156,13 +1156,14 @@ def _make_model_request_wrap(
         # What the handler returned or raised is the model's or an inner capability's, not this one's.
         # Each response with a copy of its parts, so a change made to it in place isn't taken for the handler's.
         from_handler: list[tuple[ModelResponse, Sequence[ModelResponsePart]]] = []
-        raised_by_handler: list[BaseException] = []
+        # Each error with what it told the model when raised, so one changed before it's re-raised isn't handed on.
+        raised_by_handler: list[tuple[BaseException, object]] = []
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
             try:
                 response = await inner(request_context)
             except BaseException as e:
-                raised_by_handler.append(e)
+                raised_by_handler.append((e, _what_it_says(e, copy=True)))
                 raise
             from_handler.append((response, deepcopy(response.parts)))
             return response
@@ -1170,11 +1171,11 @@ def _make_model_request_wrap(
         try:
             response = await cap.wrap_model_request(cap_ctx, request_context=request_context, handler=handler)
         except SkipModelRequest as e:
-            if any(e is raised for raised in raised_by_handler):
+            if _handed_on(e, raised_by_handler):
                 raise
             raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
         except ModelRetry as e:
-            if not any(e is raised for raised in raised_by_handler):
+            if not _handed_on(e, raised_by_handler):
                 # The retry keeps the handler's response in history, so it can't have changed it either.
                 _check_handler_responses_unchanged(held, from_handler)
                 hold_feedback(e, held)
@@ -1457,6 +1458,20 @@ async def _after_model_request_held(
         raise _writes_model_turn(held, 'return a different response from `after_model_request`')
     _check_handler_responses_unchanged(held, [(response, parts)], 'in `after_model_request`')
     return returned
+
+
+def _what_it_says(error: BaseException, *, copy: bool = False) -> object:
+    """What an error tells the model: a skip's response parts or a retry's feedback, or `None`."""
+    if isinstance(error, SkipModelRequest):
+        return deepcopy(error.response.parts) if copy else error.response.parts
+    if isinstance(error, ModelRetry):
+        return error.message
+    return None
+
+
+def _handed_on(error: BaseException, raised_by_handler: Sequence[tuple[BaseException, object]]) -> bool:
+    """Whether `error` is one the handler raised, re-raised telling the model what it did then."""
+    return any(error is raised and _what_it_says(error) == said for raised, said in raised_by_handler)
 
 
 def _check_handler_responses_unchanged(

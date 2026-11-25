@@ -684,28 +684,46 @@ def feedback_held_to(error: ModelRetry) -> tuple[str, Authority] | None:
 
 @dataclass
 class MessagesSnapshot:
-    """The messages a hook received and what each said then, for `hold_added_messages`."""
+    """What the messages a hook received said before it ran, for `hold_added_messages`.
 
-    messages: list[ModelMessage]
-    parts: list[ModelRequestPart]
+    Copies, not the messages themselves, which the hook can change.
+    """
+
+    # The messages and parts received, kept alive so their `id`s stay theirs.
+    received: list[object]
     # By the `id` of each message and request part received, what it said, to tell one the hook edited in place.
     said: dict[int, object]
+    # What each response and request part received said, by `_fingerprint`, to tell a new one from a copy.
+    copies: dict[tuple[type, object], list[object]]
+    # The `instructions` of the requests received.
+    instructions: set[str | None]
 
 
 def snapshot_messages(messages: Sequence[ModelMessage]) -> MessagesSnapshot:
-    """The messages and request parts of `messages` before a hook runs, for `hold_added_messages`."""
-    parts: list[ModelRequestPart] = []
-    said: dict[int, object] = {}
+    """What `messages` say before a hook runs, for `hold_added_messages`."""
+    snapshot = MessagesSnapshot(received=[], said={}, copies={}, instructions=set())
     for message in messages:
         if isinstance(message, ModelResponse):
-            said[id(message)] = deepcopy(message)
+            _snapshot_item(snapshot, message, deepcopy(message))
             continue
-        said[id(message)] = _request_shape(message)
+        snapshot.received.append(message)
+        snapshot.said[id(message)] = _request_shape(message)
+        snapshot.instructions.add(message.instructions)
         for part in message.parts:
-            parts.append(part)
             # A tool's return reaches the model as tool output whoever edits it, and can hold any object.
-            said[id(part)] = part if isinstance(part, ToolReturnPart) else deepcopy(part)
-    return MessagesSnapshot(list(messages), parts, said)
+            _snapshot_item(snapshot, part, part if isinstance(part, ToolReturnPart) else deepcopy(part))
+    return snapshot
+
+
+def _snapshot_item(snapshot: MessagesSnapshot, item: ModelResponse | ModelRequestPart, said: object) -> None:
+    snapshot.received.append(item)
+    snapshot.said[id(item)] = said
+    snapshot.copies.setdefault(_fingerprint(item), []).append(said)
+
+
+def _fingerprint(item: object) -> tuple[type, object]:
+    """A key equal items share, so a new item is only compared with the received ones that could equal it."""
+    return type(item), getattr(item, 'timestamp', None)
 
 
 def hold_added_messages(
@@ -713,7 +731,7 @@ def hold_added_messages(
 ) -> None:
     """Hold what a capability below operator authority added to `messages` in a hook to its ceiling, in place.
 
-    A part or message counts as added when it's a new one equal to none the hook received, or one it received and
+    A part or response counts as added when it's a new one equal to none the hook received, or one it received and
     changed in place, so a hook that copies the history or only removes from it adds nothing. Each added request part
     is held as `ctx.enqueue` holds it, and an added or changed `ModelResponse`, or `instructions` no request it
     received had, raises `UserError`. Held in place, so the history the deprecated mirroring already appended them to
@@ -722,10 +740,9 @@ def hold_added_messages(
     if ceiling == 'operator':
         return
     added = _Added(snapshot)
-    instructions = {message.instructions for message in snapshot.messages if isinstance(message, ModelRequest)}
     for message in messages:
         if added(message):
-            _check_added_message(message, instructions, capability_id, ceiling)
+            _check_added_message(message, snapshot.instructions, capability_id, ceiling)
         if isinstance(message, ModelRequest):
             message.parts = [
                 _held_part(part, capability_id, ceiling) if added(part) else part for part in message.parts
@@ -755,20 +772,21 @@ _NOT_RECEIVED = object()
 
 
 class _Added:
-    """Whether a message or part is one a hook added: a new one equal to none it received, or one it changed."""
+    """Whether a message or part is one a hook added: a new one equal to none it received, or one it changed.
+
+    A new request always counts, as what it can add itself is `instructions`, which `_check_added_message` checks
+    against those received; its parts are checked one by one.
+    """
 
     def __init__(self, snapshot: MessagesSnapshot):
-        self._olds: dict[bool, list[ModelMessage | ModelRequestPart]] = {
-            True: [*snapshot.messages],
-            False: [*snapshot.parts],
-        }
-        self._said = snapshot.said
+        self._snapshot = snapshot
 
     def __call__(self, item: ModelMessage | ModelRequestPart) -> bool:
-        said = self._said.get(id(item), _NOT_RECEIVED)
+        said = self._snapshot.said.get(id(item), _NOT_RECEIVED)
         if said is _NOT_RECEIVED:
-            olds = self._olds[isinstance(item, ModelRequest | ModelResponse)]
-            return not any(item == old for old in olds)
+            if isinstance(item, ModelRequest):
+                return True
+            return not any(item == old for old in self._snapshot.copies.get(_fingerprint(item), ()))
         if isinstance(item, ModelRequest):
             return _request_shape(item) != said
         return item != said
