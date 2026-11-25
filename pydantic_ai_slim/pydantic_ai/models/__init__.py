@@ -64,6 +64,7 @@ from .._capability_parts import (
     LookalikeNaming,
     is_downgraded_request_scoped,
     lowered_instruction_statement,
+    lowered_text_in_system_voice,
     render_capability_part,
     render_capability_parts,
 )
@@ -914,8 +915,6 @@ def _check_lowered_text_out_of_system_voice(authored: list[ModelMessage], render
     """Raise if text below `'operator'` in `authored` is in a system message in `rendered`, when the check is on."""
     if not _check_system_voice:
         return
-    from .._capability_parts import lowered_text_in_system_voice
-
     if found := lowered_text_in_system_voice(authored, rendered):
         raise AssertionError('\n'.join(found))
 
