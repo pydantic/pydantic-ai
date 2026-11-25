@@ -1512,13 +1512,8 @@ class ToolReturn(_RecordsContentFiles, Generic[_ToolReturnValueT]):
     metadata: Any = None
     """Additional data accessible by the application but not sent to the LLM.
 
-    It is kept on the [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. A JSON round trip, such as
-    [storing message history](../message-history.md#storing-and-loading-messages-to-json) or a durable
-    execution engine journaling the tool result, keeps its value but not its type: an object comes back as a
-    `dict`. The exception is the [Vercel AI data chunks](../ui/vercel-ai.md#data-chunks), which the Vercel AI
-    adapter validates back from a `dict` with a `type` key. So a `dict` that matches a chunk's fields exactly is
-    sent to the frontend as that chunk, even when the application stored it as a plain `dict`. Provider data on
-    model responses is not covered by this.
+    It is copied to [`ToolReturnPart.metadata`][pydantic_ai.messages.BaseToolReturnPart.metadata], which says
+    what survives a JSON round trip.
     """
 
     tools: list[str] | None = None
@@ -2469,7 +2464,16 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co, MetadataT_co
     """
 
     metadata: Any = None
-    """Additional data accessible by the application but not sent to the LLM."""
+    """Additional data accessible by the application but not sent to the LLM.
+
+    A JSON round trip, such as [storing message history](../message-history.md#storing-and-loading-messages-to-json)
+    or a durable execution engine journaling a tool result, keeps its value but not its type: an object comes back
+    as a `dict`. The exception is the [Vercel AI data chunks](../ui/vercel-ai.md#data-chunks), which the Vercel AI
+    adapter validates back from a `dict` with a `type` key in a `ToolReturnPart`'s metadata. So a `dict` that
+    matches a chunk's fields exactly is sent to the frontend as that chunk, even when the application stored it as
+    a plain `dict`. This covers `metadata` only, not provider data such as a native tool return's
+    `provider_details`.
+    """
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
