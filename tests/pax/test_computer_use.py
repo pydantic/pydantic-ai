@@ -566,6 +566,15 @@ async def test_an_expiring_link_is_renewed_before_it_stops_opening(
     await plugin.on_session_end(SessionEnd(reason='exit'))
 
 
+async def test_no_link_is_got_outside_full_permissions(checkout: Path, linked: LinkedProvider) -> None:
+    # Getting a link starts the desktop, which the model can't use outside `/permissions full`.
+    plugin = plugin_of(load(checkout, settings={PERMISSIONS_SETTING: 'auto'}))
+    await plugin.computer_use_command(['on'])
+    await plugin.command(['fake'])
+    assert row(plugin) == ['fake sandbox (computer-use)', ''] and linked.links == []
+    await plugin.on_session_end(SessionEnd(reason='exit'))
+
+
 async def test_a_link_that_never_expires_is_got_once(
     checkout: Path, linked: LinkedProvider, monkeypatch: pytest.MonkeyPatch
 ) -> None:

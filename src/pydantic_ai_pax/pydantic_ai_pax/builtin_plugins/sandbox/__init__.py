@@ -366,6 +366,9 @@ class SandboxPlugin(Plugin):
         provider = sandbox.provider if sandbox is not None else None
         if sandbox is None or sandbox.deleted or not self._on() or not isinstance(provider, SupportsDesktopUrl):
             return
+        if not self.full_access():
+            # Getting the link starts the desktop, which only `/permissions full` lets the model use.
+            return
         expires = sandbox.watch_expires
         if sandbox.watch_url is not None and (expires is None or monotonic() < expires - MINT_AHEAD):
             return
