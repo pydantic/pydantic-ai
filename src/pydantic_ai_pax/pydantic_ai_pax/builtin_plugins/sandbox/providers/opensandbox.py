@@ -46,6 +46,9 @@ LOOPBACK_HOSTS = ('localhost', '127.0.0.1', '::1')
 STAND_IN = 'placeholder'
 """What the sandbox's `git` and `gh` send as the token; the proxy replaces the whole header."""
 
+_DEBIAN_APT_HOSTS = ('deb.debian.org', 'security.debian.org')
+"""Temporary egress targets allowed only while bootstrapping X11 packages before GitHub credentials enter the vault."""
+
 
 @dataclass(frozen=True)
 class OpenSandboxProvider:
@@ -56,6 +59,7 @@ class OpenSandboxProvider:
     working_dir: str = '/workspace'
     token_in_sandbox: bool = False
     has_desktop_url: bool = False
+    desktop_url_is_bearer: bool = False
 
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop
@@ -116,6 +120,17 @@ class OpenSandboxProvider:
         )
         try:
             sandbox = await backend.get_sandbox()
+            if desktop and github is not None and backend.display is not None:
+                # Bootstrap the display's apt packages while the Credential Vault is still empty, then drop the
+                # temporary Debian mirror rules before any GitHub token enters the proxy.
+                await sandbox.patch_egress_rules(
+                    [NetworkRule(action='allow', target=host) for host in _DEBIAN_APT_HOSTS]
+                )
+                try:
+                    await backend.display.display_size()
+                finally:
+                    with anyio.CancelScope(shield=True):
+                        await sandbox.delete_egress_rules(list(_DEBIAN_APT_HOSTS))
             if github is not None:
                 values = {host: github.authorization(host) for host in GITHUB_HOSTS}
                 names = {value: f'github-{index}' for index, value in enumerate(dict.fromkeys(values.values()))}

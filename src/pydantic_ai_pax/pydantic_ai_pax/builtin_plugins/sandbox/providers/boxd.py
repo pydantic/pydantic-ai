@@ -48,6 +48,7 @@ class BoxdProvider:
     working_dir: str = '/home/boxd/workspace'
     token_in_sandbox: bool = False
     has_desktop_url: bool = True
+    desktop_url_is_bearer: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, boxd.AsyncBoxd]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'boxd.AsyncBoxd'], init=False, compare=False, repr=False
     )

@@ -93,6 +93,11 @@ class SandboxProvider(Protocol):
         """Whether `desktop_url` can return a provider-hosted interactive desktop URL (such as VNC or console)."""
         ...
 
+    @property
+    def desktop_url_is_bearer(self) -> bool:
+        """Whether `desktop_url` embeds a bearer credential (never minted or printed automatically on `/computer-use view`)."""
+        ...
+
     def missing(self, *, desktop: bool = False) -> str | None:
         """What to do before a sandbox can be made, such as a key to add; `None` when nothing is missing."""
         ...

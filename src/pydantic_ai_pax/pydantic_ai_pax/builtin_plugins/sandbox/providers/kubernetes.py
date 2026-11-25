@@ -43,6 +43,7 @@ class KubernetesProvider:
     """Below sandboxd's default root, which the docs' templates also make the home, so the token is not in the checkout."""
     token_in_sandbox: bool = True
     has_desktop_url: bool = False
+    desktop_url_is_bearer: bool = False
 
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop

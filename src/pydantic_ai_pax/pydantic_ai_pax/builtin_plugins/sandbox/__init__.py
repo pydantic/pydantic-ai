@@ -477,20 +477,10 @@ class SandboxPlugin(Plugin):
             raise ValueError(
                 f"This conversation's {sandbox.provider.title} desktop sandbox was deleted. Run /new to start another."
             )
-        if sandbox.provider.has_desktop_url:
-            try:
-                live_url = await sandbox.live_desktop_url()
-            except (UserError, WorkspaceError, RuntimeError):
-                _logger.warning(
-                    'Could not open provider live desktop URL for %s; falling back to local viewer',
-                    sandbox.ref,
-                    exc_info=True,
-                )
-                live_url = None
-            if live_url is not None:
-                opened = await self._open_in_browser(live_url)
-                action = 'Opened live desktop in your browser' if opened else 'Live desktop'
-                return f'{action}: {live_url}'
+        if (live_url := await self._try_live_desktop_url(sandbox)) is not None:
+            opened = await self._open_in_browser(live_url)
+            action = 'Opened live desktop in your browser' if opened else 'Live desktop'
+            return f'{action}: {live_url}'
         session = self._viewer_session(sandbox)
         if not session.frames:
             try:
@@ -502,6 +492,20 @@ class SandboxPlugin(Plugin):
         opened = await self._open_in_browser(url)
         action = 'Opened desktop viewer in your browser' if opened else 'Desktop viewer'
         return f'{action}: {url}'
+
+    async def _try_live_desktop_url(self, sandbox: _Sandbox) -> str | None:
+        """Fetch a login-authenticated provider live desktop URL; bearer links stay behind an explicit viewer click."""
+        if not sandbox.provider.has_desktop_url or sandbox.provider.desktop_url_is_bearer:
+            return None
+        try:
+            return await sandbox.live_desktop_url()
+        except (UserError, WorkspaceError, RuntimeError):
+            _logger.warning(
+                'Could not open provider live desktop URL for %s; falling back to local viewer',
+                sandbox.ref,
+                exc_info=True,
+            )
+            return None
 
     async def _open_in_browser(self, url: str) -> bool:
         """Open `url` via a private redirect page off the event loop, keeping tokens out of process argv."""

@@ -43,6 +43,7 @@ class SpritesProvider:
     working_dir: str = '/home/sprite/workspace'
     token_in_sandbox: bool = True
     has_desktop_url: bool = False
+    desktop_url_is_bearer: bool = False
     _clients: 'WeakKeyDictionary[SandboxBackend, AsyncSpritesClient]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'AsyncSpritesClient'], init=False, compare=False, repr=False
     )

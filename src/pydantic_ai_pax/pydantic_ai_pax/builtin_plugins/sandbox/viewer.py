@@ -485,9 +485,11 @@ render();
 
 
 async def _event_stream(session: DesktopSession) -> AsyncIterator[str]:
-    """Yield SSE `data:` payloads for every new frame on `session` until it closes."""
+    """Yield SSE `data:` payloads for existing and new frames on `session` until it closes."""
     queue = session.subscribe()
     try:
+        for item in session.frames:
+            yield f'data: {json.dumps(item.meta())}\n\n'
         while (item := await queue.get()) is not None:
             yield f'data: {json.dumps(item.meta())}\n\n'
     finally:
@@ -535,7 +537,7 @@ def create_viewer_app(viewer: DesktopViewer, *, token: str, hosts: frozenset[str
         return Response(
             item.png,
             media_type='image/png',
-            headers={'Cache-Control': 'private, max-age=3600', 'X-Content-Type-Options': 'nosniff'},
+            headers={'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff'},
         )
 
     @app.get('/events')

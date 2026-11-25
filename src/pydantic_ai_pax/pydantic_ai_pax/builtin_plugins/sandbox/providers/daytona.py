@@ -38,8 +38,8 @@ SECRET_LABEL = 'clai-github-secret'
 VNC_PORT = 6080
 """The port Daytona's desktop snapshot serves its noVNC viewer on."""
 
-PREVIEW_EXPIRES_SECONDS = 3600
-"""How long a signed preview link minted for `/computer-use view` stays valid."""
+PREVIEW_EXPIRES_SECONDS = 300
+"""How long a signed preview link minted on demand for interactive desktop access stays valid."""
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,7 @@ class DaytonaProvider:
     working_dir: str = '/home/daytona/workspace'
     token_in_sandbox: bool = False
     has_desktop_url: bool = True
+    desktop_url_is_bearer: bool = True
     _clients: 'WeakKeyDictionary[SandboxBackend, daytona.AsyncDaytona]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'daytona.AsyncDaytona'],
         init=False,

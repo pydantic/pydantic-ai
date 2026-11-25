@@ -3164,6 +3164,9 @@ Every `/sandbox` provider supports `/computer-use`, with the same checkout seedi
 - `local smol` desktop requires the `smolmachines` package (`pydantic-ai-pax[local]` on macOS Apple
   silicon or Linux); the Windows `smolvm` CLI fallback has no display.
 - `local boxlite` allocates a 4 GB disk for the desktop image.
+- `opensandbox` with a `gh` login temporarily allows `deb.debian.org` and `security.debian.org` to
+  install the X11 display programs before any GitHub credential enters the proxy vault, then removes
+  those rules so egress stays restricted to GitHub hosts.
 - Plain `/sandbox` conversations and local conversations do not expose the `computer` tool. Desktop
   mode is recorded on the conversation's `workspace_ref` (`PROVIDER-desktop`), so `/resume`, `/fork`,
   and compaction keep `ComputerUse` active.
@@ -3174,16 +3177,17 @@ Run `/computer-use view` at any time, including while a turn is running, to see 
 
 - **`boxd`**: opens the machine's console Desktop view (`access.desktop_url`), protected by your
   boxd console login.
-- **`daytona`**: starts the desktop's VNC/noVNC service if needed and opens a 1-hour signed preview
-  URL on port `6080`. The VNC server has no password, so anyone with that link can see and control
-  the desktop until it expires.
-- **All other providers** (and as a fallback if a provider live URL cannot be opened): starts Pax's
-  on-demand loopback live viewer (`http://127.0.0.1:<port>/?token=...&sandbox=...`) and opens it in
-  your browser. The viewer receives every screenshot the model takes in real time over Server-Sent
-  Events, overlays subtle markers where clicks, pointer moves, and drags landed, keeps the last 30
-  frames to scrub through, and provides **Refresh** and an optional 2-second **Auto** snapshot poll.
-  When the provider also supports an interactive desktop (`boxd`, `daytona`), the viewer includes an
-  **Interactive desktop** button to open it on demand.
+- **All other providers, including `daytona`** (and as a fallback if a `boxd` URL cannot be opened):
+  starts Pax's on-demand loopback live viewer (`http://127.0.0.1:<port>/?token=...&sandbox=...`) and
+  opens it via a private `0600` redirect page in your browser. The viewer receives every screenshot
+  the model takes in real time over Server-Sent Events, overlays subtle markers where clicks, pointer
+  moves, and drags landed, keeps the last 30 frames to scrub through, and provides **Refresh** and an
+  optional 2-second **Auto** snapshot poll.
+- **`daytona` interactive desktop**: because Daytona's noVNC preview URL is a passwordless bearer
+  link that grants full control of the desktop (including `git`/`gh` through the sandbox's GitHub
+  proxy), `/computer-use view` opens the loopback viewer by default instead of minting or printing
+  that link automatically. Click **Interactive desktop** in the viewer when you explicitly want
+  interactive control; Pax then mints a 5-minute signed preview URL on port `6080` on demand.
 
 In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), the `sandbox` plugin also adds a
 **Desktop** side panel that embeds the loopback viewer directly beside the transcript.
@@ -3191,8 +3195,8 @@ In the [web UI](../PLUGINS.md#web-this-session-in-your-browser), the `sandbox` p
 Everything on the sandbox screen, secrets included, reaches the model and its provider in
 screenshots, and text on the screen can steer the model like any tool output. The loopback viewer
 binds only to `127.0.0.1`, checks the `Host` header, requires a per-launch random token (and a
-matching loopback `Origin` on `POST /api/*`), and sets a nonce CSP with `frame-ancestors` limited
-to loopback origins.
+matching loopback `Origin` on `POST /api/*`), sends `Cache-Control: no-store` on HTML and PNG
+responses, and sets a nonce CSP with `frame-ancestors` limited to loopback origins.
 
 ### Several sessions in the web UI
 

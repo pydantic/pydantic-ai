@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.machinery
 import io
 import json
 import struct
 import zlib
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
+from importlib.util import find_spec
 from pathlib import Path
-from typing import Any
 
 import anyio
 import httpx
@@ -84,6 +83,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, 
 from pydantic_ai_pax.builtin_plugins.sandbox.viewer import (
     HEADER,
     MAX_FRAMES,
+    DesktopFrame,
     DesktopSession,
     DesktopViewer,
     _ViewerGuard,  # pyright: ignore[reportPrivateUsage]
@@ -171,6 +171,7 @@ class FakeDesktopProvider:
     working_dir: str = '/home/user/workspace'
     token_in_sandbox: bool = False
     has_desktop_url: bool = False
+    desktop_url_is_bearer: bool = False
     requirement: str | None = None
     live_url_value: str | None = None
     live_url_error: Exception | None = None
@@ -220,10 +221,6 @@ class FakeDesktopProvider:
         return FakeDesktopBackend(
             ref, self.root / ref.id, env={**env, **git_env}, display=self.display if desktop else None
         )
-
-
-def _installed(name: str) -> importlib.machinery.ModuleSpec:
-    return importlib.machinery.ModuleSpec(name, None)
 
 
 def _not_installed(name: str) -> None:
@@ -631,6 +628,17 @@ async def test_view_native_url_fallback_and_side_panel(
     await plugin.on_session_end(SessionEnd(reason='exit'))
     assert not await first_page.exists() and not await second_page.exists()
 
+    # Bearer native URL (e.g. Daytona) defaults to the loopback viewer instead of minting/printing a bearer link.
+    desktop_provider.live_url_error = None
+    desktop_provider.desktop_url_is_bearer = True
+    bearer_plugin = plugin_of(load(work, terminal=True))
+    monkeypatch.setattr(bearer_plugin._viewer, 'ensure_started', lambda: 43212)  # pyright: ignore[reportPrivateUsage]
+    await bearer_plugin.computer_use_command(['fake'])
+    bearer_msg = await bearer_plugin.computer_use_command(['view'])
+    assert bearer_msg.startswith('Opened desktop viewer in your browser: http://127.0.0.1:43212/?token=')
+    await bearer_plugin.on_session_end(SessionEnd(reason='exit'))
+    desktop_provider.desktop_url_is_bearer = False
+
     # Headless view does not call open_browser and tolerates failed initial capture.
     desktop_provider.has_desktop_url = False
     desktop_provider.display.fail_screenshot = WorkspaceError('display starting')
@@ -639,7 +647,7 @@ async def test_view_native_url_fallback_and_side_panel(
     await headless.computer_use_command(['fake'])
     headless_msg = await headless.computer_use_command(['view'])
     assert headless_msg.startswith('Desktop viewer: http://127.0.0.1:43211/?token=')
-    assert len(opened) == 2
+    assert len(opened) == 3
 
     # Once a frame exists, `/computer-use view` reuses existing frames without triggering a live capture.
     desktop_provider.display.fail_screenshot = None
@@ -705,10 +713,12 @@ async def test_desktop_viewer_app_end_to_end() -> None:
         assert page.headers['x-content-type-options'] == 'nosniff'
         assert 'Interactive desktop' in page.text
 
-        # Record a frame and fetch its PNG; missing seq -> 404.
+        # Record a frame and fetch its PNG (never cached on disk); missing seq -> 404.
         recorded = session.record(PNG_A, actions=(Click(x=10, y=20),), result=ComputerResult(performed=1))
         img = await client.get(f'/frames/{recorded.seq}.png?token={token}&sandbox={key}')
         assert img.status_code == 200 and img.content == PNG_A and img.headers['content-type'] == 'image/png'
+        assert img.headers['cache-control'] == 'no-store'
+        assert img.headers['x-content-type-options'] == 'nosniff'
         assert (await client.get(f'/frames/999.png?token={token}&sandbox={key}')).status_code == 404
 
         # POST /api/capture captures live screenshot; errors return 502.
@@ -726,8 +736,16 @@ async def test_desktop_viewer_app_end_to_end() -> None:
         fail_live = True
         assert (await client.post(f'/api/live-url?sandbox={key}', headers={HEADER: token})).status_code == 502
 
-        # SSE stream pushes recorded frames and terminates on session.close().
+        # SSE stream replays existing frames on subscribe, pushes new frames, and terminates on session.close().
         sse_lines: list[str] = []
+        subscribed = asyncio.Event()
+        real_subscribe = session.subscribe
+
+        def notify_subscribe() -> asyncio.Queue[DesktopFrame | None]:
+            subscribed.set()
+            return real_subscribe()
+
+        session.subscribe = notify_subscribe
 
         async def read_sse() -> None:
             async with client.stream('GET', f'/events?token={token}&sandbox={key}') as response:
@@ -737,12 +755,12 @@ async def test_desktop_viewer_app_end_to_end() -> None:
                         sse_lines.append(line.removeprefix('data: '))
 
         task = asyncio.create_task(read_sse())
-        while not session._subscribers:  # pyright: ignore[reportPrivateUsage]
-            await asyncio.sleep(0)
+        await subscribed.wait()
         session.record(PNG_B, summary='pushed')
         session.close()
         await task
-        assert [json.loads(line)['summary'] for line in sse_lines] == ['pushed']
+        session.subscribe = real_subscribe
+        assert [json.loads(line)['summary'] for line in sse_lines] == ['click (10, 20)', 'Live snapshot', 'pushed']
 
     # Bounded ring buffer and full subscriber queue eviction.
     q = session.subscribe()
@@ -758,7 +776,7 @@ async def test_desktop_viewer_app_end_to_end() -> None:
 async def test_viewer_guard_and_server_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[object] = []
 
-    async def inner(scope: Mapping[str, object], receive: Any, send: Any) -> None:
+    async def inner(scope: Mapping[str, object], receive: object, send: object) -> None:
         del receive, send
         seen.append(scope['type'])
 
@@ -784,7 +802,7 @@ async def test_viewer_guard_and_server_lifecycle(monkeypatch: pytest.MonkeyPatch
         async def stop(self) -> None:
             stopped.append(self.port)
 
-    def fake_serve(build: Callable[[int], Any], *, host: str, port: int) -> _FakeServer:
+    def fake_serve(build: Callable[[int], object], *, host: str, port: int) -> _FakeServer:
         assert host == '127.0.0.1' and port == 0
         built_apps.append(build(51234))
         return _FakeServer()
@@ -806,11 +824,9 @@ async def test_viewer_guard_and_server_lifecycle(monkeypatch: pytest.MonkeyPatch
 # ---------------------------------------------------------------------------
 
 
-async def test_boxd_and_daytona_desktop_url_and_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
-    import daytona
-
+@pytest.mark.skipif(find_spec('boxd') is None, reason='boxd not installed')
+async def test_boxd_desktop_url_and_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
-    from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
 
     class _BoxdAccess:
         desktop_url = 'https://console.boxd.sh/machines/m1/desktop'
@@ -820,7 +836,7 @@ async def test_boxd_and_daytona_desktop_url_and_wiring(monkeypatch: pytest.Monke
         access = _BoxdAccess()
 
     boxd_p = boxd_provider.BoxdProvider()
-    assert boxd_p.has_desktop_url is True
+    assert boxd_p.has_desktop_url is True and boxd_p.desktop_url_is_bearer is False
     monkeypatch.setenv(boxd_provider.KEY_NAME, 'boxd-key')
     boxd_backend = boxd_p.reopen(WorkspaceRef(provider='boxd-desktop', id='m1'), desktop=True)
     assert isinstance(boxd_backend, BoxdSandboxBackend) and boxd_backend.display is not None
@@ -833,6 +849,13 @@ async def test_boxd_and_daytona_desktop_url_and_wiring(monkeypatch: pytest.Monke
     await boxd_p.close(boxd_backend)
     await boxd_p.close(boxd_backend)
 
+
+@pytest.mark.skipif(find_spec('daytona') is None, reason='daytona not installed')
+async def test_daytona_desktop_url_and_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
+    import daytona
+
+    from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
+
     class _FakeDaytonaClient:
         closed = False
 
@@ -844,7 +867,7 @@ async def test_boxd_and_daytona_desktop_url_and_wiring(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(daytona, 'AsyncDaytona', _FakeDaytonaClient)
     daytona_p = daytona_provider.DaytonaProvider()
-    assert daytona_p.has_desktop_url is True
+    assert daytona_p.has_desktop_url is True and daytona_p.desktop_url_is_bearer is True
     monkeypatch.setenv(daytona_provider.KEY_NAME, 'dtn-key')
     dtn_backend = daytona_p.reopen(WorkspaceRef(provider='daytona-desktop', id='d1'), desktop=True)
     assert isinstance(dtn_backend, DaytonaSandboxBackend) and dtn_backend.display is not None
@@ -876,7 +899,62 @@ async def test_boxd_and_daytona_desktop_url_and_wiring(monkeypatch: pytest.Monke
     await daytona_p.close(dtn_plain)
 
 
-async def test_smol_and_other_providers_desktop_wiring(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.skipif(find_spec('opensandbox') is None, reason='opensandbox not installed')
+async def test_opensandbox_desktop_bootstraps_before_github_vault(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
+
+    events: list[str] = []
+
+    class _FakeVault:
+        async def create(self, **kwargs: object) -> None:
+            del kwargs
+            events.append('vault_create')
+
+    class _FakeSbx:
+        id = 'osb-1'
+        credential_vault = _FakeVault()
+
+        async def patch_egress_rules(self, rules: list[object]) -> None:
+            events.append(f'patch:{len(rules)}')
+
+        async def delete_egress_rules(self, targets: list[str]) -> None:
+            events.append(f'delete:{",".join(targets)}')
+
+    class _FakeDisplay:
+        async def display_size(self) -> tuple[int, int]:
+            events.append('display_size')
+            return (1280, 800)
+
+    fake_sbx = _FakeSbx()
+    fake_display = _FakeDisplay()
+
+    async def fake_get_sandbox(self: OpenSandboxBackend) -> _FakeSbx:
+        del self
+        return fake_sbx
+
+    async def fake_give_login(backend: object, github: GitHubCredential) -> None:
+        del backend, github
+        events.append('give_github_login')
+
+    monkeypatch.setenv(opensandbox_provider.DOMAIN_NAME, 'localhost:8080')
+    monkeypatch.setattr(OpenSandboxBackend, 'get_sandbox', fake_get_sandbox)
+    monkeypatch.setattr(OpenSandboxBackend, 'display', property(lambda self: fake_display))
+    monkeypatch.setattr(opensandbox_provider, 'give_github_login', fake_give_login)
+
+    prov = opensandbox_provider.OpenSandboxProvider()
+    ref, backend = await prov.create(github=GitHubCredential(login='Ada', token='gho_x'), desktop=True)
+    assert ref == WorkspaceRef(provider='opensandbox-desktop', id='osb-1')
+    assert events == [
+        'patch:2',
+        'display_size',
+        'delete:deb.debian.org,security.debian.org',
+        'vault_create',
+        'give_github_login',
+    ]
+    await prov.close(backend)
+
+
+async def test_smol_missing_and_reached_display(monkeypatch: pytest.MonkeyPatch) -> None:
     smol_p = local_provider.SmolProvider()
     monkeypatch.setattr(local_provider, 'find_spec', _not_installed)
     monkeypatch.setattr(local_provider.sys, 'platform', 'win32')
@@ -925,27 +1003,82 @@ async def test_smol_and_other_providers_desktop_wiring(monkeypatch: pytest.Monke
     with pytest.raises(UnsupportedActionError):
         await min_display.cursor_position()
 
+
+@pytest.mark.parametrize(
+    ('prov', 'ref_prov', 'ref_id'),
+    [
+        pytest.param(
+            e2b_provider.E2BProvider(),
+            'e2b-desktop',
+            'e1',
+            id='e2b',
+            marks=pytest.mark.skipif(find_spec('e2b') is None, reason='e2b not installed'),
+        ),
+        pytest.param(
+            opensandbox_provider.OpenSandboxProvider(),
+            'opensandbox-desktop',
+            'o1',
+            id='opensandbox',
+            marks=pytest.mark.skipif(find_spec('opensandbox') is None, reason='opensandbox not installed'),
+        ),
+        pytest.param(
+            modal_provider.ModalProvider(),
+            'modal-desktop',
+            'mod1',
+            id='modal',
+            marks=pytest.mark.skipif(find_spec('modal') is None, reason='modal not installed'),
+        ),
+        pytest.param(
+            render_provider.RenderProvider(),
+            'render-desktop',
+            'r1',
+            id='render',
+            marks=pytest.mark.skipif(find_spec('render') is None, reason='render not installed'),
+        ),
+        pytest.param(
+            sprites_provider.SpritesProvider(),
+            'sprites-desktop',
+            'sp1',
+            id='sprites',
+            marks=pytest.mark.skipif(find_spec('sprites') is None, reason='sprites not installed'),
+        ),
+        pytest.param(
+            kubernetes_provider.KubernetesProvider(),
+            'kubernetes-desktop',
+            'default/k1',
+            id='kubernetes',
+            marks=pytest.mark.skipif(
+                find_spec('k8s_agent_sandbox') is None or find_spec('grpc') is None,
+                reason='k8s_agent_sandbox not installed',
+            ),
+        ),
+        pytest.param(
+            local_provider.SmolProvider(),
+            'local-smol-desktop',
+            f'pydantic-ai-{"0" * 32}',
+            id='local-smol',
+            marks=pytest.mark.skipif(find_spec('smol') is None, reason='smol not installed'),
+        ),
+        pytest.param(
+            local_provider.BoxLiteProvider(),
+            'local-boxlite-desktop',
+            f'pydantic-ai-{"0" * 32}',
+            id='local-boxlite',
+            marks=pytest.mark.skipif(find_spec('boxlite') is None, reason='boxlite not installed'),
+        ),
+    ],
+)
+async def test_provider_reopen_desktop_wiring(
+    prov: sandbox.SandboxProvider, ref_prov: str, ref_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv(e2b_provider.KEY_NAME, 'e2b-key')
     monkeypatch.setenv(opensandbox_provider.DOMAIN_NAME, 'localhost:8080')
     monkeypatch.setenv(render_provider.KEY_NAME, 'r-key')
     monkeypatch.setenv(render_provider.WORKSPACE_KEY_NAME, 'tea-1')
     monkeypatch.setenv(sprites_provider.KEY_NAME, 's-key')
-    monkeypatch.setattr(local_provider, 'find_spec', _installed)
-
-    reopen_checks = [
-        (e2b_provider.E2BProvider(), 'e2b-desktop', 'e1'),
-        (opensandbox_provider.OpenSandboxProvider(), 'opensandbox-desktop', 'o1'),
-        (modal_provider.ModalProvider(), 'modal-desktop', 'mod1'),
-        (render_provider.RenderProvider(), 'render-desktop', 'r1'),
-        (sprites_provider.SpritesProvider(), 'sprites-desktop', 'sp1'),
-        (kubernetes_provider.KubernetesProvider(), 'kubernetes-desktop', 'default/k1'),
-        (local_provider.SmolProvider(), 'local-smol-desktop', f'pydantic-ai-{"0" * 32}'),
-        (local_provider.BoxLiteProvider(), 'local-boxlite-desktop', f'pydantic-ai-{"0" * 32}'),
-    ]
-    for prov, ref_prov, ref_id in reopen_checks:
-        backend = await anyio.to_thread.run_sync(
-            lambda p=prov, rp=ref_prov, ri=ref_id: p.reopen(WorkspaceRef(provider=rp, id=ri), desktop=True)
-        )
-        assert isinstance(backend, SupportsDisplay) and backend.display is not None, prov.name
-        assert await prov.desktop_url(backend) is None
-        await prov.close(backend)
+    backend = await anyio.to_thread.run_sync(
+        lambda: prov.reopen(WorkspaceRef(provider=ref_prov, id=ref_id), desktop=True)
+    )
+    assert isinstance(backend, SupportsDisplay) and backend.display is not None, prov.name
+    assert await prov.desktop_url(backend) is None
+    await prov.close(backend)

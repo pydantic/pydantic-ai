@@ -42,6 +42,7 @@ class E2BProvider:
     working_dir: str = '/home/user/workspace'
     token_in_sandbox: bool = False
     has_desktop_url: bool = False
+    desktop_url_is_bearer: bool = False
 
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop

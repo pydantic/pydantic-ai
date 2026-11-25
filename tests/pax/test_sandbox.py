@@ -138,6 +138,7 @@ class FakeProvider:
     working_dir: str = '/home/user/workspace'
     token_in_sandbox: bool = False
     has_desktop_url: bool = False
+    desktop_url_is_bearer: bool = False
     requirement: str | None = None
     created: list[GitHubCredential | None] = field(default_factory=list[GitHubCredential | None])
     reopened: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
