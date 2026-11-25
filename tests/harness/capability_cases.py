@@ -661,7 +661,7 @@ CASES: dict[str, CapabilityCase] = {
     'ServingModelRecorder': CapabilityCase(Anonymous('one per sub-agent run, added by the delegating toolset')),
     'DelegatedTask': CapabilityCase(
         Anonymous("one per sub-agent run, added by the delegating toolset with that run's task"),
-        build=lambda _: DelegatedTask('Summarize the report.', authority='none'),
+        build=lambda _: DelegatedTask('Summarize the report.', task_authority='none'),
     ),
     '_Skill': CapabilityCase(
         Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name')

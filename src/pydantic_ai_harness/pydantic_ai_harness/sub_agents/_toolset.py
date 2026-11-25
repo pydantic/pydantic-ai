@@ -1715,7 +1715,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if isinstance(sub_agent, _CreatedSubAgent) and not message_history:
             # The instructions the model wrote for an agent it created start each of its conversations.
             instructions = sub_agent.instructions
-        delegated = DelegatedTask(prompt, authority=sub_agent.task_authority, instructions=instructions)
+        delegated = DelegatedTask(prompt, task_authority=sub_agent.task_authority, instructions=instructions)
         # First, so the capabilities after it see the task as the sub-agent reads it.
         capabilities = [delegated, *capabilities]
         attempted = False

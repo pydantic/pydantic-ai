@@ -77,11 +77,13 @@ class DelegatedTask(AbstractCapability[Any]):
     # sub-agent run under durable execution too.
     _safe_at_runtime: ClassVar[bool] = True
 
-    def __init__(self, prompt: str | None, *, authority: TaskAuthority, instructions: str | None = None) -> None:
+    def __init__(self, prompt: str | None, *, task_authority: TaskAuthority, instructions: str | None = None) -> None:
         self.prompt = prompt
         """The prompt the run starts from, or `None` for a run resuming from its history without one, which has no
         task to deliver."""
-        self.authority = authority
+        self.task_authority = task_authority
+        """The authority of the task and messages, not this capability's: `authority` is its ceiling, which stays
+        `'operator'` so the instruction above reaches the sub-agent as the operator's."""
         self.instructions = instructions
         """Instructions the delegating model wrote for an agent it created, which come first in its conversation."""
 
@@ -106,11 +108,11 @@ class DelegatedTask(AbstractCapability[Any]):
 
     def _delivers(self) -> bool:
         """Whether the run starts from a prompt that the sub-agent reads as something other than its user's."""
-        return self.prompt is not None and (self.authority == 'none' or self.instructions is not None)
+        return self.prompt is not None and (self.task_authority == 'none' or self.instructions is not None)
 
     def _delivered(self, task: str, prompt: UserPromptPart) -> Sequence[ModelRequestPart]:
         """The parts the sub-agent reads in place of `prompt`, which holds `task`."""
-        if self.authority == 'user':
+        if self.task_authority == 'user':
             # The instructions of a created agent can't carry the user's authority any more than the operator's.
             assert self.instructions is not None
             return [parent_message(self.instructions), prompt]

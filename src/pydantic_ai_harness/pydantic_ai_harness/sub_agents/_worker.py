@@ -293,7 +293,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
                 return TaskFailedEvent(
                     task_id=task_id, agent_name=agent_name, error='This worker has no conversation to resume.'
                 )
-        delegated = DelegatedTask(start.prompt, authority=start.task_authority)
+        delegated = DelegatedTask(start.prompt, task_authority=start.task_authority)
         # Every attempt adds to one usage, so the usage limits and the reported usage cover them all.
         usage = RunUsage()
         attempt = 0
