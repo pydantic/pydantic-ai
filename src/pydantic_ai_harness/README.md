@@ -197,6 +197,7 @@ The tools the model uses in the run's workspace, whichever one it is.
 | [FileSystem](pydantic_ai_harness/file_system/) | Harness | Read, write, edit, list, and search files under a root in the run's workspace, with opt-in ripgrep tools; path-traversal checked, secrets read-only |
 | [Smart Search](pydantic_ai_harness/smart_search/) | Harness | Code search by behavior in the run's workspace: plain-English queries, ranked excerpts, judged by any model (a decision model over System One, or TypeSafe's Jev, recommended) |
 | [Shell](pydantic_ai_harness/shell/) | Harness | Command execution in the run's workspace with allowlists, denylists, timeouts, credential-stripping, and opt-in commands that outlive the run |
+| [Announce Working Directory](pydantic_ai_harness/announce_working_directory/) | Harness | Names the workspace's working directory in the instructions, once, for your own tools as well as `FileSystem` and `Shell` |
 
 ### Tools & native abilities
 

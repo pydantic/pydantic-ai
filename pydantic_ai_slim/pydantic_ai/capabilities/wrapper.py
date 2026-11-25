@@ -92,6 +92,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
     # subclass attribute of the same name must not be able to override it.
+    def __readopt_wrapped_identity(self) -> None:
+        # An adopted `id` belongs to the instance it was adopted from. The new wrapped capability
+        # can be a container holding that instance, which keeps the `id` itself, so adopt afresh.
+        if self._adopted_wrapped_id:
+            self.id = None
+            self._adopted_wrapped_id = False
+        self.__adopt_wrapped_identity()
+
     def __adopt_wrapped_identity(self) -> None:
         # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
         # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
@@ -261,7 +269,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         if new_wrapped is self.wrapped:
             return self
         new_self = replace_no_init(self, wrapped=new_wrapped)
-        new_self.__adopt_wrapped_identity()
+        new_self.__readopt_wrapped_identity()
         return new_self
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
