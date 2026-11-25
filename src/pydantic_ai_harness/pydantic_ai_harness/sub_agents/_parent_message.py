@@ -120,11 +120,15 @@ class DelegatedTask(AbstractCapability[Any]):
 
 
 def _replace_part(old: ModelRequestPart, new: Sequence[ModelRequestPart], messages: Sequence[ModelMessage]) -> None:
-    """Put `new` in place of `old` in every request of `messages` holding it."""
+    """Put `new` in place of `old`, or a copy of it an earlier hook made, in every request of `messages` holding it."""
+
+    def is_old(part: ModelRequestPart) -> bool:
+        return part is old or part == old
+
     holders = {
         id(message): message
         for message in messages
-        if isinstance(message, ModelRequest) and any(part is old for part in message.parts)
+        if isinstance(message, ModelRequest) and any(is_old(part) for part in message.parts)
     }
     for holder in holders.values():
-        holder.parts = [part for current in holder.parts for part in (new if current is old else [current])]
+        holder.parts = [part for current in holder.parts for part in (new if is_old(current) else [current])]
