@@ -18,8 +18,8 @@ name: Latest Versions Canary
 # temporary upper cap `<N` to the affected extra so users are protected while the
 # migration happens. Suppressing the signal is not one of them.
 #
-# On `v*` tag pushes `ci.yml` calls this workflow as an advisory check: `check` waits for it but
-# lists it in `allowed-failures`, so a red run does not stop `publish to PyPI` or `deploy-docs`.
+# On `v*` tag pushes `ci.yml` calls this workflow as an advisory check. No job there needs it, so
+# a red run turns the tag run red without delaying or stopping `publish to PyPI` or `deploy-docs`.
 # That run is time-dependent: an SDK published to PyPI minutes before the tag can turn it red.
 #
 # Scope, and its accepted limitation: only the dependencies our published packages declare
@@ -35,8 +35,8 @@ name: Latest Versions Canary
 # invisible to a single-interpreter run, because `uv sync` and `pytest` only ever exercise the
 # marker branches the running interpreter selects — resolving every branch in `uv lock` does
 # not run them. The interior versions are left to `ci.yml`, which covers all five at the
-# bottom of the range; two here is the compromise between that coverage and a job every
-# release waits for.
+# bottom of the range; two here is the compromise between that coverage and the runner time
+# every tag spends on it.
 #
 # Each leg uploads a report: its step outcomes, its JUnit results and the dependencies that moved.
 # The daily run comes from `latest-versions-canary-nightly.yml`, whose report job files new

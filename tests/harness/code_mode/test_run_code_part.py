@@ -151,7 +151,7 @@ class TestRunCodeCallPart:
         agent = Agent(
             FunctionModel(_run_code_then_answer("await lookup(item='widget')")),
             tools=[Tool(lookup, requires_approval=True, tool_kind=lookup_kind)],
-            capabilities=[CodeMode[object](), HandleDeferredToolCalls(handler=deny_all)],
+            capabilities=[CodeMode[object](tools=['lookup']), HandleDeferredToolCalls(handler=deny_all)],
         )
         await agent.run('hi')
 

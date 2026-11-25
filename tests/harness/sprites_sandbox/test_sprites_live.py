@@ -3,8 +3,8 @@
 The fake-backed suites cover the harness-owned logic: deadline handling, cancellation, and
 exception mapping. This live tier admits only what a correctly written fake could not catch: real
 process execution in a Sprite, `env` layered on the Sprite's environment, output reaching the
-client before a command ends, a closed exec connection stopping a timed-out command, and deletion
-as the Sprites control plane reports it.
+client before a command ends, a closed exec connection stopping a timed-out command, creation
+refusing an existing name with a 409, and deletion as the Sprites control plane reports it.
 
 Admission rule:
   A test belongs here only when its docstring can name the fake-encoded assumption it
@@ -43,6 +43,8 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
+from ..computer_use.display_contract_live import check_display_contract
+from ..computer_use.display_fakes import full_display
 
 pytestmark = [pytest.mark.sprites_live]
 
@@ -78,9 +80,9 @@ async def client(sprites_token: str) -> AsyncIterator[AsyncSpritesClient]:
 
 
 @asynccontextmanager
-async def _owned(client: AsyncSpritesClient) -> AsyncGenerator[SpritesSandboxBackend]:
+async def _owned(client: AsyncSpritesClient, *, desktop: bool = False) -> AsyncGenerator[SpritesSandboxBackend]:
     """Create a Sprite and delete it on the way out, even when the test deleted it already."""
-    backend = SpritesSandboxBackend(client=client)
+    backend = SpritesSandboxBackend(client=client, desktop=desktop)
     native = await backend.get_sandbox()
     try:
         yield backend
@@ -98,6 +100,15 @@ async def test_creates_a_fresh_sprite_and_runs_a_command(client: AsyncSpritesCli
 
         assert backend.ref is not None
         assert (result.stdout.strip(), result.stderr.strip(), result.exit_code) == ('out', 'err', 3)
+
+
+async def test_creating_a_name_that_exists_is_refused_with_409(client: AsyncSpritesClient) -> None:
+    """Validates the fake-encoded assumption that sending a create again under a name that already exists
+    cannot make a second Sprite: Sprites refuses it with a 409, which `_create_refused` treats as committed."""
+    async with _owned(client) as backend:
+        assert backend.ref is not None
+        with pytest.raises(SpriteError, match=r'\(status 409\)'):
+            await client.create_sprite(backend.ref.id)
 
 
 async def test_destroy_ref_does_not_attach(client: AsyncSpritesClient) -> None:
@@ -263,6 +274,14 @@ async def test_coder_shell_and_file_tools_run_in_the_sprite(client: AsyncSprites
 
     assert 'git version' in result.output
     assert 'hello' in result.output
+
+
+async def test_a_desktop_meets_the_display_contract(client: AsyncSpritesClient) -> None:
+    """The fakes can't catch an X server that resets when its last client exits, as Xvfb does without `-noreset`."""
+    async with _owned(client, desktop=True) as backend:
+        display = full_display(backend)
+        await display.screenshot()
+        await check_display_contract(display)
 
 
 async def test_commands_get_a_usable_environment(client: AsyncSpritesClient) -> None:

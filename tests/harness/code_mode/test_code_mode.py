@@ -42,6 +42,7 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     AbstractToolset,
     Agent,
+    ExternalToolset,
     RunContext,
     Tool,
     ToolDefinition,
@@ -49,6 +50,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -2029,6 +2031,21 @@ class TestCodeMode:
         assert 'load_capability' in tools
         assert tools['load_capability'].tool_def.tool_kind == 'capability-load'
 
+    async def test_computer_tool_not_sandboxed(self) -> None:
+        """`ComputerUse`'s `computer` tool stays native: the model itself has to see the screenshot it returns."""
+        td_computer = ToolDefinition(name='computer', description='Run actions on the screen.', tool_kind=COMPUTER_KIND)
+        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_computer])
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def get_user' in description
+        assert 'async def computer' not in description
+        assert tools['computer'].tool_def.tool_kind == COMPUTER_KIND.id
+
     async def test_code_execution_tool_not_sandboxed(self) -> None:
         """A tool that is itself a code sandbox (carries `code_arg_name` metadata) stays native.
 
@@ -2148,28 +2165,178 @@ class TestCodeMode:
         assert 'async def duckduckgo_search' in description
         assert 'duckduckgo_search' not in tools
 
-    async def test_deferred_execution_tools_sandboxed(self) -> None:
-        """Tools with `kind='external'`/`'unapproved'` are sandboxed like any other tool; resolution happens via a `HandleDeferredToolCalls` capability."""
-        td_external = ToolDefinition(
+    @pytest.mark.parametrize('kind', ['external', 'unapproved'])
+    async def test_deferred_execution_tools_native_under_all(self, kind: Literal['external', 'unapproved']) -> None:
+        """`tools='all'` keeps approval-required and external tools native, so their deferred calls work without a handler."""
+        td_deferred = ToolDefinition(
             name='approve_action',
             description='Needs approval.',
             parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
             return_schema={'type': 'string'},
-            kind='external',
+            kind=kind,
         )
-        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_external])
+        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_deferred])
         wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
-        ctx = build_run_context(None)
-        tools = await wrapper.get_tools(ctx)
+        tools = await wrapper.get_tools(build_run_context(None))
 
+        assert set(tools) == {'run_code', 'approve_action'}
         description = tools['run_code'].tool_def.description
         assert description is not None
-        # The external tool appears as a sandboxed function signature.
+        assert 'async def get_user' in description
+        assert 'approve_action' not in description
+
+    @pytest.mark.parametrize('kind', ['external', 'unapproved'])
+    async def test_explicit_selector_sandboxes_deferred_execution_tools(
+        self, kind: Literal['external', 'unapproved']
+    ) -> None:
+        """An explicit selector still sandboxes approval-required and external tools, for agents with an inline handler."""
+        td_deferred = ToolDefinition(
+            name='approve_action',
+            description='Needs approval.',
+            parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
+            return_schema={'type': 'string'},
+            kind=kind,
+        )
+        wrapper = CodeMode[object](tools=['approve_action'], dynamic_catalog=False).get_wrapper_toolset(
+            _StaticToolset([td_deferred])
+        )
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        assert set(tools) == {'run_code'}
+        description = tools['run_code'].tool_def.description
+        assert description is not None
         assert 'async def approve_action' in description
-        # Not exposed as a native tool.
-        assert 'approve_action' not in tools
+
+    async def test_approval_required_toolset_stays_sandboxed_under_all(self) -> None:
+        """`.approval_required()` gates calls without changing `kind`, so `tools='all'` still sandboxes its tools."""
+
+        def delete_file(path: str) -> str:
+            """Delete a file."""
+            return f'deleted {path}'  # pragma: no cover
+
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(
+            _build_function_toolset(delete_file).approval_required()
+        )
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        assert set(tools) == {'run_code'}
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def delete_file' in description
+
+    async def test_approval_required_tool_follows_deferred_flow_under_default_selector(self) -> None:
+        """A bare `CodeMode()` leaves an approval-required tool native, so the run pauses for approval and resumes."""
+
+        def delete_file(path: str) -> str:
+            """Delete a file."""
+            return f'deleted {path}'
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                assert sorted(tool.name for tool in info.function_tools) == ['delete_file', 'run_code']
+                return ModelResponse(parts=[ToolCallPart('delete_file', {'path': 'a.txt'}, tool_call_id='c1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool(delete_file, requires_approval=True)],
+            capabilities=[CodeMode[object]()],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('delete a.txt')
+        assert isinstance(paused.output, DeferredToolRequests)
+        assert [call.tool_name for call in paused.output.approvals] == ['delete_file']
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(approvals={'c1': ToolApproved()}),
+        )
+        assert resumed.output == 'done'
+        tool_return = resumed.all_messages()[-2].parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        assert tool_return.content == 'deleted a.txt'
+
+    async def test_external_tool_follows_deferred_flow_under_default_selector(self) -> None:
+        """A bare `CodeMode()` leaves an external tool native, so the run pauses for its result and resumes."""
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                assert sorted(tool.name for tool in info.function_tools) == ['run_code', 'upload']
+                return ModelResponse(parts=[ToolCallPart('upload', {'path': 'a.txt'}, tool_call_id='c1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        upload = ToolDefinition(
+            name='upload',
+            parameters_json_schema={'type': 'object', 'properties': {'path': {'type': 'string'}}, 'required': ['path']},
+        )
+        agent = Agent(
+            FunctionModel(model_fn),
+            toolsets=[ExternalToolset([upload])],
+            capabilities=[CodeMode[object]()],
+            output_type=[str, DeferredToolRequests],
+        )
+        paused = await agent.run('upload a.txt')
+        assert isinstance(paused.output, DeferredToolRequests)
+        assert [call.tool_name for call in paused.output.calls] == ['upload']
+
+        resumed = await agent.run(
+            message_history=paused.all_messages(),
+            deferred_tool_results=DeferredToolResults(calls={'c1': 'uploaded'}),
+        )
+        assert resumed.output == 'done'
+        tool_return = resumed.all_messages()[-2].parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        assert tool_return.content == 'uploaded'
+
+    @pytest.mark.parametrize(
+        ('tools', 'sandboxed'),
+        [pytest.param('all', False, id='all'), pytest.param(['delete_file'], True, id='explicit')],
+    )
+    async def test_discovered_approval_required_tool_placement_with_dynamic_catalog(
+        self, tools: Literal['all'] | list[str], sandboxed: bool
+    ) -> None:
+        """With the default dynamic catalog, a discovered approval-required tool stays native under `'all'`.
+
+        An explicit selector keeps it off the wire until it's found and then folds it into `run_code`.
+        """
+
+        def delete_file(path: str) -> str:
+            """Delete a file."""
+            return f'deleted {path}'  # pragma: no cover
+
+        declared: list[list[str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            declared.append(sorted(tool.name for tool in info.function_tools))
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['delete']}, tool_call_id='s1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        code_mode = CodeMode[object](tools=tools)
+        agent = Agent(
+            FunctionModel(model_fn),
+            tools=[Tool(delete_file, requires_approval=True, defer_loading=True)],
+            capabilities=[ToolSearch[object](), code_mode],
+        )
+        with capture_run_messages() as messages:
+            await agent.run('delete a.txt')
+
+        assert 'delete_file' not in declared[0]
+        assert ('delete_file' in declared[-1]) is not sandboxed
+        announced = [
+            part.tools
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, DiscoveryAnnouncementPart)
+        ]
+        assert announced == ([('delete_file',)] if sandboxed else [])
 
     async def test_tool_without_return_schema_warns(self) -> None:
         """A sandboxed tool with no return_schema triggers a one-time warning."""
@@ -2598,14 +2765,19 @@ class TestCodeMode:
         class PanicException(BaseException):
             """Match the pyo3 panic class recognized by `is_sandbox_panic`."""
 
+        class CrashedError(ValueError):
+            """Stand in for `MontyCrashedError`, which cannot be constructed from Python."""
+
+            timed_out = False
+
         errors: dict[str, BaseException] = {
-            'worker-crash': ValueError('worker crash'),
+            'worker-crash': CrashedError('worker crash'),
             'host-error': RuntimeError('host failure'),
             'sandbox-panic': PanicException('sandbox panic'),
         }
         # The native crash exception cannot be constructed from Python. Inject it after a real
         # feed so the snippet catches the refusal before the worker or host binding fails.
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.MontyCrashedError', ValueError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', CrashedError)
         original_run = MontyExecutor.run
 
         async def fail_after_feed(
@@ -5335,7 +5507,7 @@ class TestCodeModeOSAccess:
         assert result.return_value == "os.getenv('A', None)"
 
     async def test_positional_os_callback_is_deprecated_but_still_works(self) -> None:
-        def os_cb(fn: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+        def os_cb(fn: OsFunction, args: tuple[object, ...], kwargs: dict[str, object]) -> str:
             return f'positional {fn}'
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

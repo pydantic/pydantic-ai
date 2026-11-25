@@ -78,6 +78,10 @@ jobs:
       fail-fast: false
       matrix:
         provider: ${{ fromJSON(needs.plan.outputs.providers) }}
+    env:
+      # Timestamps the captured log lines of every pytest step, which `tests/harness/conftest.py` sets to include the
+      # harness's INFO lines.
+      PYTEST_ADDOPTS: "--log-format='%(asctime)s %(levelname)s %(name)s %(message)s'"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -412,6 +412,19 @@ def _google_retry_info_body(retry_delay: object) -> dict[str, Any]:
     }
 
 
+_UPSTREAM_OVERFLOW = "Input length (100000) exceeds the model's maximum context length (8192)."
+
+
+_UPSTREAM_OVERFLOW_JSON = json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}})
+_DEEPLY_NESTED_RAW = '[' * 1_000 + ']' * 1_000
+"""Past `pydantic_core.from_json`'s depth limit, and deep enough that `json.loads` raises `RecursionError` on Python 3.11."""
+
+
+def _openrouter_metadata_raw_error(raw: object, code: int | str = 400, **metadata: object) -> dict[str, object]:
+    """An OpenRouter error that forwards the upstream provider's error in `metadata.raw`."""
+    return {'error': {'code': code, 'message': 'Provider returned error', 'metadata': {'raw': raw, **metadata}}}
+
+
 CASES = [
     Case(
         id='openai-rate-limit',
@@ -445,6 +458,13 @@ CASES = [
         handler=_json(503, {'error': {'message': 'The engine is currently overloaded', 'type': 'server_error'}}),
         categories=_OVERLOADED,
         attrs={'status_code': 503, 'provider_error_code': None, 'provider_error_type': 'server_error'},
+    ),
+    Case(
+        id='openai-provider-timeout',
+        model=_openai,
+        handler=_json(408, {'error': {'message': 'Request timed out', 'type': 'timeout'}}),
+        categories={ModelHTTPError, ModelConnectionError, ModelTimeoutError},
+        attrs={'status_code': 408, 'provider_error_type': 'timeout', 'phase': None},
     ),
     Case(
         id='openai-context-window',
@@ -599,6 +619,242 @@ CASES = [
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
     ),
+    # OpenRouter forwards the upstream provider's overflow in `metadata.raw`, as JSON or plain text, behind a generic
+    # message.
+    Case(
+        id='openrouter-http-metadata-raw-context-window-json',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON)),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-json-stream',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON)),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-plain',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW)),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-plain-stream',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW)),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        stream=True,
+    ),
+    # Any other error keeps its category whatever `metadata.raw` says: like `openai`, a status a retrying transport gave
+    # up on is classified from the error's `message`, not from the whole body.
+    Case(
+        id='openrouter-http-metadata-raw-context-window-401',
+        model=_openrouter,
+        handler=_json(401, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 401)),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': '401'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-401-stream',
+        model=_openrouter,
+        handler=_json(401, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 401)),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401, 'provider_error_code': '401'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-403',
+        model=_openrouter,
+        handler=_json(403, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 403)),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403, 'provider_error_code': '403'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-403-flagged-input',
+        model=_openrouter,
+        handler=_json(
+            403,
+            _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 403, flagged_input='text', reasons=['violence']),
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 403, 'provider_error_code': '403'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-403-flagged-input-stream',
+        model=_openrouter,
+        handler=_json(
+            403,
+            _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 403, flagged_input='text', reasons=['violence']),
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 403, 'provider_error_code': '403'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-404',
+        model=_openrouter,
+        handler=_json(404, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 404)),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': '404'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-404-stream',
+        model=_openrouter,
+        handler=_json(404, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 404)),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': '404'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-402',
+        model=_openrouter,
+        handler=_json(402, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 402)),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 402, 'provider_error_code': '402'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-402-stream',
+        model=_openrouter,
+        handler=_json(402, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 402)),
+        categories={ModelHTTPError, ModelQuotaExceededError},
+        attrs={'status_code': 402, 'provider_error_code': '402'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-429',
+        model=_openrouter,
+        handler=_json(429, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 429)),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '429'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-429-stream',
+        model=_openrouter,
+        handler=_json(429, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 429)),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'provider_error_code': '429'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-503',
+        model=_openrouter,
+        handler=_json(503, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 503)),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'provider_error_code': '503'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-503-stream',
+        model=_openrouter,
+        handler=_json(503, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 503)),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'provider_error_code': '503'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-model-not-found',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON, 'model_not_found')),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 400, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-object',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error({'error': {'message': _UPSTREAM_OVERFLOW}})),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-generic-nested-type',
+        model=_openrouter,
+        handler=_json(
+            400, _openrouter_metadata_raw_error(json.dumps({'error': {'type': 'BadRequestError', 'code': 400}}))
+        ),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-deeply-nested',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_DEEPLY_NESTED_RAW)),
+        categories=_REJECTED,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-overloaded',
+        model=_openrouter,
+        handler=_json(
+            503,
+            _openrouter_metadata_raw_error(
+                'litellm.InternalServerError: The provider is overloaded, please try again later.', 503
+            ),
+        ),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 503, 'provider_error_code': '503'},
+    ),
+    Case(
+        id='openai-http-metadata-raw-context-window-401',
+        model=_openai,
+        handler=_json(
+            401,
+            {'error': {'message': 'Invalid API key provided.', 'metadata': {'raw': _UPSTREAM_OVERFLOW_JSON}}},
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 401},
+    ),
+    Case(
+        id='openai-http-metadata-raw-context-window-403',
+        model=_openai,
+        handler=_json(
+            403,
+            {
+                'error': {
+                    'message': 'Your API key does not have access to this model.',
+                    'metadata': {'raw': _UPSTREAM_OVERFLOW_JSON},
+                }
+            },
+        ),
+        categories=_AUTHENTICATION,
+        attrs={'status_code': 403},
+    ),
+    Case(
+        id='openai-http-metadata-raw-context-window-404',
+        model=_openai,
+        handler=_json(
+            404,
+            {
+                'error': {
+                    'code': 'model_not_found',
+                    'message': 'No endpoints found matching your request.',
+                    'metadata': {'raw': _UPSTREAM_OVERFLOW_JSON},
+                }
+            },
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 404, 'provider_error_code': 'model_not_found'},
+    ),
+    Case(
+        id='openai-http-metadata-raw-context-window-model-not-found',
+        model=_openai,
+        handler=_json(
+            400,
+            {
+                'error': {
+                    'code': 'model_not_found',
+                    'message': 'We could not route your request.',
+                    'metadata': {'raw': _UPSTREAM_OVERFLOW_JSON},
+                }
+            },
+        ),
+        categories=_NOT_FOUND,
+        attrs={'status_code': 400, 'provider_error_code': 'model_not_found'},
+    ),
     Case(
         id='openrouter-body-rate-limit',
         model=_openrouter,
@@ -614,6 +870,14 @@ CASES = [
             200,
             {'error': {'code': 400, 'message': "This endpoint's maximum context length is 128000 tokens."}},
         ),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        has_cause=False,
+    ),
+    Case(
+        id='openrouter-body-metadata-raw-context-window',
+        model=_openrouter,
+        handler=_json(200, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW_JSON)),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         has_cause=False,
@@ -853,6 +1117,22 @@ CASES = [
         handler=_raise('timeout'),
         categories={ModelConnectionError, ModelTimeoutError},
         attrs={'phase': 'read'},
+    ),
+    Case(
+        # Groq's flex service tier is out of capacity.
+        id='groq-flex-capacity',
+        model=_groq,
+        handler=_json(498, {'error': {'message': 'Flex tier capacity exceeded.', 'type': 'invalid_request_error'}}),
+        categories={ModelHTTPError, ModelUnavailableError},
+        attrs={'status_code': 498},
+    ),
+    Case(
+        # Groq's remote MCP dependency failure is not a model failure.
+        id='groq-mcp-dependency',
+        model=_groq,
+        handler=_json(424, {'error': {'message': 'Remote MCP server failed.', 'type': 'invalid_request_error'}}),
+        categories={ModelHTTPError},
+        attrs={'status_code': 424},
     ),
     Case(
         id='google-rate-limit',
@@ -2564,8 +2844,13 @@ async def test_retrying_transport_gave_up_keeps_streamed_error_body(
     assert exc.retry_after == retry_after
 
 
-def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientError:
+def _bedrock_error(
+    code: str, message: str, status_code: int | None, original_status_code: int | None = None
+) -> ClientError:
     response: dict[str, Any] = {'Error': {'Code': code, 'Message': message}}
+    if original_status_code is not None:
+        # botocore puts a `ModelErrorException`'s modeled fields at the top level of the error response.
+        response['originalStatusCode'] = original_status_code
     if status_code is None:
         # An exception event inside a `ConverseStream` response: botocore gives it no response metadata.
         return EventStreamError(cast(Any, response), 'ConverseStream')
@@ -2613,6 +2898,20 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
             {ModelHTTPError, ModelServerError},
             {'status_code': 500, 'provider_error_code': 'InternalServerException'},
             id='server-error',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('ModelErrorException', 'The model returned an error.', 424),
+            {ModelHTTPError, ModelServerError},
+            {'status_code': 424, 'provider_error_code': 'ModelErrorException'},
+            id='model-error',
+        ),
+        pytest.param(
+            lambda: _bedrock_error(
+                'ModelErrorException', 'The model returned an error.', 424, original_status_code=429
+            ),
+            {ModelHTTPError, ModelRateLimitError},
+            {'status_code': 424, 'provider_error_code': 'ModelErrorException'},
+            id='model-error-original-status',
         ),
         pytest.param(
             lambda: _bedrock_error('serviceUnavailableException', 'Service unavailable.', None),
@@ -2716,8 +3015,8 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
         ),
         pytest.param(
             lambda: _bedrock_error('modelTimeoutException', 'The model took too long.', None),
-            {ModelHTTPError},
-            {'status_code': 408, 'in_stream': True, 'provider_error_code': 'modelTimeoutException'},
+            {ModelHTTPError, ModelConnectionError, ModelTimeoutError},
+            {'status_code': 408, 'in_stream': True, 'provider_error_code': 'modelTimeoutException', 'phase': None},
             id='stream-model-timeout',
         ),
         pytest.param(

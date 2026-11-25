@@ -323,6 +323,41 @@ def test_openai_compatible_endpoints_fall_back_from_max_effort():
     assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'delegates'),
+    [
+        ('gpt-6.1-terra', True),
+        ('gpt-5.5', True),
+        ('gpt-4o', True),
+        ('gpt-oss-120b', False),
+        ('o3', False),
+        ('claude-opus-5-5', False),
+    ],
+)
+def test_delegates_unprompted(model_name: str, delegates: bool):
+    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API."""
+    profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(profile, dict)
+    assert profile.get('delegates_unprompted', False) is delegates
+
+
+@pytest.mark.parametrize(
+    'key', ['openai_chat_streaming_repeats_usage_totals', 'openai_chat_completion_tokens_omit_reasoning']
+)
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [('gemini-3.1-flash-lite', True), ('google/gemini-3.1-flash-lite', False), ('gpt-5-mini', False)],
+)
+def test_gemini_usage_flags_only_on_openai_provider_gemini_names(key: str, model_name: str, expected: bool):
+    """The shared profile stays off, as the hosts that reuse it aren't verified to report usage the way Gemini does."""
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get(key, False) is expected
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get(key, False) is False
+
+
 class TestEncryptedReasoningContent:
     """Tests for encrypted reasoning content support."""
 

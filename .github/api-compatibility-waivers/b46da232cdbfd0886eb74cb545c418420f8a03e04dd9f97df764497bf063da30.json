@@ -1,0 +1,5 @@
+{
+  "against": "v2.70.0",
+  "reason": "clai2 MCP servers load on demand by default (#13902): `ServerSettings.defer_loading` defaults to `True`, so a server saved without the key becomes the deferred capability `mcp_NAME`; `\"defer_loading\": false` keeps it eager. The library's `pydantic_ai.capabilities.MCP` default is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13913"
+}

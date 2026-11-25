@@ -869,6 +869,22 @@ def test_model_json_schema_with_capabilities():
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
+                'ComputerTool': {
+                    'properties': {
+                        'kind': {'default': 'computer', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'display_size': {
+                            'maxItems': 2,
+                            'minItems': 2,
+                            'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                            'title': 'Display Size',
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['display_size'],
+                    'title': 'ComputerTool',
+                    'type': 'object',
+                },
                 'FileSearchProviderSettings': {
                     'additionalProperties': True,
                     'properties': {'xai': {'$ref': '#/$defs/XaiFileSearchToolSettings'}},
@@ -1154,6 +1170,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-4-argon',
                         'gateway/google-cloud:gemini-4-carbon',
                         'gateway/google-cloud:gemini-4-hydrogen',
+                        'gateway/google-cloud:gemini-4-neon',
                         'gateway/google:gemini-3-pro-image',
                         'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
@@ -1164,6 +1181,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-4-argon',
                         'gateway/google:gemini-4-carbon',
                         'gateway/google:gemini-4-hydrogen',
+                        'gateway/google:gemini-4-neon',
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
                         'gateway/groq:qwen/qwen3.8-27b',
@@ -1186,6 +1204,7 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-4-argon',
                         'google-cloud:gemini-4-carbon',
                         'google-cloud:gemini-4-hydrogen',
+                        'google-cloud:gemini-4-neon',
                         'google-decisions:gemini-decision-1',
                         'google:gemini-3-pro-image',
                         'google:gemini-3.1-flash-image',
@@ -1197,6 +1216,7 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-4-argon',
                         'google:gemini-4-carbon',
                         'google:gemini-4-hydrogen',
+                        'google:gemini-4-neon',
                         'groq:openai/gpt-oss-120b',
                         'groq:openai/gpt-oss-20b',
                         'groq:qwen/qwen3.8-27b',
@@ -1784,6 +1804,12 @@ def test_model_json_schema_with_capabilities():
                                         },
                                         {
                                             'allOf': [
+                                                {'$ref': '#/$defs/ComputerTool'},
+                                                {'properties': {'kind': {'const': 'computer'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
                                                 {'$ref': '#/$defs/MCPServerTool'},
                                                 {'properties': {'kind': {'const': 'mcp_server'}}, 'required': ['kind']},
                                             ]
@@ -2208,6 +2234,8 @@ def test_model_json_schema_with_capabilities():
                                         'ModelAuthenticationError',
                                         'ModelNotFoundError',
                                         'ModelRequestTimeout',
+                                        'ModelEmptyResponseError',
+                                        'ModelInvalidResponseError',
                                         'ContentFilterError',
                                         'OutputTokenLimitExceeded',
                                     ],
@@ -2230,6 +2258,8 @@ def test_model_json_schema_with_capabilities():
                                             'ModelAuthenticationError',
                                             'ModelNotFoundError',
                                             'ModelRequestTimeout',
+                                            'ModelEmptyResponseError',
+                                            'ModelInvalidResponseError',
                                             'ContentFilterError',
                                             'OutputTokenLimitExceeded',
                                         ],
@@ -2445,6 +2475,8 @@ def test_model_json_schema_with_capabilities():
                                         'ModelAuthenticationError',
                                         'ModelNotFoundError',
                                         'ModelRequestTimeout',
+                                        'ModelEmptyResponseError',
+                                        'ModelInvalidResponseError',
                                         'ContentFilterError',
                                         'OutputTokenLimitExceeded',
                                     ],
@@ -2467,6 +2499,8 @@ def test_model_json_schema_with_capabilities():
                                             'ModelAuthenticationError',
                                             'ModelNotFoundError',
                                             'ModelRequestTimeout',
+                                            'ModelEmptyResponseError',
+                                            'ModelInvalidResponseError',
                                             'ContentFilterError',
                                             'OutputTokenLimitExceeded',
                                         ],

@@ -17,7 +17,7 @@ from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 
-from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT
+from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT, delete_live_machine
 from .fake_boxd import FakeBoxd
 
 
@@ -64,7 +64,7 @@ class TestLiveBoxdSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
         finally:
             try:
                 if backend.ref is not None:
-                    await BoxdSandbox().destroy(backend.ref)
+                    await delete_live_machine(backend.ref)
             finally:
                 await backend.aclose()
 
@@ -83,7 +83,7 @@ class TestLiveBoxdSandboxBackend(WorkspaceBackendSuite):  # pragma: lax no cover
         for backend in created:
             try:
                 if backend.ref is not None:
-                    await BoxdSandbox().destroy(backend.ref)
+                    await delete_live_machine(backend.ref)
             finally:
                 await backend.aclose()
 

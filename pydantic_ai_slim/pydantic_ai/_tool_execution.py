@@ -31,6 +31,15 @@ from . import _output, exceptions, messages as _messages, result
 from ._deferred import jsonable_validated_args
 from ._deferred_capabilities import LoadCapabilityCallPart
 from ._enqueue import within_ceiling
+from ._tool_status import (
+    FINAL_RESULT_PROCESSED,
+    OUTPUT_EXECUTION_FAILED,
+    OUTPUT_NOT_FINAL_RESULT,
+    OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED,
+    OUTPUT_VALIDATION_FAILED,
+    RETRY_WINS,
+    TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+)
 from .exceptions import ToolFailedError, ToolRetryError
 from .tools import (
     DeferredToolRequests,
@@ -74,7 +83,7 @@ async def _iter_completed_or_buffered(
         return
 
     waiters = event_stream_buffer.waiters
-    signal = asyncio.Event()
+    signal = asyncio.Event()  # noqa: TID251  (raced with asyncio tasks in `asyncio.wait`)
     waiters.append(signal)
     try:
         while pending:
@@ -100,18 +109,6 @@ async def _iter_completed_or_buffered(
                 yield task
     finally:
         waiters.remove(signal)
-
-
-# Status messages synthesized as the `content` of an output/function tool's `ToolReturnPart`
-# when the tool isn't run (or its result isn't used). Centralized so the same wording is shared
-# by the producers and by `_apply_retry_wins`, which replaces the winning output's status part.
-_FINAL_RESULT_PROCESSED = 'Final result processed.'
-_RETRY_WINS = 'Output not used as the final result - addressing tool retries from this round first.'
-_OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED = 'Output tool not used - a final result was already processed.'
-_OUTPUT_NOT_FINAL_RESULT = 'Output tool processed, but its value will not be the final result of the agent run.'
-_OUTPUT_EXECUTION_FAILED = 'Output tool not used - output function execution failed.'
-_OUTPUT_VALIDATION_FAILED = 'Output tool not used - output failed validation.'
-_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED = 'Tool not executed - a final result was already processed.'
 
 
 def cancelled_sub_agent_return(
@@ -701,7 +698,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         Tracks the part directly (`winning_output_part`) so `_apply_retry_wins` can replace it
         in `output_parts` without scanning the list.
         """
-        self.winning_output_part = self._status_part(call, _FINAL_RESULT_PROCESSED)
+        self.winning_output_part = self._status_part(call, FINAL_RESULT_PROCESSED)
         yield from self._record_output_part(call, self.winning_output_part, args_valid=True)
 
     async def _run_output(self, call: _messages.ToolCallPart) -> AsyncIterator[_messages.AgentStreamEvent]:
@@ -710,7 +707,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             for event in self._emit_winning_output(call):
                 yield event
         elif self.final_result is not None:
-            part = self._status_part(call, _OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED)
+            part = self._status_part(call, OUTPUT_SKIPPED_FINAL_ALREADY_PROCESSED)
             for event in self._record_output_part(call, part, args_valid=None):
                 yield event
         else:
@@ -734,7 +731,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             else:
                 # A successful-but-not-winning output only happens under `'exhaustive'`; `'early'`
                 # and `'graceful'` stop running output tools at the first success.
-                part = self._status_part(r.call, _OUTPUT_NOT_FINAL_RESULT)
+                part = self._status_part(r.call, OUTPUT_NOT_FINAL_RESULT)
                 yield from self._record_output_part(r.call, part, args_valid=True)
         elif r.retry_part is not None:
             yield from self._record_output_part(r.call, r.retry_part, args_valid=r.args_valid)
@@ -742,7 +739,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # Absorbed failure: another output won, so this one's max-retries error is recorded
             # as a skip rather than raised. (When no output won, the caller raises `raise_exc`.)
             assert r.raise_exc is not None
-            message = _OUTPUT_EXECUTION_FAILED if r.args_valid else _OUTPUT_VALIDATION_FAILED
+            message = OUTPUT_EXECUTION_FAILED if r.args_valid else OUTPUT_VALIDATION_FAILED
             part = self._status_part(r.call, message)
             yield from self._record_output_part(r.call, part, args_valid=r.args_valid)
 
@@ -782,7 +779,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         """
         part = _messages.ToolReturnPart(
             tool_name=call.tool_name,
-            content=_TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+            content=TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
             tool_call_id=call.tool_call_id,
         )
         self.output_parts.append(part)
@@ -1202,7 +1199,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         # locate it by identity and replace it in `output_parts` without scanning for a content match.
         assert self.winning_output_part is not None
         idx = self.output_parts.index(self.winning_output_part)
-        self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=_RETRY_WINS)
+        self.output_parts[idx] = dataclasses.replace(self.winning_output_part, content=RETRY_WINS)
         self.final_result = None
 
     async def _finalize_deferred(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
@@ -1235,6 +1232,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 try:
                     validated = await self.tool_manager.validate_tool_call(call)
                 except exceptions.UnexpectedModelBehavior:
+                    self.ctx.state.check_incomplete_tool_call()
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
 

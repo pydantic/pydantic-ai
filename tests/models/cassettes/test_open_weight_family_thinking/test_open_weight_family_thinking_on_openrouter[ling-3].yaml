@@ -1,0 +1,94 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "167"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: inclusionai/ling-3.1-flash
+        stream: false
+        messages:
+        - role: user
+          content: What is 17 * 23? Reply with the number only.
+        reasoning_effort: medium
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        WWW-Authenticate,PAYMENT-REQUIRED,Payment-Receipt,PAYMENT-RESPONSE,Location,X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1795403014-UgivGc6j95r2oSmQqsJN
+        object: chat.completion
+        created: 1795403014
+        model: inclusionai/ling-3.1-flash
+        provider: Novita
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: "391"
+            refusal: null
+            reasoning: 17 * 23 = 17 * 20 + 17 * 3 = 340 + 51 = 391.
+            reasoning_details:
+            - type: reasoning.text
+              text: 17 * 23 = 17 * 20 + 17 * 3 = 340 + 51 = 391.
+              format: unknown
+              index: 0
+        usage:
+          prompt_tokens: 36
+          completion_tokens: 41
+          total_tokens: 77
+          cost: 9.54e-6
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 9.54e-6
+            upstream_inference_prompt_cost: 2.16e-6
+            upstream_inference_completions_cost: 7.38e-6
+          completion_tokens_details:
+            reasoning_tokens: 37
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-23T03:03:35.731415+00:00
