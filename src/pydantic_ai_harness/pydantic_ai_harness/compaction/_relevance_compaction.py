@@ -50,6 +50,7 @@ from pydantic_ai_harness.compaction._receipts import (
     is_receipt_message,
     make_receipt_part,
     record_receipt,
+    registered_id,
 )
 from pydantic_ai_harness.compaction._shared import (
     CLEARED_TOOL_RESULT_METADATA,
@@ -553,7 +554,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             handle=handle,
             has_summary=has_summary,
         )
-        return ModelRequest(parts=[make_receipt_part(text)])
+        return ModelRequest(parts=[make_receipt_part(text, capability_id=registered_id(ctx, self))])
 
     @durable_operation('judge')
     async def _judge_steps(

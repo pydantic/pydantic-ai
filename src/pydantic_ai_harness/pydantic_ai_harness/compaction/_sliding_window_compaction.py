@@ -19,6 +19,7 @@ from pydantic_ai_harness.compaction._receipts import (
     is_receipt_part,
     make_receipt_part,
     record_receipt,
+    registered_id,
 )
 from pydantic_ai_harness.compaction._shared import (
     compact_with_span,
@@ -241,7 +242,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
             handle=handle,
             has_summary=False,
         )
-        return ModelRequest(parts=[make_receipt_part(text)])
+        return ModelRequest(parts=[make_receipt_part(text, capability_id=registered_id(ctx, self))])
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reject a registration without a trigger."""
