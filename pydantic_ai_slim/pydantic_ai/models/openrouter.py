@@ -564,7 +564,7 @@ def _map_openrouter_provider_details(
         provider_details['finish_reason'] = native_finish_reason
 
     if usage := response.usage:
-        if cost := usage.cost:
+        if (cost := usage.cost) is not None:
             provider_details['cost'] = cost
 
         if cost_details := usage.cost_details:
