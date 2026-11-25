@@ -794,7 +794,10 @@ _partial_cancellation_agent = Agent(
 )
 
 _partial_cancellation_messages: list[ModelMessage] = []
-"""What the run cancelled by `handle.cancel()` recorded, as the workflow can't return it."""
+"""What the cancelled run recorded, as a workflow cancelled by `handle.cancel()` can't return it."""
+
+_partial_cancellation_usage: list[RunUsage] = []
+"""The usage the cancelled run recorded."""
 
 
 @workflow.defn
@@ -807,11 +810,14 @@ class PartialCancellationWorkflow:
         try:
             await _partial_cancellation_agent.run(prompt, cancellation_token=self._token)
         except RunCancelled as exc:
-            return ModelMessagesTypeAdapter.dump_json(exc.all_messages()).decode()
+            _partial_cancellation_messages[:] = exc.all_messages()
+            _partial_cancellation_usage[:] = [exc.usage]
+            return 'run cancelled'
         except asyncio.CancelledError as exc:
             run_cancelled = RunCancelled.from_cancellation(exc)
             assert run_cancelled is not None
             _partial_cancellation_messages[:] = run_cancelled.all_messages()
+            _partial_cancellation_usage[:] = [run_cancelled.usage]
             raise
         return 'completed'  # pragma: no cover
 
@@ -827,6 +833,7 @@ async def _run_partial_cancellation_workflow(
 
     _partial_cancellation_activity_started = asyncio.Event()
     _partial_cancellation_messages.clear()
+    _partial_cancellation_usage.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -843,14 +850,24 @@ async def _run_partial_cancellation_workflow(
         await _partial_cancellation_activity_started.wait()
         if by_signal:
             await handle.signal(PartialCancellationWorkflow.cancel)
-            messages = ModelMessagesTypeAdapter.validate_json(await handle.result())
+            assert await handle.result() == 'run cancelled'
         else:
             await handle.cancel()
             with pytest.raises(WorkflowFailureError) as exc_info:
                 await handle.result()
             assert isinstance(exc_info.value.__cause__, TemporalCancelledError)
-            messages = list(_partial_cancellation_messages)
-        return messages, await handle.fetch_history()
+        return list(_partial_cancellation_messages), await handle.fetch_history()
+
+
+def _assert_streamed_partial_kept(messages: list[ModelMessage]) -> None:
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart(content='The partial reply')]
+    assert response.state == 'interrupted'
+    # The partial's usage is billed once, as the one request the run made.
+    [usage] = _partial_cancellation_usage
+    assert usage.requests == 1
+    assert usage.output_tokens == response.usage.output_tokens > 0
 
 
 async def _replay_partial_cancellation(history: WorkflowHistory) -> None:
@@ -865,10 +882,7 @@ async def test_temporal_run_cancelled_by_signal_keeps_streamed_partial_response(
     """A run cancelled while its model activity streams keeps what was streamed, as an `'interrupted'` response."""
     messages, history = await _run_partial_cancellation_workflow(client, by_signal=True)
 
-    response = messages[-1]
-    assert isinstance(response, ModelResponse)
-    assert response.parts == [TextPart(content='The partial reply')]
-    assert response.state == 'interrupted'
+    _assert_streamed_partial_kept(messages)
     await _replay_partial_cancellation(history)
 
 
@@ -876,10 +890,7 @@ async def test_temporal_workflow_cancel_keeps_streamed_partial_response(client: 
     """Cancelling the workflow keeps what the run's model activity streamed, and the workflow still ends cancelled."""
     messages, history = await _run_partial_cancellation_workflow(client, by_signal=False)
 
-    response = messages[-1]
-    assert isinstance(response, ModelResponse)
-    assert response.parts == [TextPart(content='The partial reply')]
-    assert response.state == 'interrupted'
+    _assert_streamed_partial_kept(messages)
     await _replay_partial_cancellation(history)
 
 

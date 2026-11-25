@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock
@@ -16,6 +17,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResult,
     AgentStreamEvent,
+    CancellationToken,
     FinalResultEvent,
     FunctionToolset,
     ModelResponse,
@@ -90,7 +92,7 @@ from pydantic_ai.durable_exec._utils import (
     StreamedActivityResult,
     StreamedModelRequestResult,
 )
-from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelRetry, RunCancelled, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     DocumentUrl,
     FileUrl,
@@ -253,6 +255,34 @@ async def test_durability_forces_sequential_tools_inside_durable_context() -> No
         return cast(AgentRunResult[Any], object())
 
     await bound.wrap_run(ctx, handler=handler)
+
+
+async def test_cancelled_model_stream_unit_fails_unless_the_engine_returns_its_output() -> None:
+    """A model stream unit cancelled after it produced output still fails by default, rather than returning it.
+
+    Only an engine that waits for the unit's result on a cancellation, like Temporal, returns the output.
+    """
+    streamed = asyncio.Event()
+
+    async def stream_then_block(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'partial'
+        streamed.set()
+        await asyncio.Event().wait()
+
+    async def drain(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_then_block), name='cancelled_stream', capabilities=[JournalDurability()]
+    )
+    token = CancellationToken()
+    run = asyncio.create_task(agent.run('Hello', cancellation_token=token, event_stream_handler=drain))
+    await streamed.wait()
+    token.cancel()
+
+    with pytest.raises(RunCancelled):
+        await run
 
 
 def test_prepare_run_context_without_agent() -> None:
