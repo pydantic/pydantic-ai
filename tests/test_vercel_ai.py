@@ -3047,7 +3047,11 @@ async def test_run_stream_tool_metadata_single_chunk(durable_round_trip: bool):
     ids=['chunk-shaped-content', 'metadata-without-type'],
 )
 async def test_event_stream_does_not_interpret_non_chunks_as_serialized_metadata(part: ToolReturnPart):
-    """Tool content is never rehydrated, and a metadata dict without a chunk `type` is not a chunk."""
+    """Tool content is never rehydrated, and a metadata dict without a chunk `type` is not a chunk.
+
+    Both are decided by the adapter's encoder alone, with no provider exchange involved, so the
+    tool result is fed to the event stream directly rather than through a recorded run.
+    """
 
     async def event_generator():
         yield FunctionToolResultEvent(part=part)
