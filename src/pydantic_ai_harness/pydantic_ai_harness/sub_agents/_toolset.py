@@ -353,10 +353,12 @@ class RecordedDelegation:
 
 
 RecordDelegation = Callable[
-    [RunContext[Any], str, str, str | None, DynamicAgentSpec | None, int, bool], Awaitable[RecordedDelegation]
+    [RunContext[Any], str, str, str | None, DynamicAgentSpec | None, int, bool, TaskAuthority | None],
+    Awaitable[RecordedDelegation],
 ]
 """Runs one delegation in a durable unit of its own: context, agent name, task, model key, created agent's spec, the
-delegating run's level in its delegation tree, and whether it is a task, under an owner's usage rules."""
+delegating run's level in its delegation tree, whether it is a task, under an owner's usage rules, and the authority
+its task carries when a listener set it, else `None` for the sub-agent's own."""
 
 
 @dataclass(frozen=True)
@@ -940,14 +942,22 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             )
 
     async def _delegate_recorded(
-        self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None, *, managed: bool = False
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        task: str,
+        key: str | None,
+        *,
+        managed: bool = False,
+        task_authority: TaskAuthority | None = None,
     ) -> _Ended | None:
         """Run the delegation in a durable unit of its own if it gets one, else return `None`."""
         record = self._record_delegation
         if record is None or not ctx.in_durable_context or self._is_self(agent_name):
             return None
         created = self._created.get(ctx.run_id or '', {}).get(agent_name)
-        recorded = await record(ctx, agent_name, task, key, created[0] if created else None, _depth.get(), managed)
+        spec = created[0] if created else None
+        recorded = await record(ctx, agent_name, task, key, spec, _depth.get(), managed, task_authority)
         cause = ModelRetry(recorded.output) if recorded.retry else None
         return _Ended(outcome=recorded.outcome, output=recorded.output, cause=cause)
 
@@ -960,13 +970,16 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         spec: DynamicAgentSpec | None,
         level: int,
         managed: bool = False,
+        task_authority: TaskAuthority | None = None,
     ) -> RecordedDelegation:
         """Run a delegation inside the durable unit that records it, rebuilding a created agent from its spec.
 
-        A worker doesn't inherit the delegating run's context, so the run's `level`, and for a task its owner's usage
-        rules, are set again.
+        A worker doesn't inherit the delegating run's context, so the run's `level`, for a task its owner's usage
+        rules, and the task's authority a listener set, are set again.
         """
         sub_agent = self._agents[agent_name] if spec is None else self._build_created(spec)
+        if task_authority is not None:
+            sub_agent = replace(sub_agent, task_authority=task_authority)
         with delegation_level(level):
             ended = await self._run_delegation(
                 ctx, agent_name, sub_agent, task=task, key=key, workspace=ctx.workspace, managed=managed
@@ -1200,7 +1213,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         await owner.publish(record, TaskStartedEvent(task_id=record.id, agent_name=record.agent_name))
         task_id, agent_name = record.id, record.agent_name
         async with reporting_settlement(owner, record):
-            ended = await self._delegate_recorded(ctx, agent_name, record.prompt, key, managed=True)
+            ended = await self._delegate_recorded(
+                ctx, agent_name, record.prompt, key, managed=True, task_authority=start.task_authority
+            )
             if ended is None:
                 ended = await self._run_delegation(
                     ctx,

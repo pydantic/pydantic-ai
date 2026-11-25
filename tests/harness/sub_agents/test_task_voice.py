@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -37,6 +39,7 @@ from pydantic_ai_harness.sub_agents import (
     TaskCompletedEvent,
     TaskStartedEvent,
 )
+from tests.harness._recording_durability import RecordingDurability
 from tests.harness.sub_agents._sent import AGENT_MESSAGE_NOTE, AGENT_TASK_INSTRUCTIONS
 from tests.harness.sub_agents.test_task_control import (
     WAIT,
@@ -358,3 +361,28 @@ class TestSubAgentsTaskAuthorityUser:
         with anyio.fail_after(WAIT):
             await parent.run('Go.')
         assert rendered(seen[-1]) == [('user', 'Slow.'), ('user', 'Hurry.'), ('tool', 'resumed')]
+
+    @pytest.mark.parametrize('durable', [False, True])
+    async def test_a_listener_can_give_a_task_the_users_authority(self, durable: bool) -> None:
+        # An application sending a task on the user's behalf sets its authority, in a durable unit too.
+        @dataclass
+        class OnTheUsersBehalf(AbstractCapability[Any]):
+            @on_event(TaskAssignedEvent)
+            async def assigned(self, ctx: RunContext[Any], event: TaskAssignedEvent) -> None:
+                event.task_authority = 'user'
+
+        seen: list[list[ModelMessage]] = []
+
+        def respond(messages: list[ModelMessage]) -> ModelResponse:
+            seen.append(messages)
+            return text('child done')
+
+        child = Agent(scripted(respond), name='cleaner')
+        durability = [RecordingDurability()] if durable else []
+        parent = Agent(
+            delegating(),
+            name='durable',
+            capabilities=[controlled(SubAgent(child)), OnTheUsersBehalf(), *durability],
+        )
+        await parent.run('Go.')
+        assert rendered(seen[0]) == [('user', TASK)]

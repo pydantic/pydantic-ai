@@ -36,6 +36,7 @@ from pydantic_ai_harness.sub_agents._control import (
 from pydantic_ai_harness.sub_agents._deferred import DeferredStateStore, InMemoryDeferredStateStore
 from pydantic_ai_harness.sub_agents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.sub_agents._models import ModelOption, as_option, model_label, validate_restriction
+from pydantic_ai_harness.sub_agents._parent_message import TaskAuthority
 from pydantic_ai_harness.sub_agents._tasks import DelegationTask, DelegationTasks, enqueue_while_open, isolated
 from pydantic_ai_harness.sub_agents._toolset import (
     CONTROL_TOOL_NAMES,
@@ -845,11 +846,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         spec: DynamicAgentSpec | None,
         level: int,
         managed: bool = False,
+        task_authority: TaskAuthority | None = None,
     ) -> RecordedDelegation:
         """Run a delegation in a durable unit of its own, so recovery reuses its result."""
         toolset = self._run_toolset if self._per_run else self._toolset
         assert toolset is not None, 'Only a capability with delegates offers the delegate tool.'
-        return await toolset._run_recorded(ctx, agent_name, task, model, spec, level, managed)  # pyright: ignore[reportPrivateUsage]
+        return await toolset._run_recorded(ctx, agent_name, task, model, spec, level, managed, task_authority)  # pyright: ignore[reportPrivateUsage]
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
