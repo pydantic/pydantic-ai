@@ -104,6 +104,11 @@ ENGINES: dict[str, str] = {
     'azure_durable_task': 'src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/**/*.py',
 }
 
+# Modules under the engine roots that no engine runs: `DurableEngineSuite`, the conformance suite engines are tested
+# with, builds agents from core types the way a test does, so recording its reads would route every such change to
+# durable review.
+NOT_WALKED = frozenset({'pydantic_ai_slim/pydantic_ai/durable_exec/conformance.py'})
+
 # Annotation constructors whose arguments, not themselves, are the annotated type.
 _TYPE_WRAPPERS = frozenset(
     {'Annotated', 'ClassVar', 'Final', 'NotRequired', 'Optional', 'ReadOnly', 'Required', 'Type', 'Union', 'type'}
@@ -922,6 +927,8 @@ def build_manifest(root: Path = REPO_ROOT) -> Manifest:
     entries: _EntrySets = {}
     for engine, pattern in ENGINES.items():
         for path in sorted(root.glob(pattern)):
+            if path.relative_to(root).as_posix() in NOT_WALKED:
+                continue
             source_root = next(root / source for source in SOURCE_ROOTS if (root / source) in path.parents)
             parts = path.relative_to(source_root).with_suffix('').parts
             module = index.module('.'.join(parts[:-1] if parts[-1] == '__init__' else parts))

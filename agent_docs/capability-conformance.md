@@ -19,72 +19,22 @@ The contracts are numbered C0, C1, … in the order they land, and an area with 
 
 **How it's tested**
 
-- `DECLARES_CALLS` (C0) builds every buildable public case and checks it: `test_a_capability_that_runs_with_tools_declares_calls`. A capability made of others is checked through its parts.
-- `test_pending_calls_backfill` pins how many cases are still pending. A PR that writes a case's `calls` removes its exemption and lowers the count; a new capability doesn't add a pending one.
-- For a capability whose hooks run around other tools' calls, `with_echo` builds it beside an `echo` tool, and `ECHO` calls it.
-
-## Prompt cache
-
-**Requirements**
-
-- Every request a capability sends repeats the earlier one as a prefix: it appends to history and never rewrites what an earlier request sent, its instructions are addressable, and the same history projects to the same bytes. The rules are in [Message History & Prompt Caching](message-history-and-caching.md).
-- Two of a capability on one agent mean what its `combine` policy says, and stating one configuration twice reaches the model the same as stating it once.
-
-**How it's tested**
-
-- `tests/test_history_append_only.py` and `tests/harness/test_history_append_only.py` run every buildable case through a scripted conversation on each provider adapter. A capability that keeps state the conversation should change gets a `SCENARIOS` entry; a prefix move that is a bug goes in `KNOWN`, linked to its issue, and one that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move. A case whose `calls` rewrite history by design sets `moves_cache_prefix`.
-- `tests/test_capability_combine.py` and its Harness twin check each case's `combine` policy; `COMBINE_FIXED_POINT` checks that a configuration stated twice is stated once.
-
-## Voice and authority
-
-**Requirements**
-
-- Every model-visible text a capability produces carries its source: a tool's output is `ToolResultSource`, another model's text `ModelSource`, a workspace file `WorkspaceSource`.
-- Below `'operator'`, it never renders as a system or developer message, and never authors a `ModelResponse`.
-- Authority only goes down: a part reaches the model with the lower of its source's and its kind's authority, never raised.
-- The attribution is the same on every route the content takes: a native tool call, Code Mode, IPython Code Mode, `ToolBridge`, `BackgroundTools`, a sub-agent, a durable engine, and a round trip through `ModelMessagesTypeAdapter` or a UI protocol.
-
-The rules behind these are in [Message History & Prompt Caching](message-history-and-caching.md), "Trust tiers map to channels, and nothing is ever promoted".
-
-**How it's tested**
-
-- C0 (above) makes these contracts reach every capability that runs tools.
-- C1, route matrix (planned): each case's `calls` run at `with_authority('none')` through every route, and the typed history must match the native route's source, authority and frame.
-- C2, sink check (planned): `Model.prepare_messages` asserts no part below `'operator'` renders as system or developer, and no capability below `'operator'` authors a `ModelResponse`.
-- C3, role-site guard (planned): every site that builds a system or developer part is in an allowlist with its reason.
-- C4, transformation registry (planned): every function that returns `list[ModelMessage]` is registered, and sources survive each one.
-- C5, attribution on spans (planned): OpenTelemetry message parts keep each capability part's source.
-
-## Durable execution
-
-**Requirements**
-
-- Every request a tool makes goes through a `@durable_operation` or a workspace call (`ctx.workspace`). DBOS runs a function tool in workflow code, so a request made any other way is made again on every recovery.
-- Every toolset a capability builds has an `id`, and is built once, when the agent is: Temporal and Prefect run each function tool in a unit named after it, and refuse an agent with an id-less toolset or a run that adds one. A capability with `@durable_operation`s and no default `id` needs one given (`ToolGuardrail(id=...)`), and its case gives one.
-- Code that runs in the workflow is deterministic: hooks, instructions, `prepare_tools`, a toolset factory, and a tool marked `ToolDefinition.durable=False`, which runs outside its unit. It reads clocks, randomness and I/O only through a `@durable_operation`, and a workflow-side tool must not block.
-- A capability added per run only adds hooks, instructions or settings: one that contributes an executing toolset, declares a `@durable_operation`, or chooses or wraps the model must be on the agent when it's built ([#13124](https://github.com/pydantic/pydantic-ai/pull/13124)).
-- The names of the units a capability's calls record (its id, its operation names, its toolset ids) don't change between releases, as an in-flight workflow replays by them. A change that renames one says how in-flight runs recover.
-- A capability doesn't check which engine it runs under. When it needs an engine fact, such as whether the engine runs function tools in workflow code, it reads the engine's `DurabilityEngineSpec`, so a new engine gets the right answer, refusal included, without a branch in the capability. A fact the spec doesn't have yet is an engine gap to raise with the durable owner.
-
-The engine-side rules (what crosses a durable boundary, workspace routing, workflow-side determinism) are in `pydantic_ai_slim/pydantic_ai/durable_exec/AGENTS.md`, and the core definitions the engines depend on are listed in `scripts/durable_exec_contract.json`. This section covers what a capability must do; those cover what the engines and core must keep.
-
-**How it's tested**
-
-- D1, durable per case: every case with `calls` runs them, one per response, under each engine, and the units the run records must be the ones its `Calls.durable_steps` lists (`DurableSteps(dbos=..., temporal=...)`, names without the agent prefix, the run's own model requests left out). A case whose tools do no I/O lists nothing for DBOS, which is checked too. When a name changes, the failure prints the new list: update the case, with a compatibility note if a recorded name changed.
-  - `DURABLE_DBOS`: `tests/harness/test_durable_tool_io.py` runs the calls in a DBOS workflow, forks it from after its last step, as recovery does, and checks that no request the stand-ins count is made again.
-  - `DURABLE_TEMPORAL`: `tests/harness/test_durable_temporal_replay.py` runs them in a Temporal workflow, on one dev server per module, and replays the recorded history with a `Replayer`, which must succeed without a request. An agent Temporal refuses breaks it, so an id-less toolset is a `refused` cell, with its issue.
-- `ENGINE_SUPPORT` (in `tests/capability_cases.py`) is the engine x case table: what each engine in `ENGINES` does with each case's calls, as a `Support` cell. A cell it doesn't list is `supported` under the engines a suite runs every case under (`SUITE_ENGINES`: DBOS and Temporal) and `untested` under the others. `Support` is shared, so W1 can key the same type by workspace backend.
-  - `supported`: the engine's suite runs the calls and checks what the engine records.
-  - `limited`: the same, and `reason` names the limit, which the suite must also assert.
-  - `refused`: `raises` is a regex of what the engine raises, and the suite fails once the engine stops raising it.
-  - `broken`: the engine runs the calls and gets them wrong. It carries the `issue` that tracks the bug, and the suite fails once the bug no longer reproduces.
-  - `untested`: no suite runs the calls under the engine yet; it carries the `issue` that tracks adding one. `test_untested_cells_only_go_down` pins how many each engine has: a PR may lower the count, never raise it.
-  - A cell is the only place a case's support is written down: `DURABLE_DBOS` and `DURABLE_TEMPORAL` exempt exactly the cases their engine's column marks `refused` or `broken`, and `test_every_durability_capability_is_an_engine` fails until a new engine's durability capability is in `ENGINE_CAPABILITIES`.
-- `SCENARIO_SUPPORT` (also in `tests/capability_cases.py`) holds scenarios a capability, or `RunContext`, must handle under every engine beyond D1's one-call-per-response run, keyed `<owner>.<scenario>`, such as `BackgroundTools.survives_approval_wait`. Every scenario has a `Support` cell for every engine. A `broken` cell's issue has a regex in `BROKEN_SIGNATURES` that the observed outcome must still match. Scenarios never feed D1's exemptions.
-  - A capability's own tests run its scenarios, under every engine.
-  - The D1 suites run the scenarios `SCENARIO_RUNS` scripts: `ctx.emit` and `ctx.enqueue` from a function tool, from inside a durable unit, and from a hook. A `ScenarioRecorder` notes the custom and capability events and enqueued messages the run observes, in workflow code. The run must observe each scenario's list once, and its recovery (DBOS) or replay (Temporal) must observe the same, with nothing lost or added. The recorder makes the run stream, which changes the model request's unit name, so cases don't get one.
-- A case that can't run under an engine is exempt from that engine's contract, with the reason: an exemption, never a skip. As in every contract, a case whose optional dependency (`requires`) isn't installed is skipped: `BrowserUse`'s is installed only by its own CI job, which doesn't run these suites yet.
-- Prefect and the Harness engines are next; until then, `test_prefect_wraps_every_toolset_temporal_does` checks Prefect accepts every case Temporal runs.
+- `DurableEngineSuite` (`pydantic_ai.durable_exec.conformance`) is the public suite every durable engine runs, shaped like `WorkspaceBackendSuite`: a subclass provides an `engine` fixture implementing `DurableEngine` (`durability()`, `run(agent, prompt)`, `recover(run, after=None)`), and the suite runs one test per cell, a case's calls (`test_case`) or a scenario (`test_scenario`). It runs the agent under the engine, recovers the run, and checks the cell's declared level.
+  - `TestDBOS` (`tests/harness/test_durable_tool_io.py`) runs it under DBOS: a run is a workflow, and recovery forks it from after its last step and from the middle of its record.
+  - `TestTemporal` (`tests/harness/test_durable_temporal_replay.py`) runs it under Temporal, on one dev server per class and a worker per run. Recovery replays the history with a `Replayer`, which must succeed without a request. Temporal can't resume from part of a history, so `can_fork_mid_run` is `False`.
+  - Both feed it, through `BuiltInEngineSuite` (`tests/harness/_durable_cases.py`), every public case with `calls` and every scenario `SCENARIO_RUNS` scripts, and count the requests the cases' stand-ins make. In S1 the suite's `cases` and `scenarios` come from the test side; making `Calls` and `SCENARIO_RUNS` public is the follow-up.
+- Each engine declares its support as plain data in its own package, `pydantic_ai/durable_exec/<engine>/_conformance.py`: `SUPPORT`, the cells that aren't `supported`, keyed by case or scenario name, and `RECOVERY`. The engine's subclass points at them, `ENGINE_SUPPORT_MODULES` (`tests/capability_cases.py`) lists them, and `scripts/durable_exec_support.py --write` renders them into `docs/durable_execution/compatibility.md`, which `test_the_compatibility_page_is_current` keeps current. A cell the table doesn't list is `supported`, and asserted. A third-party subclass can set `unlisted = 'pending'` to report a failing unlisted cell as an expected failure.
+  - `supported`: the run returns the answer and makes each counted request once. Recovery returns the same output, records the same units, observes the same events and enqueued messages, and makes no counted request again. Recovery from part of the record keeps the units before the cut. When `expected_units` names them, the case's units are its `Calls.durable_steps` for the engine (`DurableSteps(dbos=..., temporal=...)`, names without the agent prefix, the run's own model requests left out but counted, one per call and one to answer). A case whose tools do no I/O lists nothing for DBOS, which is checked too. When a name changes, the failure prints the new list: update the case, with a compatibility note if a recorded name changed.
+  - `limited`: the same, and the cell's `check` asserts the limit on the run; `reason` is the docs caveat.
+  - `refused`: the engine raises a `UserError` matching `match` before the refused operation records anything. A refusal at build or run start records no unit. A refusal inside a unit (`ctx.emit`, `ctx.enqueue` in an activity or step) comes after the run's model requests are recorded, so the units before it must be unaffected: recovering the record records the same units, refuses again, and makes no counted request again.
+  - `broken`: the engine runs it and gets it wrong. `match` is a regex of the symptom, searched for in what the run raised and in each check it fails, and `issue` tracks the bug. Once the bug is fixed the symptom is gone and the cell fails, saying to update it.
+  - `untested` is only for the docs table of engines that don't run the suite yet; the suite fails a cell declared `untested`.
+  - `Recovery('restart', reason, issue)` declares an engine that restarts a run instead of replaying it (Render). The suite then checks each cell that would assert recovery equality as limited: a recovery makes each counted request exactly once more and returns the same output. The docs show those cells as limited, linking the declaration's issue.
+- `DURABLE_DBOS` and `DURABLE_TEMPORAL` (D1) exempt exactly the cases their engine's table marks `refused` or `broken`; they read the table on first use, as it imports the engine's SDK.
+- `tests/harness/test_engine_support.py` checks the tables: every cell names a public case with `calls` or a scenario, `test_every_durability_capability_is_an_engine` fails until a new engine's durability capability is in `ENGINE_CAPABILITIES`, and `test_every_durability_capability_has_a_suite` fails until it has a suite or is in `PENDING_ENGINES`, which may only shrink.
+- Scenarios, keyed `<owner>.<scenario>` (`Scenario` in `tests/capability_cases.py`), are runs beyond one call per response, such as `BackgroundTools.survives_approval_wait`. The suite runs those `SCENARIO_RUNS` scripts: `ctx.emit` and `ctx.enqueue` from a function tool, from inside a durable unit, and from a hook. A recorder in workflow code notes the custom and capability events and enqueued messages the run observes; the run must observe each scenario's list once, and its recovery the same, with nothing lost or added. The recorder makes the run stream, which changes the model request's unit name, so scenarios' units aren't pinned. A capability's own tests run its other scenarios.
+- A case that can't run under an engine is a `refused` or `broken` cell, with the reason: never a skip. A case whose optional dependency (`requires`) isn't installed is skipped: `BrowserUse`'s is installed only by its own CI job, which doesn't run these suites yet.
+- Prefect and the Harness engines are next, one per PR, each lowering `PENDING_ENGINES`; until then, `test_prefect_wraps_every_toolset_temporal_does` checks Prefect accepts every case Temporal runs.
 
 ## Workspaces and sandboxes
 

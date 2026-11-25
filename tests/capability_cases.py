@@ -22,9 +22,10 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any, Literal, TypeGuard, get_args
 from unittest.mock import patch
 
@@ -65,6 +66,7 @@ from pydantic_ai.capabilities import (
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.durable_exec.conformance import Support
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -884,88 +886,18 @@ ENGINE_CAPABILITIES: Mapping[Engine, str] = {
 }
 """The durability capability of each engine: every public `BaseDurabilityCapability` must be one of them."""
 
-SupportLevel = Literal['supported', 'limited', 'refused', 'broken', 'untested']
+ENGINE_SUPPORT_MODULES: Mapping[Engine, str] = {
+    'dbos': 'pydantic_ai.durable_exec.dbos._conformance',
+    'temporal': 'pydantic_ai.durable_exec.temporal._conformance',
+}
+"""The support table of each engine that runs `DurableEngineSuite`: a module with its `SUPPORT` and `RECOVERY`.
 
-
-@dataclass(frozen=True)
-class Support:
-    """How a durable engine runs something: a case's calls here, a workspace backend's calls in W1.
-
-    - `supported`: a suite runs it under the engine and checks what the engine records.
-    - `limited`: the same, and `reason` names the limit, which the suite also asserts.
-    - `refused`: the engine raises, matching the `raises` regex, and the suite checks it does.
-    - `broken`: the engine runs it and gets it wrong. `issue` tracks the bug, and the suite checks it still
-      reproduces, so the cell fails once the bug is fixed.
-    - `untested`: no suite runs it under the engine yet; `issue` tracks adding one.
-    """
-
-    level: SupportLevel
-    reason: str = ''
-    raises: str | None = None
-    issue: int | None = None
-
-    def __post_init__(self) -> None:
-        if self.level != 'supported' and not self.reason:
-            raise ValueError(f'a `{self.level}` cell needs a `reason`')
-        if (self.level == 'refused') != (self.raises is not None):
-            raise ValueError('a `refused` cell, and only one, names what the engine raises in `raises`')
-        if self.level in ('broken', 'untested') and self.issue is None:
-            raise ValueError(f'a `{self.level}` cell needs the `issue` that tracks it')
-
-    @property
-    def exempt(self) -> Exempt:
-        """Why a suite exempts the cell from its contract: the engine doesn't run it right."""
-        return Exempt(self.reason if self.issue is None else f'{self.reason}: {_ISSUES}{self.issue}')
-
-
-UNTESTED_ENGINES_ISSUE = 12291
-"""Tracks running the cases under every engine, and enforcing what each cell says."""
-
-SUITE_ENGINES: tuple[Engine, ...] = ('dbos', 'temporal')
-"""The engines a suite runs every case with `calls` under: a cell `ENGINE_SUPPORT` doesn't list is `supported`
-there, and `untested` under the others."""
+The tables live in the engines' own packages, as plain data: the suite subclasses and the docs generator
+(`scripts/durable_exec_support.py`) read them. Importing one imports its engine's SDK, through its package.
+"""
 
 ID_LESS_TOOLSETS = ('BrowserUse', 'PydanticAIDocs')
 """The cases whose toolset has no id, which Temporal and Prefect refuse."""
-
-ENGINE_SUPPORT: Mapping[str, Mapping[Engine, Support]] = {
-    **{
-        name: {
-            'temporal': Support(
-                'refused',
-                'its toolset has no id, which Temporal names the activity of a function tool after',
-                raises='need to have a unique `id` in order to be used with Temporal',
-                issue=9233,
-            )
-        }
-        for name in ID_LESS_TOOLSETS
-    },
-    'CompactOnRequest': {
-        'temporal': Support(
-            'broken',
-            'its `for_run` copy builds a new toolset, which Temporal refuses as one added at run time',
-            issue=14403,
-        )
-    },
-    'Planning': {
-        'temporal': Support(
-            'refused',
-            'its tools emit plan events, which Temporal refuses from an activity',
-            raises='Emitting events from a tool or event stream handler is not supported',
-            issue=7971,
-        )
-    },
-}
-"""The cells of the engine x case table that differ from the default `engine_support` gives, by case name."""
-
-
-def engine_support(name: str, engine: Engine) -> Support:
-    """How `engine` runs the calls of the case of `name`."""
-    if (cell := ENGINE_SUPPORT.get(name, {}).get(engine)) is not None:
-        return cell
-    if engine in SUITE_ENGINES:
-        return Support('supported')
-    return Support('untested', f'no suite runs the cases under {engine} yet', issue=UNTESTED_ENGINES_ISSUE)
 
 
 Scenario = Literal[
@@ -979,108 +911,9 @@ Scenario = Literal[
 ]
 """A scenario a capability, or `RunContext`, must handle under every engine, named `<owner>.<scenario>`.
 
-A cell of `ENGINE_SUPPORT` is D1's bar on a case's `calls`, run one per response; a scenario is a run of its own,
-such as a background call kept running across a mid-run approval, which its capability's tests script.
-"""
-
-SCENARIOS: tuple[Scenario, ...] = get_args(Scenario)
-
-_FOREGROUND = (
-    'the engine runs tool calls sequentially, so the tool runs in the foreground and returns its result inline'
-)
-_SEQUENTIAL_DEFAULT = f"{_FOREGROUND}; `parallel_execution_mode='sequential'` is the default"
-_NO_WAIT = (
-    'a mid-run approval wait raises `UserError` under the engine, so no background task can keep running across it'
-)
-_NO_DURABLE_WAIT = 'the engine has no durable wait for an outside answer, so a mid-run approval wait raises `UserError`'
-_WAIT_REFUSED = 'does not support waiting for external events yet'
-
-_IN_UNIT = 'is not supported inside a durable'
-_ENQUEUE_IN_UNIT = Support(
-    'refused',
-    'a durable unit replays from its record without running the code again, so an enqueued message would be lost',
-    raises=_IN_UNIT,
-    issue=7971,
-)
-_TOOL_IN_ACTIVITY_EMIT = Support(
-    'refused',
-    'Temporal runs a function tool in an activity, which refuses an emitted event',
-    raises='Emitting events from a tool or event stream handler is not supported',
-    issue=7971,
-)
-_TOOL_IN_ACTIVITY_ENQUEUE = Support(
-    'refused',
-    'Temporal runs a function tool in an activity, which refuses an enqueued message',
-    raises=_IN_UNIT,
-    issue=7971,
-)
-
-
-def _d1_scenario(*, dbos: Support, temporal: Support, expected: str) -> dict[Engine, Support]:
-    """The cells of a scenario the D1 suites run: DBOS and Temporal, and `untested` with `expected` elsewhere."""
-    untested = Support(
-        'untested',
-        f'no suite runs the scenario under this engine yet; expected: {expected}',
-        issue=UNTESTED_ENGINES_ISSUE,
-    )
-    return {engine: {'dbos': dbos, 'temporal': temporal}.get(engine, untested) for engine in ENGINES}
-
-
-SCENARIO_SUPPORT: Mapping[Scenario, Mapping[Engine, Support]] = {
-    'BackgroundTools.runs_in_background': {
-        'temporal': Support('supported'),
-        'dbos': Support('supported'),
-        'prefect': Support('supported'),
-        'aws_lambda': Support('limited', _FOREGROUND),
-        'absurd': Support('limited', _SEQUENTIAL_DEFAULT),
-        'pgtask': Support('limited', _SEQUENTIAL_DEFAULT),
-        'azure_durable_task': Support('supported'),
-        'render': Support('supported'),
-    },
-    'BackgroundTools.survives_approval_wait': {
-        'temporal': Support('supported'),
-        'dbos': Support('broken', _NO_WAIT, issue=14443),
-        'prefect': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
-        'aws_lambda': Support('limited', f'{_FOREGROUND}, so no call is in flight across the wait'),
-        'absurd': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
-        'pgtask': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
-        'azure_durable_task': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
-        'render': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
-    },
-    'RunContext.emit_from_tool': _d1_scenario(
-        dbos=Support('supported'),
-        temporal=_TOOL_IN_ACTIVITY_EMIT,
-        expected='refused in a unit (Temporal, Prefect, Azure) or supported in workflow code; Render supported',
-    ),
-    'RunContext.enqueue_from_tool': _d1_scenario(
-        dbos=Support('supported'),
-        temporal=_TOOL_IN_ACTIVITY_ENQUEUE,
-        expected='refused in a unit (Temporal, Prefect, Azure) or supported in workflow code',
-    ),
-    'RunContext.emit_in_unit': _d1_scenario(
-        dbos=Support(
-            'broken', 'an event emitted in a step is not emitted again when recovery replays the step', issue=7971
-        ),
-        temporal=Support(
-            'refused',
-            'Temporal refuses an event emitted in an activity',
-            raises='Emitting events from a tool or event stream handler is not supported',
-            issue=7971,
-        ),
-        expected='refused, or lost on recovery where the engine replays the unit from its record',
-    ),
-    'RunContext.enqueue_in_unit': _d1_scenario(
-        dbos=_ENQUEUE_IN_UNIT,
-        temporal=_ENQUEUE_IN_UNIT,
-        expected='refused: an engine replays a unit from its record, so the message would be lost',
-    ),
-    'RunContext.emit_enqueue_from_hook': _d1_scenario(
-        dbos=Support('supported'),
-        temporal=Support('supported'),
-        expected='supported: a hook runs in workflow code, which every engine re-executes',
-    ),
-}
-"""What each engine does in each scenario: a cell for every engine, which the scenario's tests check.
+A case is D1's bar on a capability's `calls`, run one per response; a scenario is a run of its own, such as a
+background call kept running across a mid-run approval, which its capability's tests script. An engine's support
+table has a cell for each that it doesn't support. What each scenario checks:
 
 - `BackgroundTools.runs_in_background`: a tool marked `background` replies that it is running in the background,
   and its result arrives later as a follow-up message.
@@ -1089,18 +922,11 @@ SCENARIO_SUPPORT: Mapping[Scenario, Mapping[Engine, Support]] = {
   running across the wait, without the run suspending, and its result arrives.
 - `RunContext.*`: `ctx.emit` and `ctx.enqueue` from a function tool, from inside a durable unit (a
   `@durable_operation`), and from a hook. What the run observes, its custom and capability events and enqueued
-  messages, must be the same after recovery or replay, each once. `SCENARIO_RUNS` scripts them, and the D1 suites
-  run them.
-
-These never feed D1's exemptions, which come from `ENGINE_SUPPORT` alone.
+  messages, must be the same after recovery or replay, each once. `SCENARIO_RUNS` scripts them, and the built-in
+  engines' `DurableEngineSuite` subclasses run them.
 """
 
-BROKEN_SIGNATURES: Mapping[int, str] = {14443: _WAIT_REFUSED, 7971: r"recovery lost \['event:unit'\]"}
-"""How the bug behind each `broken` scenario cell's issue shows today, as a regex the observed outcome must match.
-
-`Support` only lets a `refused` cell name what the engine raises, so a broken cell's signature lives here: once the
-issue is fixed the outcome changes, and the cell fails.
-"""
+SCENARIOS: tuple[Scenario, ...] = get_args(Scenario)
 
 
 @dataclass(kw_only=True)
@@ -1207,30 +1033,57 @@ SCENARIO_RUNS: Mapping[Scenario, ScenarioRun] = {
 """The scenarios the D1 suites run, and what each must observe; the others are run by their capability's tests."""
 
 
-def _not_run_right(engine: Engine) -> dict[str, Exempt]:
-    """The cases `engine` refuses or gets wrong, which its suite's contract exempts."""
-    return {
-        name: cell.exempt
-        for name, cells in ENGINE_SUPPORT.items()
-        if (cell := cells.get(engine)) is not None and cell.level in ('refused', 'broken')
-    }
+class _EngineExemptions(Mapping[str, Exempt]):
+    """The cases an engine's support table marks `refused` or `broken`, which its D1 contract exempts.
+
+    It reads the table on first use, as importing it imports the engine's SDK: without the SDK, which a lane
+    without the engine's suite lacks, it exempts nothing.
+    """
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine: Engine = engine
+
+    @cached_property
+    def _cells(self) -> dict[str, Exempt]:
+        try:
+            table = importlib.import_module(ENGINE_SUPPORT_MODULES[self._engine])
+        except ImportError:  # pragma: lax no cover
+            return {}
+        cells: Mapping[str, Support] = table.SUPPORT
+        return {
+            name: Exempt(cell.reason if cell.issue is None else f'{cell.reason}: {_ISSUES}{cell.issue}')
+            for name, cell in cells.items()
+            if name not in SCENARIOS and cell.level in ('refused', 'broken')
+        }
+
+    def __getitem__(self, key: str) -> Exempt:
+        return self._cells[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._cells)
+
+    def __len__(self) -> int:
+        return len(self._cells)
 
 
-DURABLE_DBOS = Contract('durable_dbos', applies=lambda _, case: case.calls is not None, exempt=_not_run_right('dbos'))
-"""D1: in a DBOS workflow, a case's calls record the steps its `durable_steps.dbos` lists, and re-executing the
-workflow from after its last step, as recovering a committed run does, makes none of their requests again.
+DURABLE_DBOS = Contract(
+    'durable_dbos', applies=lambda _, case: case.calls is not None, exempt=_EngineExemptions('dbos')
+)
+"""D1: in a DBOS workflow, a case's calls record the steps its `durable_steps.dbos` lists, and recovering the
+workflow, from after its last step or from part of its record, makes none of their requests again.
 
 DBOS runs a function tool in workflow code, so a request the tool makes outside a `durable_operation` or a
-workspace call is made again on every recovery. Its exemptions are the cells `ENGINE_SUPPORT` marks `refused` or
-`broken` under DBOS.
+workspace call is made again on every recovery. `TestDBOS` (`tests/harness/test_durable_tool_io.py`) checks it.
+Its exemptions are the cases DBOS's support table marks `refused` or `broken`.
 """
 
 DURABLE_TEMPORAL = Contract(
-    'durable_temporal', applies=lambda _, case: case.calls is not None, exempt=_not_run_right('temporal')
+    'durable_temporal', applies=lambda _, case: case.calls is not None, exempt=_EngineExemptions('temporal')
 )
 """D1: in a Temporal workflow, a case's calls schedule the activities its `durable_steps.temporal` lists, and a
-`Replayer` replays the recorded history equal, without a request. Its exemptions are the cells `ENGINE_SUPPORT`
-marks `refused` or `broken` under Temporal.
+`Replayer` replays the recorded history equal, without a request. `TestTemporal`
+(`tests/harness/test_durable_temporal_replay.py`) checks it. Its exemptions are the cases Temporal's support table
+marks `refused` or `broken`.
 
 Temporal runs a function tool in an activity named after its toolset's `id`, so an agent with an id-less toolset is
 refused, and what replays is the workflow code around it: hooks, instructions and workflow-side tools.

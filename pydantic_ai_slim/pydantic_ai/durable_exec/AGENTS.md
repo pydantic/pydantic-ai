@@ -97,6 +97,29 @@ paths, and verify that resources created inside a durable unit do not escape it.
 teardown, control-flow exceptions, persisted-output upgrades, and behavior outside the durable
 context in the engine's own suite.
 
+### Checking an engine
+
+Every engine runs `DurableEngineSuite` from `pydantic_ai.durable_exec.conformance`. Subclass it and
+provide an `engine` fixture implementing `DurableEngine`: `durability()` returns a new durability
+capability, `run(agent, prompt)` runs the agent in process the way the engine runs a workflow and
+returns an `EngineRun` with the units it recorded (agent name left out) and the output or the error,
+and `recover(run, after=None)` recovers the run from its record, keeping only the first `after` units
+when given. Unwrap a refusal the engine wraps back into `UserError`. Return `False` from
+`can_fork_mid_run` when the engine can't recover from part of its record, and document the limit.
+Start the engine once per class (`scope='class'`, as a `classmethod`), with no real waits.
+
+Declare the engine's support as plain data in its own package, `<engine>/_conformance.py`:
+`SUPPORT`, the cells that aren't `supported` (each `Support` with its `reason`, `match`, `check` and
+`issue` as its level requires), and `RECOVERY`, `Recovery('restart', ...)` for an engine that restarts
+a run instead of replaying it. Import nothing from the engine's SDK there. Point the subclass at both,
+add the table to `ENGINE_SUPPORT_MODULES` (`tests/capability_cases.py`) and to `TABLES` in
+`scripts/durable_exec_support.py`, take the engine out of `PENDING_ENGINES`
+(`tests/harness/test_engine_support.py`), and regenerate the docs table with
+`uv run python scripts/durable_exec_support.py --write`. A built-in engine's subclass extends
+`BuiltInEngineSuite` (`tests/harness/_durable_cases.py`), which runs every case and scenario and pins
+the case units to `Calls.durable_steps`. `TestDBOS` and `TestTemporal` are the examples, and
+`agent_docs/capability-conformance.md` ("Durable execution") says what each level checks.
+
 ## Core changes that engines depend on
 
 `scripts/durable_exec_contract.json` lists the core definitions the durable engines import,

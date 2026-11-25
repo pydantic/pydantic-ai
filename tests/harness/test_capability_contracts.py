@@ -49,8 +49,6 @@ from ..capability_cases import (
 )
 from ..function_model_prefix import RequestRecorder, patch_models
 from ._contracts import CASES, PUBLIC, assert_holds as _assert_holds, contract_cases as _cases
-from ._counting_clients import REQUESTS
-from ._durable_cases import PROMPT, UNPROMPTED_REQUEST, journal_breaks, one_call_per_response
 from .capability_cases import (
     CONTRACTS as HARNESS_CONTRACTS,
     HOSTED_MCP_CONNECTION,
@@ -417,47 +415,6 @@ def test_a_capability_that_runs_with_tools_declares_calls(
         return
     declared = CASES[name].calls is not None
     _assert_holds(DECLARES_CALLS, name, [] if declared else [f'it contributes {contributes} but declares no `calls`'])
-
-
-async def test_a_nested_run_on_a_durable_case_model_is_answered_and_counted() -> None:
-    """The durable suites count it, so a nested run's request a recovery repeats breaks them like any other."""
-    REQUESTS.clear()
-
-    model = one_call_per_response((('ask', {}),))
-
-    async def ask() -> str:
-        return (await Agent(model).run('nested')).output
-
-    try:
-        result = await Agent(model, tools=[ask]).run(PROMPT)
-        assert (result.output, REQUESTS) == ('done', {UNPROMPTED_REQUEST: 1})
-    finally:
-        REQUESTS.clear()
-
-
-def test_a_drifted_journal_breaks_the_durable_contracts() -> None:
-    """A unit renamed, added or dropped breaks them, and so does a model request too many or too few."""
-    expected = ('capability__memory.write_memory',)
-    recorded = ['a__model.request', 'a__capability__memory.write_memory', 'a__model.request']
-
-    def read(units: list[str]) -> list[str]:
-        return journal_breaks(
-            units, prefix='a__', model_request='model.request', calls=1, expected=expected, engine='dbos'
-        )
-
-    assert read(recorded) == []
-    renamed = ['a__model.request', 'a__capability__memory.write', 'a__model.request']
-    assert len(read(renamed)) == 1
-    assert len(read(['a__model.request', 'a__model.request'])) == 1, 'a dropped unit breaks them'
-    assert read(['a__capability__memory.write_memory', 'a__model.request']) == [
-        'the run recorded 1 `model.request` units, not one per call and one to answer'
-    ]
-    assert read([*recorded, 'a__model.request', 'a__capability__memory.read_memory']) == [
-        'the run recorded 3 `model.request` units, not one per call and one to answer',
-        "the calls record `dbos=('capability__memory.write_memory', 'capability__memory.read_memory')`, not "
-        "('capability__memory.write_memory',). A recorded name is what a workflow from an earlier release replays by: "
-        'change the case only with a compatibility note (agent_docs/capability-conformance.md, "Durable execution")',
-    ]
 
 
 def test_pending_calls_backfill() -> None:

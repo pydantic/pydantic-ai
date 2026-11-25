@@ -1,12 +1,11 @@
-"""Every capability case's calls, run in a DBOS workflow: `DURABLE_DBOS`, half of D1.
+"""`DurableEngineSuite` under DBOS, `TestDBOS`: every capability case's calls and every scenario, in a DBOS workflow.
 
 DBOS runs function tools in workflow code, so a capability's tool I/O is only recorded when the
-capability routes it through a `durable_operation` or a workspace call. Each case in
-`tests/capability_cases.py` and `tests/harness/capability_cases.py` with `calls` makes them in a DBOS
-workflow, one per response, then re-executes the workflow from after its last recorded step, the way
-recovering a committed run does. No request may be made again, and the steps the run recorded must be
-the ones the case's `durable_steps.dbos` lists. `tests/harness/test_durable_temporal_replay.py` runs
-the same calls under Temporal.
+capability routes it through a `durable_operation` or a workspace call. `DBOSEngine` runs each agent in
+a workflow, and recovers it by forking the workflow from a step, the way recovering a committed run
+re-executes it from after its last recorded step. `pydantic_ai.durable_exec.dbos._conformance` declares
+the cells that aren't `supported`. `tests/harness/test_durable_temporal_replay.py` runs the same suite
+under Temporal.
 
 Planning's tools also run with an event stream handler, whose steps for the events a tool emits must
 replay in their recorded order. Shell's `shell` tool names its job in workflow code, so a recovered
@@ -22,8 +21,8 @@ import asyncio
 import json
 import tempfile
 import uuid
-from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +31,7 @@ import pytest
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.durable_exec.conformance import EngineRun
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.planning import (
@@ -46,42 +45,106 @@ from pydantic_ai_harness.shell import Shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..append_only import skip_unless_installed
-from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS, SCENARIO_RUNS, Scenario
-from ._contracts import CASES, assert_cell_holds, contract_cases
-from ._durable_cases import (
-    assert_scenario_cell,
-    build_case,
-    counting_requests,
-    installed,
-    journal_breaks,
-    observe_run,
-    one_call_per_response,
-    scenario_agent,
-    scenario_breaks,
-)
+from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS
+from ._contracts import CASES
+from ._durable_cases import BuiltInEngineSuite, build_case, suite_cases
 
-# Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
+# Module scope registers the DBOS workflows, which DBOS requires before launch.
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
-    from pydantic_ai.durable_exec.dbos import DBOSDurability
+    from pydantic_ai.durable_exec.dbos import DBOSDurability, _conformance as dbos_conformance
     from pydantic_ai.durable_exec.prefect import PrefectDurability
 except ImportError:  # pragma: lax no cover
     pytest.skip('dbos or prefect not installed', allow_module_level=True)
 
 
-@pytest.fixture
-def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
-    config: DBOSConfig = {
-        'name': 'durable_tool_io',
-        'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
-    }
+def _launch(directory: Path, name: str) -> DBOS:
+    config: DBOSConfig = {'name': name, 'system_database_url': f'sqlite:///{directory / "dbos.sqlite"}'}
     instance = DBOS(config=config)
     DBOS.launch()
+    return instance
+
+
+@pytest.fixture
+def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
+    instance = _launch(tmp_path, 'durable_tool_io')
     try:
         yield instance
     finally:
         DBOS.destroy()
+
+
+_ENGINE_AGENTS: dict[str, Agent[None, str]] = {}
+"""The agents `DBOSEngine` runs, by name, which its one workflow looks up."""
+
+
+@DBOS.workflow(name='durable_engine_suite_run')
+async def _run_agent(agent_name: str, prompt: str) -> str:
+    return (await _ENGINE_AGENTS[agent_name].run(prompt)).output
+
+
+@dataclass
+class DBOSEngine:
+    """DBOS, launched on SQLite: a run is a workflow, and recovery forks it from a step."""
+
+    name: str = 'dbos'
+    agent_names: dict[str, str] = field(default_factory=dict[str, str])
+    """The name of the agent each workflow runs, by workflow id."""
+
+    def durability(self) -> DBOSDurability[None]:
+        return DBOSDurability[None]()
+
+    async def run(self, agent: Agent[None, str], prompt: str) -> EngineRun:
+        assert agent.name is not None
+        _ENGINE_AGENTS[agent.name] = agent
+        workflow_id = str(uuid.uuid4())
+        self.agent_names[workflow_id] = agent.name
+        try:
+            with SetWorkflowID(workflow_id):
+                output: str | BaseException = await _run_agent(agent.name, prompt)
+        except Exception as error:
+            output = error
+        return EngineRun(workflow_id, output, await self._units(workflow_id))
+
+    async def recover(self, run: EngineRun, *, after: int | None = None) -> EngineRun:
+        steps = await DBOS.list_workflow_steps_async(run.id)
+        if after is not None and after < len(steps):
+            start = steps[after]['function_id']
+        else:
+            start = max((step['function_id'] for step in steps), default=0) + 1
+        handle = await DBOS.fork_workflow_async(run.id, start)
+        self.agent_names[handle.workflow_id] = self.agent_names[run.id]
+        try:
+            # The default 1s result poll would add up to a second on top of the internal queue's own poll.
+            output: str | BaseException = await handle.get_result(polling_interval_sec=0.01)
+        except Exception as error:
+            output = error
+        return EngineRun(handle.workflow_id, output, await self._units(handle.workflow_id))
+
+    async def _units(self, workflow_id: str) -> list[str]:
+        prefix = f'{self.agent_names[workflow_id]}__'
+        return [
+            step['function_name'].removeprefix(prefix) for step in await DBOS.list_workflow_steps_async(workflow_id)
+        ]
+
+
+class TestDBOS(BuiltInEngineSuite):
+    support = dbos_conformance.SUPPORT
+    recovery = dbos_conformance.RECOVERY
+    cases = suite_cases(DURABLE_DBOS)
+    durable_steps = 'dbos'
+    model_request_unit = 'model.request'
+
+    @pytest.fixture(scope='class')
+    @classmethod
+    def engine(cls, tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOSEngine, None, None]:
+        _launch(tmp_path_factory.mktemp('dbos'), 'durable_engine_suite')
+        try:
+            yield DBOSEngine()
+        finally:
+            DBOS.destroy()
+            _ENGINE_AGENTS.clear()
 
 
 def _call_tools(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
@@ -96,100 +159,12 @@ def _call_tools(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
     return FunctionModel(respond)
 
 
-def _case_agent(name: str) -> Agent[None, str]:
-    calls = CASES[name].calls
-    assert calls is not None
-    directory = Path(tempfile.mkdtemp(prefix=f'harness_durable_tool_io_{name}_'))
-    return Agent(
-        one_call_per_response(calls.made),
-        name=f'{name}_agent',
-        deps_type=type(None),
-        capabilities=[*build_case(name, directory), DBOSDurability[None]()],
-    )
-
-
-_AGENTS: dict[str, Agent[None, str]] = {
-    name: _case_agent(name) for name, case in CASES.items() if DURABLE_DBOS.applies(name, case) and installed(name)
-}
-"""The agent that makes each case's calls, for every case `DURABLE_DBOS` applies to whose dependency is installed."""
-
-
 def _workflow(agent: Agent[None, str]) -> Callable[[], Awaitable[str]]:
     @DBOS.workflow(name=f'{agent.name}_workflow')
     async def run() -> str:
         return (await agent.run('go')).output
 
     return run
-
-
-_WORKFLOWS = {key: _workflow(agent) for key, agent in _AGENTS.items()}
-
-
-@pytest.fixture
-def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[], Counter[str]]:
-    return counting_requests(monkeypatch, tmp_path)
-
-
-@pytest.mark.parametrize('name', contract_cases(DURABLE_DBOS))
-async def test_dbos_recovery_does_not_repeat_tool_requests(
-    name: str, dbos: DBOS, count_requests: Callable[[], Counter[str]]
-) -> None:
-    skip_unless_installed(name, CASES[name].requires)
-    calls = CASES[name].calls
-    assert calls is not None
-    workflow_id = str(uuid.uuid4())
-    with SetWorkflowID(workflow_id):
-        assert await _WORKFLOWS[name]() == 'done'
-    first_run = count_requests()
-    assert set(first_run.values()) <= {1}, f'a request was made more than once: {first_run}'
-
-    steps = await dbos.list_workflow_steps_async(workflow_id)
-    # Re-execute the workflow function from after its last step, the way recovery does. Calling it
-    # again under the same ID is no replay: DBOS returns the stored result without running it.
-    handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
-    # The default 1s result poll would add up to a second on top of the internal queue's own poll.
-    assert await handle.get_result(polling_interval_sec=0.01) == 'done'
-    recovered = count_requests()
-    breaks = [] if recovered == first_run else [f'recovery made a request again: {first_run} became {recovered}']
-    breaks += journal_breaks(
-        [step['function_name'] for step in steps],
-        prefix=f'{_AGENTS[name].name}__',
-        model_request='model.request',
-        calls=len(calls.made),
-        expected=calls.durable_steps.dbos,
-        engine='dbos',
-    )
-    assert_cell_holds('dbos', DURABLE_DBOS, name, breaks)
-
-
-def _scenario_workflow(scenario: Scenario) -> Callable[[], Awaitable[list[str]]]:
-    agent = scenario_agent(scenario, DBOSDurability[None]())
-
-    @DBOS.workflow(name=f'{agent.name}_workflow')
-    async def run() -> list[str]:
-        return await observe_run(agent)
-
-    return run
-
-
-_SCENARIO_WORKFLOWS = {scenario: _scenario_workflow(scenario) for scenario in SCENARIO_RUNS}
-
-
-@pytest.mark.parametrize('scenario', sorted(SCENARIO_RUNS))
-async def test_a_scenario_observes_the_same_after_dbos_recovery(scenario: Scenario, dbos: DBOS) -> None:
-    """The events and enqueued messages a run observes come back the same, each once, when recovery re-executes it."""
-    workflow_id = str(uuid.uuid4())
-    try:
-        with SetWorkflowID(workflow_id):
-            first = await _SCENARIO_WORKFLOWS[scenario]()
-    except UserError as error:
-        breaks = [f'the engine refuses: {error}']
-    else:
-        steps = await dbos.list_workflow_steps_async(workflow_id)
-        handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
-        recovered = await handle.get_result(polling_interval_sec=0.01)
-        breaks = scenario_breaks(scenario, first, recovered)
-    assert_scenario_cell('dbos', scenario, breaks)
 
 
 _SHELL_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_shell_'))
