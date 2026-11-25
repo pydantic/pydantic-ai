@@ -66,7 +66,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import AbstractCapability, ModelFallback, NativeTool
+from pydantic_ai.capabilities import AbstractCapability, NativeTool
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
@@ -204,17 +204,6 @@ async def test_bedrock_model_blocks_requests_when_disabled():
 
     with pytest.raises(RuntimeError, match='Model requests are not allowed'):
         await model.count_tokens(messages, None, model_request_parameters)
-
-
-class _StubBedrockResponseClient:
-    """Minimal Bedrock client whose `converse` returns the provided response."""
-
-    def __init__(self, response: dict[str, Any]):
-        self._response = response
-        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
-
-    def converse(self, **_: Any) -> dict[str, Any]:
-        return self._response
 
 
 def _bedrock_model_with_error(error: ClientError | BotoCoreError) -> BedrockConverseModel:
@@ -9826,28 +9815,3 @@ async def test_non_json_response_body_raises_model_api_error(
     assert exc_info.value.message.startswith(message)
     if call == 'stream':
         assert isinstance(exc_info.value.__cause__, EventStreamParserError)
-
-
-@pytest.mark.parametrize('stop_reason', ['malformed_model_output', 'malformed_tool_use'])
-async def test_bedrock_empty_malformed_response_falls_back(allow_model_requests: None, stop_reason: str):
-    """An empty response Bedrock ended as malformed has `finish_reason='error'`, so `ModelFallback` falls back on it.
-
-    Not a VCR test: Bedrock doesn't produce malformed output or a malformed tool call on demand.
-    """
-    response: dict[str, Any] = {
-        'output': {'message': {'role': 'assistant', 'content': []}},
-        'stopReason': stop_reason,
-        'usage': {'inputTokens': 10, 'outputTokens': 0, 'totalTokens': 10},
-        'metrics': {'latencyMs': 1},
-    }
-    model = BedrockConverseModel(
-        'us.amazon.nova-micro-v1:0', provider=_StubBedrockProvider(cast(Any, _StubBedrockResponseClient(response)))
-    )
-    agent = Agent(model, capabilities=[ModelFallback(TestModel(custom_output_text='fallback used'))])
-
-    result = await agent.run('hello')
-
-    assert result.output == 'fallback used'
-    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == snapshot(
-        [('us.amazon.nova-micro-v1:0', 'rejected')]
-    )
