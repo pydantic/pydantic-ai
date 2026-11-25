@@ -83,7 +83,7 @@ from .._cancel import (
     take_run_binding,
 )
 from .._deferred_capabilities import registered_loaded_capability_ids
-from .._instructions import AgentInstructions
+from .._instructions import AgentInstructions, lowered_block_id
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
 from .._run_conversation import failed_run_conversation
@@ -4447,6 +4447,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             sourced_instructions = self._get_instructions(
                 additional_instructions=instructions, cap_instructions=resolved_caps.instructions
             )
+            _warn_lowered_instructions_not_sent(run_capability)
             # A standard run states a loaded deferred capability's instructions in history, after its load return,
             # which seeding skips: a session has no channel for them. They join the session's own instructions
             # instead, after the rest, resolved as the graph resolves them before each request.
@@ -5693,6 +5694,25 @@ def _resolve_layered_model_settings(
         layered = merge_model_settings(layered, resolved)
         run_context.model_settings = merged
     return _agent_graph.StepModelSettings(merged=merged, layered=layered)
+
+
+def _warn_lowered_instructions_not_sent(capability: AbstractCapability[Any]) -> None:
+    """Warn that a realtime session leaves out the instructions of the capabilities below operator authority.
+
+    A standard run states them in history as framed data, which a session has no channel for, and they must not reach it
+    as instructions.
+    """
+    # TODO(#14458): send them to a realtime session as framed data, too.
+    lowered = sorted({lowered_block_id(source) for source in capability._lowered_instruction_sources()})  # pyright: ignore[reportPrivateUsage]
+    if lowered:
+        names = ', '.join(f'{name!r}' for name in lowered)
+        warnings.warn(
+            f'The instructions of capabilities below operator authority ({names}) are not sent to a realtime session: '
+            'a standard run sends them as framed data in the message history, which a session has no channel for yet. '
+            'See https://github.com/pydantic/pydantic-ai/issues/14458.',
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:

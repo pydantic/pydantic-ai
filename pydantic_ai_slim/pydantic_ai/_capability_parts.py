@@ -261,18 +261,25 @@ def lowered_instruction_statement(
             )
         )
     if change.content is not None:
-        parts.append(
-            _CapabilityInstructionsPart(content=OperatorText(change.content), source=source, timestamp=timestamp)
-        )
+        # Safe for text the operator didn't write: the part is never stored or enqueued, only rendered, and its source
+        # is below operator authority, so it renders as framed data rather than in the application's voice.
+        content = OperatorText(change.content)
+        parts.append(_CapabilityInstructionsPart(content=content, source=source, timestamp=timestamp))
     return parts
 
 
 def _statement_capability_id(change: InstructionDeltaPart) -> str:
-    """The capability a lowered block's statement is from, as its id `capability:<id>` names it."""
+    """The capability a lowered block's statement is from, as its id `capability:<id>` names it.
+
+    That id is the capability's `id` or its class's name, which the operator's configuration sets, never text a server
+    or a tool reports. A statement under any other id names no capability: `_author_phrase` calls it "a capability".
+    """
     source = change.id.source if change.id is not None else None
-    if isinstance(source, CapabilityInstructionSource):
-        return source.id
-    return str(change.id)
+    return source.id if isinstance(source, CapabilityInstructionSource) else _UNNAMED_CAPABILITY
+
+
+_UNNAMED_CAPABILITY = '<unnamed>'
+"""A capability id that isn't a plain identifier, so a note names its capability by kind alone."""
 
 
 def _note_frame(tag: str, attrs: dict[str, str | None], open_tag: str) -> str:

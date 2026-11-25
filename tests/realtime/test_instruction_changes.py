@@ -11,7 +11,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai._framing import SYSTEM_TAG, wrap
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
@@ -571,3 +571,17 @@ async def test_change_the_provider_refused_is_sent_again() -> None:
         'str',
     ]
     assert len(changes) == 1
+
+
+async def test_lowered_capability_instructions_are_left_out_with_a_warning() -> None:
+    """A session has no channel for instructions below operator authority, so it leaves them out and says so once."""
+    agent: Agent[None, str] = Agent(
+        instructions='Base',
+        capabilities=[Capability[None](id='plugin', instructions='Plugin note.').with_authority('none')],
+    )
+    model = FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))
+    with pytest.warns(UserWarning, match="capabilities below operator authority \\('plugin'\\) are not sent") as caught:
+        async with agent.realtime(model).session() as session:
+            _ = [event async for event in session]
+    assert len([w for w in caught if 'below operator authority' in str(w.message)]) == 1
+    assert model.last_instructions == 'Base'
