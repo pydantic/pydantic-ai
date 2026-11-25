@@ -25,6 +25,7 @@ from unittest.mock import Mock
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 import pydantic_ai
 from pydantic_ai import Agent
@@ -2699,6 +2700,57 @@ async def test_capture_keeps_what_ui_adapter_subclasses_are(tmp_path: Path):
     assert vars(Concrete)['__parameters__'] == ()
     assert Partial.__abstractmethods__ == Uncaptured.__abstractmethods__
     assert sorted(Partial.__abstractmethods__) == snapshot(['build_event_stream', 'build_run_input', 'load_messages'])
+
+
+def test_capture_builds_a_class_in_the_namespace_its_statement_runs_in(tmp_path: Path):
+    """A model keeps the namespace of the frame its class statement runs in, or none for one that runs in a module, as
+    without the capture: Pydantic resolves the model's annotations in it. A namespace that held the capture couldn't be
+    pickled, so Prefect couldn't hash the model.
+    """
+    module: dict[str, object] = {}
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+
+        class Inner(BaseModel):
+            value: int
+
+        class Outer(BaseModel):
+            inner: Inner
+
+        exec('from pydantic import BaseModel\nclass AtModuleLevel(BaseModel):\n    value: int\n', module)
+    finally:
+        capture.pytest_unconfigure()
+    assert 'Inner' in vars(Outer)['__pydantic_parent_namespace__']
+    assert vars(module['AtModuleLevel'])['__pydantic_parent_namespace__'] is None
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason='a PEP 695 generic class needs Python 3.12')
+def test_capture_builds_a_generic_class_in_the_namespace_its_statement_runs_in(tmp_path: Path):
+    """A PEP 695 generic class statement runs in an annotation scope, which Pydantic looks past to the frame the
+    statement runs in, as without the capture.
+    """
+    module: dict[str, object] = {}
+    exec(
+        'from pydantic import BaseModel\n'
+        'def define():\n'
+        '    class Inner(BaseModel):\n'
+        '        value: int\n'
+        '    class Generic[T](BaseModel):\n'
+        '        inner: Inner\n'
+        '        value: T\n'
+        '    return Generic\n',
+        module,
+    )
+    define = module['define']
+    assert callable(define)
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        generic = define()
+    finally:
+        capture.pytest_unconfigure()
+    assert 'Inner' in vars(generic)['__pydantic_parent_namespace__']
 
 
 def test_capture_needs_the_plugin_and_its_directory(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch):

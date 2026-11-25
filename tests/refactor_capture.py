@@ -411,6 +411,10 @@ UI_MESSAGE_METHODS = ('load_messages', 'dump_messages')
 # socket's `send`, and the ones Google's `AsyncSession` sends with.
 REALTIME_DOUBLE_PACKAGES = ('tests.realtime',)
 REALTIME_SEND_METHODS = ('send', 'send_realtime_input', 'send_client_content', 'send_tool_response')
+# The call a class statement makes, which the capture runs from a frame of its own: see `_wrap_realtime_doubles`.
+BUILD_CLASS = compile(
+    '__refactor_capture_build_class__(*__refactor_capture_args__, **__refactor_capture_kwargs__)', __file__, 'eval'
+)
 # The `SessionCore` methods a capture records the results of: what it does with what it's applied, and what the session
 # reads from it.
 SESSION_CORE_METHODS = (
@@ -1110,9 +1114,27 @@ class RefactorCapture:
                         self._wrap_realtime_double(value)
         original: Callable[..., object] = vars(builtins)['__build_class__']
 
-        # A class statement builds its class through `__build_class__`, wherever it runs.
+        # A class statement builds its class through `__build_class__`, wherever it runs. Pydantic resolves a model's
+        # annotations in the namespace of the frame its metaclass is called from, past a PEP 695 annotation scope,
+        # unless that frame runs a module. So the class is built from a frame that holds the namespace of the frame the
+        # statement runs in, under its name, rather than from this one.
         def build_class(*args: object, **kwargs: object) -> object:
-            cls = original(*args, **kwargs)
+            frame = inspect.currentframe()
+            assert frame is not None and frame.f_back is not None
+            caller = frame.f_back
+            # A frame that holds itself would be a reference cycle.
+            del frame
+            if caller.f_code.co_name.startswith('<generic parameters of') and caller.f_back is not None:
+                caller = caller.f_back
+            names = {
+                '__refactor_capture_build_class__': original,
+                '__refactor_capture_args__': args,
+                '__refactor_capture_kwargs__': kwargs,
+            }
+            try:
+                cls = eval(BUILD_CLASS.replace(co_name=caller.f_code.co_name), names, caller.f_locals)
+            finally:
+                del caller
             if isinstance(cls, type) and is_realtime_double_module(cls.__module__):
                 self._wrap_realtime_double(cls)
             return cls
