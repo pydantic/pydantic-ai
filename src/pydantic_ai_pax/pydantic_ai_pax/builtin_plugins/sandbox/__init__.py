@@ -12,9 +12,8 @@ A sandbox stays until `/sandbox delete`, which keeps the history: a copy of the 
 `/computer-use` lets the model see and control the sandbox's desktop. The history records whether it is on
 (`computer_use_on`). `/computer-use` before `/sandbox` makes
 the sandbox with a desktop. In a running sandbox it adds one where the provider can; where it cannot, it says how
-to start a sandbox with one. The model's screenshots go to a loopback viewer
-(`DesktopViewer`): `computer` rows link to it, `/computer-use view` opens it, and `pax --web` shows it beside
-the transcript.
+to start a sandbox with one. `/computer-use view` gives the provider's own link to watch the desktop, where it
+has one (`SupportsDesktopUrl`).
 """
 
 import re
@@ -29,7 +28,6 @@ from rich.console import RenderableType
 
 from pydantic_ai import AgentStreamEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.computer_use import ComputerResult, ComputerToolAction
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 from pydantic_ai.models import ModelRequestContext
@@ -40,33 +38,33 @@ from pydantic_ai.workspaces import (
     Workspace,
     WorkspaceBackend,
     WorkspaceCommand,
-    WorkspaceError,
     WorkspaceRef,
     WrapperWorkspace,
 )
-from pydantic_ai_harness.computer_use import ActionsPerformedEvent, SupportsDisplay
 from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import (
     COMPUTER_USE,
     DesktopComputerUse,
     computer_use_on,
     computer_use_state,
-    history_frames,
     render_computer_event,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.providers import PROVIDERS, GitHubCredential, SandboxProvider
-from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, give_github_login, ref_provider
+from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
+    SANDBOX_ENV,
+    SupportsDesktopUrl,
+    give_github_login,
+    ref_provider,
+)
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend, Snapshot, seed, snapshot
-from pydantic_ai_pax.builtin_plugins.sandbox.viewer import DesktopSession, DesktopViewer, sandbox_key
 from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.config import PERMISSIONS_SETTING
 from pydantic_ai_pax.config.api_keys import load_keys
 from pydantic_ai_pax.gh_cli import gh_token, gh_user
 from pydantic_ai_pax.models.profiles import KEY_NAME
-from pydantic_ai_pax.plugins import NoSettings, PanelView, Plugin, PluginHost, SessionEnd, SidePanel
+from pydantic_ai_pax.plugins import NoSettings, Plugin, PluginHost, SessionEnd
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.runtime.imported_history import imported_context
 from pydantic_ai_pax.runtime.session import ConversationWorkspace, ShellLineWorkspace
-from pydantic_ai_pax.ui.browser import open_browser
 from pydantic_ai_pax.ui.menus.dialogs import RUNNERS, TerminalDialogs
 from pydantic_ai_pax.ui.rendering.status import StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
@@ -123,13 +121,6 @@ class _Sandbox:
                 raise UserError(f'This conversation runs in a {self.provider.title} sandbox. {missing}')
             self.backend = self.provider.reopen(self.ref, desktop=self.desktop)
         return self.backend
-
-    async def screenshot(self) -> bytes:
-        """A screenshot of the sandbox's desktop, for the viewer's Refresh button."""
-        backend = self.open()
-        if not isinstance(backend, SupportsDisplay) or backend.display is None:
-            raise UserError(f'This {self.provider.title} sandbox has no desktop.')
-        return await backend.display.screenshot()
 
     async def close(self) -> None:
         """Close what the provider opened for the workspace; the next `open` reopens it."""
@@ -292,14 +283,13 @@ class SandboxPlugin(Plugin):
         super().__init__(host, settings)
         self._sandboxes: dict[WorkspaceRef, _Sandbox] = {}
         """Each sandbox this session made or opened."""
-        self._viewer = DesktopViewer()
         self._armed_for: str | None = None
         """The conversation whose next `/sandbox PROVIDER` gets a desktop, as `/computer-use` ran before it."""
 
     def get_capabilities(self) -> Sequence[AbstractCapability[None]]:
         return (
             _ConversationSandbox(self),
-            DesktopComputerUse(on_frame=self._record_frame, full_access=self.full_access),
+            DesktopComputerUse(full_access=self.full_access),
         )
 
     def full_access(self) -> bool:
@@ -322,7 +312,7 @@ class SandboxPlugin(Plugin):
             ),
             Command(
                 name='computer-use',
-                description="Let the model see and control the sandbox's desktop, or open the live view",
+                description="Let the model see and control the sandbox's desktop, or show the link to watch it",
                 handler=self.computer_use_command,
                 complete=lambda args: ('on', 'off', 'view') if len(args) <= 1 else (),
                 during_turn_subcommands=('view',),
@@ -338,23 +328,8 @@ class SandboxPlugin(Plugin):
             return 'computer-use' if self._armed() else ''
         return f'{sandbox.provider.name} sandbox{" (computer-use)" if self._on() else ""}'
 
-    def get_side_panels(self) -> Sequence[SidePanel]:
-        return (SidePanel(id='desktop', title='Desktop', icon='panel', view=self._desktop_panel),)
-
-    async def _desktop_panel(self) -> PanelView:
-        sandbox = self.current()
-        if sandbox is None or sandbox.deleted or not self._on():
-            return PanelView(note='Run /computer-use and /sandbox PROVIDER to give the model a desktop.')
-        self._viewer_session(sandbox)
-        return PanelView(url=self._viewer.url(sandbox.ref))
-
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
-        live_url = None
-        if isinstance(event, ActionsPerformedEvent) and (sandbox := self.current()) is not None and self._on():
-            # Started here, by the first `computer` row, so the link works the moment it is drawn.
-            self._viewer_session(sandbox)
-            live_url = self._viewer.try_url(sandbox.ref)
-        return render_computer_event(event, live_url=live_url)
+        return render_computer_event(event)
 
     def sandbox(self, ref: WorkspaceRef, messages: Sequence[ModelMessage]) -> _Sandbox:
         """The sandbox `ref` names, which a `/sandbox` provider owns; `messages`, a history naming it, says if it has a desktop."""
@@ -378,24 +353,6 @@ class SandboxPlugin(Plugin):
 
     def _armed(self) -> bool:
         return self._armed_for == self.host.conversation.conversation_id
-
-    def _viewer_session(self, sandbox: _Sandbox) -> DesktopSession:
-        """The viewer's session for `sandbox`, made on first use with the screenshots already in the history."""
-        if (session := self._viewer.get(sandbox_key(sandbox.ref))) is None:
-            session = self._viewer.register(
-                DesktopSession(ref=sandbox.ref, title=sandbox.provider.title, capture=sandbox.screenshot)
-            )
-            messages = self.host.conversation.messages
-            if history_sandbox(messages) == sandbox.ref:
-                for png, actions, result in history_frames(messages):
-                    session.record(png, actions=actions, result=result)
-        return session
-
-    def _record_frame(
-        self, ref: WorkspaceRef, png: bytes, actions: Sequence[ComputerToolAction], result: ComputerResult | None
-    ) -> None:
-        if (sandbox := self._sandboxes.get(ref)) is not None:  # The run opened it.
-            self._viewer_session(sandbox).record(png, actions=actions, result=result)
 
     def complete(self, args: list[str]) -> Iterable[str]:
         words = [name.split() for name in PROVIDERS]
@@ -438,7 +395,7 @@ class SandboxPlugin(Plugin):
             return f'This conversation runs on this machine. {offer} moves a new conversation into a sandbox.'
         if sandbox.deleted:
             return f'This conversation ran in {sandbox.provider.title} sandbox {sandbox.ref.id}, now deleted. Run /new.'
-        computer_use = ' with computer use on (/computer-use view shows its desktop)' if self._on() else ''
+        computer_use = ' with computer use on' if self._on() else ''
         return (
             f'This conversation runs in {sandbox.provider.title} sandbox {sandbox.ref.id}{computer_use}, '
             f'in {sandbox.provider.working_dir}. /sandbox delete deletes it.'
@@ -468,10 +425,7 @@ class SandboxPlugin(Plugin):
             )
         sandbox.add_desktop()
         await self._record_computer_use(sandbox, on=True)
-        return (
-            'Computer use is on: the model can see and control the desktop. /computer-use view shows it.'
-            + self._needs_full()
-        )
+        return 'Computer use is on: the model can see and control the desktop.' + self._needs_full()
 
     async def _record_computer_use(self, sandbox: _Sandbox, *, on: bool) -> None:
         """Save `/computer-use on|off` as an exchange, as `/sandbox` saves its own."""
@@ -488,19 +442,11 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         if sandbox is None or sandbox.deleted or not self._on():
             raise ValueError('Computer use is not on here. Run /computer-use and /sandbox PROVIDER first.')
-        session = self._viewer_session(sandbox)
-        if not session.frames:
-            try:
-                await session.capture_live()
-            except (UserError, WorkspaceError):
-                pass  # The viewer still opens, and shows the screen on the model's next action or a Refresh.
-        url = self._viewer.url(sandbox.ref)
-        if self.host.console.is_terminal:
-            # Through a private redirect page, so the viewer's token stays out of the browser's command line.
-            page = await self._viewer.launch_url(url)
-            if await to_thread.run_sync(open_browser, page, abandon_on_cancel=True):
-                return f'Opened the desktop viewer in your browser: {url}'
-        return f'Desktop viewer: {url}'
+        provider = sandbox.provider
+        url = await provider.desktop_url(sandbox.open()) if isinstance(provider, SupportsDesktopUrl) else None
+        if url is None:
+            return f'{provider.title} has no link to watch its desktop.'
+        return f'Desktop: {url}'
 
     async def _start(self, provider: SandboxProvider) -> str:
         current = self.current()
@@ -554,18 +500,13 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         if sandbox is None:
             return 'This conversation has no sandbox.'
-        await self._delete_sandbox(sandbox)
-        return f'Deleted {sandbox.provider.title} sandbox {sandbox.ref.id}. Run /new to start another conversation.'
-
-    async def _delete_sandbox(self, sandbox: _Sandbox) -> None:
         await sandbox.provider.delete(sandbox.ref)
         await sandbox.close()
-        self._viewer.remove(sandbox.ref)
         sandbox.deleted = True
+        return f'Deleted {sandbox.provider.title} sandbox {sandbox.ref.id}. Run /new to start another conversation.'
 
     async def on_session_end(self, event: SessionEnd) -> None:
         # Only closed: a sandbox is deleted only when the user says so, as its conversation can be resumed.
-        await self._viewer.close()
         for sandbox in list(self._sandboxes.values()):
             with anyio.CancelScope(shield=True):
                 await sandbox.close()
@@ -650,9 +591,7 @@ def _started(
         holds = f'{at}{", with your uncommitted changes" if checkout.changed else ""}'
     lines = [f'This conversation now runs in {provider.title} sandbox {ref.id}. {provider.working_dir} holds {holds}.']
     if desktop:
-        lines.append(
-            'Computer use is on: the model can see and control its desktop. /computer-use view shows it.' + needs_full
-        )
+        lines.append('Computer use is on: the model can see and control its desktop.' + needs_full)
     if github is None:
         lines.append(
             'gh has no GitHub login here, so the sandbox cannot push or reach private repositories. '

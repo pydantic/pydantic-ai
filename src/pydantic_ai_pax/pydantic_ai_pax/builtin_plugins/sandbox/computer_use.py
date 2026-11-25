@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Literal, assert_never
+from typing import assert_never
 
 from rich.console import RenderableType
 from rich.text import Text
@@ -10,7 +10,6 @@ from rich.text import Text
 from pydantic_ai import (
     AgentStreamEvent,
     FunctionToolCallEvent,
-    FunctionToolResultEvent,
     RunContext,
 )
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
@@ -18,8 +17,6 @@ from pydantic_ai.computer_use import (
     COMPUTER_KIND,
     Click,
     ComputerCallPart,
-    ComputerResult,
-    ComputerReturnPart,
     ComputerToolAction,
     CursorPosition,
     Drag,
@@ -36,7 +33,6 @@ from pydantic_ai.computer_use import (
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, SupportsDisplay
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text, tool_header
@@ -62,19 +58,6 @@ def computer_use_state(messages: Sequence[ModelMessage]) -> bool | None:
 def computer_use_on(messages: Sequence[ModelMessage]) -> bool:
     """Whether `/computer-use` is on, according to the history's latest response."""
     return computer_use_state(messages) is True
-
-
-FrameCallback = Callable[[WorkspaceRef, bytes, Sequence[ComputerToolAction], ComputerResult | None], None]
-"""Called after each `computer` tool result carrying a screenshot."""
-
-
-@dataclass(frozen=True, kw_only=True)
-class ActionMarker:
-    """One visual overlay on a desktop screenshot, showing where an action landed."""
-
-    kind: Literal['click', 'move', 'drag']
-    points: tuple[tuple[int, int], ...]
-    label: str = ''
 
 
 def _format_click(action: Click) -> str:
@@ -147,33 +130,8 @@ def format_actions(actions: Sequence[ComputerToolAction]) -> str:
     return ' · '.join(format_action(action) for action in actions)
 
 
-def action_markers(actions: Sequence[ComputerToolAction]) -> tuple[ActionMarker, ...]:
-    """Extract pointer coordinates from `actions` for the live desktop viewer's overlay."""
-    markers: list[ActionMarker] = []
-    for action in actions:
-        match action:
-            case Click(x=x, y=y) if x is not None and y is not None:
-                markers.append(ActionMarker(kind='click', points=((x, y),), label=_format_click(action)))
-            case MouseMove(x=x, y=y):
-                markers.append(ActionMarker(kind='move', points=((x, y),), label=f'move ({x}, {y})'))
-            case Drag(path=path):
-                markers.append(
-                    ActionMarker(
-                        kind='drag',
-                        points=tuple((point.x, point.y) for point in path),
-                        label=format_action(action),
-                    )
-                )
-            case _:
-                pass
-    return tuple(markers)
-
-
-def render_computer_event(event: AgentStreamEvent, *, live_url: str | None = None) -> RenderableType | None:
-    """Render `computer` tool calls and `ActionsPerformedEvent`s as concise transcript rows.
-
-    With `live_url`, an `ActionsPerformedEvent` row ends in a clickable `watch live ↗` link to the viewer.
-    """
+def render_computer_event(event: AgentStreamEvent) -> RenderableType | None:
+    """Render `computer` tool calls and `ActionsPerformedEvent`s as concise transcript rows."""
     if isinstance(event, FunctionToolCallEvent) and isinstance(event.part, ComputerCallPart):
         summary = format_actions(event.part.actions or ())
         return tool_header(name='computer', argument=summary)
@@ -187,56 +145,24 @@ def render_computer_event(event: AgentStreamEvent, *, live_url: str | None = Non
             count = result['performed']
             noun = 'action' if count == 1 else 'actions'
             row.append(f'{count} {noun} · screenshot', style=muted)
-        if live_url is not None:
-            row.append(' · ', style=muted)
-            row.append('watch live ↗', style=f'{theme.color(theme.AQUA)} link {live_url}')
         return row
     return None
 
 
-def history_frames(
-    messages: Sequence[ModelMessage],
-) -> list[tuple[bytes, Sequence[ComputerToolAction], ComputerResult | None]]:
-    """Screenshots and paired actions already recorded in `messages`, oldest first."""
-    calls: dict[str, Sequence[ComputerToolAction]] = {}
-    frames: list[tuple[bytes, Sequence[ComputerToolAction], ComputerResult | None]] = []
-    for message in messages:
-        for part in message.parts:
-            if isinstance(part, ComputerCallPart) and part.actions is not None:
-                calls[part.tool_call_id] = part.actions
-            elif isinstance(part, ComputerReturnPart) and (screenshot := part.screenshot) is not None:
-                frames.append((screenshot.data, calls.get(part.tool_call_id, ()), part.result))
-    return frames
-
-
 @dataclass
-class _ObservedComputerUse(WrapperCapability[None]):
-    """Wraps harness `ComputerUse` to hand each screenshot, with the actions that led to it, to `on_frame`.
+class _FullAccessComputerUse(WrapperCapability[None]):
+    """Harness `ComputerUse` without the `computer` tool in a step that starts after `/permissions` left `full`.
 
-    It also drops the `computer` tool from any step that starts after `/permissions` left `full`, which a turn
-    already running can see.
+    A turn already running sees that change at its next step.
     """
 
-    on_frame: FrameCallback = field(repr=False)
     full_access: Callable[[], bool] = field(repr=False)
-    _calls: dict[str, Sequence[ComputerToolAction]] = field(
-        default_factory=dict[str, Sequence[ComputerToolAction]], init=False, repr=False
-    )
 
     async def prepare_tools(self, ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         tool_defs = await super().prepare_tools(ctx, tool_defs)
         if self.full_access():
             return tool_defs
         return [tool_def for tool_def in tool_defs if tool_def.tool_kind != COMPUTER_KIND.id]
-
-    async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
-        if isinstance(event, FunctionToolCallEvent) and isinstance(event.part, ComputerCallPart):
-            if event.part.actions is not None:
-                self._calls[event.part.tool_call_id] = event.part.actions
-        elif isinstance(event, FunctionToolResultEvent) and isinstance(event.part, ComputerReturnPart):
-            actions = self._calls.pop(event.part.tool_call_id, ())
-            if (screenshot := event.part.screenshot) is not None and (ref := ctx.workspace.ref) is not None:
-                self.on_frame(ref, screenshot.data, actions, event.part.result)
 
 
 @dataclass
@@ -246,7 +172,6 @@ class DesktopComputerUse(AbstractCapability[None]):
     Does not override `get_workspace`, so Pax attaches the local folder as usual on other runs.
     """
 
-    on_frame: FrameCallback = field(repr=False)
     full_access: Callable[[], bool] = field(repr=False)
     """Whether `/permissions` is `full`, read at each run and each step: like harness on a read-only workspace, no
     `computer` tool otherwise, as the screen can change anything."""
@@ -260,7 +185,5 @@ class DesktopComputerUse(AbstractCapability[None]):
             and isinstance(backend, SupportsDisplay)
             and backend.display is not None
         ):
-            return _ObservedComputerUse(
-                await self._computer_use.for_run(ctx), on_frame=self.on_frame, full_access=self.full_access
-            )
+            return _FullAccessComputerUse(await self._computer_use.for_run(ctx), full_access=self.full_access)
         return AbstractCapability[None]()

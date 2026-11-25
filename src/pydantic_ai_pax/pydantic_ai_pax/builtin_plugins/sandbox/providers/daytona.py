@@ -33,6 +33,12 @@ KEY_NAME = 'DAYTONA_API_KEY'
 SECRET_LABEL = 'clai-github-secret'
 """The sandbox label naming its GitHub secret, so `delete` deletes the secret too."""
 
+DESKTOP_PORT = 6080
+"""Where the desktop's noVNC page and its websockify proxy listen in the sandbox (live, 2026-11-25)."""
+
+DESKTOP_LINK_SECONDS = 300
+"""How long a `/computer-use view` link opens the desktop. A page already open stays connected after it expires."""
+
 
 @dataclass(frozen=True)
 class DaytonaProvider:
@@ -127,6 +133,20 @@ class DaytonaProvider:
         )
         self._clients[backend] = client
         return backend
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        """A signed link to the desktop's noVNC page; anyone holding it can use the mouse and keyboard until it expires.
+
+        The token is in the host name, so the page's own requests and its websocket carry it.
+        """
+        from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
+
+        # `/computer-use view` asks only while computer use is on, so the sandbox was opened with its desktop.
+        assert isinstance(backend, DaytonaSandboxBackend) and backend.display is not None
+        await backend.display.display_size()  # Starts the desktop, which otherwise waits for the first screen call.
+        sandbox = await backend.get_sandbox()
+        signed = await sandbox.create_signed_preview_url(DESKTOP_PORT, expires_in_seconds=DESKTOP_LINK_SECONDS)
+        return f'{signed.url.rstrip("/")}/vnc.html?autoconnect=1'
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:

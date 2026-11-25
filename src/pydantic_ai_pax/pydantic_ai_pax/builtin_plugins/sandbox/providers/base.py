@@ -5,7 +5,7 @@ import os
 import posixpath
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceRef
@@ -108,6 +108,15 @@ class SandboxProvider(Protocol):
         It keeps running too, except one that would otherwise outlive this process, such as a `local smol` VM run through
         the `smolvm` CLI: that one may be stopped, and its next command starts it again.
         """
+        ...
+
+
+@runtime_checkable
+class SupportsDesktopUrl(Protocol):
+    """A provider whose own website shows a sandbox's desktop, which `/computer-use view` links to."""
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        """A new link to the desktop of the sandbox `backend` is attached to; `None` when there is none."""
         ...
 
 

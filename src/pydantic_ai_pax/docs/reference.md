@@ -52,7 +52,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/sandbox [local smol\|local boxlite\|e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a sandbox: `local smol` (SmolVM) and `local boxlite` (BoxLite) run a VM on this machine, the others are cloud sandboxes; `/sandbox local` asks which engine, and no argument says where this one runs. See [Sandboxes](#sandboxes-sandbox) |
-| `/computer-use [on\|off\|view]` | Let the model see and control the sandbox's desktop, or open the live view (`view` works during a turn). See [Computer use](#computer-use-computer-use) |
+| `/computer-use [on\|off\|view]` | Let the model see and control the sandbox's desktop, or show the provider's link to watch it (`view` works during a turn). See [Computer use](#computer-use-computer-use) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer Pax is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -3258,16 +3258,18 @@ The setting is saved in the conversation, so `/resume`, `/fork` and compaction k
 
 #### Watching the desktop: `/computer-use view`
 
-When the model first uses the `computer` tool, Pax starts a viewer on `127.0.0.1` and each
-`computer` row in the terminal gets a `watch live ↗` link to it. `/computer-use view` opens it in
-your browser, also during a turn, and the [web UI](../PLUGINS.md#web-this-session-in-your-browser)
-shows it in a **Desktop** side panel. The viewer shows each screenshot as it arrives, marks where
-clicks, pointer moves and drags landed, keeps the last 30, and has **Refresh** and a 2-second
-**Auto** refresh.
+`/computer-use view` prints `Desktop: URL`, a link to the desktop on the provider's own website, also
+during a turn. Pax runs no viewer of its own. Each run makes a new link.
+
+- **`boxd`**: the machine's Desktop view in boxd's console. It opens in a browser signed in to your
+  boxd account.
+- **`daytona`**: the desktop's noVNC page, on a signed link that works for 5 minutes. Anyone holding the link
+  can see the screen and use the mouse and keyboard until it expires. A page opened before then stays
+  connected after it.
+- **Other providers** have no such link, and it says so: `E2B has no link to watch its desktop.`
 
 Everything on the sandbox's screen, secrets included, goes to the model's provider in screenshots,
-and text on the screen can steer the model like any tool output. The viewer's link carries a
-random token: anyone on this machine holding it can see the screenshots.
+and text on the screen can steer the model like any tool output.
 
 ### Several sessions in the web UI
 

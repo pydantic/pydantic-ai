@@ -119,6 +119,13 @@ class BoxdProvider:
         self._clients[backend] = client
         return backend
 
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        """The machine's Desktop view in boxd's console, which opens only in a browser signed in to its owner's boxd."""
+        from pydantic_ai_harness.boxd_sandbox import BoxdSandboxBackend
+
+        assert isinstance(backend, BoxdSandboxBackend)
+        return (await backend.get_sandbox()).access.desktop_url or None
+
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:
             await client.close()

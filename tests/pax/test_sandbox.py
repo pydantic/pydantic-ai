@@ -139,7 +139,6 @@ def make_png(width: int = 8, height: int = 6, color: tuple[int, int, int] = (20,
 
 
 PNG_A = make_png(1280, 800, (10, 20, 30))
-PNG_B = make_png(1280, 800, (40, 50, 60))
 
 
 class FakeDisplay:
@@ -149,14 +148,11 @@ class FakeDisplay:
         self.png = png
         self.size = size
         self.actions: list[DisplayAction] = []
-        self.fail_screenshot: Exception | None = None
 
     async def display_size(self) -> tuple[int, int]:
         return self.size
 
     async def screenshot(self) -> bytes:
-        if self.fail_screenshot is not None:
-            raise self.fail_screenshot
         return self.png
 
     async def act(self, action: DisplayAction) -> None:
@@ -1422,6 +1418,26 @@ class TestBoxd:
         assert account.secrets == {}
         assert ref.id not in account.specs
         reopened = provider.reopen(ref)
+        # `/computer-use view` links to the machine's Desktop view in boxd's console; the fake's records leave out
+        # `access`, which the SDK builds from the console's address and the machine's name.
+        from boxd.models import MachineAccess
+
+        from tests.harness.boxd_sandbox.fake_boxd import FakeMachine
+
+        record = FakeMachine.record
+
+        def with_access(machine: FakeMachine, status: str | None = None) -> 'Machine':
+            access = MachineAccess(
+                ssh_port=None,
+                domain='boxd.sh',
+                url='',
+                desktop_url=f'https://app.boxd.sh/desktop/{machine.name}',
+                custom_domains=[],
+            )
+            return record(machine, status).model_copy(update={'access': access})
+
+        monkeypatch.setattr(FakeMachine, 'record', with_access)
+        assert await provider.desktop_url(reopened) == f'https://app.boxd.sh/desktop/{fake.find(ref.id).name}'
         await provider.delete(ref)
         # The clients made for workspaces stay open until clai is done with them.
         await provider.close(backend)
@@ -1736,6 +1752,20 @@ class TestDaytona:
         # Daytona adds a desktop to a sandbox already running, so a reopen asked for one has a display.
         with_desktop = provider.reopen(ref, desktop=True)
         assert isinstance(with_desktop, SupportsDisplay) and with_desktop.display is not None
+        from types import SimpleNamespace
+
+        # `/computer-use view` gets a new signed link to the desktop's noVNC page, after starting the desktop.
+        signed: list[tuple[int, int | None]] = []
+
+        async def sign(port: int, expires_in_seconds: int | None = None) -> SimpleNamespace:
+            signed.append((port, expires_in_seconds))
+            return SimpleNamespace(url=f'https://{port}-token.proxy.daytona.works/')
+
+        made.create_signed_preview_url = sign  # type: ignore[attr-defined]
+        assert (
+            await provider.desktop_url(with_desktop) == 'https://6080-token.proxy.daytona.works/vnc.html?autoconnect=1'
+        )
+        assert signed == [(6080, 300)] and made.computer_use.started
         await provider.close(with_desktop)
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
