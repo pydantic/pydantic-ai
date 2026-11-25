@@ -12,7 +12,7 @@ from ...conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
-    from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
+    from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow, WorkflowResourceLimits
 
     from ..dynamic_workflow._concurrent_sub_agents import orchestrator_model, summarize_model
     from .worker import InMemoryWorker, agent_orchestrator, completed, registered_agent, schedule_agent
@@ -29,7 +29,13 @@ c = await summarize(task=a + ' + ' + b)
 """
 
 
-def _agents(model_calls: list[str], tool_calls: list[str]) -> tuple[Agent[None, str], Agent[None, str]]:
+def _agents(
+    model_calls: list[str],
+    tool_calls: list[str],
+    *,
+    script: str = _SCRIPT,
+    resource_limits: WorkflowResourceLimits | None = None,
+) -> tuple[Agent[None, str], Agent[None, str]]:
     def noop() -> str:
         tool_calls.append('noop')
         return 'ok'
@@ -42,9 +48,12 @@ def _agents(model_calls: list[str], tool_calls: list[str]) -> tuple[Agent[None, 
         capabilities=[AzureDurableTaskDurability()],
     )
     orchestrator = Agent(
-        orchestrator_model(_SCRIPT),
+        orchestrator_model(script),
         name='orchestrator',
-        capabilities=[DynamicWorkflow(agents=[summarize]), AzureDurableTaskDurability()],
+        capabilities=[
+            DynamicWorkflow(agents=[summarize], resource_limits=resource_limits),
+            AzureDurableTaskDurability(),
+        ],
     )
     return orchestrator, summarize
 
@@ -105,3 +114,28 @@ def test_workflow_script_resumes_on_a_new_worker_without_repeating_work(durable_
         'orchestrator__model.request',
     ]
     assert threading.active_count() == threads
+
+
+# Pure computation: far longer than the limit below, with no sub-agent call to wait on.
+_BUSY_SCRIPT = """\
+total = 0
+for i in range(200000):
+    total += i
+total
+"""
+
+
+def test_elapsed_time_limit_is_off_in_orchestrator_code(durable_worker: InMemoryWorker) -> None:
+    """A run and its replay must take the same branch, so the script's time limit is off in orchestrator code."""
+    limits: WorkflowResourceLimits = {'max_duration_seconds': 1e-6}
+    orchestrator, summarize = _agents([], [], script=_BUSY_SCRIPT, resource_limits=limits)
+
+    # Outside an orchestration, the limit stops the script.
+    outside = Agent(
+        orchestrator_model(_BUSY_SCRIPT), capabilities=[DynamicWorkflow(agents=[summarize], resource_limits=limits)]
+    )
+    assert 'time limit exceeded' in outside.run_sync('Hi').output.lower()
+
+    with registered_agent(durable_worker, orchestrator), registered_agent(durable_worker, summarize):
+        instance_id = schedule_agent(durable_worker, orchestrator, deps=None)
+        assert completed(durable_worker, instance_id) == 'done: 19999900000'

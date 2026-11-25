@@ -100,8 +100,8 @@ class WorkflowResourceLimits(TypedDict, total=False):
     nor a concurrent `asyncio.gather` batch, because during that wait the script is suspended on
     the host, not running sandbox code. There is no default cap. Set one to bound a pure-CPU
     `while True` loop, which would otherwise burn a core in the sandbox worker (and block the
-    workflow thread under Temporal or Azure Durable Task) -- the one runaway the sub-agent
-    budgets do not catch.
+    workflow thread under Temporal) -- the one runaway the sub-agent budgets do not catch. It is
+    off in Azure Durable Task orchestrator code, where the elapsed time could change a replay.
     Sleeping is not execution time either, so when set, the script may also sleep for up to this
     long in total."""
 
@@ -110,6 +110,18 @@ class WorkflowResourceLimits(TypedDict, total=False):
 
     max_memory: int
     """Maximum sandbox memory, in bytes."""
+
+
+def _sandbox_limits(limits: ResourceLimits) -> ResourceLimits:
+    """The limits the sandbox enforces: without the elapsed-time check in Durable Task orchestrator code.
+
+    The SDK re-runs the script after every activity and checks a replayed activity only by sequence
+    number, type and name. A time limit that fires on one run but not the other after the script's
+    last sub-agent call would let the replay continue with a retry prompt where the recorded run had
+    the tool result. The sleep allowance is charged separately, so it is kept. Until script turns
+    run as activities (#14528), nothing bounds a CPU loop that never awaits there.
+    """
+    return limits | {'max_feed_duration_secs': None} if in_durable_task_orchestration() else limits
 
 
 def _uses_portal() -> bool:
@@ -1066,7 +1078,10 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         monty = MontyRunState()
         try:
             session = await monty.get_session(
-                type_check=True, type_check_stubs=type_check_stubs, limits=limits, use_portal=_uses_portal()
+                type_check=True,
+                type_check_stubs=type_check_stubs,
+                limits=_sandbox_limits(limits),
+                use_portal=_uses_portal(),
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for
