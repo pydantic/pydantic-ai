@@ -1960,7 +1960,7 @@ print(changes)
 
 A [template string](agent-spec.md#template-strings) can't opt in yet, because it can only render text: use a function that returns an `InstructionPart` instead. [MCP server instructions](mcp/client.md#server-instructions) append automatically where they can be keyed.
 
-The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, the history was compacted, or a request was sent without instructions (for example because a hook unset them), the request records a new baseline with current values, which costs no more cache than the change itself. The baseline is never sent to a model.
+The request that starts a run of appended changes records the instructions it was sent as an [`InstructionBaselinePart`][pydantic_ai.messages.InstructionBaselinePart]: every block, in order, with the appending ones in full and the others as an [`InstructionDigest`][pydantic_ai.messages.InstructionDigest] (id and content hash), so a long block rewritten on every request isn't stored again each time. Later requests are sent the same prefix and append their changes after it. When the prefix has to change anyway, because a block that isn't appending changed, a block's policy changed, the history was compacted, or a request was sent without instructions (for example because a hook unset them), the request records a new baseline with current values, which costs no more cache than the change itself. On a model that reads dynamic instructions after the cached prefix, a change to one doesn't record a new baseline (see [OpenAI prompt caching](models/openai.md#prompt-caching)). The baseline is never sent to a model.
 
 Persist the complete [message history](message-history.md), including these baseline parts, to retain the original prefix when another agent instance continues the conversation. Every previously sent replacement stays in history even after it is superseded. Compaction, or removing the baseline from history, starts a fresh baseline from current instructions. Do not prune old replacements independently if you want to preserve the prefix.
 
@@ -1978,6 +1978,59 @@ Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) comput
     [UI adapters](ui/overview.md) keep instruction baselines and changes in trusted server-side history. Client-submitted instruction delta and baseline parts are stripped with system prompts. Browser-only history therefore starts a new baseline; matching an old value to current text does not authenticate its origin. A loaded capability's instructions are stated again on the request holding its load, where server-held history states them, with the capability's current text: the client's history decides only which loads it holds.
 
     Append delivery does not make instruction callbacks durable. In [durable execution](durable_execution/overview.md), callbacks must be deterministic or obtain changing external values through a [durable capability operation](capabilities/custom.md#durable-capability-operations) or the engine's durable units. Registering a bound async capability method decorated with `@durable_operation` through `capability.instructions(name='state', on_change='append')(capability.read_state)` records its result before history changes are computed. Replay then uses recorded values rather than fresh external reads.
+
+#### Instructions for specific models {#model-specific-instructions}
+
+Some instructions are only needed by some models, to counter something those models tend to do. An instruction function can read the model handling the request from `ctx.model`, and its [profile](models/overview.md#inspecting-a-models-profile) from `ctx.model.profile`. Instructions are resolved before every request, and again for each model the [`ModelFallback`](capabilities/model-fallback.md#instructions-for-each-model) capability moves a request on to, so the text always matches the model that receives it.
+
+A conversation can move between models: a request falls back, or a later run continues the history on another model. To keep the instructions the conversation started with and tell the model what changed, write a line only some models need as follows:
+
+- Give it its own named block.
+- Contribute the block from the first request, empty for a model that doesn't need it.
+- Have it append its changes with `on_change='append'`.
+
+A model that doesn't need the line is then sent the instructions the conversation started with, followed by a note that the block was withdrawn, and a model that needs it and didn't have it is sent the line as a change.
+
+```python {title="model_specific_instructions.py"}
+from pydantic_ai import Agent, ModelRequest, RunContext
+from pydantic_ai.messages import InstructionPart
+from pydantic_ai.models import Model
+from pydantic_ai.models.test import TestModel
+
+
+def no_unrequested_delegation(ctx: RunContext) -> InstructionPart:
+    try:
+        delegates = isinstance(ctx.model, Model) and ctx.model.profile.get('delegates_unprompted', False)  # (1)!
+    except NotImplementedError:  # (2)!
+        delegates = False
+    return InstructionPart(
+        "Don't spawn sub-agents unless the user asks." if delegates else '',
+        name='delegation',
+        on_change='append',
+    )
+
+
+agent = Agent(instructions=['Be brief.', no_unrequested_delegation])
+
+
+def instructions_sent(model: TestModel) -> str | None:
+    request = agent.run_sync('Hi!', model=model).all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    return request.instructions
+
+
+print(instructions_sent(TestModel(profile={'delegates_unprompted': True})))
+"""
+Be brief.
+
+Don't spawn sub-agents unless the user asks.
+"""
+print(instructions_sent(TestModel()))
+#> Be brief.
+```
+
+1. [`delegates_unprompted`][pydantic_ai.profiles.ModelProfile.delegates_unprompted] is set for OpenAI's GPT models. `ctx.model` can also be a [realtime model](realtime/overview.md), which has no `Model.profile`. [Pydantic AI Harness `Coder`](harness/coder.md) uses the same pattern for its own rule against unrequested delegation.
+2. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] picks its model per request, inside the model call, so it has no profile of its own: reading `ctx.model.profile` raises `NotImplementedError`, and the line is left out. To have instructions follow the model that serves each request, use the [`ModelFallback`](capabilities/model-fallback.md) capability instead. Pydantic AI Harness `Coder` warns once when it runs on a `FallbackModel`.
 
 #### Keep untrusted text out of instructions {#untrusted-instruction-text}
 

@@ -5124,6 +5124,18 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._refresh_http_client"
       ]
     },
+    "Model._rewrite_instructions_outside_prefix": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read",
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._rewrite_instructions_outside_prefix"
+      ]
+    },
     "Model._run_scope": {
       "engines": [
         "dbos",
@@ -6039,6 +6051,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._refresh_http_client"
+      ]
+    },
+    "WrapperModel._rewrite_instructions_outside_prefix": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel._rewrite_instructions_outside_prefix"
       ]
     },
     "WrapperModel._run_scope": {

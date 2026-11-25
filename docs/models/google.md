@@ -414,6 +414,11 @@ and Gemini 2.5 Pro uses its minimum `thinking_budget` of 128 tokens. Neither ask
 On Google Cloud, `gemini-3.1-pro-preview` accepts `thinking_budget=0`, which the Gemini API rejects for it, so
 there `thinking=False` sends `thinking_budget=0` and the model doesn't think.
 
+From December 1, 2026, the Gemini API [routes `gemini-2.5-flash` to `gemini-3.5-flash-lite`](https://aistudio.google.com/docs/deprecations),
+which rejects `thinking_budget=0`. So on the Gemini API, `thinking=False` on `gemini-2.5-flash` sends the minimum
+`thinking_budget` of 128 tokens, like Gemini 2.5 Pro. Before the reroute, `gemini-2.5-flash` thinks a little with that
+budget; `gemini-3.5-flash-lite` doesn't. On Google Cloud, `gemini-2.5-flash` keeps `thinking_budget=0`.
+
 See [Thinking](../capabilities/thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
 ### Safety settings
