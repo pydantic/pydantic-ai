@@ -62,7 +62,16 @@ from pydantic_ai_pax.config import PERMISSIONS_SETTING
 from pydantic_ai_pax.config.api_keys import load_keys
 from pydantic_ai_pax.gh_cli import gh_token, gh_user
 from pydantic_ai_pax.models.profiles import KEY_NAME
-from pydantic_ai_pax.plugins import NoSettings, PanelView, Plugin, PluginHost, SessionEnd, SidePanel
+from pydantic_ai_pax.plugins import (
+    ConversationChanged,
+    NoSettings,
+    PanelView,
+    Plugin,
+    PluginHost,
+    SessionEnd,
+    SessionStart,
+    SidePanel,
+)
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.runtime.imported_history import imported_context
 from pydantic_ai_pax.runtime.session import ConversationWorkspace, ShellLineWorkspace
@@ -343,10 +352,9 @@ class SandboxPlugin(Plugin):
         return StatusLink(text='watch live', url=url) if url else ''
 
     def _live_url(self) -> str | None:
-        """The desktop viewer's URL while computer use is on and the viewer already shows its sandbox.
+        """The desktop viewer's URL while computer use is on and the viewer shows its sandbox.
 
-        Read every frame, so it never starts the viewer: a `computer` row, `/computer-use view`, or the
-        desktop panel does.
+        Read every frame, so it never starts the viewer: `_start_viewer` does, once computer use is on.
         """
         sandbox = self.current()
         return self._viewer.started_url(sandbox.ref) if sandbox is not None and self._on() else None
@@ -391,6 +399,12 @@ class SandboxPlugin(Plugin):
 
     def _armed(self) -> bool:
         return self._armed_for == self.host.conversation.conversation_id
+
+    def _start_viewer(self) -> None:
+        """Start the viewer for the conversation on screen when it has computer use on, so `watch live` shows."""
+        if (sandbox := self.current()) is not None and not sandbox.deleted and self._on():
+            self._viewer_session(sandbox)
+            self._viewer.try_url(sandbox.ref)
 
     def _viewer_session(self, sandbox: _Sandbox) -> DesktopSession:
         """The viewer's session for `sandbox`, made on first use with the screenshots already in the history."""
@@ -481,6 +495,7 @@ class SandboxPlugin(Plugin):
             )
         sandbox.add_desktop()
         await self._record_computer_use(sandbox, on=True)
+        self._start_viewer()
         return (
             'Computer use is on: the model can see and control the desktop. /computer-use view shows it.'
             + self._needs_full()
@@ -561,6 +576,7 @@ class SandboxPlugin(Plugin):
             raise
         self._armed_for = None
         self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, desktop=desktop, backend=backend)
+        self._start_viewer()
         return _started(provider, ref, checkout, github=github, desktop=desktop, needs_full=self._needs_full())
 
     async def _delete(self) -> str:
@@ -575,6 +591,12 @@ class SandboxPlugin(Plugin):
         await sandbox.close()
         self._viewer.remove(sandbox.ref)
         sandbox.deleted = True
+
+    async def on_session_start(self, event: SessionStart) -> None:
+        self._start_viewer()
+
+    async def on_conversation_changed(self, event: ConversationChanged) -> None:
+        self._start_viewer()
 
     async def on_session_end(self, event: SessionEnd) -> None:
         # Only closed: a sandbox is deleted only when the user says so, as its conversation can be resumed.

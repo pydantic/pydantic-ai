@@ -74,8 +74,8 @@ from pydantic_ai_pax.builtin_plugins.sandbox.viewer import (
     sandbox_key,
 )
 from pydantic_ai_pax.builtin_plugins.web import server as web_server
-from pydantic_ai_pax.config import PERMISSIONS_SETTING
-from pydantic_ai_pax.plugins import SessionEnd, Transcript
+from pydantic_ai_pax.config import PERMISSIONS_SETTING, Settings
+from pydantic_ai_pax.plugins import SessionEnd, SessionStart, Transcript
 from pydantic_ai_pax.ui.rendering.status import StatusLink
 
 # `checkout`, `isolated_git_config`, `provider`, and `upstream` are fixtures shared with `/sandbox`'s tests.
@@ -266,7 +266,10 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     assert 'Computer use is on' in started
     assert provider.created == [GitHubCredential(login='Ada', token='gho_secret')]
     assert provider.created_desktop == [True]
-    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox (computer-use)', '']
+    # Computer use is on, so the viewer starts and the status row links to it.
+    sandbox_segment, watch_live = (segment() for segment in plugin.get_status_segments())
+    assert sandbox_segment == 'fake sandbox'
+    assert isinstance(watch_live, StatusLink) and watch_live.text == 'watch live'
     ref = history_sandbox(session.messages)
     assert ref is not None
     assert ref == WorkspaceRef(provider='fake', id='sbx-1')
@@ -326,6 +329,10 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     resumed_loaded = load(work, Transcript(messages=session.messages))
     resumed = plugin_of(resumed_loaded)
     stub_viewer_port(monkeypatch, resumed, 43219)
+    # A conversation resumed with computer use on starts its viewer, so the status row links to it at once.
+    await resumed.on_session_start(SessionStart(agent=agent, settings=Settings()))
+    [_, watch_live] = (segment() for segment in resumed.get_status_segments())
+    assert isinstance(watch_live, StatusLink) and watch_live.url.startswith('http://127.0.0.1:43219/')
     assert (await resumed.computer_use_command(['view'])).startswith('Desktop viewer: http://127.0.0.1:43219/')
     assert [frame.png for frame in viewer_frames(resumed, ref) or []] == [PNG_A]
     assert await on_screen_sandbox(resumed).screenshot() == PNG_A
@@ -473,7 +480,7 @@ async def test_the_computer_tool_needs_full_permissions(
 
     # Arguments that are not JSON go back to the model as a retry, and the viewer records nothing.
     await session.prompt('garbled')
-    assert display.actions == [] and viewer_frames(plugin, WorkspaceRef(provider='fake', id='sbx-1')) is None
+    assert display.actions == [] and viewer_frames(plugin, WorkspaceRef(provider='fake', id='sbx-1')) == []
 
     planned[:] = [{'type': 'click', 'x': 1, 'y': 2}]
     await session.prompt('click it now')
