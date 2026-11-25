@@ -174,6 +174,7 @@ class FakeDesktopProvider:
     requirement: str | None = None
     live_url_value: str | None = None
     live_url_error: Exception | None = None
+    delete_error: Exception | None = None
     display: FakeDisplay = field(default_factory=FakeDisplay)
     created: list[tuple[GitHubCredential | None, bool]] = field(
         default_factory=list[tuple[GitHubCredential | None, bool]]
@@ -210,6 +211,8 @@ class FakeDesktopProvider:
         return self.live_url_value
 
     async def delete(self, ref: WorkspaceRef) -> None:
+        if self.delete_error is not None:
+            raise self.delete_error
         self.deleted.append(ref)
 
     async def close(self, backend: FakeDesktopBackend) -> None:
@@ -470,22 +473,37 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     assert 'watch live ↗' in render_plain(second_render)
     assert '/computer-use view' not in render_plain(second_render)
 
-    # Toggling `/computer-use` off disables the `computer` tool while keeping the sandbox running.
+    # Toggling `/computer-use` off disables the `computer` tool while keeping the sandbox running, and persists on resume.
     disabled = await plugin.computer_use_command([])
     assert 'Computer use disabled' in disabled
     assert plugin._segment() == 'fake sandbox'  # pyright: ignore[reportPrivateUsage]
     await session.prompt('without desktop')
     assert 'computer' not in seen_tools[-1]
 
+    resumed_off_loaded = load(work, Transcript(messages=session.messages))
+    resumed_off = plugin_of(resumed_off_loaded)
+    assert resumed_off._segment() == 'fake sandbox'  # pyright: ignore[reportPrivateUsage]
+    resumed_off_session = Session(agent, deps=None, plugins=resumed_off_loaded.capabilities, workspace=work)
+    resumed_off_session.replace_messages(list(session.messages))
+    await resumed_off_session.prompt('still without desktop after restart')
+    assert 'computer' not in seen_tools[-1]
+    assert resumed_off.sandbox(ref).has_desktop is True
+    await resumed_off.on_session_end(SessionEnd(reason='exit'))
+
     # Toggling `/computer-use` back on re-enables immediately without recreating the sandbox.
-    reenabled = await plugin.computer_use_command([])
-    assert 'Computer use enabled' in reenabled
+    re_enabled = await plugin.computer_use_command([])
+    assert 'Computer use enabled' in re_enabled
     assert len(desktop_provider.created) == 1
     await session.prompt('back with desktop')
     assert 'computer' in seen_tools[-1]
 
-    # Non-desktop/unowned refs are ignored, and _ObservedComputerUse handles missing actions/screenshots.
-    plugin._record_frame(WorkspaceRef(provider='other', id='sbx-1'), PNG_A, (), None)  # pyright: ignore[reportPrivateUsage]
+    # Unowned and non-desktop refs are ignored by `_record_frame`, and _ObservedComputerUse handles missing actions/screenshots.
+    unowned_ref = WorkspaceRef(provider='other', id='sbx-1')
+    plugin._record_frame(unowned_ref, PNG_A, (), None)  # pyright: ignore[reportPrivateUsage]
+    assert plugin._viewer.get(sandbox_key(unowned_ref)) is None  # pyright: ignore[reportPrivateUsage]
+    plain_ref = WorkspaceRef(provider='fake', id='sbx-plain')
+    plugin._record_frame(plain_ref, PNG_A, (), None)  # pyright: ignore[reportPrivateUsage]
+    assert plugin._viewer.get(sandbox_key(plain_ref)) is None  # pyright: ignore[reportPrivateUsage]
     from pydantic_ai import FunctionToolResultEvent, RunContext
     from pydantic_ai.capabilities import AbstractCapability
     from pydantic_ai.computer_use import ComputerReturnPart
@@ -518,7 +536,7 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     assert len(resumed_session.frames) == 1
     assert resumed_session.frames[0].png == PNG_A
     assert await resumed.sandbox(ref).capture_screen() == PNG_A
-    assert desktop_provider.reopened == [(ref, True)]
+    assert desktop_provider.reopened == [(ref, True), (ref, True)]
 
     # Viewer session for a sandbox not in the active transcript skips seeding from unrelated history.
     unrelated = plugin_of(load(work, Transcript(messages=[])))
@@ -553,7 +571,7 @@ async def test_computer_use_toggle_upgrade_and_errors(
     plugin.host.conversation = Transcript(conversation_id='c-2')
     assert plugin._segment() == ''  # pyright: ignore[reportPrivateUsage]
 
-    # Retroactive attach (`desktop_at_create=False`): works immediately even after user turns have run.
+    # Retroactive attach (`desktop_at_create=False`): works immediately even after user turns have run, and survives resume.
     await plugin.command(['fake'])
     await plugin.host.conversation.commit_messages(
         [*plugin.host.conversation.messages, ModelRequest.user_text_prompt('ran a turn')]
@@ -564,6 +582,10 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert 'already enabled' in await plugin.computer_use_command(['on'])
     assert 'computer use on' in await plugin.command([])
     assert await plugin.sandbox(WorkspaceRef(provider='fake-desktop', id='sbx-1')).capture_screen() == PNG_A
+    retro_resumed = plugin_of(load(work, Transcript(messages=plugin.host.conversation.messages)))
+    assert retro_resumed._segment() == 'fake sandbox · computer-use'  # pyright: ignore[reportPrivateUsage]
+    assert await retro_resumed.sandbox(WorkspaceRef(provider='fake', id='sbx-1')).capture_screen() == PNG_A
+    assert desktop_provider.reopened[-1] == (WorkspaceRef(provider='fake', id='sbx-1'), True)
 
     # Deleted sandbox refuses `/computer-use` and `/computer-use view`.
     await plugin.command(['delete'])
@@ -584,6 +606,24 @@ async def test_computer_use_toggle_upgrade_and_errors(
     )
     assert desktop_provider.deleted[-1] == WorkspaceRef(provider='fake', id='sbx-2')
 
+    # If deleting the replaced unused sandbox fails, retain it and retry cleanup on `/sandbox delete`.
+    orphan_plugin = plugin_of(load(work))
+    await orphan_plugin.command(['fake'])
+    old_orphan_ref = history_sandbox(orphan_plugin.host.conversation.messages)
+    assert old_orphan_ref == WorkspaceRef(provider='fake', id='sbx-4')
+    desktop_provider.delete_error = WorkspaceError('transient delete failure')
+    orphan_msg = await orphan_plugin.computer_use_command(['on'])
+    assert 'restarted unused Fake sandbox with a desktop (sbx-5)' in orphan_msg
+    assert 'Could not delete replaced sandbox sbx-4; /sandbox delete will retry it.' in orphan_msg
+    with pytest.raises(WorkspaceError, match='transient delete failure'):
+        await orphan_plugin.command(['delete'])
+    desktop_provider.delete_error = None
+    assert 'Deleted Fake sandbox sbx-5' in await orphan_plugin.command(['delete'])
+    assert desktop_provider.deleted[-2:] == [
+        WorkspaceRef(provider='fake', id='sbx-4'),
+        WorkspaceRef(provider='fake-desktop', id='sbx-5'),
+    ]
+
     # `desktop_at_create=True` on an ALREADY USED sandbox refuses safely without losing work.
     used_plugin = plugin_of(load(work))
     await used_plugin.command(['fake'])
@@ -595,7 +635,7 @@ async def test_computer_use_toggle_upgrade_and_errors(
     with pytest.raises(ValueError, match='Computer use is not active'):
         await used_plugin.computer_use_command(['view'])
     with pytest.raises(UserError, match='has no desktop display'):
-        await used_plugin.sandbox(WorkspaceRef(provider='fake', id='sbx-4')).capture_screen()
+        await used_plugin.sandbox(WorkspaceRef(provider='fake', id='sbx-6')).capture_screen()
 
 
 async def test_view_native_url_fallback_and_side_panel(

@@ -109,17 +109,44 @@ def _sandbox_id(provider: SandboxProvider, ref: WorkspaceRef) -> tuple[str, str]
     return (provider.name, ref.id)
 
 
+def _ref_key(ref: WorkspaceRef) -> tuple[str, str] | None:
+    """Stable `(provider.name, id)` key for an owned sandbox ref, or `None`."""
+    provider = _owner(ref)
+    return None if provider is None else (provider.name, ref.id)
+
+
+_SANDBOX_MARKER_KINDS = frozenset({'sandbox', 'computer-use-on', 'computer-use-off'})
+
+
+def history_computer_use(messages: Sequence[ModelMessage], ref: WorkspaceRef) -> bool:
+    """Whether computer use is enabled for `ref` according to `messages`, falling back to `is_desktop_ref(ref)`."""
+    for message in reversed(messages):
+        if not isinstance(message, ModelRequest):
+            continue
+        for part in reversed(message.parts):
+            kind = imported_kind(part)
+            if kind == 'computer-use-on':
+                return True
+            if kind == 'computer-use-off':
+                return False
+    return is_desktop_ref(ref)
+
+
+def _is_marker_message(message: ModelMessage) -> bool:
+    if isinstance(message, ModelRequest):
+        return bool(message.parts) and all(imported_kind(part) in _SANDBOX_MARKER_KINDS for part in message.parts)
+    return isinstance(message, ModelResponse) and not message.parts
+
+
 def _is_unused_sandbox(messages: Sequence[ModelMessage]) -> bool:
-    """Whether `messages` hold only the initial `/sandbox` commit exchange, with no user turns yet."""
-    if len(messages) != 2:
-        return False
-    first, second = messages
+    """Whether `messages` hold only `/sandbox` and `/computer-use` markers, with no user turns yet."""
     return (
-        isinstance(first, ModelRequest)
-        and isinstance(second, ModelResponse)
-        and len(first.parts) == 1
-        and imported_kind(first.parts[0]) == 'sandbox'
-        and not second.parts
+        bool(messages)
+        and all(_is_marker_message(message) for message in messages)
+        and any(
+            isinstance(message, ModelRequest) and any(imported_kind(part) == 'sandbox' for part in message.parts)
+            for message in messages
+        )
     )
 
 
@@ -130,7 +157,6 @@ class _Sandbox:
     provider: SandboxProvider
     ref: WorkspaceRef
     has_desktop: bool = False
-    computer_use: bool = False
     env: dict[str, str] = field(default_factory=dict[str, str], repr=False)
     """What `request_env` gave while this session holds the sandbox, added to every command; kept out of `repr`."""
     backend: SandboxBackend | None = None
@@ -198,7 +224,7 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         provider = sandbox.provider
         desktop_note = (
             ' This sandbox also has a graphical desktop that you can see and control with the `computer` tool.'
-            if sandbox.computer_use
+            if self.plugin.is_computer_use_enabled(ref, ctx.messages)
             else ''
         )
         return (
@@ -318,6 +344,8 @@ class SandboxPlugin(Plugin):
         super().__init__(host, settings)
         self._sandboxes: dict[tuple[str, str], _Sandbox] = {}
         """Each sandbox this session made or opened, keyed by `(provider.name, id)`."""
+        self._replaced_sandboxes: dict[tuple[str, str], list[_Sandbox]] = {}
+        """Replaced unused sandboxes whose immediate deletion failed, keyed by their replacement's key for retry."""
         self._viewer = DesktopViewer()
         self._armed_conversation: str | None = None
         """Conversation ID where `/computer-use` was armed before `/sandbox PROVIDER`."""
@@ -341,7 +369,7 @@ class SandboxPlugin(Plugin):
             _ConversationSandbox(self),
             DesktopComputerUse(
                 on_frame=self._record_frame,
-                is_enabled=self._is_computer_use_enabled,
+                is_enabled=self.is_computer_use_enabled,
                 on_start=self._on_computer_use_start,
             ),
         )
@@ -373,7 +401,7 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         if sandbox is None:
             return 'computer-use' if self._computer_use_armed else ''
-        suffix = ' · computer-use' if sandbox.computer_use else ''
+        suffix = ' · computer-use' if self._current_computer_use(sandbox) else ''
         return f'{sandbox.provider.name} sandbox{suffix}'
 
     def get_side_panels(self) -> Sequence[SidePanel]:
@@ -381,7 +409,7 @@ class SandboxPlugin(Plugin):
 
     async def _desktop_panel(self) -> PanelView:
         sandbox = self.current()
-        if sandbox is None or not sandbox.computer_use or sandbox.deleted:
+        if sandbox is None or not self._current_computer_use(sandbox) or sandbox.deleted:
             return PanelView(note='Run /computer-use and /sandbox PROVIDER to enable a desktop.')
         self._viewer_session(sandbox)
         return PanelView(url=self._viewer.url(sandbox.viewer_ref))
@@ -398,9 +426,9 @@ class SandboxPlugin(Plugin):
         assert provider is not None
         key = _sandbox_id(provider, ref)
         if (sandbox := self._sandboxes.get(key)) is None:
-            desktop = is_desktop_ref(ref)
+            computer_use = self.is_computer_use_enabled(ref, self.host.conversation.messages)
             sandbox = self._sandboxes[key] = _Sandbox(
-                provider=provider, ref=ref, has_desktop=desktop, computer_use=desktop
+                provider=provider, ref=ref, has_desktop=is_desktop_ref(ref) or computer_use
             )
         return sandbox
 
@@ -409,23 +437,35 @@ class SandboxPlugin(Plugin):
         ref = history_sandbox(self.host.conversation.messages)
         return None if ref is None else self.sandbox(ref)
 
-    def _is_computer_use_enabled(self, ref: WorkspaceRef) -> bool:
-        return _owned(ref) is not None and self.sandbox(ref).computer_use
+    def _current_computer_use(self, sandbox: _Sandbox) -> bool:
+        return history_computer_use(self.host.conversation.messages, sandbox.ref)
+
+    def is_computer_use_enabled(self, ref: WorkspaceRef, messages: Sequence[ModelMessage]) -> bool:
+        """Whether computer use is currently enabled for `ref` in `messages`."""
+        if (target := _ref_key(ref)) is None:
+            return False
+        msg_ref = history_sandbox(messages)
+        if msg_ref is not None and _ref_key(msg_ref) == target:
+            return history_computer_use(messages, ref)
+        if msg_ref is None:
+            current_messages = self.host.conversation.messages
+            current_ref = history_sandbox(current_messages)
+            if current_ref is not None and _ref_key(current_ref) == target:
+                return history_computer_use(current_messages, ref)
+        return is_desktop_ref(ref)
 
     def _on_computer_use_start(self, ref: WorkspaceRef) -> None:
         """Lazily start the loopback viewer when the model first invokes `computer` so inline links work."""
-        if _owned(ref) is None:
+        if not self.is_computer_use_enabled(ref, self.host.conversation.messages):
             return
         sandbox = self.sandbox(ref)
-        if not sandbox.computer_use:
-            return
         self._viewer_session(sandbox)
         if sandbox.key not in self._live_urls and (url := self._viewer.try_url(sandbox.viewer_ref)) is not None:
             self._live_urls[sandbox.key] = url
 
     def _active_live_link(self) -> tuple[str | None, bool]:
         sandbox = self.current()
-        if sandbox is None or not sandbox.computer_use:
+        if sandbox is None or not self._current_computer_use(sandbox):
             return None, False
         url = self._live_urls.get(sandbox.key)
         if url is None:
@@ -463,7 +503,7 @@ class SandboxPlugin(Plugin):
         actions: Sequence[ComputerToolAction],
         result: ComputerResult | None,
     ) -> None:
-        if _owned(ref) is not None and self.sandbox(ref).computer_use:
+        if self.is_computer_use_enabled(ref, self.host.conversation.messages):
             self._viewer_session(self.sandbox(ref)).record(png, actions=actions, result=result)
 
     def complete(self, args: list[str]) -> Iterable[str]:
@@ -493,7 +533,7 @@ class SandboxPlugin(Plugin):
         match args:
             case []:
                 sandbox = self.current()
-                currently_on = self._computer_use_armed if sandbox is None else sandbox.computer_use
+                currently_on = self._computer_use_armed if sandbox is None else self._current_computer_use(sandbox)
                 return await self._set_computer_use(enabled=not currently_on)
             case ['on']:
                 return await self._set_computer_use(enabled=True)
@@ -511,7 +551,7 @@ class SandboxPlugin(Plugin):
             return f'This conversation runs on this machine. {offer} moves a new conversation into a sandbox.'
         if sandbox.deleted:
             return f'This conversation ran in {sandbox.provider.title} sandbox {sandbox.id}, now deleted. Run /new.'
-        if sandbox.computer_use:
+        if self._current_computer_use(sandbox):
             return (
                 f'This conversation runs in {sandbox.provider.title} sandbox {sandbox.id} (computer use on), '
                 f'in {sandbox.provider.working_dir}. /computer-use view opens the desktop; /sandbox delete deletes it.'
@@ -546,16 +586,16 @@ class SandboxPlugin(Plugin):
         return 'Computer use disabled.'
 
     async def _disable_on_sandbox(self, sandbox: _Sandbox) -> str:
-        if not sandbox.computer_use:
+        if not self._current_computer_use(sandbox):
             return f'Computer use is already off for {sandbox.provider.title} sandbox {sandbox.id}.'
-        sandbox.computer_use = False
+        await self._commit_computer_use_state(sandbox, enabled=False)
         return (
             f'Computer use disabled. {sandbox.provider.title} sandbox {sandbox.id} stays running '
             'without the computer tool.'
         )
 
     async def _enable_on_sandbox(self, sandbox: _Sandbox) -> str:
-        if sandbox.computer_use:
+        if self._current_computer_use(sandbox):
             return (
                 f'Computer use is already enabled for {sandbox.provider.title} sandbox {sandbox.id}. '
                 'Run /computer-use view to watch it.'
@@ -572,8 +612,9 @@ class SandboxPlugin(Plugin):
         if not sandbox.has_desktop:
             await sandbox.close()
             sandbox.has_desktop = True
-        sandbox.computer_use = True
         await self._sync_unused_ref(sandbox)
+        if not self._current_computer_use(sandbox):
+            await self._commit_computer_use_state(sandbox, enabled=True)
         self._viewer_session(sandbox)
         return (
             f'Computer use enabled for {sandbox.provider.title} sandbox {sandbox.id}. '
@@ -581,14 +622,32 @@ class SandboxPlugin(Plugin):
         )
 
     async def _sync_unused_ref(self, sandbox: _Sandbox) -> None:
-        """Promote the initial `/sandbox` commit exchange's ref to `-desktop` while no user turns have run."""
+        """Promote an unused sandbox's marker responses to `-desktop` while no user turns have run."""
         messages = self.host.conversation.messages
         if _is_unused_sandbox(messages) and not is_desktop_ref(sandbox.ref):
-            first, second = messages
-            assert isinstance(second, ModelResponse)
             desktop_ref = WorkspaceRef(provider=ref_provider(sandbox.provider.name, desktop=True), id=sandbox.id)
             sandbox.ref = desktop_ref
-            await self.host.conversation.commit_messages([first, replace(second, workspace_ref=desktop_ref)])
+            updated = [
+                replace(message, workspace_ref=desktop_ref) if isinstance(message, ModelResponse) else message
+                for message in messages
+            ]
+            await self.host.conversation.commit_messages(updated)
+
+    async def _commit_computer_use_state(self, sandbox: _Sandbox, *, enabled: bool) -> None:
+        """Persist `/computer-use on|off` in conversation history without mutating `workspace_ref`."""
+        state = 'on' if enabled else 'off'
+        request = imported_context(
+            f'The user ran /computer-use {state}.',
+            source='clai',
+            kind=f'computer-use-{state}',
+            at=datetime.now(UTC),
+        )
+        messages = [
+            *self.host.conversation.messages,
+            ModelRequest(parts=[request]),
+            ModelResponse(parts=[], workspace_ref=sandbox.ref),
+        ]
+        await self.host.conversation.commit_messages(messages)
 
     async def _recreate_unused_with_desktop(self, old: _Sandbox) -> str:
         """Replace an unused sandbox whose provider requires `desktop=True` at creation time."""
@@ -613,25 +672,29 @@ class SandboxPlugin(Plugin):
                 finally:
                     await provider.close(backend)
             raise
-        created = _Sandbox(provider=provider, ref=new_ref, has_desktop=True, computer_use=True, backend=backend)
+        created = _Sandbox(provider=provider, ref=new_ref, has_desktop=True, backend=backend)
         self._sandboxes[created.key] = created
         self._viewer_session(created)
+        orphan_note = ''
         with anyio.CancelScope(shield=True):
             try:
                 await provider.delete(old.ref)
             except Exception:
                 _logger.warning('Could not delete replaced unused sandbox %s', old.ref, exc_info=True)
+                self._replaced_sandboxes.setdefault(created.key, []).append(old)
+                orphan_note = f' Could not delete replaced sandbox {old.id}; /sandbox delete will retry it.'
             finally:
                 await old.close()
                 self._sandboxes.pop(old.key, None)
         return (
             f'Computer use enabled: restarted unused {provider.title} sandbox with a desktop ({new_ref.id}). '
             'The model can see and control the screen with the computer tool; /computer-use view opens the live view.'
+            f'{orphan_note}'
         )
 
     async def _view(self) -> str:
         sandbox = self.current()
-        if sandbox is None or not sandbox.computer_use:
+        if sandbox is None or not self._current_computer_use(sandbox):
             raise ValueError(
                 'Computer use is not active in this conversation. Run /computer-use and /sandbox PROVIDER first.'
             )
@@ -723,7 +786,7 @@ class SandboxPlugin(Plugin):
                     await provider.close(backend)
             raise
         self._computer_use_armed = False
-        created = _Sandbox(provider=provider, ref=ref, has_desktop=desktop, computer_use=desktop, backend=backend)
+        created = _Sandbox(provider=provider, ref=ref, has_desktop=desktop, backend=backend)
         self._sandboxes[created.key] = created
         if desktop:
             self._viewer_session(created)
@@ -733,6 +796,11 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         if sandbox is None:
             return 'This conversation has no sandbox.'
+        pending = self._replaced_sandboxes.get(sandbox.key)
+        while pending:
+            await pending[-1].provider.delete(pending[-1].ref)
+            pending.pop()
+        self._replaced_sandboxes.pop(sandbox.key, None)
         await sandbox.provider.delete(sandbox.ref)
         await sandbox.close()
         self._viewer.remove(sandbox.viewer_ref)

@@ -222,14 +222,14 @@ class DesktopComputerUse(AbstractCapability[None]):
     """
 
     on_frame: FrameCallback = field(repr=False)
-    is_enabled: Callable[[WorkspaceRef], bool] | None = field(default=None, repr=False)
+    is_enabled: Callable[[WorkspaceRef, Sequence[ModelMessage]], bool] | None = field(default=None, repr=False)
     on_start: Callable[[WorkspaceRef], None] | None = field(default=None, repr=False)
     _computer_use: ComputerUse[None] = field(default_factory=ComputerUse[None], init=False, repr=False)
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
         backend = ctx.workspace.backend
         ref = ctx.workspace.ref
-        enabled = True if self.is_enabled is None else (ref is not None and self.is_enabled(ref))
+        enabled = True if self.is_enabled is None else (ref is not None and self.is_enabled(ref, ctx.messages))
         if enabled and isinstance(backend, SupportsDisplay) and backend.display is not None:
             return _ObservedComputerUse(
                 await self._computer_use.for_run(ctx), on_frame=self.on_frame, on_start=self.on_start
