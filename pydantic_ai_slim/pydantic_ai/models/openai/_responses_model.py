@@ -1820,7 +1820,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _instructions_stay_top_level(
         system_prompt_role: OpenAISystemPromptRole, messages: Sequence[ModelMessage]
     ) -> bool:
-        """Whether the instructions stay in the top-level field whatever the settings and server-side state."""
+        """Whether the instructions stay in the top-level field for the cache relocations, whatever the settings.
+
+        A model whose profile sets `honors_only_first_system_message` moves them next to a dynamic system prompt too:
+        see `_should_relocate_instructions`.
+        """
         # A `'user'` system prompt role can't be told apart from a real user turn, and a dynamic system prompt changes
         # between requests, so it can't sit in the cached prefix.
         return system_prompt_role == 'user' or has_dynamic_system_prompt(messages)

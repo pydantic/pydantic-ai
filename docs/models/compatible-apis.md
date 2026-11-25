@@ -658,7 +658,7 @@ Set [`honors_only_first_system_message=True`][pydantic_ai.profiles.ModelProfile.
 
 gpt-oss models get this by default, since their reference chat template keeps only the first system message, and Bedrock Mantle's Responses endpoint ignores the `instructions` field for them.
 
-This flag used to be called `openai_chat_supports_multiple_system_messages`, with the opposite value. The old name still works, with a deprecation warning.
+This flag used to be called `openai_chat_supports_multiple_system_messages`, with the opposite value, and affected only `OpenAIChatModel`. The old name still works, with a deprecation warning, and now also changes `OpenAIResponsesModel` requests as described above.
 
 ### Mid-conversation system messages
 
