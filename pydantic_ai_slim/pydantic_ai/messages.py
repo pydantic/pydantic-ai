@@ -3528,10 +3528,10 @@ class InstructionPart:
 
 @dataclass(repr=False, kw_only=True)
 class InstructionDeltaPart:
-    """Replace or withdraw one operator-authored instruction from this point in history onward.
+    """Replace or withdraw one instruction block from this point in history onward.
 
-    Earlier statements remain in history; the latest statement for an id is effective. This is
-    trusted operator content, so `sanitize_messages(strip_system_prompts=True)` strips it.
+    Earlier statements remain in history; the latest statement for an id is effective. History holding it is
+    trusted server state, so `sanitize_messages(strip_system_prompts=True)` strips it, whatever its `authority`.
     """
 
     id: SerializedInstructionId
@@ -3550,6 +3550,19 @@ class InstructionDeltaPart:
     A model can then send the change as a diff against the text it sent before, and only when that text
     is still what this change was computed against: if a history processor dropped an earlier change,
     the hashes differ and the model sends `content` in full instead.
+    """
+
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] the block's text carries, stored when the change is recorded.
+
+    `'operator'` for the agent's own instructions and those of capabilities at operator authority: the block is part of
+    the instruction prefix, and its changes reach the model in the application's voice. Below `'operator'`, the
+    block is the instructions of a capability whose authority is lowered, by
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority] or its class's `authority`, such as
+    an MCP server you don't trust. Such a block never enters the prefix: every statement of it is a change like this
+    one, keyed `capability:<id>`, rendered as framed data at this authority the way a
+    [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] at that authority is, never in the application's voice.
+    A compaction ends it.
     """
 
     part_kind: Literal['instruction-delta'] = 'instruction-delta'
@@ -5592,6 +5605,16 @@ class _CapabilityInstructionPart(InstructionCapabilityPart, namespace='pydantic_
 
     `ctx.enqueue` turns such a capability's system prompt into this, so it can't reach the model in the application's
     voice.
+    """
+
+
+@dataclass(repr=False, kw_only=True)
+class _CapabilityInstructionsPart(InstructionCapabilityPart, namespace='pydantic_ai', name='capability_instructions'):
+    """The instructions of a capability with less than `'operator'` authority, as one statement renders them.
+
+    Never stored: `Model.prepare_messages` builds it from an
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] below `'operator'`, so the statement renders
+    like any capability part at that authority.
     """
 
 
