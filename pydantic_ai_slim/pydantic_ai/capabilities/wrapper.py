@@ -34,7 +34,6 @@ from .abstract import (
     AgentModel,
     AgentNode,
     CapabilityDescription,
-    LoweredInstructionSource,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -46,6 +45,7 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
+    _LoweredInstructionSource,  # pyright: ignore[reportPrivateUsage]
     _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -291,7 +291,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # otherwise flatten every leaf's contribution into one unaddressable part.
         return self.wrapped._collect_instructions()
 
-    def _lowered_instruction_sources(self) -> list[LoweredInstructionSource[AgentDepsT]]:
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
         # A wrapper at operator authority passes its wrapped capability's instructions along, so any below it are the
         # wrapped tree's. One that took `get_instructions` over decides what they say instead, but not what their
         # toolsets say, which is still stated.

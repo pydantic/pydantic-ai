@@ -223,7 +223,7 @@ _AUTHORITIES: Final[tuple[object, ...]] = get_args(Authority)
 
 
 @dataclass(frozen=True)
-class LoweredInstructionSource(Generic[AgentDepsT]):
+class _LoweredInstructionSource(Generic[AgentDepsT]):
     """A capability whose instructions are below `'operator'` authority, stated in history as one block."""
 
     capability: AbstractCapability[AgentDepsT]
@@ -633,7 +633,7 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         ceiling = self._authority_ceiling
         return authority if ceiling is None else _lower_authority(authority, ceiling)
 
-    def _lowered_instruction_sources(self) -> list[LoweredInstructionSource[AgentDepsT]]:
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
         """The capabilities in this tree whose instructions are below `'operator'` authority, in dispatch order.
 
         Their instructions, their own and their toolsets', never enter the instruction prefix: each is stated in
@@ -642,11 +642,11 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         """
         if self.defer_loading is True or self._effective_authority == 'operator':
             return []
-        return [LoweredInstructionSource(self)]
+        return [_LoweredInstructionSource(self)]
 
     def _replace_lowered_instructions(
-        self, sources: Sequence[LoweredInstructionSource[AgentDepsT]]
-    ) -> list[LoweredInstructionSource[AgentDepsT]]:
+        self, sources: Sequence[_LoweredInstructionSource[AgentDepsT]]
+    ) -> list[_LoweredInstructionSource[AgentDepsT]]:
         """`sources` within this capability, whose own `get_instructions()` its override replaces.
 
         Lowered text never rides in a capability's own instructions at a higher authority, so their own instructions

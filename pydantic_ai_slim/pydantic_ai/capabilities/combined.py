@@ -39,11 +39,11 @@ from ._ordering import collect_leaves, is_innermost, sort_capabilities
 from .abstract import (
     AbstractCapability,
     AgentModel,
-    LoweredInstructionSource,
     RawOutput,
     WrapOutputProcessHandler,
     WrapOutputValidateHandler,
     _combination_roots,  # pyright: ignore[reportPrivateUsage]
+    _LoweredInstructionSource,  # pyright: ignore[reportPrivateUsage]
     _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 from .wrapper import WrapperCapability
@@ -383,7 +383,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 instructions.extend(capability._collect_instructions())
         return instructions
 
-    def _lowered_instruction_sources(self) -> list[LoweredInstructionSource[AgentDepsT]]:
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
         # Each source is judged on its own: `with_authority` lowers a container's children too. A container whose
         # subclass took `get_instructions` over decides what it says instead of its lowered children, whose toolsets'
         # instructions are still stated; below operator authority, what it says is a block of its own.
