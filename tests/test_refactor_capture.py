@@ -2705,8 +2705,21 @@ async def test_capture_keeps_what_ui_adapter_subclasses_are(tmp_path: Path):
 def test_capture_builds_a_class_in_the_namespace_its_statement_runs_in(tmp_path: Path):
     """A model keeps the namespace of the frame its class statement runs in, or none for one that runs in a module, as
     without the capture: Pydantic resolves the model's annotations in it. A namespace that held the capture couldn't be
-    pickled, so Prefect couldn't hash the model.
+    pickled, so Prefect couldn't hash the model. A warning a class raises as it's defined reports the statement's line.
     """
+
+    class Warns:
+        def __init_subclass__(cls) -> None:
+            warnings.warn('defined', UserWarning, stacklevel=2)
+
+    def define() -> type[Warns]:
+        class Subclass(Warns):
+            pass
+
+        return Subclass
+
+    with pytest.warns(UserWarning, match='defined') as uncaptured:
+        define()
     module: dict[str, object] = {}
     capture = RefactorCapture(tmp_path)
     capture.install()
@@ -2719,8 +2732,13 @@ def test_capture_builds_a_class_in_the_namespace_its_statement_runs_in(tmp_path:
             inner: Inner
 
         exec('from pydantic import BaseModel\nclass AtModuleLevel(BaseModel):\n    value: int\n', module)
+        with pytest.warns(UserWarning, match='defined') as captured:
+            define()
     finally:
         capture.pytest_unconfigure()
+    assert [(warning.filename, warning.lineno) for warning in captured] == [
+        (warning.filename, warning.lineno) for warning in uncaptured
+    ]
     assert 'Inner' in vars(Outer)['__pydantic_parent_namespace__']
     assert vars(module['AtModuleLevel'])['__pydantic_parent_namespace__'] is None
 

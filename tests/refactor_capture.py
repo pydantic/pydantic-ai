@@ -1116,8 +1116,10 @@ class RefactorCapture:
 
         # A class statement builds its class through `__build_class__`, wherever it runs. Pydantic resolves a model's
         # annotations in the namespace of the frame its metaclass is called from, past a PEP 695 annotation scope,
-        # unless that frame runs a module. So the class is built from a frame that holds the namespace of the frame the
-        # statement runs in, under its name, rather than from this one.
+        # unless that frame runs a module, and a warning a class raises as it's defined, like one from
+        # `__init_subclass__`, reports that frame. So the class is built from a frame with the locals, module, name,
+        # file and line of the frame the statement runs in, rather than from this one. Its globals are a copy of that
+        # frame's, which shares the module's warning registry once the module has one.
         def build_class(*args: object, **kwargs: object) -> object:
             frame = inspect.currentframe()
             assert frame is not None and frame.f_back is not None
@@ -1126,13 +1128,20 @@ class RefactorCapture:
             del frame
             if caller.f_code.co_name.startswith('<generic parameters of') and caller.f_back is not None:
                 caller = caller.f_back
+            code = BUILD_CLASS.replace(
+                co_name=caller.f_code.co_name,
+                co_qualname=caller.f_code.co_qualname,
+                co_filename=caller.f_code.co_filename,
+                co_firstlineno=caller.f_lineno or caller.f_code.co_firstlineno,
+            )
             names = {
+                **caller.f_globals,
                 '__refactor_capture_build_class__': original,
                 '__refactor_capture_args__': args,
                 '__refactor_capture_kwargs__': kwargs,
             }
             try:
-                cls = eval(BUILD_CLASS.replace(co_name=caller.f_code.co_name), names, caller.f_locals)
+                cls = eval(code, names, caller.f_locals)
             finally:
                 del caller
             if isinstance(cls, type) and is_realtime_double_module(cls.__module__):
