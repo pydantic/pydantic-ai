@@ -4508,6 +4508,21 @@ _OPENAI_IMAGE_STATUS_ERRORS: list[ParameterSet] = [
         id='invalid-api-key',
     ),
     pytest.param(
+        401,
+        None,
+        # An OpenAI-compatible proxy can forward the upstream error in `metadata.raw`; like `openai`, only the error's
+        # `message` is classified.
+        {
+            'message': 'Incorrect API key provided',
+            'type': 'invalid_request_error',
+            'code': 'invalid_api_key',
+            'metadata': {'raw': "This model's maximum context length is 8192 tokens."},
+        },
+        ModelAuthenticationError,
+        None,
+        id='invalid-api-key-metadata-raw-context-window',
+    ),
+    pytest.param(
         403,
         None,
         {
@@ -4559,7 +4574,7 @@ _OPENAI_IMAGE_STATUS_ERRORS: list[ParameterSet] = [
 async def test_openai_image_generation_status_error(
     status_code: int,
     headers: dict[str, str] | None,
-    error: dict[str, str | None],
+    error: dict[str, object],
     expected_error: type[
         ModelRateLimitError
         | ModelQuotaExceededError
@@ -4613,7 +4628,7 @@ async def test_openai_image_generation_status_error(
 async def test_openai_image_generation_gave_up_status_error(
     status_code: int,
     headers: dict[str, str] | None,
-    error: dict[str, str | None],
+    error: dict[str, object],
     expected_error: type[
         ModelRateLimitError
         | ModelQuotaExceededError

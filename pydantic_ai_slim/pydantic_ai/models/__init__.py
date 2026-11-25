@@ -1568,6 +1568,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     _honors_compaction_boundaries: ClassVar[bool] = False
     """Whether the adapter drops the history before a compaction part it sends, with `_trim_before_compaction`."""
 
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        """Whether this model reads dynamic rewrite-mode instructions outside the cached prompt prefix.
+
+        A change to one then doesn't end the instruction window (see `update_instruction_history`).
+        """
+        return False
+
     def _model_for_response(self, response: ModelResponse) -> Model:
         """The model that produced `response`, for a model that delegates requests to others."""
         return self

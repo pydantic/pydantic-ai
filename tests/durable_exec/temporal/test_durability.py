@@ -45,6 +45,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestTimeout,
     ModelResponse,
+    ModelSettingsDeltaEvent,
     MultiModalContent,
     NativeOutput,
     PartDeltaEvent,
@@ -61,6 +62,7 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     Tool,
+    ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
@@ -77,7 +79,6 @@ from pydantic_ai.capabilities import (
     BatchModelRequests,
     Capability,
     DynamicCapability,
-    HandleDeferredToolCalls,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -103,7 +104,9 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
@@ -177,9 +180,10 @@ try:
         WorkflowInterceptorClassInput,
         WorkflowOutboundInterceptor,
     )
-    from temporalio.workflow import ActivityConfig, ActivityHandle, ChildWorkflowConfig
+    from temporalio.workflow import ActivityConfig, ActivityHandle, ChildWorkflowConfig, NondeterminismError
 
     import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
+    from pydantic_ai.durable_exec._base import MODEL_RESPONSE_STREAM_EVENT_TYPES
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -324,6 +328,75 @@ class RunSyncDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return simple_durable_agent.run_sync(prompt).output
+
+
+async def _submit_output_tool(ctx: RunContext[None]) -> str:
+    await ctx.submit_output('final_result', {'response': 'submitted'})
+    return 'done'
+
+
+def _call_submit_output_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('_submit_output_tool', {})])
+
+
+def _submit_output_agent(name: str, metadata: dict[str, Any] | None) -> Agent[None, str]:
+    toolset = FunctionToolset[None](id=f'{name}_tools')
+    toolset.add_function(_submit_output_tool, metadata=metadata)
+    return Agent(
+        FunctionModel(_call_submit_output_tool),
+        name=name,
+        deps_type=NoneType,
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+
+submit_output_in_activity_agent = _submit_output_agent('durability_submit_output_in_activity', None)
+submit_output_in_workflow_agent = _submit_output_agent('durability_submit_output_in_workflow', {'temporal': False})
+
+
+@workflow.defn
+class SubmitOutputInActivityWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_activity_agent.run(prompt)).output
+
+
+@workflow.defn
+class SubmitOutputInWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_workflow_agent.run(prompt)).output
+
+
+async def test_durability_submit_output_needs_the_tool_in_the_workflow(client: Client):
+    """`submit_output()` can't reach the run from a tool's activity, but works from a tool opted out of one."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubmitOutputInActivityWorkflow, SubmitOutputInWorkflowWorkflow],
+        plugins=[AgentPlugin(submit_output_in_activity_agent), AgentPlugin(submit_output_in_workflow_agent)],
+    ):
+        output = await client.execute_workflow(
+            SubmitOutputInWorkflowWorkflow.run,
+            args=['Finish'],
+            id=SubmitOutputInWorkflowWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'submitted'
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                SubmitOutputInActivityWorkflow.run,
+                args=['Finish'],
+                id=SubmitOutputInActivityWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert isinstance(activity_error.cause, ApplicationError)
+    assert activity_error.cause.type == 'UserError'
+    assert 'in the same process as the run itself' in activity_error.cause.message
 
 
 async def test_durability_run_sync_in_workflow_fails_the_workflow(client: Client):
@@ -1334,6 +1407,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
     if prompt.content == 'not_found':
         raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
+    if prompt.content == 'empty_response':
+        raise ModelEmptyResponseError('test-model', 'Streamed response ended without content or tool calls')
+    if prompt.content == 'invalid_response':
+        raise ModelInvalidResponseError('test-model', 'Invalid response', body='<html>Bad gateway</html>')
     if prompt.content == 'quota':
         raise ModelHTTPError.for_category(ModelQuotaExceededError, status_code=402, model_name='test-model')
     if prompt.content == 'request_timeout':
@@ -1414,6 +1491,21 @@ class NonRetryableModelErrorWorkflow:
             3,
             'ModelNotFoundError ModelHTTPError non_retryable=False',
             id='unlisted-rejection-category',
+        ),
+        pytest.param(
+            # An unusable response used to be a plain `UnexpectedModelBehavior`, which the framework adds to every
+            # retry policy. It still reports that name, so Temporal doesn't retry it, and the workflow gets the model
+            # error for a `ModelFallback` or retry capability to handle.
+            'empty_response',
+            1,
+            'ModelEmptyResponseError UnexpectedModelBehavior non_retryable=False',
+            id='empty-response',
+        ),
+        pytest.param(
+            'invalid_response',
+            1,
+            'ModelInvalidResponseError UnexpectedModelBehavior non_retryable=False',
+            id='invalid-response',
         ),
     ],
 )
@@ -2409,60 +2501,6 @@ async def test_durability_wrap_run_disables_threads(client: Client):
         assert output == 'Echo: test'
 
 
-# --- Durability wrap_run refuses external-event waits ---
-
-
-def _approval_needed_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
-
-
-def _ask_in_process(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
-    raise AssertionError('unreachable')  # pragma: no cover
-
-
-_external_event_agent = Agent(
-    FunctionModel(_approval_needed_fn),
-    name='external_event_test',
-    deps_type=type(None),
-    capabilities=[
-        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
-        HandleDeferredToolCalls[None](_ask_in_process),
-    ],
-)
-
-
-@_external_event_agent.tool_plain(name='delete', requires_approval=True)
-def _delete_needs_approval(path: str) -> str:
-    raise AssertionError('unreachable')  # pragma: no cover
-
-
-@workflow.defn
-class ExternalEventWaitWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await _external_event_agent.run(prompt)
-        return result.output  # pragma: no cover
-
-
-async def test_durability_wrap_run_refuses_external_event_waits(client: Client):
-    """A workflow can't record a wait for an external event yet, so the engine fails the workflow clearly instead of waiting in process."""
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[ExternalEventWaitWorkflow],
-        plugins=[AgentPlugin(_external_event_agent)],
-    ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
-            await client.execute_workflow(
-                ExternalEventWaitWorkflow.run,
-                args=['clean up'],
-                id=ExternalEventWaitWorkflow.__name__,
-                task_queue=TASK_QUEUE,
-            )
-
-    assert 'does not support waiting for external events yet' in str(exc_info.value.cause)
-
-
 # --- Durability validation ---
 
 
@@ -2694,8 +2732,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 7
+    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset + the external-event `ask`
+    assert len(bound.temporal_activities) == 8
 
 
 def test_durability_temporal_registrations_before_binding():
@@ -2713,8 +2751,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for both function toolsets
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for both function toolsets + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_temporal_activities_rejects_omitting_child_workflows():
@@ -2794,8 +2832,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for <agent> and the shared toolset (once)
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for <agent> and the shared toolset (once) + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_activity_config_not_mutated():
@@ -8892,6 +8930,202 @@ async def test_population_change_delta_is_recorded_once_and_replays(client: Clie
     assert deltas == [['later']]
     replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert replay.replay_failure is None
+
+
+# --- Delta events take an `event_stream_handler` activity of their own ---
+#
+# `ToolAvailabilityDeltaEvent` for a mid-run tool population change (2.60, #9405) and `ModelSettingsDeltaEvent` for a
+# named `thinking` level (2.62, #11111) are dispatched to the durability's `event_stream_handler` like any other
+# workflow-side event, so each adds an activity that histories recorded before those releases don't have.
+
+_delta_handler_events: list[str] = []
+
+
+async def _delta_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _delta_handler_events.append(type(event).__name__)
+
+
+async def _done_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'done'
+
+
+async def _population_change_stream_fn(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    """Stream what `_population_change_model_fn` returns: a handler makes every model request a streamed one."""
+    part = _population_change_model_fn(messages, info).parts[0]
+    if isinstance(part, ToolCallPart):
+        yield {0: DeltaToolCall(name=part.tool_name, json_args='{}', tool_call_id=part.tool_call_id)}
+    else:
+        yield 'done'
+
+
+thinking_level_handler_agent = Agent(
+    FunctionModel(stream_function=_done_stream_fn),
+    name='durability_thinking_level_handler',
+    model_settings={'thinking': 'low'},
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_delta_event_handler)],
+)
+
+population_change_handler_agent = Agent(
+    FunctionModel(stream_function=_population_change_stream_fn),
+    name='durability_population_change_handler',
+    toolsets=[
+        FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
+    ],
+    capabilities=[
+        PrepareTools(_admit_later_from_step_two),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_delta_event_handler),
+    ],
+)
+
+
+@workflow.defn
+class ThinkingLevelHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await thinking_level_handler_agent.run('go')).output
+
+
+@workflow.defn
+class PopulationChangeHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await population_change_handler_agent.run('go')).output
+
+
+async def _record_delta_event_history(
+    client: Client, workflow_type: type[Any], agent: Agent[None, str]
+) -> WorkflowHistory:
+    task_queue = f'{workflow_type.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[workflow_type],
+        plugins=[AgentPlugin(agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            workflow_type.__name__, id=task_queue, task_queue=task_queue, result_type=str
+        )
+        assert await handle.result() == 'done'
+        return await handle.fetch_history()
+
+
+def _scheduled_activity_kinds(history: WorkflowHistory) -> list[str]:
+    return [
+        event.activity_task_scheduled_event_attributes.activity_type.name.rsplit('__', 1)[-1]
+        for event in history.events
+        if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+    ]
+
+
+@pytest.mark.parametrize(
+    ('workflow_type', 'agent', 'delta_event_type', 'activities', 'earlier_activities', 'handled_events'),
+    [
+        pytest.param(
+            ThinkingLevelHandlerWorkflow,
+            thinking_level_handler_agent,
+            ModelSettingsDeltaEvent,
+            snapshot(['event_stream_handler', 'model_request_stream']),
+            snapshot(['model_request_stream']),
+            snapshot(['ModelSettingsDeltaEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']),
+            id='thinking-level',
+        ),
+        pytest.param(
+            PopulationChangeHandlerWorkflow,
+            population_change_handler_agent,
+            ToolAvailabilityDeltaEvent,
+            snapshot(
+                [
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'event_stream_handler',
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'model_request_stream',
+                ]
+            ),
+            snapshot(
+                [
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'model_request_stream',
+                ]
+            ),
+            snapshot(
+                [
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'ToolAvailabilityDeltaEvent',
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'PartStartEvent',
+                    'FinalResultEvent',
+                    'PartEndEvent',
+                ]
+            ),
+            id='tool-population-change',
+        ),
+    ],
+)
+async def test_delta_event_handler_activity_breaks_replay_of_earlier_histories(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_type: type[Any],
+    agent: Agent[None, str],
+    delta_event_type: type[AgentStreamEvent],
+    activities: list[str],
+    earlier_activities: list[str],
+    handled_events: list[str],
+):
+    """A delta event takes a handler activity of its own, so a history recorded without it fails replay with `TMPRL1100`.
+
+    Pins the activity sequence these events produce today: changing it breaks replay of in-flight workflows the
+    same way again, which `docs/durable_execution/temporal.md` documents for the upgrades that introduced them.
+
+    The earlier history is recorded with the event left out of handler dispatch, which is the activity sequence
+    the releases before it recorded, since they didn't emit it. Unsandboxed, so the patched dispatch is the one the
+    workflow runs.
+    """
+    _delta_handler_events.clear()
+    history = await _record_delta_event_history(client, workflow_type, agent)
+    assert _scheduled_activity_kinds(history) == activities
+    assert _delta_handler_events == handled_events
+
+    with monkeypatch.context() as patch_dispatch:
+        patch_dispatch.setattr(
+            'pydantic_ai.durable_exec._base.MODEL_RESPONSE_STREAM_EVENT_TYPES',
+            (*MODEL_RESPONSE_STREAM_EVENT_TYPES, delta_event_type),
+        )
+        earlier_history = await _record_delta_event_history(client, workflow_type, agent)
+    assert _scheduled_activity_kinds(earlier_history) == earlier_activities
+
+    replayer = Replayer(
+        workflows=[workflow_type], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    )
+    assert (await replayer.replay_workflow(history)).replay_failure is None
+    replay = await replayer.replay_workflow(earlier_history, raise_on_replay_failure=False)
+    assert isinstance(replay.replay_failure, NondeterminismError)
+    assert (
+        f"[TMPRL1100] Nondeterminism error: Activity type of scheduled event 'agent__{agent.name}__model_request_stream'"
+        f" does not match activity type of activity command 'agent__{agent.name}__event_stream_handler'"
+    ) in str(replay.replay_failure)
 
 
 def _placement_model_fn(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
