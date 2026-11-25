@@ -7,13 +7,16 @@ model only in a voice no higher than its [`effective_authority`][pydantic_ai._ca
 the predicate the in-process sink check (C2) uses too, here applied to what each provider puts on the wire.
 
 `voice_authority` says, once for every provider, what authority the model hears each wire voice with: the system or
-developer voice, including tool definitions, needs `'operator'`, the unframed user turn `'user'` or above, framed data and tool results take any
-authority, and no request part may reach the assistant's turn. A part may land lower than its authority, never
+developer voice, including tool definitions, needs `'operator'`, the unframed user turn `'user'` or above, framed
+data and tool results take any authority, and no request part may reach the assistant's turn. A part may land lower than its authority, never
 higher. Every line of its text must land somewhere: a line that reaches the model in no voice at all has lost its
 voice.
 
 A provider that breaks this for a case is a known finding in `KNOWN`, a strict `xfail` with what fixes it, so the fix
 fails the suite until its entry is removed.
+
+Not VCR tests: what's checked is the request each model builds, captured offline, and the remaining tests run the
+check itself on hand-written wire bodies. No provider exchange happens.
 """
 
 from __future__ import annotations
@@ -271,7 +274,10 @@ _PAGE_HISTORY: list[ModelMessage] = [
     ],
 )
 def test_the_check_flags_a_part_above_its_authority(messages: list[dict[str, object]], violation: str | None) -> None:
-    """`voice_violations` on hand-written wire bodies: data may only reach the model framed, or as a tool result."""
+    """`voice_violations` on hand-written wire bodies: data may only reach the model framed, or as a tool result.
+
+    Not a VCR test: the bodies are written here to pin each framing case, with no provider exchange.
+    """
     violations = voice_violations(CapturedRequest('openai-chat', {'messages': messages}), _PAGE_HISTORY)
     if violation is None:
         assert violations == []
@@ -296,10 +302,17 @@ def test_the_check_flags_a_part_above_its_authority(messages: list[dict[str, obj
 def test_a_part_is_found_by_each_line_of_its_text(
     content: str | StructuredContent | Sequence[UserContent], expected: list[str]
 ) -> None:
+    """Every line of each text item is looked for, so a dropped or raised later line is caught too.
+
+    Not a VCR test: `markers` reads a part built here, with no provider exchange.
+    """
     part = PagePart(content=content, source=ToolResultSource(tool_name='fetch'))
     assert markers(part) == expected
 
 
 def test_every_known_entry_names_a_case_and_provider() -> None:
-    """An entry for a case that no longer has calls, or a provider that's gone, would hide the next finding there."""
+    """An entry for a case that no longer has calls, or a provider that's gone, would hide the next finding there.
+
+    Not a VCR test: it only checks the `KNOWN` table against the subjects and providers.
+    """
     assert [key for key in KNOWN if key[0] not in SUBJECTS or key[1] not in CAPTURED_PROVIDERS] == []

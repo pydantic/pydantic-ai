@@ -2,10 +2,9 @@
 
 `capture` runs a history through a real provider model's `prepare_messages`, then its `request`, answers the HTTP
 request with a 400 (or, for Bedrock, stops before botocore builds one) so nothing leaves the process, and returns the
-request body as the model built it. It doesn't
-normalize the history first the way the agent graph does, so pass it a history an agent run ended with.
-`voices_of` reads that body back, so a test can ask which voice a marker string reached the model in without knowing
-each provider's wire format.
+request body as the model built it. It doesn't normalize the history first the way the agent graph does, so pass it a
+history an agent run ended with. `voices_of` reads that body back, so a test can ask which voice a marker string
+reached the model in without knowing each provider's wire format.
 """
 
 from __future__ import annotations
