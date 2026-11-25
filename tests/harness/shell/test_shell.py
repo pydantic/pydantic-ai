@@ -599,7 +599,7 @@ class TestDurableJob:
 
 
 class _LauncherNotStarted(LocalWorkspaceBackend):
-    """A backend whose shell cannot start the launcher, which is the one command run as an argv."""
+    """A backend whose shell cannot start the launcher, the one command the test runs."""
 
     async def run(
         self,
@@ -609,8 +609,6 @@ class _LauncherNotStarted(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if isinstance(command, str):
-            return await super().run(command, shell=shell, env=env, timeout=timeout)
         return CommandResult(exit_code=126, stdout='', stderr='sh: 1: exec: sh: Argument list too long\n')
 
 
