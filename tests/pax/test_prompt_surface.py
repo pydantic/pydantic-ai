@@ -721,8 +721,9 @@ def test_clicking_a_pinned_hyperlink_opens_its_target_and_a_transcript_one_does_
     A transcript label, as a model's `[label](url)`, hides where it goes, so it does not open on a click.
     """
     screen = Screen(width=60, height=10)
-    footer = f'fake sandbox | {hyperlink("watch live ↗", url="http://127.0.0.1:8/?token=t")} | ' + hyperlink(
-        'notes', url='file:///etc/hosts'
+    # `沙箱` takes four cells, so the link starts at column 13, not 11.
+    footer = f'fake 沙箱 | {hyperlink("watch live ↗", url="file:///tmp/pax-desktop.html")} | ' + hyperlink(
+        'notes', url='mailto:ada@example.com'
     )
     screen.surface.paint(('TOP', 'DRAFT', 'BOTTOM', footer))
     row = Text('read ')
@@ -731,12 +732,13 @@ def test_clicking_a_pinned_hyperlink_opens_its_target_and_a_transcript_one_does_
     screen.now += FRAME_INTERVAL
     screen.surface.refresh()
     assert screen.lines()[0] == 'read continue'
-    assert screen.lines()[-1] == 'fake sandbox | watch live ↗ | notes'
+    assert screen.lines()[-1] == 'fake 沙箱 | watch live ↗ | notes'
     assert click(screen, 6, 1) == [], 'a transcript label'
-    assert click(screen, 16, 10) == ['http://127.0.0.1:8/?token=t'], 'the first cell'
-    assert click(screen, 27, 10) == ['http://127.0.0.1:8/?token=t'], 'the arrow'
-    assert click(screen, 28, 10) == []
-    assert click(screen, 31, 10) == [], 'other schemes open only through the terminal'
+    assert click(screen, 12, 10) == []
+    assert click(screen, 13, 10) == ['file:///tmp/pax-desktop.html'], 'the first cell'
+    assert click(screen, 24, 10) == ['file:///tmp/pax-desktop.html'], 'the arrow'
+    assert click(screen, 25, 10) == []
+    assert click(screen, 28, 10) == [], 'other schemes open only through the terminal'
 
 
 def test_clicking_a_url_wrapped_across_rows_opens_all_of_it() -> None:

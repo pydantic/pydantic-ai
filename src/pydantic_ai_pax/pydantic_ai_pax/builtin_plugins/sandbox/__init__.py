@@ -17,6 +17,7 @@ to start a sandbox with one. The model's screenshots go to a loopback viewer
 the transcript.
 """
 
+import logging
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -81,6 +82,8 @@ from pydantic_ai_pax.ui.rendering.status import StatusLink, StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
 __all__ = ('SandboxPlugin',)
+
+_logger = logging.getLogger(__name__)
 
 
 def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
@@ -345,7 +348,7 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         if sandbox is None:
             return 'computer-use' if self._armed() else ''
-        watched = self._viewer.started_url(sandbox.ref) is not None
+        watched = self._viewer.started_page(sandbox.ref) is not None
         return f'{sandbox.provider.name} sandbox{" (computer-use)" if not watched and self._on() else ""}'
 
     def _watch_live(self) -> StatusLink | str:
@@ -353,12 +356,12 @@ class SandboxPlugin(Plugin):
         return StatusLink(text='watch live', url=url) if url else ''
 
     def _live_url(self) -> str | None:
-        """The desktop viewer's URL while computer use is on and the viewer shows its sandbox.
+        """The page that opens the desktop viewer while computer use is on and the viewer shows its sandbox.
 
         Read every frame, so it never starts the viewer: `_start_viewer` does, once computer use is on.
         """
         sandbox = self.current()
-        return self._viewer.started_url(sandbox.ref) if sandbox is not None and self._on() else None
+        return self._viewer.started_page(sandbox.ref) if sandbox is not None and self._on() else None
 
     def get_side_panels(self) -> Sequence[SidePanel]:
         return (SidePanel(id='desktop', title='Desktop', icon='panel', view=self._desktop_panel),)
@@ -373,9 +376,7 @@ class SandboxPlugin(Plugin):
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         live_url = None
         if isinstance(event, ActionsPerformedEvent) and (sandbox := self.current()) is not None and self._on():
-            # Started here, by the first `computer` row, so the link works the moment it is drawn.
-            self._viewer_session(sandbox)
-            live_url = self._viewer.try_url(sandbox.ref)
+            live_url = self._viewer.started_page(sandbox.ref)
         return render_computer_event(event, live_url=live_url)
 
     def sandbox(self, ref: WorkspaceRef, messages: Sequence[ModelMessage]) -> _Sandbox:
@@ -401,11 +402,14 @@ class SandboxPlugin(Plugin):
     def _armed(self) -> bool:
         return self._armed_for == self.host.conversation.conversation_id
 
-    def _start_viewer(self) -> None:
+    async def _start_viewer(self) -> None:
         """Start the viewer for the conversation on screen when it has computer use on, so `watch live` shows."""
         if (sandbox := self.current()) is not None and not sandbox.deleted and self._on():
             self._viewer_session(sandbox)
-            self._viewer.try_url(sandbox.ref)
+            try:
+                await self._viewer.start(sandbox.ref)
+            except OSError:
+                _logger.warning('Could not start the loopback desktop viewer for %s', sandbox.ref, exc_info=True)
 
     def _viewer_session(self, sandbox: _Sandbox) -> DesktopSession:
         """The viewer's session for `sandbox`, made on first use with the screenshots already in the history."""
@@ -496,7 +500,7 @@ class SandboxPlugin(Plugin):
             )
         sandbox.add_desktop()
         await self._record_computer_use(sandbox, on=True)
-        self._start_viewer()
+        await self._start_viewer()
         return (
             'Computer use is on: the model can see and control the desktop. /computer-use view shows it.'
             + self._needs_full()
@@ -523,10 +527,10 @@ class SandboxPlugin(Plugin):
                 await session.capture_live()
             except (UserError, WorkspaceError):
                 pass  # The viewer still opens, and shows the screen on the model's next action or a Refresh.
+        page = await self._viewer.start(sandbox.ref)
         url = self._viewer.url(sandbox.ref)
         if self.host.console.is_terminal:
-            # Through a private redirect page, so the viewer's token stays out of the browser's command line.
-            page = await self._viewer.launch_url(url)
+            # The page, not `url`, so the viewer's token stays out of the browser's command line.
             if await to_thread.run_sync(open_browser, page, abandon_on_cancel=True):
                 return f'Opened the desktop viewer in your browser: {url}'
         return f'Desktop viewer: {url}'
@@ -577,7 +581,7 @@ class SandboxPlugin(Plugin):
             raise
         self._armed_for = None
         self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, desktop=desktop, backend=backend)
-        self._start_viewer()
+        await self._start_viewer()
         return _started(provider, ref, checkout, github=github, desktop=desktop, needs_full=self._needs_full())
 
     async def _delete(self) -> str:
@@ -594,10 +598,10 @@ class SandboxPlugin(Plugin):
         sandbox.deleted = True
 
     async def on_session_start(self, event: SessionStart) -> None:
-        self._start_viewer()
+        await self._start_viewer()
 
     async def on_conversation_changed(self, event: ConversationChanged) -> None:
-        self._start_viewer()
+        await self._start_viewer()
 
     async def on_session_end(self, event: SessionEnd) -> None:
         # Only closed: a sandbox is deleted only when the user says so, as its conversation can be resumed.

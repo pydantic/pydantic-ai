@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 import secrets
 import tempfile
@@ -45,7 +44,6 @@ MAX_FRAMES = 30
 _PAGE = Path(__file__).with_name('viewer.html')
 """The viewer page, with `__TITLE__`, `__NONCE__`, and `__CONFIG__` for `_viewer_html` to fill in."""
 _SUBSCRIBER_QUEUE_SIZE = 16
-_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -269,7 +267,7 @@ class DesktopViewer:
         self._sessions: dict[str, DesktopSession] = {}
         self._token = secrets.token_urlsafe(24)
         self._server: WebServer | None = None
-        self._launch_pages: list[Path] = []
+        self._pages: dict[str, Path] = {}
 
     def register(self, session: DesktopSession) -> DesktopSession:
         self._sessions[session.key] = session
@@ -301,31 +299,29 @@ class DesktopViewer:
             f'http://127.0.0.1:{port}/?token={quote(self._token, safe="")}&sandbox={quote(sandbox_key(ref), safe="")}'
         )
 
-    def started_url(self, ref: WorkspaceRef) -> str | None:
-        """The viewer URL for `ref` once the loopback server runs and has its session, never starting the server."""
-        return self.url(ref) if self._server is not None and sandbox_key(ref) in self._sessions else None
+    async def start(self, ref: WorkspaceRef) -> str:
+        """Start the loopback server, and return the `file://` page that opens `ref`'s viewer.
 
-    def try_url(self, ref: WorkspaceRef) -> str | None:
-        """Like `url(ref)`, returning `None` if the loopback server cannot bind a port."""
-        try:
-            return self.url(ref)
-        except OSError:
-            _logger.warning('Could not start loopback desktop viewer for %s', ref, exc_info=True)
-            return None
-
-    async def launch_url(self, url: str) -> str:
-        """Return a private `file://` redirect URL for `url`, tracked for cleanup in `close`."""
-        page = await to_thread.run_sync(_write_launch_page, url)
-        self._launch_pages.append(page)
+        The page is made once per sandbox, `0600`, and removed by `close`. Links point at it, not at the viewer's URL,
+        so the token stays out of the browser's command line.
+        """
+        key = sandbox_key(ref)
+        if (page := self._pages.get(key)) is None:
+            page = self._pages[key] = await to_thread.run_sync(_write_launch_page, self.url(ref))
         return page.as_uri()
 
+    def started_page(self, ref: WorkspaceRef) -> str | None:
+        """The page `start` made for `ref` while the viewer has its session, never starting anything."""
+        page = self._pages.get(sandbox_key(ref))
+        return page.as_uri() if page is not None and sandbox_key(ref) in self._sessions else None
+
     async def close(self) -> None:
-        """Close all SSE streams, remove private redirect pages, and stop the loopback server if started."""
+        """Close all SSE streams, remove the `start` pages, and stop the loopback server if started."""
         for session in list(self._sessions.values()):
             session.close()
         self._sessions.clear()
-        if self._launch_pages:
-            pages, self._launch_pages = self._launch_pages, []
+        if self._pages:
+            pages, self._pages = list(self._pages.values()), {}
             with anyio.CancelScope(shield=True):
                 await to_thread.run_sync(_unlink_pages, pages)
         if (server := self._server) is not None:

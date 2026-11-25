@@ -3707,7 +3707,7 @@ down.
 
 Return `StatusLink(text=..., url=...)` from `pydantic_ai_pax.ui.rendering.status`
 to show a link. The row shows the text followed by `↗`, and a click on it opens
-the `http` or `https` URL in your browser. Other places that show the row, such
+the `http`, `https` or `file` URL in your browser. Other places that show the row, such
 as the line prompt, show only the text. The built-in `sandbox` plugin uses one
 for `watch live ↗` while computer use is on.
 

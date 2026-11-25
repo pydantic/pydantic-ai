@@ -144,9 +144,11 @@ def hyperlink(text: str, *, url: str) -> str:
 
 
 def paint_row(region: Region, *, y: int, row: str, links: list[PaintedLink]) -> None:
-    """Paint an ANSI `row` at `y`, adding the cells its `http(s)` hyperlinks cover to `links`, since painted cells drop them.
+    """Paint an ANSI `row` at `y`, adding the cells its `http(s)` and `file:` hyperlinks cover to `links`.
 
-    Other schemes, such as `file:`, are left to the terminal: a click here opens without asking.
+    Painted cells drop hyperlinks, so `links` keeps them. Only for rows the shell paints, as a click opens these
+    without showing where they go. `file:` is for the desktop viewer's private page, which keeps its token off the
+    browser's command line. Other schemes are left to the terminal.
     """
     region.ansi(0, y, row)
     if LINK_START not in row:
@@ -155,7 +157,7 @@ def paint_row(region: Region, *, y: int, row: str, links: list[PaintedLink]) -> 
     # The added end closes a link the row leaves open, as a cut one does.
     for match in _LINK.finditer(row + LINK_END):
         column = visible_length(row[: match.start()])
-        if url.startswith(('http://', 'https://')) and column > start:
+        if url.startswith(('http://', 'https://', 'file://')) and column > start:
             x = region.rect.x
             links.append(PaintedLink(row=region.rect.y + y, start=x + start, end=x + column, url=url))
         url, start = match[1], column

@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 from collections.abc import AsyncIterator, Callable
+from html import escape
 from pathlib import Path
 
 import anyio
@@ -75,7 +76,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.viewer import (
 )
 from pydantic_ai_pax.builtin_plugins.web import server as web_server
 from pydantic_ai_pax.config import PERMISSIONS_SETTING, Settings
-from pydantic_ai_pax.plugins import SessionEnd, SessionStart, Transcript
+from pydantic_ai_pax.plugins import ConversationChanged, SessionEnd, SessionStart, Transcript
 from pydantic_ai_pax.ui.rendering.status import StatusLink
 
 # `checkout`, `isolated_git_config`, `provider`, and `upstream` are fixtures shared with `/sandbox`'s tests.
@@ -116,6 +117,12 @@ class StubServer:
 def stub_viewer_port(monkeypatch: pytest.MonkeyPatch, plugin: SandboxPlugin, port: int) -> None:
     """Skip binding a real port; `test_desktop_viewer_app_end_to_end` serves the viewer for real."""
     monkeypatch.setattr(plugin._viewer, '_server', StubServer(port))  # pyright: ignore[reportPrivateUsage]
+
+
+def fail_serve(build: Callable[[int], object], *, host: str, port: int) -> object:
+    """A viewer server that cannot bind its port."""
+    del build, host, port
+    raise OSError('port blocked')
 
 
 def viewer_frames(plugin: SandboxPlugin, ref: WorkspaceRef) -> list[DesktopFrame] | None:
@@ -288,15 +295,18 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     assert frame.summary == 'click (120, 240) · type "hi"'
     assert frame.markers == (ActionMarker(kind='click', points=((120, 240),), label='click (120, 240)'),)
 
-    # The `computer` result row links to the loopback viewer, and so does the status row while the viewer runs.
+    # The `computer` result row and the status row link to the viewer's private page, so no token is in a link.
     rendered = plugin.render(ActionsPerformedEvent(result=ComputerResult(performed=2)))
     assert rendered is not None
     assert '2 actions · screenshot · watch live ↗' in render_plain(rendered)
-    live_url = plugin._viewer.url(ref)  # pyright: ignore[reportPrivateUsage]
+    page = plugin._viewer.started_page(ref)  # pyright: ignore[reportPrivateUsage]
+    assert page is not None and page.startswith('file://') and 'token=' not in page
     assert [segment() for segment in plugin.get_status_segments()] == [
         'fake sandbox',
-        StatusLink(text='watch live', url=live_url),
+        StatusLink(text='watch live', url=page),
     ]
+    viewer_url = plugin._viewer.url(ref)  # pyright: ignore[reportPrivateUsage]
+    assert escape(viewer_url) in await anyio.Path(page.removeprefix('file://')).read_text(encoding='utf-8')
 
     # Toggling `/computer-use` off disables the `computer` tool while keeping the sandbox running, and survives resume and compaction.
     disabled = await plugin.computer_use_command([])
@@ -332,11 +342,23 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     # A conversation resumed with computer use on starts its viewer, so the status row links to it at once.
     await resumed.on_session_start(SessionStart(agent=agent, settings=Settings()))
     [_, watch_live] = (segment() for segment in resumed.get_status_segments())
-    assert isinstance(watch_live, StatusLink) and watch_live.url.startswith('http://127.0.0.1:43219/')
+    assert isinstance(watch_live, StatusLink) and watch_live.url.startswith('file://')
     assert (await resumed.computer_use_command(['view'])).startswith('Desktop viewer: http://127.0.0.1:43219/')
     assert [frame.png for frame in viewer_frames(resumed, ref) or []] == [PNG_A]
     assert await on_screen_sandbox(resumed).screenshot() == PNG_A
     assert provider.reopened == [ref, ref] and provider.reopened_desktop == [True, True]
+
+    # Switching to a conversation with computer use on starts its viewer too; one that cannot bind gets no link.
+    switched = plugin_of(load(work, Transcript(messages=session.messages)))
+    changed = ConversationChanged(conversation_id=switched.host.conversation.conversation_id, title=None)
+    monkeypatch.setattr(web_server.WebServer, 'serve', staticmethod(fail_serve))
+    await switched.on_conversation_changed(changed)
+    assert [segment() for segment in switched.get_status_segments()] == ['fake sandbox (computer-use)', '']
+    stub_viewer_port(monkeypatch, switched, 43220)
+    await switched.on_conversation_changed(changed)
+    [_, watch_live] = (segment() for segment in switched.get_status_segments())
+    assert watch_live == StatusLink(text='watch live', url=switched._viewer.started_page(ref) or '')  # pyright: ignore[reportPrivateUsage]
+    await switched.on_session_end(SessionEnd(reason='exit'))
 
     # The history naming the sandbox, not the one on screen, says it has a desktop.
     unrelated = plugin_of(load(work, Transcript(messages=[])))
@@ -704,15 +726,16 @@ async def test_viewer_server_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     url_1 = viewer.url(ref)
     url_2 = viewer.url(ref)
     assert url_1 == url_2 and url_1.startswith('http://127.0.0.1:51234/?token=')
-    assert viewer.try_url(ref) == url_1
+    page = await viewer.start(ref)
+    assert await viewer.start(ref) == page, 'one page per sandbox'
+    assert viewer.started_page(ref) is None, 'no session registered for it'
     assert len(built_apps) == 1
     viewer.remove(ref)  # Removing an unregistered ref is a no-op.
     await viewer.close()
     assert stopped == [51234]
 
-    def fail_serve(build: Callable[[int], object], *, host: str, port: int) -> _FakeServer:
-        del build, host, port
-        raise OSError('port blocked')
+    assert not Path(page.removeprefix('file://')).exists()
 
     monkeypatch.setattr(web_server.WebServer, 'serve', staticmethod(fail_serve))
-    assert DesktopViewer().try_url(ref) is None
+    with pytest.raises(OSError, match='port blocked'):
+        await DesktopViewer().start(ref)

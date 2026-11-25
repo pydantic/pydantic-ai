@@ -39,7 +39,7 @@ from pydantic_ai_pax.ui.prompt.image_input import ImageInput
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.prompt.live_prompt import IDLE_REPAINT, LivePrompt, PromptWakeup
 from pydantic_ai_pax.ui.prompt.prompt_completion import CompletionWorker
-from pydantic_ai_pax.ui.prompt.prompt_selection import hyperlink
+from pydantic_ai_pax.ui.prompt.prompt_selection import LINK_END, LINK_START, hyperlink
 from pydantic_ai_pax.ui.prompt.prompt_surface import ENTER, KEYS_ON, LEAVE, MODES_OFF, WHEEL_ROWS
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.status import Status, StatusLink
@@ -56,6 +56,7 @@ async def editor(
     panel: Callable[[str], Sequence[str]] = lambda _: (),
     key_wait_limit: float = 5,
     inline: bool = False,
+    width: int = 80,
 ) -> AsyncGenerator[tuple[LivePrompt, PipeInput, io.StringIO]]:
     """An opened editor on a pipe; `key_wait_limit` fails a test left waiting for keys that never come.
 
@@ -64,7 +65,7 @@ async def editor(
     A test that feeds no keys and writes to a real store passes a limit no stall reaches: a slow disk is no hang.
     """
     output = output if output is not None else io.StringIO()
-    console = Console(file=output, force_terminal=True, width=80, height=24)
+    console = Console(file=output, force_terminal=True, width=width, height=24)
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
     with (
@@ -1003,6 +1004,22 @@ async def test_clicking_a_status_row_link_opens_it(inline: bool) -> None:
         live.feed('mouse', f'\x1b[<0;{column};24M')
         live.feed('mouse', f'\x1b[<0;{column};24m')
         assert opened == [url]
+
+
+async def test_a_footer_cut_inside_a_link_closes_it() -> None:
+    """Otherwise the terminal would link everything printed after the footer."""
+    url = 'file:///tmp/pax-desktop.html'
+    status = Status(
+        model='m',
+        fields=lambda: ('plugins',),
+        status_segments=(lambda: 'docker sandbox', lambda: StatusLink(text='watch live', url=url)),
+    )
+    terminal = SurfaceTerminal(width=24, height=24)
+    async with editor(output=terminal, toolbar=status.toolbar, inline=True, width=24) as (live, _, _):
+        live.paint()
+    cut = terminal.getvalue().rpartition(f'{LINK_START};{url}\x1b\\')[2]
+    row = cut.partition('\r')[0]
+    assert row.startswith('watch …') and LINK_END in row
 
 
 async def test_a_mouse_drag_copies_the_transcript_without_touching_the_draft() -> None:

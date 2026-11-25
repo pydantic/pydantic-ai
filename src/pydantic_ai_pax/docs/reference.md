@@ -3261,8 +3261,9 @@ The setting is saved in the conversation, so `/resume`, `/fork` and compaction k
 
 #### Watching the desktop: `/computer-use view`
 
-When the model first uses the `computer` tool, Pax starts a viewer on `127.0.0.1` and each
-`computer` row in the terminal gets a `watch live ↗` link to it. `/computer-use view` opens it in
+When computer use turns on, Pax starts a viewer on `127.0.0.1`, and the status row and each
+`computer` row in the terminal get a `watch live ↗` link to it. The link opens a private local
+page that forwards to the viewer, so the viewer's access token never reaches a browser's command line. `/computer-use view` opens it in
 your browser, also during a turn, and the [web UI](../PLUGINS.md#web-this-session-in-your-browser)
 shows it in a **Desktop** side panel. The viewer shows each screenshot as it arrives, marks where
 clicks, pointer moves and drags landed, keeps the last 30, and has **Refresh** and a 2-second
