@@ -522,7 +522,7 @@ class TestCommand:
         # The response only names the sandbox: with no parts, the model is not made to have said anything.
         assert isinstance(response, ModelResponse)
         assert (response.parts, response.workspace_ref) == ([], WorkspaceRef(provider='fake', id='sbx-1'))
-        assert [segment() for segment in loaded.status_segments] == ['fake sandbox']
+        assert [segment() for segment in loaded.status_segments] == ['fake sandbox', '']
         assert await plugin.command([]) == (
             'This conversation runs in Fake sandbox sbx-1, in /home/user/workspace. /sandbox delete deletes it.'
         )
@@ -800,7 +800,7 @@ class TestLifecycle:
         provider.folder(ref).mkdir()
         loaded = load(checkout, Transcript(messages=worked_in(ref)))
         plugin = plugin_of(loaded)
-        assert [segment() for segment in loaded.status_segments] == ['fake sandbox']
+        assert [segment() for segment in loaded.status_segments] == ['fake sandbox', '']
         current = plugin.current()
         assert current is not None
         backend = current.open()
@@ -834,7 +834,7 @@ class TestLifecycle:
     async def test_history_in_an_unknown_workspace_runs_here(self, checkout: Path, provider: FakeProvider) -> None:
         loaded = load(checkout, Transcript(messages=worked_in(WorkspaceRef(provider='retired', id='sb-1'))))
         assert plugin_of(loaded).current() is None
-        assert [segment() for segment in loaded.status_segments] == ['']
+        assert [segment() for segment in loaded.status_segments] == ['', '']
 
     async def test_reopen_needs_the_requirement(self, checkout: Path, provider: FakeProvider) -> None:
         provider.requirement = 'Add your Fake key in /keys.'
@@ -1765,7 +1765,7 @@ class TestDaytona:
         assert (
             await provider.desktop_url(with_desktop) == 'https://6080-token.proxy.daytona.works/vnc.html?autoconnect=1'
         )
-        assert signed == [(6080, 300)] and made.computer_use.started
+        assert signed == [(6080, 3600)] and made.computer_use.started
         await provider.close(with_desktop)
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'

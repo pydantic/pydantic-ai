@@ -113,7 +113,10 @@ class SandboxProvider(Protocol):
 
 @runtime_checkable
 class SupportsDesktopUrl(Protocol):
-    """A provider whose own website shows a sandbox's desktop, which `/computer-use view` links to."""
+    """A provider whose own website shows a sandbox's desktop, which the status row's `watch live ↗` opens."""
+
+    desktop_link_seconds: int | None
+    """How long a link from `desktop_url` opens the desktop; `None` when it does not expire."""
 
     async def desktop_url(self, backend: SandboxBackend) -> str | None:
         """A new link to the desktop of the sandbox `backend` is attached to; `None` when there is none."""

@@ -1951,7 +1951,8 @@ It retains up to 10,000 items and four million characters, plus a bounded partia
 line. Old output is dropped at those limits; oversized Markdown parts keep their
 rendered tail instead of their source. `/clear` and `/new` forget earlier output,
 so neither the panel nor the exit printout shows it again. Hyperlinks are
-preserved in that printout; Termflow 1.0's live cells do not carry hyperlink metadata.
+preserved in that printout. On the full screen, a click on a link in the status row, such as
+`watch live ↗`, opens it in your browser.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
 The status row follows Code Puppy's styling: muted surrounding text, an accented
@@ -1960,7 +1961,7 @@ context warnings keep the warning colour. The same styling applies while idle
 and working.
 
 A plugin can contribute its own fragment from `get_status_segments`, such
-as a branch name. Fragments are muted, grouped under the configurable `plugins`
+as a branch name, or a link that ends in `↗` and opens when clicked. Fragments are muted, grouped under the configurable `plugins`
 field, and dropped when the plugin unloads. See [PLUGINS.md](../PLUGINS.md) for the method and its cost
 rules.
 
@@ -3256,17 +3257,19 @@ not in the web UI.
 
 The setting is saved in the conversation, so `/resume`, `/fork` and compaction keep it.
 
-#### Watching the desktop: `/computer-use view`
+#### Watching the desktop
 
-`/computer-use view` prints `Desktop: URL`, a link to the desktop on the provider's own website, also
-during a turn. Pax runs no viewer of its own. Each run makes a new link.
+While computer use is on, the status row shows `watch live ↗` next to the sandbox. Click it to open the
+desktop on the provider's own website. Pax runs no viewer of its own. `/computer-use view` prints a fresh
+link as `Desktop: URL`, also during a turn.
 
 - **`boxd`**: the machine's Desktop view in boxd's console. It opens in a browser signed in to your
   boxd account.
-- **`daytona`**: the desktop's noVNC page, on a signed link that works for 5 minutes. Anyone holding the link
-  can see the screen and use the mouse and keyboard until it expires. A page opened before then stays
-  connected after it.
-- **Other providers** have no such link, and it says so: `E2B has no link to watch its desktop.`
+- **`daytona`**: the desktop's noVNC page, on a signed link that works for 1 hour. Anyone holding the link
+  can see the screen and use the mouse and keyboard until it expires. Pax gets a new link for the status
+  row before then, and a page opened earlier stays connected.
+- **Other providers** have no such link: the status row shows no `watch live ↗`, and `/computer-use view`
+  says `E2B has no link to watch its desktop.`
 
 Everything on the sandbox's screen, secrets included, goes to the model's provider in screenshots,
 and text on the screen can steer the model like any tool output.

@@ -36,8 +36,8 @@ SECRET_LABEL = 'clai-github-secret'
 DESKTOP_PORT = 6080
 """Where the desktop's noVNC page and its websockify proxy listen in the sandbox (live, 2026-11-25)."""
 
-DESKTOP_LINK_SECONDS = 300
-"""How long a `/computer-use view` link opens the desktop. A page already open stays connected after it expires."""
+DESKTOP_LINK_SECONDS = 60 * 60
+"""How long a desktop link opens the desktop; Pax gets a new one before then. A page already open stays connected."""
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,7 @@ class DaytonaProvider:
     working_dir: str = '/home/daytona/workspace'
     token_in_sandbox: bool = False
     desktop_at_create: bool = False
+    desktop_link_seconds: int | None = DESKTOP_LINK_SECONDS
     _clients: 'WeakKeyDictionary[SandboxBackend, daytona.AsyncDaytona]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'daytona.AsyncDaytona'],
         init=False,

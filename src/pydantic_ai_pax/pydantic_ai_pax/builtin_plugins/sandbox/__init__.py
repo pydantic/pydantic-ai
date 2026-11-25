@@ -16,10 +16,12 @@ to start a sandbox with one. `/computer-use view` gives the provider's own link 
 has one (`SupportsDesktopUrl`).
 """
 
+import logging
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
+from time import monotonic
 
 import anyio
 import anyio.lowlevel
@@ -61,12 +63,20 @@ from pydantic_ai_pax.config import PERMISSIONS_SETTING
 from pydantic_ai_pax.config.api_keys import load_keys
 from pydantic_ai_pax.gh_cli import gh_token, gh_user
 from pydantic_ai_pax.models.profiles import KEY_NAME
-from pydantic_ai_pax.plugins import NoSettings, Plugin, PluginHost, SessionEnd
+from pydantic_ai_pax.plugins import (
+    ConversationChanged,
+    NoSettings,
+    Plugin,
+    PluginHost,
+    SessionEnd,
+    SessionStart,
+    TurnStart,
+)
 from pydantic_ai_pax.plugins.keys import choose_key
 from pydantic_ai_pax.runtime.imported_history import imported_context
 from pydantic_ai_pax.runtime.session import ConversationWorkspace, ShellLineWorkspace
 from pydantic_ai_pax.ui.menus.dialogs import RUNNERS, TerminalDialogs
-from pydantic_ai_pax.ui.rendering.status import StatusSegment
+from pydantic_ai_pax.ui.rendering.status import StatusLink, StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
 __all__ = ('SandboxPlugin',)
@@ -87,6 +97,12 @@ def _owner(ref: WorkspaceRef) -> SandboxProvider | None:
     return next((provider for name, provider in PROVIDERS.items() if ref_provider(name) == ref.provider), None)
 
 
+logger = logging.getLogger(__name__)
+
+MINT_AHEAD = 10 * 60
+"""How long before an expiring `watch live` link stops opening a new one is minted, so a click never meets a 401."""
+
+
 @dataclass(kw_only=True)
 class _Sandbox:
     """A sandbox this session made or opened, shared by every conversation whose history names it."""
@@ -99,6 +115,10 @@ class _Sandbox:
     """Whether `open` attaches the sandbox's desktop too, as `ComputerUse` needs."""
     backend: SandboxBackend | None = None
     deleted: bool = False
+    watch_url: str | None = None
+    """The provider's link to watch the desktop, which the status row shows; minted outside painting, never by it."""
+    watch_expires: float | None = None
+    """When `watch_url` stops opening, on the `monotonic` clock; `None` for a link that does not expire."""
     _detached: list[SandboxBackend] = field(default_factory=list[SandboxBackend], repr=False)
     """Backends `add_desktop` replaced, which `close` closes."""
 
@@ -320,13 +340,53 @@ class SandboxPlugin(Plugin):
         )
 
     def get_status_segments(self) -> Sequence[StatusSegment]:
-        return (self._segment,)
+        return (self._segment, self._watch_segment)
 
     def _segment(self) -> str:
         sandbox = self.current()
         if sandbox is None:
             return 'computer-use' if self._armed() else ''
-        return f'{sandbox.provider.name} sandbox{" (computer-use)" if self._on() else ""}'
+        computer_use = self._on() and not self._watch_segment()
+        return f'{sandbox.provider.name} sandbox{" (computer-use)" if computer_use else ""}'
+
+    def _watch_segment(self) -> StatusLink | str:
+        """`watch live ↗` while the desktop is on; it runs every frame, so it only reads the link minted earlier."""
+        sandbox = self.current()
+        if sandbox is None or sandbox.deleted or sandbox.watch_url is None or not self._on():
+            return ''
+        if sandbox.watch_expires is not None and monotonic() >= sandbox.watch_expires:
+            return ''
+        return StatusLink(text='watch live', url=sandbox.watch_url)
+
+    async def _mint_watch_link(self) -> None:
+        """Get the link `watch live` opens when the conversation shown has the desktop on and none is fresh."""
+        sandbox = self.current()
+        provider = sandbox.provider if sandbox is not None else None
+        if sandbox is None or sandbox.deleted or not self._on() or not isinstance(provider, SupportsDesktopUrl):
+            return
+        expires = sandbox.watch_expires
+        if sandbox.watch_url is not None and (expires is None or monotonic() < expires - MINT_AHEAD):
+            return
+        sandbox.watch_url = sandbox.watch_expires = None
+        seconds, minted = provider.desktop_link_seconds, monotonic()
+        try:
+            sandbox.watch_url = await provider.desktop_url(sandbox.open())
+        except Exception as exc:  # noqa: BLE001 -- the link is extra; the command or turn goes on without it.
+            logger.warning('Could not get the link to watch the %s desktop: %s', provider.title, exc)
+            return
+        sandbox.watch_expires = None if seconds is None else minted + seconds
+
+    async def on_session_start(self, event: SessionStart) -> None:
+        del event
+        await self._mint_watch_link()
+
+    async def on_conversation_changed(self, event: ConversationChanged) -> None:
+        del event
+        await self._mint_watch_link()
+
+    async def on_turn_start(self, event: TurnStart) -> None:
+        del event
+        await self._mint_watch_link()
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         return render_computer_event(event)
@@ -425,6 +485,7 @@ class SandboxPlugin(Plugin):
             )
         sandbox.add_desktop()
         await self._record_computer_use(sandbox, on=True)
+        await self._mint_watch_link()
         return 'Computer use is on: the model can see and control the desktop.' + self._needs_full()
 
     async def _record_computer_use(self, sandbox: _Sandbox, *, on: bool) -> None:
@@ -494,6 +555,7 @@ class SandboxPlugin(Plugin):
             raise
         self._armed_for = None
         self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, desktop=desktop, backend=backend)
+        await self._mint_watch_link()
         return _started(provider, ref, checkout, github=github, desktop=desktop, needs_full=self._needs_full())
 
     async def _delete(self) -> str:

@@ -43,6 +43,7 @@ from pydantic_ai.computer_use import (
     Zoom,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, Display, SupportsDisplay
 from pydantic_ai_pax import Session
@@ -58,10 +59,11 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers import (
     GitHubCredential,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
-from pydantic_ai_pax.config import PERMISSIONS_SETTING
-from pydantic_ai_pax.plugins import SessionEnd, Transcript
+from pydantic_ai_pax.config import PERMISSIONS_SETTING, Settings
+from pydantic_ai_pax.plugins import ConversationChanged, SessionEnd, SessionStart, Transcript, TurnStart
 
 # `checkout`, `isolated_git_config`, `provider`, and `upstream` are fixtures shared with `/sandbox`'s tests.
+from pydantic_ai_pax.ui.rendering.status import StatusLink
 from tests.pax.test_sandbox import (
     FakeDisplay,
     FakeProvider,
@@ -213,14 +215,14 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     session.replace_messages([])
     armed = await plugin.computer_use_command([])
     assert 'Computer use is on' in armed
-    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use']
+    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use', '']
 
     started = await plugin.command(['fake'])
     assert 'Fake sandbox sbx-1' in started
     assert 'Computer use is on' in started
     assert provider.created == [GitHubCredential(login='Ada', token='gho_secret')]
     assert provider.created_desktop == [True]
-    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox (computer-use)']
+    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox (computer-use)', '']
     ref = history_sandbox(session.messages)
     assert ref is not None
     assert ref == WorkspaceRef(provider='fake', id='sbx-1')
@@ -240,7 +242,7 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     # Toggling `/computer-use` off disables the `computer` tool while keeping the sandbox running, and survives resume and compaction.
     disabled = await plugin.computer_use_command([])
     assert 'Computer use is off' in disabled
-    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox']
+    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox', '']
     await session.prompt('without desktop')
     assert 'computer' not in seen_tools[-1]
 
@@ -248,7 +250,7 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     compacted_messages = session.messages[-2:]
     resumed_off_loaded = load(work, Transcript(messages=compacted_messages))
     resumed_off = plugin_of(resumed_off_loaded)
-    assert [segment() for segment in resumed_off.get_status_segments()] == ['fake sandbox']
+    assert [segment() for segment in resumed_off.get_status_segments()] == ['fake sandbox', '']
     resumed_off_session = Session(agent, deps=None, plugins=resumed_off_loaded.capabilities, workspace=work)
     resumed_off_session.replace_messages(list(compacted_messages))
     await resumed_off_session.prompt('still without desktop after compaction and restart')
@@ -301,9 +303,9 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert 'Computer use is on' in await plugin.computer_use_command(['on'])
     assert 'Computer use is off' in await plugin.computer_use_command(['off'])
     await plugin.computer_use_command(['on'])
-    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use']
+    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use', '']
     plugin.host.conversation = Transcript(conversation_id='c-2')
-    assert [segment() for segment in plugin.get_status_segments()] == ['']
+    assert [segment() for segment in plugin.get_status_segments()] == ['', '']
 
     # Retroactive attach (`desktop_at_create=False`): works immediately even after user turns have run, and survives resume.
     await plugin.command(['fake'])
@@ -322,7 +324,7 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert 'computer use on' in await plugin.command([])
     assert screen(plugin) is display
     retro_resumed = plugin_of(load(work, Transcript(messages=plugin.host.conversation.messages)))
-    assert [segment() for segment in retro_resumed.get_status_segments()] == ['fake sandbox (computer-use)']
+    assert [segment() for segment in retro_resumed.get_status_segments()] == ['fake sandbox (computer-use)', '']
     assert screen(retro_resumed) is display
     assert provider.reopened[-1] == WorkspaceRef(provider='fake', id='sbx-1') and provider.reopened_desktop[-1]
 
@@ -459,27 +461,91 @@ async def test_a_history_without_the_desktop_opening_the_sandbox_first(
 
 @dataclass
 class LinkedProvider(FakeProvider):
-    """A fake provider whose website shows a sandbox's desktop, as boxd's console and Daytona's preview links do."""
+    """A fake provider whose website shows a sandbox's desktop on a link that expires, as Daytona's does."""
 
+    desktop_link_seconds: int | None = 3600
     links: list[str] = field(default_factory=list[str])
+    fail: bool = False
 
     async def desktop_url(self, backend: SandboxBackend) -> str | None:
         assert isinstance(backend, SupportsDisplay) and backend.display is not None and backend.ref is not None
+        if self.fail:
+            raise ConnectionError('the provider is down')
         link = f'https://desktop.example/{backend.ref.id}/vnc.html?token={len(self.links)}'
         self.links.append(link)
         return link
 
 
-async def test_view_gives_the_providers_desktop_link(
-    checkout: Path, provider: FakeProvider, display: FakeDisplay, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def row(plugin: SandboxPlugin) -> list[str | StatusLink]:
+    return [segment() for segment in plugin.get_status_segments()]
+
+
+def watch(token: int) -> StatusLink:
+    return StatusLink(text='watch live', url=f'https://desktop.example/sbx-1/vnc.html?token={token}')
+
+
+@pytest.fixture
+def linked(provider: FakeProvider, display: FakeDisplay, monkeypatch: pytest.MonkeyPatch) -> LinkedProvider:
     linked = LinkedProvider(provider.root, provider.upstream, display=display)
     monkeypatch.setattr(sandbox, 'PROVIDERS', {linked.name: linked})
-    plugin = plugin_of(load(checkout))
+    return linked
+
+
+async def test_the_status_row_links_to_the_desktop_while_it_is_on(checkout: Path, linked: LinkedProvider) -> None:
+    loaded = load(checkout)
+    plugin = plugin_of(loaded)
+    await plugin.command(['fake'])
+    assert row(plugin) == ['fake sandbox', '']
+
+    await plugin.computer_use_command(['on'])
+    assert row(plugin) == ['fake sandbox', watch(0)]
+    # `/computer-use view` gives a new link; the row keeps the one it has, and a turn does not ask again.
+    assert await plugin.computer_use_command(['view']) == 'Desktop: https://desktop.example/sbx-1/vnc.html?token=1'
+    await loaded.dispatch(TurnStart(text='go'))
+    assert row(plugin) == ['fake sandbox', watch(0)]
+
+    await plugin.computer_use_command(['off'])
+    assert row(plugin) == ['fake sandbox', '']
+
+    # A Pax resuming the conversation shows a link at once.
+    resumed_loaded = load(checkout, Transcript(messages=[*loaded.host.conversation.messages[:-2]]))
+    await resumed_loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
+    assert row(plugin_of(resumed_loaded)) == ['fake sandbox', watch(2)]
+    await plugin.on_session_end(SessionEnd(reason='exit'))
+    await plugin_of(resumed_loaded).on_session_end(SessionEnd(reason='exit'))
+
+
+async def test_an_expiring_link_is_renewed_before_it_stops_opening(
+    checkout: Path, linked: LinkedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = [1000.0]
+    monkeypatch.setattr(sandbox, 'monotonic', lambda: now[0])
+    loaded = load(checkout)
+    plugin = plugin_of(loaded)
     await plugin.computer_use_command(['on'])
     await plugin.command(['fake'])
+    assert row(plugin) == ['fake sandbox', watch(0)]
 
-    # Each `/computer-use view` asks the provider for a new link, as a signed one expires.
-    assert await plugin.computer_use_command(['view']) == 'Desktop: https://desktop.example/sbx-1/vnc.html?token=0'
-    assert await plugin.computer_use_command(['view']) == 'Desktop: https://desktop.example/sbx-1/vnc.html?token=1'
+    now[0] += 49 * 60
+    await loaded.dispatch(ConversationChanged(conversation_id=loaded.host.conversation.conversation_id, title='t'))
+    assert row(plugin) == ['fake sandbox', watch(0)]
+    now[0] += 2 * 60
+    await loaded.dispatch(TurnStart(text='go'))
+    assert row(plugin) == ['fake sandbox', watch(1)]
+
+    # Left idle past its hour, the row drops the link rather than offer one that no longer opens.
+    now[0] += 61 * 60
+    assert row(plugin) == ['fake sandbox (computer-use)', '']
+    await plugin.on_session_end(SessionEnd(reason='exit'))
+
+
+async def test_a_link_that_cannot_be_got_leaves_the_row_without_one(
+    checkout: Path, linked: LinkedProvider, caplog: pytest.LogCaptureFixture
+) -> None:
+    linked.fail = True
+    plugin = plugin_of(load(checkout))
+    await plugin.computer_use_command(['on'])
+    assert 'Computer use is on' in await plugin.command(['fake'])
+    assert row(plugin) == ['fake sandbox (computer-use)', '']
+    assert 'Could not get the link to watch the Fake desktop: the provider is down' in caplog.text
     await plugin.on_session_end(SessionEnd(reason='exit'))
