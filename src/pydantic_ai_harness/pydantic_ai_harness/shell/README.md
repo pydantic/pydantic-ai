@@ -349,7 +349,6 @@ to stdout) so command output can never spoof the tracked directory.
 
 The instructions name the working directory through [`AnnounceWorkingDirectory`](../announce_working_directory/), which states it once however
 many capabilities bring it, and starts a sandbox that isn't running to ask for it.
-Asking is a durable step at run start, so Temporal and DBOS runs started before an upgrade that adds it no longer replay.
 
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 

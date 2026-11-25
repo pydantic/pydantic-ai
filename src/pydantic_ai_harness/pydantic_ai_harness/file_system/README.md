@@ -140,7 +140,6 @@ workspace instead (`LocalWorkspace('./repo')`).
 
 The instructions name the working directory through [`AnnounceWorkingDirectory`](../announce_working_directory/), which states it once however
 many capabilities bring it, and starts a sandbox that isn't running to ask for it.
-Asking is a durable step at run start, so Temporal and DBOS runs started before an upgrade that adds it no longer replay.
 
 [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) renames the tools so the model can tell two
 `FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
