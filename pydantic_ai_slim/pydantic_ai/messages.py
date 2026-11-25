@@ -3277,6 +3277,11 @@ class AgentInstructionSource:
     There is exactly one agent in scope, so it carries no id.
     """
 
+    _: KW_ONLY
+
+    kind: Literal['agent'] = 'agent'
+    """Source type identifier, used as a discriminator for deserialization."""
+
     def __str__(self) -> str:
         return 'agent'
 
@@ -3289,6 +3294,11 @@ class ToolsetInstructionSource:
 
     id: str
 
+    _: KW_ONLY
+
+    kind: Literal['toolset'] = 'toolset'
+    """Source type identifier, used as a discriminator for deserialization."""
+
     def __str__(self) -> str:
         return f'toolset:{self.id}'
 
@@ -3300,6 +3310,11 @@ class CapabilityInstructionSource:
     """A capability with an `id`."""
 
     id: str
+
+    _: KW_ONLY
+
+    kind: Literal['capability'] = 'capability'
+    """Source type identifier, used as a discriminator for deserialization."""
 
     def __str__(self) -> str:
         return f'capability:{self.id}'
@@ -3316,6 +3331,11 @@ class RunInstructionSource:
     a value passed to a later run of the same conversation is the same block.
     """
 
+    _: KW_ONLY
+
+    kind: Literal['run'] = 'run'
+    """Source type identifier, used as a discriminator for deserialization."""
+
     def __str__(self) -> str:
         return 'run'
 
@@ -3328,11 +3348,33 @@ InstructionSource: TypeAlias = (
 """The source that authored an instruction part."""
 
 
+_INSTRUCTION_SOURCE_KINDS = frozenset({'agent', 'toolset', 'capability', 'run'})
+
+
+def _instruction_source_kind(value: Any) -> str | None:
+    """Discriminate an `InstructionSource`, including one serialized before the sources carried a `kind`.
+
+    An instruction id persists as its string, but a serializer that doesn't use the field's schema, like the
+    Temporal payload converter's, writes the source's fields. Without a `kind`, `{}` reads as the agent and
+    `{'id': ...}` as a toolset, which is what such a payload has always loaded as.
+    """
+    if isinstance(value, dict):
+        fields = cast(dict[str, Any], value)
+        return fields.get('kind') or ('toolset' if 'id' in fields else 'agent')
+    return getattr(value, 'kind', None)
+
+
 @dataclass(frozen=True, repr=False)
 class InstructionId:
     """The key an instruction part is addressed by: who contributed it, and which of their parts it is."""
 
-    source: InstructionSource
+    source: Annotated[
+        Annotated[AgentInstructionSource, pydantic.Tag('agent')]
+        | Annotated[ToolsetInstructionSource, pydantic.Tag('toolset')]
+        | Annotated[CapabilityInstructionSource, pydantic.Tag('capability')]
+        | Annotated[RunInstructionSource, pydantic.Tag('run')],
+        pydantic.Discriminator(_instruction_source_kind),
+    ]
     """Who contributed the part: the agent, a toolset with an `id`, a capability with an `id`, or a run."""
 
     _: KW_ONLY
@@ -3346,12 +3388,20 @@ class InstructionId:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def _deserialize_instruction_id(value: str | InstructionId | None) -> InstructionId | None:
+def _deserialize_instruction_id(
+    value: str | InstructionId | dict[str, Any] | None,
+) -> InstructionId | dict[str, Any] | None:
     """Rebuild a key from the string it renders to.
 
     A namespace this version doesn't know can only come from a newer one, whose keys it has no way to
-    address anyway, so it reads as unaddressable rather than failing the message it arrived on.
+    address anyway, so it reads as unaddressable rather than failing the message it arrived on. The same
+    goes for a source `kind` it doesn't know in an id written as an object.
     """
+    if isinstance(value, dict):
+        source = value.get('source')
+        if isinstance(source, dict) and (kind := cast(dict[str, Any], source).get('kind')) is not None:
+            return value if kind in _INSTRUCTION_SOURCE_KINDS else None
+        return value
     if not isinstance(value, str):
         return value
     if value == 'agent':
