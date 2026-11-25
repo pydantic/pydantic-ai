@@ -435,13 +435,13 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     session.replace_messages([])
     armed = await plugin.computer_use_command([])
     assert 'Computer use enabled' in armed
-    assert plugin._segment() == 'computer-use'  # pyright: ignore[reportPrivateUsage]
+    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use']
 
     started = await plugin.command(['fake'])
     assert 'Fake sandbox sbx-1' in started
     assert 'Computer use enabled (1280x800 desktop)' in started
     assert desktop_provider.created == [(GitHubCredential(login='Ada', token='gho_secret'), True)]
-    assert plugin._segment() == 'fake sandbox · computer-use'  # pyright: ignore[reportPrivateUsage]
+    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox (computer-use)']
     ref = history_sandbox(session.messages)
     assert ref is not None
     assert ref == WorkspaceRef(provider='fake-desktop', id='sbx-1') and is_desktop_ref(ref)
@@ -473,19 +473,21 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     assert 'watch live ↗' in render_plain(second_render)
     assert '/computer-use view' not in render_plain(second_render)
 
-    # Toggling `/computer-use` off disables the `computer` tool while keeping the sandbox running, and persists on resume.
+    # Toggling `/computer-use` off disables the `computer` tool while keeping the sandbox running, and survives resume and compaction.
     disabled = await plugin.computer_use_command([])
     assert 'Computer use disabled' in disabled
-    assert plugin._segment() == 'fake sandbox'  # pyright: ignore[reportPrivateUsage]
+    assert [segment() for segment in plugin.get_status_segments()] == ['fake sandbox']
     await session.prompt('without desktop')
     assert 'computer' not in seen_tools[-1]
 
-    resumed_off_loaded = load(work, Transcript(messages=session.messages))
+    # Drop everything before the last turn (simulating compaction discarding the `/computer-use off` marker).
+    compacted_messages = session.messages[-2:]
+    resumed_off_loaded = load(work, Transcript(messages=compacted_messages))
     resumed_off = plugin_of(resumed_off_loaded)
-    assert resumed_off._segment() == 'fake sandbox'  # pyright: ignore[reportPrivateUsage]
+    assert [segment() for segment in resumed_off.get_status_segments()] == ['fake sandbox']
     resumed_off_session = Session(agent, deps=None, plugins=resumed_off_loaded.capabilities, workspace=work)
-    resumed_off_session.replace_messages(list(session.messages))
-    await resumed_off_session.prompt('still without desktop after restart')
+    resumed_off_session.replace_messages(list(compacted_messages))
+    await resumed_off_session.prompt('still without desktop after compaction and restart')
     assert 'computer' not in seen_tools[-1]
     assert resumed_off.sandbox(ref).has_desktop is True
     await resumed_off.on_session_end(SessionEnd(reason='exit'))
@@ -567,9 +569,9 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert 'Computer use enabled' in await plugin.computer_use_command(['on'])
     assert 'Computer use disabled' in await plugin.computer_use_command(['off'])
     await plugin.computer_use_command(['on'])
-    assert plugin._segment() == 'computer-use'  # pyright: ignore[reportPrivateUsage]
+    assert [segment() for segment in plugin.get_status_segments()] == ['computer-use']
     plugin.host.conversation = Transcript(conversation_id='c-2')
-    assert plugin._segment() == ''  # pyright: ignore[reportPrivateUsage]
+    assert [segment() for segment in plugin.get_status_segments()] == ['']
 
     # Retroactive attach (`desktop_at_create=False`): works immediately even after user turns have run, and survives resume.
     await plugin.command(['fake'])
@@ -583,7 +585,7 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert 'computer use on' in await plugin.command([])
     assert await plugin.sandbox(WorkspaceRef(provider='fake-desktop', id='sbx-1')).capture_screen() == PNG_A
     retro_resumed = plugin_of(load(work, Transcript(messages=plugin.host.conversation.messages)))
-    assert retro_resumed._segment() == 'fake sandbox · computer-use'  # pyright: ignore[reportPrivateUsage]
+    assert [segment() for segment in retro_resumed.get_status_segments()] == ['fake sandbox (computer-use)']
     assert await retro_resumed.sandbox(WorkspaceRef(provider='fake', id='sbx-1')).capture_screen() == PNG_A
     assert desktop_provider.reopened[-1] == (WorkspaceRef(provider='fake', id='sbx-1'), True)
 

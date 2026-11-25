@@ -31,6 +31,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.computer_use import ComputerResult, ComputerToolAction
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import (
@@ -117,18 +118,17 @@ def _ref_key(ref: WorkspaceRef) -> tuple[str, str] | None:
 
 _SANDBOX_MARKER_KINDS = frozenset({'sandbox', 'computer-use-on', 'computer-use-off'})
 
+COMPUTER_USE_STATE = 'clai2_computer_use'
+"""Local `/computer-use` on/off state carried in sandboxed `ModelResponse.metadata`, never sent to providers."""
+
 
 def history_computer_use(messages: Sequence[ModelMessage], ref: WorkspaceRef) -> bool:
     """Whether computer use is enabled for `ref` according to `messages`, falling back to `is_desktop_ref(ref)`."""
-    for message in reversed(messages):
-        if not isinstance(message, ModelRequest):
-            continue
-        for part in reversed(message.parts):
-            kind = imported_kind(part)
-            if kind == 'computer-use-on':
-                return True
-            if kind == 'computer-use-off':
-                return False
+    response = next((message for message in reversed(messages) if isinstance(message, ModelResponse)), None)
+    if response is not None and response.metadata:
+        state = response.metadata.get(COMPUTER_USE_STATE)
+        if isinstance(state, bool):
+            return state
     return is_desktop_ref(ref)
 
 
@@ -293,6 +293,15 @@ class _ConversationSandbox(ConversationWorkspace[None]):
             ref = history_sandbox(conversation.messages)
         return None if (ref := _owned(ref)) is None else self._workspace(ref)
 
+    async def after_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        del request_context
+        if (ref := _owned(ctx.workspace.ref)) is None:
+            return response
+        enabled = self.plugin.is_computer_use_enabled(ref, ctx.messages)
+        return replace(response, metadata={**(response.metadata or {}), COMPUTER_USE_STATE: enabled})
+
     def shell_line_workspace(self, messages: Sequence[ModelMessage]) -> ShellLineWorkspace | None:
         if (ref := history_sandbox(messages)) is None:
             return None
@@ -401,7 +410,7 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         if sandbox is None:
             return 'computer-use' if self._computer_use_armed else ''
-        suffix = ' · computer-use' if self._current_computer_use(sandbox) else ''
+        suffix = ' (computer-use)' if self._current_computer_use(sandbox) else ''
         return f'{sandbox.provider.name} sandbox{suffix}'
 
     def get_side_panels(self) -> Sequence[SidePanel]:
@@ -634,7 +643,7 @@ class SandboxPlugin(Plugin):
             await self.host.conversation.commit_messages(updated)
 
     async def _commit_computer_use_state(self, sandbox: _Sandbox, *, enabled: bool) -> None:
-        """Persist `/computer-use on|off` in conversation history without mutating `workspace_ref`."""
+        """Persist `/computer-use on|off` on the latest response metadata without mutating `workspace_ref`."""
         state = 'on' if enabled else 'off'
         request = imported_context(
             f'The user ran /computer-use {state}.',
@@ -645,7 +654,7 @@ class SandboxPlugin(Plugin):
         messages = [
             *self.host.conversation.messages,
             ModelRequest(parts=[request]),
-            ModelResponse(parts=[], workspace_ref=sandbox.ref),
+            ModelResponse(parts=[], workspace_ref=sandbox.ref, metadata={COMPUTER_USE_STATE: enabled}),
         ]
         await self.host.conversation.commit_messages(messages)
 
