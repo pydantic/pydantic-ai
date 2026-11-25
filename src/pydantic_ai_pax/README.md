@@ -410,7 +410,9 @@ These are on from the start:
 - `observability`: traces to [Logfire](https://pydantic.dev/logfire), when you set a token
 
 Turn on more when you need them, such as `github`, `linear`, `notion`, `slack`,
-`google_workspace`, and `logfire_mcp`.
+`google_workspace`, and `logfire_mcp`. `pax --minimal` starts with only `coder`,
+`ask_user`, and `persistence`, for one launch. At startup, Pax names each plugin it
+doesn't ship and the tools it adds.
 
 To install a plugin, clone it from Git, name a plugin or a harness capability by its import
 path, or drop a file in `~/.config/pydantic-clai2/plugins/`:

@@ -1,6 +1,6 @@
 """What the live sessions of one Pax process share."""
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Generic, Self
@@ -42,11 +42,20 @@ class ClaiProcess(Generic[DepsT]):
     """The native Codex provider per account, shared by every session's `ModelResolver`, so each refreshes once."""
 
     @classmethod
-    def open(cls, store: SettingsStore | None = None, *, builtin_plugins: Sequence[PluginSettings] = ()) -> Self:
-        """The process over `store`, by default the user's settings database, with `builtin_plugins` shipped."""
+    def open(
+        cls,
+        store: SettingsStore | None = None,
+        *,
+        builtin_plugins: Sequence[PluginSettings] = (),
+        only_plugins: Collection[str] | None = None,
+    ) -> Self:
+        """The process over `store`, by default the user's settings database, with `builtin_plugins` shipped.
+
+        `only_plugins` limits this launch to those plugins, as `pax --minimal` does.
+        """
         store = store or SettingsStore()
         conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
-        plugins = ProcessPlugins[DepsT](store=store, builtin=builtin_plugins)
+        plugins = ProcessPlugins[DepsT](store=store, builtin=builtin_plugins, only=only_plugins)
         plugins.live = live = LiveRuntimes(conversations=conversations)
         return cls(
             store=store,

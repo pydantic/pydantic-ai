@@ -1340,6 +1340,34 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     assert (await service.command([])).startswith('Resumed Fix the parser')
 
 
+async def test_resume_browser_leaves_imports_out_when_turned_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`sessions.import_external` off: the browser lists Pax's own, and `/resume claude` still imports."""
+    service, _ = sessions_service(tmp_path)
+    service.context.settings = Settings(model=None, session_namer=False, session_import_external=False)
+    await service.session.prompt('A Pax session')
+    await service.session.clear()
+    claude_session(tmp_path)
+    seen: list[list[tuple[str, ...]]] = []
+
+    def own_only(browser: SessionBrowser) -> str:
+        seen.append([entry.tags for entry in browser.entries])
+        browser.reload()
+        seen.append([entry.tags for entry in browser.entries])
+        return ''
+
+    monkeypatch.setattr(SessionBrowser, 'run', own_only)
+    assert await service.command([]) == ''
+    assert seen == [[()], [()]]
+
+    def claude_only(browser: SessionBrowser) -> str:
+        return next(entry.id for entry in browser.entries if entry.tags == ('claude',))
+
+    monkeypatch.setattr(SessionBrowser, 'run', claude_only)
+    assert (await service.command(['claude'])).startswith('Resumed Fix the parser')
+
+
 async def test_an_archived_copy_keeps_its_original_out_of_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

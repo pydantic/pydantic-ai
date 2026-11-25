@@ -69,6 +69,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `-m`, `--model MODEL` | Use this model for this run, without saving it |
 | `-p`, `--prompt TEXT` | Run one prompt without interaction and print only the answer; see [Headless mode](#headless-mode) |
 | `-a`, `--agent MODULE:ATTR` | Chat with your own Pydantic AI agent; see [Your own agent](#your-own-agent) |
+| `--minimal` | Load only the `coder`, `ask_user`, and `persistence` plugins for this launch; see [Startup](#startup) |
 | `--resume [SESSION-ID]` | Restore a saved session; no ID opens the browser |
 | `-c`, `--continue` | Restore the most recent saved session in this directory; see [Saved sessions](#saved-sessions-and-resume) |
 | `--resume-claude [SESSION-ID]`, `--resume-codex [SESSION-ID]` | Import and restore a Claude Code or Codex session |
@@ -112,6 +113,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `accounts.pool` | `true` | A model without @PROFILE runs on every signed-in account of its provider, in /accounts order, as @* does. PROVIDER@default:MODEL runs the default account alone. |
 | `sessions.naming` | `true` | Name saved sessions in the background using a model, at extra cost. By default only sessions held with the current model are named; once saved, even as true, every session from any workspace is. |
 | `sessions.naming_model` | `null` | Naming model override; null uses the current model. |
+| `sessions.import_external` | `true` | List Claude Code and Codex sessions in the /resume browser next to saved ones. Off, /resume claude and /resume codex still import them. |
 | `updates.channel` | `stable` | Where /update looks: stable PyPI releases, or main for the newest Pax commit on main. |
 | `repo_context.walk_up_roots` | `["~"]` | User-only JSON list of inclusive stops for instruction autoload when the plugin's `walk_up` is on; the nearest one containing the workspace applies, and with none the walk stops at the repository root. |
 | `repo_context.autoload_symlink_roots` | `[]` | User-only JSON list of authorized external instruction-symlink target directories, for autoload only. |
@@ -218,6 +220,19 @@ OpenTelemetry, such as export retries and timeouts, never print to the terminal
 either; logging handlers that a plugin configures still receive them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
+
+Once plugins have loaded, the terminal prints one line for each loaded plugin Pax
+doesn't ship, naming the tools it gives the model, such as
+`Plugin scanner: tools port_scan, whois`. A plugin whose tools aren't known before a
+run, such as an MCP server's, is described by what it adds instead, such as
+`1 capability`. `-p` and `--web` don't print it.
+
+`pax --minimal` loads only the `coder`, `ask_user`, and `persistence` plugins,
+whatever else is enabled, saved, or declared by the project. It saves nothing:
+the next launch without it loads your plugins as before. `/plugins enable NAME` or
+`/plugins add` loads another one for the rest of the launch. It applies to `-p` and
+`--web` too (`--web` keeps its `web` plugin), and can't be combined with `--agent`,
+which loads no plugins.
 
 ### Updating
 
@@ -2750,7 +2765,9 @@ Right previews it. Rename or delete it after importing it. The imported copy
 keeps saying where it came from, also once Pax renames it, and the web UI's
 sidebar shows the same label beside its title. Codex sessions a
 script ran with `codex exec` are not listed, but `--resume-codex SESSION-ID`
-imports one.
+imports one. To keep them out of plain `/resume`, run
+`/set sessions.import_external false`; `/resume claude`, `/resume codex`, and the
+`--resume-claude`/`--resume-codex` flags still import them.
 
 Importing copies the conversation into Pax's saved sessions. The originals are
 only read, never changed. Pax keeps what the model saw: prompts, answers,

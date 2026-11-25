@@ -142,6 +142,13 @@ class Settings(BaseModel):
     session_namer_model: str | None = Field(
         default=None, description='Naming model override; null uses the current model.'
     )
+    session_import_external: bool = Field(
+        default=True,
+        description=(
+            'List Claude Code and Codex sessions in the /resume browser next to saved ones. '
+            'Off, /resume claude and /resume codex still import them.'
+        ),
+    )
     theme: str = Field(
         default='default',
         description='Keep Pax colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme.',
@@ -278,6 +285,7 @@ SETTING_FIELDS = {
     'accounts.pool': 'pool_accounts',
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
+    'sessions.import_external': 'session_import_external',
     'updates.channel': 'update_channel',
     'repo_context.walk_up_roots': 'repo_context_walk_up_roots',
     'repo_context.autoload_symlink_roots': 'repo_context_autoload_symlink_roots',

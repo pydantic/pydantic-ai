@@ -12,7 +12,7 @@ import hashlib
 import importlib
 import logging
 import os
-from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -373,10 +373,18 @@ class ProcessPlugins(Generic[DepsT]):
     included, or failed can differ between sessions; its changes come through `change` and `follow`.
     """
 
-    def __init__(self, *, store: SettingsStore, builtin: Sequence[PluginSettings] = ()) -> None:
-        """`builtin` ships with Pax; the store overrides it, as it does each session's project declarations."""
+    def __init__(
+        self, *, store: SettingsStore, builtin: Sequence[PluginSettings] = (), only: Collection[str] | None = None
+    ) -> None:
+        """`builtin` ships with Pax; the store overrides it, as it does each session's project declarations.
+
+        `only` names the plugins this launch loads (`pax --minimal`); the others count as disabled until the
+        process ends, and nothing is saved for them.
+        """
         self.store = store
         self.builtin = canonical_plugin_declarations(builtin)
+        self.only: set[str] | None = None if only is None else set(only)
+        """The plugins this launch may load, or `None` for every enabled one; `allow` adds one enabled meanwhile."""
         self.staged: dict[str, PluginSettings] = {}
         """A `/plugins add` declaration being tried before it is saved, so rejected settings never reach the store."""
         self.editing: set[str] = set()
@@ -416,7 +424,24 @@ class ProcessPlugins(Generic[DepsT]):
         for shipped in (project, self.builtin):
             for name in shipped.keys() - declared.keys():
                 declared[name] = shipped[name]
-        return declared
+        return self._held_off(declared)
+
+    def _held_off(self, declared: dict[str, PluginSettings]) -> dict[str, PluginSettings]:
+        """`declared`, with what a launch limited to `only` leaves off as disabled: a copy, never saved."""
+        if self.only is None:
+            return declared
+        allowed = self.only | self.staged.keys()
+        return {
+            name: declaration
+            if name in allowed or not declaration.enabled
+            else declaration.model_copy(update={'enabled': False})
+            for name, declaration in declared.items()
+        }
+
+    def allow(self, name: str) -> None:
+        """Let a launch limited to `only` load `name` too, once the user enables or adds it."""
+        if self.only is not None:
+            self.only.add(name)
 
     def upgrade(self, saved: PluginSettings) -> PluginSettings:
         """Resolve moved plugin paths and retired harness built-ins in stored declarations.

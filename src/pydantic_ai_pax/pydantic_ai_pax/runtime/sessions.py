@@ -330,11 +330,15 @@ class Sessions(Generic[DepsT, OutputT]):
             return await self.resume(conversation_id, unarchive=unarchive)
         return await self.browse(source, unarchive=unarchive)
 
+    def _import_sources(self) -> tuple[ImportSource, ...]:
+        """The agents whose sessions the unfiltered browser lists; `sessions.import_external` off lists none."""
+        return IMPORT_SOURCES if self.context.settings.session_import_external else ()
+
     async def browse(self, source: ImportSource | None, *, unarchive: bool = True) -> str:
         """Pick from Pax's sessions and not-yet-imported ones, or from one agent's sessions only."""
         entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
         self.namer.backfill([entry for entry in entries if entry.archived_at is None], client=self.naming)
-        imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
+        imports = await run_sync(ImportCatalog, (source,) if source else self._import_sources())
         loop = asyncio.get_running_loop()
 
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:

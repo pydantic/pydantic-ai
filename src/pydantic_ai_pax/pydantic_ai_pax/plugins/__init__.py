@@ -19,12 +19,13 @@ from typing_extensions import TypeVar as DefaultTypeVar, deprecated, get_origina
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import BinaryContent, ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
@@ -1492,6 +1493,29 @@ class LoadedPlugin(Generic[DepsT]):
         )
         parts = [f'{count} {one if count == 1 else many}' for count, one, many in counts if count]
         return ', '.join(parts) or 'nothing yet'
+
+    def tool_names(self) -> list[str]:
+        """The function tools its capabilities declare, by their functions' names, without running anything.
+
+        An MCP server's tools, and a toolset or capability built per run, aren't known before a run.
+        """
+        names: list[str] = []
+
+        def toolset(found: AbstractToolset[DepsT]) -> None:
+            if isinstance(found, FunctionToolset):
+                names.extend(name for name in found.tools if name not in names)
+
+        def capability(found: AbstractCapability[DepsT]) -> None:
+            declared = found.get_toolset()
+            # A toolset function builds its toolset per run, so its tools aren't known yet.
+            if declared is not None and not callable(declared):
+                declared.apply(toolset)
+
+        for contributed in self.capabilities:
+            # Likewise a capability function.
+            if not callable(contributed):
+                contributed.apply(capability)
+        return names
 
 
 def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:
