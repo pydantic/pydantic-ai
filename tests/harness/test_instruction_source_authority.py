@@ -34,7 +34,15 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionDef,
+    FunctionModel,
+    StreamFunctionDef,
+)
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.memory import FileMemoryStore, Memory
@@ -57,8 +65,8 @@ class _Seen:
     def record(self, messages: list[ModelMessage], info: AgentInfo) -> None:
         """Note the canary in what a model was sent in the operator's voice: instructions, system parts, tool definitions.
 
-        Every model in the run records, a sub-agent's too. The user channel is judged from the typed history instead,
-        where a framed data part still says which source it came from.
+        Every model in the run records, a sub-agent's too. The user channel is judged from the typed history instead
+        (`record_history`), where a framed data part still says which source it came from.
         """
         for message in messages:
             if not isinstance(message, ModelRequest):
@@ -77,7 +85,10 @@ class _Seen:
         )
 
     def record_history(self, messages: Sequence[ModelMessage]) -> None:
-        """Note the canary in the run's typed request parts, at the authority each part carries it with."""
+        """Note the canary in a run's typed request parts, at the authority each part carries it with.
+
+        Called with each request's history before the model renders it, in every run, a sub-agent's too.
+        """
         for message in messages:
             if isinstance(message, ModelRequest):
                 self.places.extend(_place(part) for part in message.parts if CANARY in repr(part))
@@ -112,7 +123,21 @@ def _scripted(seen: _Seen, calls: Sequence[ToolCallPart] = ()) -> FunctionModel:
             assert isinstance(part, TextPart)
             yield part.content
 
-    return FunctionModel(respond, stream_function=stream)
+    return _TypedHistoryModel(seen, respond, stream_function=stream)
+
+
+class _TypedHistoryModel(FunctionModel):
+    """A `FunctionModel` that hands each request's history to `seen` while its capability parts are still typed."""
+
+    def __init__(self, seen: _Seen, function: FunctionDef, *, stream_function: StreamFunctionDef) -> None:
+        super().__init__(function, stream_function=stream_function)
+        self._seen = seen
+
+    def prepare_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+    ) -> list[ModelMessage]:
+        self._seen.record_history(messages)
+        return super().prepare_messages(messages, model_request_parameters)
 
 
 @dataclass
@@ -248,10 +273,7 @@ async def _reached(name: str, directory: Path, authority: Authority) -> list[tup
     capabilities = source.build(directory, authority, seen)
     working_dir = directory / source.working_dir
     workspace = LocalWorkspaceBackend(working_dir) if authority == 'operator' else untrusted(working_dir)
-    result = await Agent(_scripted(seen, source.calls(authority)), capabilities=capabilities).run(
-        'go', workspace=workspace
-    )
-    seen.record_history(result.all_messages())
+    await Agent(_scripted(seen, source.calls(authority)), capabilities=capabilities).run('go', workspace=workspace)
     return seen.places
 
 
