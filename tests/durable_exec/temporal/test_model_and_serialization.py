@@ -1391,6 +1391,23 @@ def test_payload_converter_decodes_instruction_ids_without_kind() -> None:
     ]
 
 
+def test_payload_converter_reads_an_unknown_instruction_source_kind_as_unaddressable() -> None:
+    """A source `kind` from a newer version leaves the id unaddressable, as an unknown string namespace does."""
+    payload = temporalio.api.common.v1.Payload(
+        metadata={'encoding': b'json/plain'},
+        data=(
+            b'{"parts":['
+            b'{"id":{"source":{"id":"x","kind":"workspace"},"name":null},"content":"x","part_kind":"instruction-delta"},'
+            b'{"id":{"source":{"id":"memory","kind":"capability"},"name":null},"content":"x","part_kind":"instruction-delta"}'
+            b'],"kind":"request"}'
+        ),
+    )
+
+    [decoded] = PydanticAIPayloadConverter().from_payloads([payload], [ModelRequest])
+
+    assert [part.id for part in decoded.parts] == [None, InstructionId(CapabilityInstructionSource('memory'))]
+
+
 async def test_unknown_custom_event_recovers_across_workers() -> None:
     """A worker without the defining module keeps the payload intact for one that has it.
 

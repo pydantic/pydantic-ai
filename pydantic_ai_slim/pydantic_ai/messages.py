@@ -3348,6 +3348,9 @@ InstructionSource: TypeAlias = (
 """The source that authored an instruction part."""
 
 
+_INSTRUCTION_SOURCE_KINDS = frozenset({'agent', 'toolset', 'capability', 'run'})
+
+
 def _instruction_source_kind(value: Any) -> str | None:
     """Discriminate an `InstructionSource`, including one serialized before the sources carried a `kind`.
 
@@ -3389,8 +3392,14 @@ def _deserialize_instruction_id(value: str | InstructionId | None) -> Instructio
     """Rebuild a key from the string it renders to.
 
     A namespace this version doesn't know can only come from a newer one, whose keys it has no way to
-    address anyway, so it reads as unaddressable rather than failing the message it arrived on.
+    address anyway, so it reads as unaddressable rather than failing the message it arrived on. The same
+    goes for a source `kind` it doesn't know in an id written as an object.
     """
+    if isinstance(value, dict):
+        source = cast(dict[str, Any], value).get('source')
+        if isinstance(source, dict) and (kind := cast(dict[str, Any], source).get('kind')) is not None:
+            return value if kind in _INSTRUCTION_SOURCE_KINDS else None
+        return value
     if not isinstance(value, str):
         return value
     if value == 'agent':
