@@ -256,9 +256,10 @@ session that moves to another folder (`/workspace`, or `/resume` of a session sa
 folder) takes that folder's decision.
 
 Which capabilities change their output for an untrusted folder depends on their support for
-workspace authority. Today `repo_context` sends the instruction files it loads at the start (the
-walk-up `AGENTS.md` files) as the repository's data instead of putting them in the instructions,
-and marks the ones it surfaces as the agent works in a subfolder. Agent Skills, your own skill
+workspace authority. Today `repo_context` keeps the walk-up `AGENTS.md` files out of the
+instructions: it names the folder's own file there for the model to read with its file tools,
+sends the ones above it as the repository's data, and marks the ones it surfaces as the agent
+works in a subfolder. Agent Skills, your own skill
 folders included, stay out of the skill catalog: the model lists them with `list_skills` and
 reads one with `load_skill`, as tool output. The read-only Review specialist keeps the authority
 for the directory it is sent to. Agent folders do not check it yet, and load as before in both
