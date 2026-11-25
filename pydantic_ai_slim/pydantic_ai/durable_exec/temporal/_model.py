@@ -490,6 +490,15 @@ class TemporalModel(WrapperModel):
         return current.profile
 
     @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        """The currently active model's, like `profile`.
+
+        A raw model ID's model is only built in the activity, so it keeps the shared window rule, as `Model` does.
+        """
+        current = self._current_model()
+        return not isinstance(current, str) and current._rewrite_instructions_outside_prefix
+
+    @property
     def context_window(self) -> int | None:
         """Get the context window of the currently active model, rather than the default one's."""
         current = self._current_model()
