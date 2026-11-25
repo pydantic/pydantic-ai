@@ -19,6 +19,7 @@ async def render(args: dict[str, object] | str, *, width: int = 200, tool_arg_ch
         Console(file=output, width=width), stop_loading=lambda: None, tool_arg_chars=tool_arg_chars
     )
     await renderer.on_stream_event(FunctionToolCallEvent(part=ToolCallPart('search_repositories', args)))
+    await renderer.finish()
     return output.getvalue()
 
 

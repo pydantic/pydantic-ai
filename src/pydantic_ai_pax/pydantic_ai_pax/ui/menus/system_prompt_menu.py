@@ -1,8 +1,8 @@
 """`/system_prompt`: see the instructions the model receives, and edit your own.
 
-Your instructions are the `run.instructions` setting. CLAI sends them after its built-in instructions,
+Your instructions are the `run.instructions` setting. Pax sends them after its built-in instructions,
 the repository's AGENTS.md, and plugin instructions, which this menu shows but cannot change: yours add
-to them and replace none. Clearing yours restores CLAI's defaults. The menu is a `SettingsMenu`, so the
+to them and replace none. Clearing yours restores Pax's defaults. The menu is a `SettingsMenu`, so the
 terminal and the web UI show the same rows, each asking through its own `Dialogs`.
 """
 
@@ -25,7 +25,7 @@ NONE = 'none'
 """What the instructions row shows while you have none."""
 _SUMMARY_CHARS = 40
 _ADDED = (
-    "Sent after CLAI's built-in instructions, AGENTS.md, and plugin instructions, "
+    "Sent after Pax's built-in instructions, AGENTS.md, and plugin instructions, "
     'which stay as they are. Changes apply from your next prompt.'
 )
 
@@ -89,7 +89,7 @@ class SystemPromptSource:
         sent = sent_instructions(self._history())
         if sent is None:
             return (
-                "Nothing was sent in this conversation yet. Your next prompt sends CLAI's built-in "
+                "Nothing was sent in this conversation yet. Your next prompt sends Pax's built-in "
                 'instructions, AGENTS.md, and plugin instructions, followed by yours.'
             )
         return sent or 'The latest request had no system prompt.'
@@ -138,7 +138,7 @@ class SystemPromptSource:
         return self._save(raw.strip())
 
     def reset(self, row: FieldRow) -> str:
-        """Remove your instructions, leaving CLAI's defaults."""
+        """Remove your instructions, leaving Pax's defaults."""
         if row.key != INSTRUCTIONS:
             return f'{row.label} has nothing to reset.'
         if not self.instructions:

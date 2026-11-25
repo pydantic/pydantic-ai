@@ -1,4 +1,4 @@
-"""CLAI's docs ship with the package and the agent reads them a section at a time."""
+"""Pax's docs ship with the package and the agent reads them a section at a time."""
 
 from __future__ import annotations
 
@@ -15,17 +15,18 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_pax import clai_docs
-from pydantic_ai_pax.clai_docs import (
-    _CLAI_DOCS,  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_pax import pax_docs
+from pydantic_ai_pax.pax_docs import (
     _DOC_IDS,  # pyright: ignore[reportPrivateUsage]
     _HARNESS_DOCS,  # pyright: ignore[reportPrivateUsage]
+    _PAX_DOCS,  # pyright: ignore[reportPrivateUsage]
     _READ_LIMIT,  # pyright: ignore[reportPrivateUsage]
     CAPABILITY_ID,
     ClaiDocs,
+    PaxDocs,
 )
 
-PROJECT = Path(clai_docs.__file__).resolve().parent.parent
+PROJECT = Path(pax_docs.__file__).resolve().parent.parent
 HARNESS_PACKAGE = Path(str(files('pydantic_ai_harness')))
 
 SYNTHETIC = """\
@@ -57,23 +58,24 @@ LONG_LINE = f'{"-" * 140}needle{"+" * 280}'
 
 
 def _call_docs_tool(
-    name: Literal['read_clai_docs', 'search_clai_docs'],
+    name: Literal['read_pax_docs', 'search_pax_docs', 'read_clai_docs', 'search_clai_docs'],
     arguments: dict[str, str],
     *,
     expect_retry: bool = False,
 ) -> str:
     """Exercise every lookup through the public capability and real agent tool lifecycle."""
+    docs = ClaiDocs() if '_clai_' in name else PaxDocs()
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             assert [tool.name for tool in info.function_tools] == ['load_capability']
-            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': CAPABILITY_ID})])
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': docs.id})])
         if len(messages) == 3:
             assert name in {tool.name for tool in info.function_tools}
             return ModelResponse(parts=[ToolCallPart(name, arguments)])
         return ModelResponse(parts=[TextPart('done')])
 
-    result = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[ClaiDocs()]).run_sync('Look up docs')
+    result = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[docs]).run_sync('Look up docs')
     [returned] = [
         part
         for message in result.all_messages()
@@ -85,22 +87,39 @@ def _call_docs_tool(
     return returned.content
 
 
+def test_legacy_tools_suggest_callable_names() -> None:
+    assert 'Read one with read_clai_docs(path), or find a section with search_clai_docs(query).' in _call_docs_tool(
+        'read_clai_docs', {'path': ''}
+    )
+    assert 'Read a section with read_clai_docs(path).' in _call_docs_tool(
+        'search_clai_docs', {'query': 'saved api keys'}
+    )
+
+
+def test_legacy_tools_keep_the_full_descriptions() -> None:
+    for current, legacy in (
+        (pax_docs._read_pax_docs, pax_docs._read_clai_docs),  # pyright: ignore[reportPrivateUsage]
+        (pax_docs._search_pax_docs, pax_docs._search_clai_docs),  # pyright: ignore[reportPrivateUsage]
+    ):
+        assert (current.__doc__ or '').replace('_pax_docs', '_clai_docs') == legacy.__doc__
+
+
 def read_docs(path: str = '', *, expect_retry: bool = False) -> str:
-    """Call `read_clai_docs` through `ClaiDocs`, not its private implementation."""
-    return _call_docs_tool('read_clai_docs', {'path': path}, expect_retry=expect_retry)
+    """Call `read_pax_docs` through `PaxDocs`, not its private implementation."""
+    return _call_docs_tool('read_pax_docs', {'path': path}, expect_retry=expect_retry)
 
 
 def search_docs(query: str, *, expect_retry: bool = False) -> str:
-    """Call `search_clai_docs` through `ClaiDocs`, not its private implementation."""
-    return _call_docs_tool('search_clai_docs', {'query': query}, expect_retry=expect_retry)
+    """Call `search_pax_docs` through `PaxDocs`, not its private implementation."""
+    return _call_docs_tool('search_pax_docs', {'query': query}, expect_retry=expect_retry)
 
 
 @pytest.fixture(autouse=True)
 def fresh_docs() -> Iterator[None]:
     """Each test parses the docs it reads, so a patched source is never served from an earlier test."""
-    clai_docs._doc.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    pax_docs._doc.cache_clear()  # pyright: ignore[reportPrivateUsage]
     yield
-    clai_docs._doc.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    pax_docs._doc.cache_clear()  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture
@@ -120,8 +139,8 @@ def synthetic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def resources(name: str) -> Path:
         return packages[name]
 
-    monkeypatch.setattr(clai_docs, 'files', resources)
-    monkeypatch.setattr(clai_docs, '_DOC_IDS', ('readme', 'harness/coder'))
+    monkeypatch.setattr(pax_docs, 'files', resources)
+    monkeypatch.setattr(pax_docs, '_DOC_IDS', ('readme', 'harness/coder'))
 
 
 def test_catalog_lists_every_doc() -> None:
@@ -181,7 +200,7 @@ Save an API key in /keys.
 
 
 def test_long_section_returns_its_own_text_and_an_outline(synthetic: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(clai_docs, '_READ_LIMIT', 90)
+    monkeypatch.setattr(pax_docs, '_READ_LIMIT', 90)
     assert read_docs('readme') == snapshot("""\
 readme is 0 KB, too long to read whole. Read a section by its path:
 
@@ -202,7 +221,7 @@ This section is too long to read whole. Read a subsection by its path:
   - readme#keys: Keys
 - readme#setup-1: Setup\
 """)
-    monkeypatch.setattr(clai_docs, '_READ_LIMIT', 10)
+    monkeypatch.setattr(pax_docs, '_READ_LIMIT', 10)
     assert read_docs('readme#setup-1') == '## Setup\n\n\n\n[Truncated at 10 characters.]\n'
     assert read_docs('readme#guide') == snapshot("""\
 # Guide
@@ -224,9 +243,9 @@ This section is too long to read whole. Read a subsection by its path:
     [
         (
             'refrence',
-            "There is no CLAI doc 'refrence'. Did you mean reference? Call read_clai_docs with no path to list the docs.",
+            "There is no Pax doc 'refrence'. Did you mean reference? Call read_pax_docs with no path to list the docs.",
         ),
-        ('nothing', "There is no CLAI doc 'nothing'. Call read_clai_docs with no path to list the docs."),
+        ('nothing', "There is no Pax doc 'nothing'. Call read_pax_docs with no path to list the docs."),
         (
             'reference#saved-api-key',
             "reference has no section 'saved-api-key'. Did you mean reference#saved-api-keys? Read 'reference' for its outline.",
@@ -246,7 +265,7 @@ def test_search_ranks_sections_matching_every_word_in_the_heading() -> None:
         '- plugins#saved-api-keys: Saved API keys',
     }
     assert len(headings) == 10
-    assert results.endswith('\n\nRead a section with read_clai_docs(path).')
+    assert results.endswith('\n\nRead a section with read_pax_docs(path).')
 
 
 def test_search_snippets_show_the_matching_line(synthetic: None) -> None:
@@ -254,23 +273,23 @@ def test_search_snippets_show_the_matching_line(synthetic: None) -> None:
 - readme#setup: Setup
   Install it with quokka.
 
-Read a section with read_clai_docs(path).\
+Read a section with read_pax_docs(path).\
 """)
     assert search_docs('needle') == snapshot("""\
 - harness/coder#long: Long
   ...-----------------------------------------------------needle+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++...
 
-Read a section with read_clai_docs(path).\
+Read a section with read_pax_docs(path).\
 """)
 
 
 def test_title_only_search_results_have_no_snippet(synthetic: None, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(clai_docs, '_DOC_IDS', ('readme',))
+    monkeypatch.setattr(pax_docs, '_DOC_IDS', ('readme',))
     assert search_docs('setup') == snapshot("""\
 - readme#setup: Setup
 - readme#setup-1: Setup
 
-Read a section with read_clai_docs(path).\
+Read a section with read_pax_docs(path).\
 """)
 
 
@@ -280,7 +299,7 @@ def test_search_with_only_short_or_common_words_still_searches() -> None:
 
 def test_search_without_a_match_says_so() -> None:
     assert search_docs('zzzqqq') == (
-        "No CLAI docs section matches 'zzzqqq'. Call read_clai_docs with no path to list the docs."
+        "No Pax docs section matches 'zzzqqq'. Call read_pax_docs with no path to list the docs."
     )
 
 
@@ -296,9 +315,9 @@ def test_docs_resolve_in_editable_and_wheel_installs(tmp_path: Path, monkeypatch
     def installed(name: str) -> Path:
         return package
 
-    monkeypatch.setattr(clai_docs, 'files', installed)
+    monkeypatch.setattr(pax_docs, 'files', installed)
     assert read_docs('declarative-plugins') == (PROJECT / 'docs' / 'declarative-plugins.md').read_text(encoding='utf-8')
-    clai_docs._doc.cache_clear()  # pyright: ignore[reportPrivateUsage]
+    pax_docs._doc.cache_clear()  # pyright: ignore[reportPrivateUsage]
     (package / '_docs').mkdir()
     (package / '_docs' / 'declarative-plugins.md').write_text('# Packaged\n')
     assert read_docs('declarative-plugins') == '# Packaged\n'
@@ -306,8 +325,8 @@ def test_docs_resolve_in_editable_and_wheel_installs(tmp_path: Path, monkeypatch
 
 def test_wheel_and_sdist_ship_every_doc_outside_the_package() -> None:
     build = tomllib.loads((PROJECT / 'pyproject.toml').read_text(encoding='utf-8'))['tool']['hatch']['build']['targets']
-    outside = [source for source, _ in _CLAI_DOCS.values() if not source.startswith('pydantic_ai_pax/')]
-    assert len({Path(source).name for source in outside}) == len(outside), 'Bundled CLAI docs need unique basenames'
+    outside = [source for source, _ in _PAX_DOCS.values() if not source.startswith('pydantic_ai_pax/')]
+    assert len({Path(source).name for source in outside}) == len(outside), 'Bundled Pax docs need unique basenames'
     assert build['wheel']['force-include'] == {
         source: f'pydantic_ai_pax/_docs/{Path(source).name}' for source in outside
     }
@@ -319,12 +338,12 @@ def test_wheel_and_sdist_ship_every_doc_outside_the_package() -> None:
 def test_every_clai_user_doc_is_cataloged() -> None:
     user_docs = {path.relative_to(PROJECT).as_posix() for path in (PROJECT / 'docs').rglob('*.md')}
     user_docs.update({'README.md', 'PLUGINS.md'})
-    sources = {source for source, _ in _CLAI_DOCS.values()}
+    sources = {source for source, _ in _PAX_DOCS.values()}
     assert user_docs <= sources
 
 
 def test_every_harness_capability_clai_imports_has_its_readme_listed() -> None:
-    """A capability CLAI starts using gets its README into `_HARNESS_DOCS`; one it stops using leaves it."""
+    """A capability Pax starts using gets its README into `_HARNESS_DOCS`; one it stops using leaves it."""
     imported: set[str] = set()
     for module in (PROJECT / 'pydantic_ai_pax').rglob('*.py'):
         for node in ast.walk(ast.parse(module.read_text(encoding='utf-8'))):
@@ -345,21 +364,21 @@ async def test_agent_searches_then_reads_a_section() -> None:
             assert [tool.name for tool in info.function_tools] == ['load_capability']
             return ModelResponse(parts=[ToolCallPart('load_capability', {'id': CAPABILITY_ID})])
         tools = {tool.name: tool for tool in info.function_tools}
-        assert tools['search_clai_docs'].parameters_json_schema['additionalProperties'] is False
-        assert tools['read_clai_docs'].parameters_json_schema['additionalProperties'] is False
+        assert tools['search_pax_docs'].parameters_json_schema['additionalProperties'] is False
+        assert tools['read_pax_docs'].parameters_json_schema['additionalProperties'] is False
         if len(messages) == 3:
-            return ModelResponse(parts=[ToolCallPart('search_clai_docs', {'query': 'saved api keys'})])
+            return ModelResponse(parts=[ToolCallPart('search_pax_docs', {'query': 'saved api keys'})])
         if len(messages) == 5:
-            return ModelResponse(parts=[ToolCallPart('read_clai_docs', {'path': 'reference#saved-api-keys'})])
+            return ModelResponse(parts=[ToolCallPart('read_pax_docs', {'path': 'reference#saved-api-keys'})])
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[ClaiDocs()])
+    agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[PaxDocs()])
     result = await agent.run('Where are API keys saved?')
     returns = [
         part.content
         for message in result.all_messages()
         for part in message.parts
-        if isinstance(part, ToolReturnPart) and part.tool_name in {'search_clai_docs', 'read_clai_docs'}
+        if isinstance(part, ToolReturnPart) and part.tool_name in {'search_pax_docs', 'read_pax_docs'}
     ]
     assert len(returns) == 2
     assert isinstance(returns[0], str) and '- reference#saved-api-keys: Saved API keys' in returns[0]

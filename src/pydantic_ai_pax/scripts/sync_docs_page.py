@@ -17,8 +17,8 @@ README = ROOT / 'src' / 'pydantic_ai_pax' / 'README.md'
 PAGE = ROOT / 'docs' / 'harness' / 'clai2.md'
 HEADER = """\
 ---
-title: CLAI
-description: "CLAI is a coding agent for your terminal, built on Pydantic AI and the Pydantic AI Harness."
+title: Pax
+description: "Pax is a coding agent TUI built on the Pydantic AI Harness SDK's Coder, and a terminal interface for any Pydantic AI agent."
 ---
 
 <!-- Generated from src/pydantic_ai_pax/README.md by src/pydantic_ai_pax/scripts/sync_docs_page.py. Edit the README instead. -->

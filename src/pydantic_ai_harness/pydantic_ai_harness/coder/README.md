@@ -26,7 +26,7 @@ flowchart LR
 
 ## Usage
 
-Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, and ripgrep (`rg`), which backs the `list_files` and `grep` tools. Without the extra, importing `Coder` raises an `ImportError` naming it:
+Install the Coder extra. It includes `json-repair`, which `RepairToolArguments` needs, ripgrep (`rg`), which backs the `list_files` and `grep` tools, and Pillow, which downscales large images `read_file` returns. Without the extra, importing `Coder` raises an `ImportError` naming it, and without Pillow, constructing `Coder` does, unless you pass `max_image_side=None`:
 
 uv:
 
@@ -74,11 +74,13 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()
 With `LocalWorkspace`, [`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) and [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) work in the same directory. With a sandbox, the CLI keeps one sandbox for the session, but `to_web()` starts a new one for each message because the web protocol does not carry the workspace ref, so use `LocalWorkspace` when files must persist between web messages.
 
 The exported `pydantic_ai_harness.coder:coder_agent` is the same agent, model-less and named `coder`, working in the directory that is current when it is imported.
-Use it with the Pydantic AI CLI:
+[Pax](https://pydantic.dev/docs/ai/pax/) runs this agent in your terminal, with `--agent` taking the import path. It loads no plugins, and needs a model because the export carries none:
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
+uvx pydantic-ai-pax --agent pydantic_ai_harness.coder:coder_agent -m anthropic:claude-opus-5-5
 ```
+
+For a coding agent rather than this export, plain `uvx pydantic-ai-pax` builds its own `Coder` with Pax's plugins.
 
 ### The command environment
 
@@ -137,10 +139,11 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 `Coder()` is these capabilities, in this order:
 
 1. A `Capability` carrying the default instructions, plus any `instructions=` you pass.
-2. [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/)`(content_hashes=False, max_read_chars=50000, tools=FILE_TOOL_NAMES, max_retries=5)`, where
+2. [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/)`(content_hashes=False, max_read_chars=50000, tools=FILE_TOOL_NAMES, max_retries=5, max_image_side=1024)`, where
    `FILE_TOOL_NAMES` is `read_file`, `write_file`, `edit_file`, `list_files`, and `grep`. Its `root_dir` is the workspace's working directory.
    Each file tool allows five consecutive retries (for a denied path or a stale edit) rather than the agent's default one,
-   so a repeated correctable mistake does not end a long run.
+   so a repeated correctable mistake does not end a long run. Images over 1024 pixels on the longest side are downscaled;
+   `Coder(max_image_side=None)` sends them at full size and drops the Pillow requirement.
 3. [`Shell`](https://pydantic.dev/docs/ai/harness/shell/)`(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell'])`.
 4. [`RepoContext`](https://pydantic.dev/docs/ai/harness/repo-context/)`(walk_up='repo_root')`
    for repository instructions: the instruction file of each directory (`AGENTS.md`, else `CLAUDE.md`) from the repository root down to the working directory
@@ -328,6 +331,8 @@ Provider-specific cache settings, such as `anthropic_cache`, take precedence ove
 ## Upgrading
 
 `json-repair` moved from the base install to the `coder` and `repair-tool-arguments` extras. If you install plain `pydantic-ai-harness`, importing `Coder` or `coder_agent` raises an `ImportError`: install `pydantic-ai-harness[coder]`, or add `coder` to the extras you already use. If you use `RepairToolArguments` on its own, install `pydantic-ai-harness[repair-tool-arguments]`.
+
+Pillow is now in the `coder` extra too, because `Coder` downscales the images `read_file` returns. After an upgrade of `pydantic-ai-harness` alone that does not re-resolve its extras, constructing `Coder` or loading `coder_agent` raises an `ImportError`: reinstall `pydantic-ai-harness[coder]`, install `pillow`, or pass `Coder(max_image_side=None)` to keep full-size images.
 
 `Coder` now loads the repository's instruction files from the repository root (the nearest directory with a `.git` entry) down to the working directory at run start, one per directory with `AGENTS.md` ahead of `CLAUDE.md`, and inlines a subdirectory's instruction file the first time the agent reads, lists, writes or edits something under it, up to 32,000 characters per conversation. Its bundled `RepoContext` is now `RepoContext(walk_up='repo_root')`. This adds workspace `exists` and `stat` calls at run start, so Temporal and DBOS runs started before the upgrade no longer replay: let them finish or version the deployment first. To get close to the old behavior, pass `Coder(repo_context=RepoContext(filenames=('CLAUDE.md', 'AGENTS.md'), nested_traversal=False))`. It only approximates it: a directory holding both files now loads only `CLAUDE.md`, where it used to load both.
 

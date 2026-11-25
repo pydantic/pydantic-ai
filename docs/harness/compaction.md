@@ -45,7 +45,7 @@ A long run accumulates tool outputs, file reads, and reasoning until the history
 |---|---|---|---|
 | `ClampOversizedMessages` | zero-LLM | Head/tail-truncates one oversized part (response text, tool-call args) | One runaway generation exceeds the context cap |
 | `SlidingWindowCompaction` | zero-LLM | Drops the oldest whole messages down to a tail | Only the recent turns matter |
-| `ClearToolResults` | zero-LLM | Blanks old tool *results* in place, keeping the last `keep_pairs` | Tool outputs dominate and can be re-fetched |
+| `ClearToolResults` | zero-LLM | Blanks old tool *results* in place, keeping the last `keep_pairs` or `keep_turns` | Tool outputs dominate and can be re-fetched |
 | `DeduplicateFileReads` | zero-LLM | Blanks file reads superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages, keeping the recent tail | Old context matters but must shrink; use behind the cheap tiers |
 | `RelevanceCompaction` | one judge request per new step, plus an optional summary | Keeps, reduces, or drops each older step by a judge model's answers | Some old tool results are needed verbatim, others are dead weight |
@@ -387,9 +387,31 @@ agent = Agent(
 )
 ```
 
-`clear_tool_inputs=True` also blanks the cleared calls' arguments, and those calls lose their item ID as a [clamped part](#clampoversizedmessages-surviving-a-runaway-generation) does. A `load_capability` call keeps its argument, which Pydantic AI reads to know which capability is loaded. `exclude_tools` names tools whose results are never cleared.
+`clear_tool_inputs=True` also blanks the cleared calls' arguments, and those calls lose their item ID as a [clamped part](#clampoversizedmessages-surviving-a-runaway-generation) does. A `load_capability` call keeps its argument, which Pydantic AI reads to know which capability is loaded. `exclude_tools` names tools whose results are never cleared; `tools` names the only ones that are, and `keep_pairs` then counts only their pairs, shared across the listed tools, so `tools=['retrieve'], keep_pairs=2` keeps the newest two `retrieve` results whatever ran in between. Setting `tools` with `exclude_tools` raises `UserError`.
 
-With `max_messages`, the count starts after the last cleared result, since clearing removes no messages. Clearing thus happens in batches: the next clear waits until more than `max_messages` messages follow the last cleared result, and the requests in between extend the cached prefix instead of rewriting it. Right after a clear, about `2 * keep_pairs` messages (the kept pairs) follow the last cleared result and each tool step adds two, so the next clear comes after about `(max_messages - 2 * keep_pairs) / 2` tool steps; at or below `2 * keep_pairs`, it clears on every request.
+`keep_turns` keeps by user turn instead: the results of the last `keep_turns` completed turns plus the current one, which is never cleared, so `keep_turns=0` clears every earlier turn's. Only the user's own prompt starts a turn, not harness-added prompts (pinned messages, receipts) or a `ToolReturn`'s `content`, and a run resumed without a prompt counts the history's last turn as current. A `keep_pairs` other than its default of 3 alongside it raises `UserError`.
+
+`placeholder` can also be a function of the `ToolReturnPart` being cleared, for example to keep its first line so the ids it listed survive:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.messages import ToolReturnPart
+from pydantic_ai_harness import ClearToolResults
+
+
+def first_line(part: ToolReturnPart) -> str:
+    return part.model_response_str().partition('\n')[0]
+
+
+agent = Agent(
+    '{{ openai:small }}',
+    capabilities=[ClearToolResults(max_tokens=50_000, tools=['search'], keep_turns=0, placeholder=first_line)],
+)
+```
+
+The function runs once per result, when it is cleared, and the history stores its output; a clear that `min_clear_tokens` drops calls it again later. It must be deterministic, or a history cleared again on a resumed or replayed run comes out different and the prompt cache misses. A result whose `metadata` is neither `None` nor a `dict` isn't cleared with a function, and an [agent spec](../agent-spec.md) only takes a string.
+
+With `max_messages`, the count starts after the last cleared result, since clearing removes no messages. Clearing thus happens in batches: the next clear waits until more than `max_messages` messages follow the last cleared result, and the requests in between extend the cached prefix instead of rewriting it. Right after a clear, about `2 * keep_pairs` messages (the kept pairs) follow the last cleared result and each tool step adds two, so the next clear comes after about `(max_messages - 2 * keep_pairs) / 2` tool steps; at or below `2 * keep_pairs`, it clears on every request. With `keep_turns`, the kept turns' messages count the same way.
 
 ## `DeduplicateFileReads`: drop superseded reads
 

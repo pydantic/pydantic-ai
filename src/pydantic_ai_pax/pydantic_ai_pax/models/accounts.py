@@ -1,7 +1,7 @@
 """Accounts: every signed-in account per provider, in the order `@*` tries them.
 
 The settings database keeps only the order, a label, and which plugin sign-in owns an account. Logins
-CLAI keeps in its credential store are found from their files, so ones made before accounts existed
+Pax keeps in its credential store are found from their files, so ones made before accounts existed
 appear too; a plugin keeps its own tokens, so its accounts are the ones signed in through `/login`.
 """
 
@@ -16,7 +16,7 @@ from pydantic_ai_pax.models.profiles import DEFAULT, account, provider_of, with_
 from pydantic_ai_pax.plugins import PluginLogin
 
 SUBSCRIPTIONS = ('openai-codex', 'github-copilot')
-"""Sign-ins CLAI ships, whose default account is a browser or device login."""
+"""Sign-ins Pax ships, whose default account is a browser or device login."""
 
 CONNECTIONS = ('openrouter', 'vllm')
 """Providers whose account is a saved connection; the default one is what `/model add` connects."""
@@ -92,7 +92,7 @@ def remember(store: SettingsStore, *, login: str, profile: str | None, plugin: P
 
 
 def sign_out(store: SettingsStore, item: Account) -> str:
-    """Delete CLAI's copy of the credentials and forget the account; a plugin keeps its own tokens."""
+    """Delete Pax's copy of the credentials and forget the account; a plugin keeps its own tokens."""
     store.remove_account(provider=item.provider, profile=item.profile)
     if item.plugin_login is not None:
         return f'Removed {item.login} from the list. Its plugin keeps the sign-in; use its own logout to end it.'
@@ -115,7 +115,7 @@ class LoginChoice:
 
     @property
     def has_default(self) -> bool:
-        """Whether the account without a profile is one CLAI signs in, rather than the environment's key."""
+        """Whether the account without a profile is one Pax signs in, rather than the environment's key."""
         return self.kind != 'api key'
 
 

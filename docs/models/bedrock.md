@@ -120,6 +120,10 @@ Such a request is streamed behind the scenes, since a response that long can tak
 
 Bedrock reserves `maxTokens` against your tokens-per-minute quota when a request starts, so an account with a small Claude quota can see more `ThrottlingException`s. Set `max_tokens` close to the output you expect to reserve less and send a non-streaming `Converse` request.
 
+### Sampling settings on Claude
+
+As on [Anthropic](anthropic.md#sampling-settings), a Claude request that thinks drops `temperature` other than `1`, `top_p` below `0.95` and `top_k`, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`, silently, since Bedrock rejects them.
+
 ### Stop sequences
 
 Converse rejects [`stop_sequences`][pydantic_ai.settings.ModelSettings.stop_sequences] with a 400 for the OpenAI (GPT and gpt-oss), xAI Grok, Qwen, Google Gemma, Z.AI GLM, Moonshot AI Kimi, MiniMax and NVIDIA Nemotron models, DeepSeek V3.2, Writer Palmyra Vision, and Mistral's Devstral, Magistral, Ministral 3, Mistral Large 3 and Voxtral. On those models, Pydantic AI drops the setting with an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] instead of sending it, so the response isn't cut off at a stop sequence. Claude, Amazon Nova, Meta Llama, DeepSeek R1 and the older Mistral models take it.
