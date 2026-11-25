@@ -373,6 +373,27 @@ def test_responses_continuation_reconstructs_stored_input(tmp_path: Path, stream
     assert [violation.level for violation in violations] == (['system', 'system'] if rewrite_prefix else [])
 
 
+@pytest.mark.parametrize('model, expected_levels', [('gpt-6.1-sol', ['system']), ('gpt-6.2-sol', [])])
+def test_responses_instructions_outside_prefix_from_gpt_6_2(
+    tmp_path: Path, model: str, expected_levels: list[str]
+) -> None:
+    """GPT-6.2 puts the top-level `instructions` after `input`, so changing them doesn't move the cached prefix."""
+    interactions: list[dict[str, object]] = []
+    history: list[dict[str, str]] = [{'role': 'system', 'content': 'Stable.'}]
+    for turn in ('First.', 'Second.'):
+        history = [*history, {'role': 'user', 'content': turn}]
+        body = {'model': model, 'instructions': f'Changes every turn: {turn}', 'input': history}
+        interactions.append(
+            {
+                'request': {'method': 'POST', 'uri': 'https://api.openai.com/v1/responses', 'parsed_body': body},
+                'response': {'status': {'code': 200, 'message': 'OK'}},
+            }
+        )
+    cassette = tmp_path / 'instructions.yaml'
+    cassette.write_text(yaml.safe_dump({'interactions': interactions}))
+    assert [violation.level for violation in iter_cassette_prefix_violations(cassette)] == expected_levels
+
+
 @pytest.mark.parametrize('response', [None, {'body': {'string': None}}])
 def test_responses_continuation_ignores_unusable_response_metadata(tmp_path: Path, response: object) -> None:
     """A continuation with no usable response id cannot reconstruct stored input, but remains checkable."""
