@@ -199,7 +199,6 @@ from ..profiles import (
     merge_profile,
 )
 from ..profiles.decision import decision_model_profile
-from ..profiles.google import google_interactions_model_profile
 from ..providers import InterfaceClient, Provider, infer_provider, infer_provider_class
 from ..settings import (
     CacheSetting,
@@ -3775,6 +3774,8 @@ def infer_model_profile(model: str) -> ModelProfile:
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
     if provider == 'google-interactions':
+        from ..profiles.google import google_interactions_model_profile
+
         # The overrides `GoogleInteractionsModel._instance_profile_defaults` applies over the `GoogleProvider` profile.
         profile = merge_profile(profile, google_interactions_model_profile(model_name))
     return profile
