@@ -68,7 +68,9 @@ _MIN_MARKER = 12
 
 
 def markers(part: CapabilityPart) -> list[str]:
-    """Stretches of `part`'s text to find it by on the wire: each line of each text item, empty if it has no text.
+    """Stretches of `part`'s text to find it by on the wire, empty if it has no text.
+
+    These are the first line of its text and every later line of at least `_MIN_MARKER` characters.
 
     A part with no text, such as only a file, can't be found by its text, so it's left out of the check.
     """
