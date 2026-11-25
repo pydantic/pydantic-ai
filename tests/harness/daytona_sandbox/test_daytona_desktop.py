@@ -42,7 +42,7 @@ from pydantic_ai.computer_use import (
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
-from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
+from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, SupportsLiveView, UnsupportedActionError
 from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
 
 from ..computer_use.display_fakes import full_display, look_click_then_finish
@@ -588,3 +588,16 @@ async def test_a_desktop_capability_runs_the_computer_tool_on_a_new_sandbox(fake
     assert await attached.screenshot() == sandbox.computer_use.png
     assert fake_daytona.sandboxes == [sandbox]
     assert sandbox.desktop_calls[-1] == 'take_full_screen'
+
+
+async def test_the_live_view_is_a_signed_url_of_the_desktops_novnc_page(fake_daytona: FakeDaytona) -> None:
+    screen = DaytonaSandboxBackend(desktop=True).display
+    assert isinstance(screen, SupportsLiveView)
+
+    url = await screen.live_view_url()
+
+    # Signed for an hour, on the port Daytona's desktop serves noVNC on.
+    assert url == 'https://6080-token3600.proxy.daytona.works/vnc.html?autoconnect=true&view_only=true&resize=scale'
+    # The desktop started first, so the page has a screen to show.
+    (sandbox,) = fake_daytona.sandboxes
+    assert 'start' in sandbox.desktop_calls

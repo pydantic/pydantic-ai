@@ -14,8 +14,8 @@ from pydantic_ai import Agent
 from pydantic_ai.computer_use import ComputerReturnPart
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import FunctionModel
-from pydantic_ai.workspaces import WorkspaceRef, WorkspaceUnavailableError
-from pydantic_ai_harness.computer_use import ComputerUse
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
+from pydantic_ai_harness.computer_use import ComputerUse, SupportsLiveView
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
 
 from ..computer_use._fake_x_display import FakeDisplay
@@ -218,3 +218,42 @@ class TestStartScript:
         assert result.returncode == 1
         assert 'another X server, outside this sandbox, already uses display :1' in result.stderr
         assert not (stubs / 'xfce-starts').exists()
+
+
+async def test_the_live_view_starts_once_behind_a_password(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    screen = E2BSandboxBackend(desktop=True).display
+    assert isinstance(screen, SupportsLiveView)
+
+    url = await screen.live_view_url()
+    assert await screen.live_view_url() == url
+
+    commands = fake_e2b.sandboxes[0].commands.calls
+    (start,) = [call for call in commands if 'x11vnc' in call.command]
+    assert start.envs is not None
+    password = start.envs['VNC_PASSWORD']
+    assert len(password) == 8
+    # The password reaches x11vnc through the env, so it isn't in the command line.
+    assert password not in start.command
+    assert '-viewonly' in start.command and '-passwd "$VNC_PASSWORD"' in start.command
+    assert url == (
+        'https://6080-sbx-1.e2b.app/vnc.html?autoconnect=true&view_only=true&resize=scale&password=' + password
+    )
+    # The display started first, so x11vnc has a screen to share.
+    assert len(display.starts) == 1
+
+
+async def test_a_live_view_that_cannot_start_says_why(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    def responder(command: str, timeout: float | None) -> tuple[str, str, int]:
+        if 'x11vnc' in command:
+            return '', 'the live view needs x11vnc and noVNC in /opt/noVNC\n', 1
+        return display(command, timeout)
+
+    fake_e2b.responder = responder
+    screen = E2BSandboxBackend(desktop=True).display
+    assert isinstance(screen, SupportsLiveView)
+
+    with pytest.raises(
+        WorkspaceError,
+        match=r'^Could not start the live view in E2B sandbox sbx-1: the live view needs x11vnc and noVNC in /opt/noVNC$',
+    ):
+        await screen.live_view_url()

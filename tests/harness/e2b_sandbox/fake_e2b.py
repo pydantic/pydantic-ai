@@ -654,6 +654,9 @@ class FakeSandbox:
                 handle.terminate()
         return True
 
+    def get_host(self, port: int) -> str:
+        return f'{port}-{self.sandbox_id}.e2b.app'
+
     def check_alive(self) -> None:
         """Fail an envd call the way the SDK does once the sandbox is gone.
 

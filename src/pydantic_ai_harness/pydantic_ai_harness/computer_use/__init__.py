@@ -7,6 +7,7 @@ from pydantic_ai_harness.computer_use._protocol import (
     DisplayAction,
     SupportsCursorPosition,
     SupportsDisplay,
+    SupportsLiveView,
     SupportsZoom,
     UnsupportedActionError,
 )
@@ -19,6 +20,7 @@ __all__ = [
     'DisplayAction',
     'SupportsCursorPosition',
     'SupportsDisplay',
+    'SupportsLiveView',
     'SupportsZoom',
     'UnsupportedActionError',
 ]

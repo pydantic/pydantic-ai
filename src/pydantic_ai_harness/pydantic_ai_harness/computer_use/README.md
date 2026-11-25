@@ -83,6 +83,30 @@ panel. To give the agent a browser, install one in your image, such as `firefox-
 Drags move the pointer in steps with short pauses, so a web page's drag-and-drop sees them. Now and then a
 page still misses one.
 
+## Watch the screen
+
+A person can watch the agent work in a browser. On these sandboxes the display implements
+`SupportsLiveView`, and `live_view_url()` returns a page that
+shows the screen live:
+
+| Sandbox | The page |
+|---|---|
+| [E2B](../e2b_sandbox/#give-the-agent-a-desktop) | noVNC, served from the sandbox. Anyone can reach the page, so the URL holds a random password, and the screen is view-only. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC`, which E2B's `desktop` template has. |
+| [Daytona](../daytona_sandbox/#give-the-agent-a-desktop) | Daytona's noVNC, on a signed URL that works for an hour. The page sends no input, but anyone with the URL could. Call `live_view_url()` again for a new URL. |
+| [boxd](../boxd_sandbox/#give-the-agent-a-desktop) | The machine's desktop in boxd's console. Only a browser signed in to boxd can open it. |
+
+```python {title="computer_use_live_view.py"}
+from pydantic_ai_harness.computer_use import SupportsLiveView
+from pydantic_ai_harness.e2b_sandbox import E2BSandboxBackend
+
+backend = E2BSandboxBackend(desktop=True)
+if isinstance(backend.display, SupportsLiveView):
+    print(await backend.display.live_view_url())
+```
+
+Treat the URL like a password. The first call starts the display. When the page can't be made, `live_view_url()`
+raises [`WorkspaceError`](https://pydantic.dev/docs/ai/api/pydantic-ai/workspaces/#pydantic_ai.workspaces.WorkspaceError).
+
 ## Safety
 
 The model controls a real screen, and anything it clicks or types happens. Run it in a sandbox that holds only what
@@ -167,6 +191,8 @@ For the `zoom` and `cursor_position` actions, also implement
 ::: pydantic_ai_harness.computer_use.SupportsZoom
 
 ::: pydantic_ai_harness.computer_use.SupportsCursorPosition
+
+::: pydantic_ai_harness.computer_use.SupportsLiveView
 
 ::: pydantic_ai_harness.computer_use.DisplayAction
 

@@ -474,7 +474,8 @@ namespace. Its `result` is the call's `ComputerResult`.
 
 A workspace backend with a screen implements `SupportsDisplay`: a `display` property that returns a `Display`, or
 `None` without a screen. `Display` and the optional `SupportsZoom` and `SupportsCursorPosition` are in
-`pydantic_ai_harness.computer_use`, not in core `pydantic_ai.workspaces`.
+`pydantic_ai_harness.computer_use`, not in core `pydantic_ai.workspaces`. On E2B, Daytona and boxd the display also
+implements `SupportsLiveView`: `await display.live_view_url()` returns a page where a person can watch the screen.
 
 Gotchas:
 

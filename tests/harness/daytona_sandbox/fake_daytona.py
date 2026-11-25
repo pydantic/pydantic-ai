@@ -586,6 +586,13 @@ class FakeSandbox:
         self.start_calls.append(timeout)
         self.state = SandboxState.STARTED
 
+    async def create_signed_preview_url(
+        self, port: int, expires_in_seconds: int | None = None, request_timeout: float | None = None
+    ) -> SimpleNamespace:
+        self.check_alive()
+        # Daytona puts the token in the host name, so the URL works without headers.
+        return SimpleNamespace(url=f'https://{port}-token{expires_in_seconds}.proxy.daytona.works')
+
     async def wait_for_sandbox_start(self, timeout: float | None = 60) -> None:
         self.state = SandboxState.STARTED
 

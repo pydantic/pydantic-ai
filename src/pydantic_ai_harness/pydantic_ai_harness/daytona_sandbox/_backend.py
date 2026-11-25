@@ -62,7 +62,7 @@ try:
 except ImportError as error:
     raise ImportError('Install `pydantic-ai-harness[daytona]` to use DaytonaSandbox.') from error
 
-from pydantic_ai_harness.computer_use._display import LazyDisplay, checked_desktop_size
+from pydantic_ai_harness.computer_use._display import LiveViewDisplay, checked_desktop_size
 from pydantic_ai_harness.daytona_sandbox._desktop import (
     ADD_CHROMIUM_NO_SANDBOX_FLAG,
     DISPLAY,
@@ -91,6 +91,10 @@ _PARTIAL_OUTPUT_LIMIT = 4096
 # A command's whole output is downloaded into memory.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
 _OUTPUT_PREVIEW_BYTES = 64 * 1024
+# The port of the noVNC page that Daytona's desktop serves, seen live on 2026-11-25.
+_LIVE_VIEW_PORT = 6080
+# How long a live view URL works. Daytona's own default is 60 seconds.
+_LIVE_VIEW_SECONDS = 3_600
 
 logger = logging.getLogger(__name__)
 
@@ -505,8 +509,11 @@ class DaytonaSandboxBackend(
         self._display = (
             None
             if self._desktop_size is None
-            else LazyDisplay(
-                DaytonaDisplayDriver(self._computer_use_api), self._start_display, operation=self._display_operation
+            else LiveViewDisplay(
+                DaytonaDisplayDriver(self._computer_use_api),
+                self._start_display,
+                live_view=self._live_view_url,
+                operation=self._display_operation,
             )
         )
         self._secrets = dict(secrets) if secrets is not None else None
@@ -923,6 +930,17 @@ class DaytonaSandboxBackend(
                 f'to bring it back. ({error})'
             ) from error
         await sandbox.process.exec(ADD_CHROMIUM_NO_SANDBOX_FLAG, timeout=_REQUEST_TIMEOUT)
+
+    async def _live_view_url(self) -> str:
+        """A signed URL of the desktop's noVNC page, which works for an hour without a Daytona login.
+
+        `view_only` is a setting of the page: Daytona's VNC server takes input from anyone who has the URL.
+        """
+        sandbox = await self.get_sandbox()
+        signed = await sandbox.create_signed_preview_url(
+            _LIVE_VIEW_PORT, expires_in_seconds=_LIVE_VIEW_SECONDS, request_timeout=_REQUEST_TIMEOUT
+        )
+        return f'{signed.url.rstrip("/")}/vnc.html?autoconnect=true&view_only=true&resize=scale'
 
 
 def _is_desktop_broken(error: daytona.DaytonaServiceUnavailableError) -> bool:

@@ -34,6 +34,7 @@ __all__ = (
     'DisplayAction',
     'SupportsCursorPosition',
     'SupportsDisplay',
+    'SupportsLiveView',
     'SupportsZoom',
     'UnsupportedActionError',
 )
@@ -62,7 +63,8 @@ class Display(Protocol):
 
     Positions are in screenshot pixels, counted from the top left corner. A display may start its screen on the first
     method call. It can also implement [`SupportsZoom`][pydantic_ai_harness.computer_use.SupportsZoom] and
-    [`SupportsCursorPosition`][pydantic_ai_harness.computer_use.SupportsCursorPosition].
+    [`SupportsCursorPosition`][pydantic_ai_harness.computer_use.SupportsCursorPosition], and
+    [`SupportsLiveView`][pydantic_ai_harness.computer_use.SupportsLiveView].
     """
 
     async def display_size(self) -> tuple[int, int]:
@@ -114,4 +116,20 @@ class SupportsCursorPosition(Protocol):
 
     async def cursor_position(self) -> Point:
         """The pointer's position in screenshot pixels."""
+        ...
+
+
+@runtime_checkable
+class SupportsLiveView(Protocol):
+    """An optional extra for a [`Display`][pydantic_ai_harness.computer_use.Display]: a web page that shows the screen.
+
+    `ComputerUse` doesn't use it. It is for an app that lets a person watch the agent work.
+    """
+
+    async def live_view_url(self) -> str:
+        """A URL a browser can open to watch the screen live, view-only where the provider allows it.
+
+        Anyone with the URL may be able to see the screen, so treat it like a password. Raise `WorkspaceError` when
+        the URL can't be made.
+        """
         ...

@@ -27,7 +27,7 @@ from pydantic_ai.computer_use import (
     TypeText,
 )
 from pydantic_ai.workspaces import CommandResult, WorkspaceError, WorkspaceUnavailableError
-from pydantic_ai_harness.computer_use._display import RELEASE_TIMEOUT, LazyDisplay, png_from_base64
+from pydantic_ai_harness.computer_use._display import RELEASE_TIMEOUT, LazyDisplay, LiveViewDisplay, png_from_base64
 from pydantic_ai_harness.computer_use._drag import DRAG_STEP_PAUSE, drag_steps
 from pydantic_ai_harness.computer_use._protocol import DisplayAction, UnsupportedActionError
 
@@ -481,12 +481,14 @@ def x11_display(
     describe_environment: Callable[[], str],
     *,
     start_script: str = _START_DESKTOP,
+    live_view: Callable[[], Awaitable[str]] | None = None,
 ) -> LazyDisplay | None:
     """A backend's display on `DISPLAY` at `size`, or `None` without a size.
 
     `start_script` starts an X server at the size given as `$1`, unless one already runs; the default also starts a
     desktop. `describe_environment` names the environment in error messages, such as `'E2B sandbox abc'`. The backend
-    adds `DISPLAY` to its commands' env, so a program the agent starts from the shell opens on the screen.
+    adds `DISPLAY` to its commands' env, so a program the agent starts from the shell opens on the screen. With
+    `live_view`, which makes the URL, the display also implements `SupportsLiveView`.
     """
     if size is None:
         return None
@@ -501,7 +503,9 @@ def x11_display(
                 f'Could not start the display in {describe_environment()}: {(result.stderr or result.stdout).strip()}'
             )
 
-    return LazyDisplay(X11DisplayDriver(run_command), start)
+    if live_view is None:
+        return LazyDisplay(X11DisplayDriver(run_command), start)
+    return LiveViewDisplay(X11DisplayDriver(run_command), start, live_view=live_view)
 
 
 class X11DisplayDriver:

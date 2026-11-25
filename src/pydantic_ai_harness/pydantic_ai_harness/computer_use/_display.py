@@ -135,3 +135,26 @@ class LazyDisplay:
 
     async def cursor_position(self) -> Point:
         return await self._run_on_driver(lambda driver: driver.cursor_position(), retry_once=True)
+
+
+class LiveViewDisplay(LazyDisplay):
+    """A `LazyDisplay` that also implements `SupportsLiveView`, for a backend whose provider can show its screen.
+
+    `live_view` makes the URL. It runs inside `operation`, after the display has started, so the page shows a screen.
+    """
+
+    def __init__(
+        self,
+        driver: DisplayDriver,
+        start_display: Callable[[], Awaitable[None]],
+        *,
+        live_view: Callable[[], Awaitable[str]],
+        operation: Callable[[], AbstractAsyncContextManager[object]] = nullcontext,
+    ):
+        super().__init__(driver, start_display, operation=operation)
+        self._live_view = live_view
+
+    async def live_view_url(self) -> str:
+        async with self._operation():
+            await self._start_unless_running()
+            return await self._live_view()

@@ -31,7 +31,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.boxd_sandbox._desktop import INSTALL_PANEL, START_PANEL, WRITE_PANEL_SETTINGS
-from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, UnsupportedActionError
+from pydantic_ai_harness.computer_use import ComputerUse, DisplayAction, SupportsLiveView, UnsupportedActionError
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..computer_use.display_fakes import full_display, look_click_then_finish
@@ -448,3 +448,18 @@ async def test_a_desktop_machine_runs_computer_use(host: FakeBoxd) -> None:
     attached = sandbox.backend(ref).display
     assert attached is not None
     assert await attached.screenshot() == host.desktop.png
+
+
+async def test_the_live_view_is_the_machines_desktop_page_in_the_console(host: FakeBoxd) -> None:
+    backend = BoxdSandboxBackend(desktop=True)
+    screen = backend.display
+    assert isinstance(screen, SupportsLiveView)
+
+    assert await screen.live_view_url() == 'https://app.boxd.example/desktop/machine'
+    # The screen was set up first, so the page shows the desktop at its size.
+    assert any(call.startswith('set_screen_size') for call in host.desktop.calls)
+
+    assert backend.ref is not None
+    host.machines[backend.ref.id].desktop_url = ''
+    with pytest.raises(WorkspaceError, match=r"^boxd did not give a desktop URL for the machine '.+'\.$"):
+        await screen.live_view_url()

@@ -42,6 +42,7 @@ from boxd import (
     ConflictError,
     ExecResult,
     Machine,
+    MachineAccess,
     MachineNetworking,
     MachineSpecBuilder,
     NotFoundError,
@@ -116,6 +117,8 @@ class FakeMachine:
     org: str | None = None
     # A copy's source machine: its id, and its status when it was forked.
     forked_from: tuple[str, str] | None = None
+    # The machine's page in boxd's console; boxd leaves it empty when the client can't tell the console's address.
+    desktop_url: str = 'https://app.boxd.example/desktop/machine'
 
     def record(self, status: str | None = None) -> Machine:
         return Machine.model_construct(
@@ -124,6 +127,7 @@ class FakeMachine:
             status=status or self.status,
             networking=MachineNetworking(networks=self.networks, isolated=self.isolated),
             org=None if self.org is None else OrgRef(id=f'org-{self.org}', name=self.org),
+            access=MachineAccess.model_construct(desktop_url=self.desktop_url),
         )
 
 

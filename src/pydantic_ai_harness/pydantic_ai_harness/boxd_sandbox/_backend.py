@@ -81,7 +81,7 @@ from pydantic_ai_harness._workspace_provider import (
     running_on_asyncio,
 )
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay, UnsupportedActionError
-from pydantic_ai_harness.computer_use._display import LazyDisplay, checked_desktop_size
+from pydantic_ai_harness.computer_use._display import LiveViewDisplay, checked_desktop_size
 
 if TYPE_CHECKING:
     from boxd import AsyncBoxd, FsEntry, Machine
@@ -506,9 +506,10 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         self._display = (
             None
             if desktop_size is None
-            else LazyDisplay(
+            else LiveViewDisplay(
                 BoxdDisplayDriver(self._computer_api),
                 partial(self._start_display, desktop_size),
+                live_view=self._live_view_url,
                 operation=self._display_operation,
             )
         )
@@ -583,6 +584,14 @@ class BoxdSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem,
         await self._client.machines.computer.set_screen_size(self._ref.id, *size)
         # Not started here, where a shell command would wait for its install too, but before the next screen call.
         self._panel_start_pending = True
+
+    async def _live_view_url(self) -> str:
+        """The machine's desktop page in boxd's console. Only a browser signed in to boxd can open it."""
+        assert self._client is not None and self._ref is not None
+        url = (await self._client.machines.get(self._ref.id)).access.desktop_url
+        if not url:
+            raise WorkspaceError(f'boxd did not give a desktop URL for the machine {self._ref.id!r}.')
+        return url
 
     async def get_sandbox(self) -> Machine:
         """Return the machine's current `boxd.Machine` record, creating or attaching to it on first use.
