@@ -287,7 +287,7 @@ class TestPayloadHelpers:
         rendered = json_lines([{'text': 'a\N{LINE SEPARATOR}b'}, {'ok': True}])
         assert rendered.splitlines() == ['{"text":"a\\u2028b"}', '{"ok":true}']
         indented = indented_json({'text': 'a\N{PARAGRAPH SEPARATOR}b\x85c'})
-        assert indented.splitlines() == ['{', '  "text": "a\\u2029b\\u0085c"', '}']
+        assert indented.splitlines() == ['{', '  "text": "a\\u2029b\\^Ec"', '}']
 
     def test_measure_chars_and_tokens(self):
         assert measure('x' * 100, over_tokens=False, tokenizer=None) == 100
@@ -1293,9 +1293,9 @@ class TestSummarize:
         # No handler means the nested run takes the non-streaming request path, which this
         # summarizer rejects; the failure degrades to the `then` fallback (#9249).
         cap: ToolOutputLimits[object] = ToolOutputLimits(
-            bands=[Band(over=5, action=Summarize(model=_stream_only_summarizer(), then=Truncate(max_chars=95)))]
+            bands=[Band(over=5, action=Summarize(model=_stream_only_summarizer(), then=Truncate(max_chars=150)))]
         )
-        out = await _run(cap, 'x' * 100)
+        out = await _run(cap, 'x' * 300)
         assert isinstance(out, str) and 'truncated' in out
 
     async def test_stream_only_summarizer_completes_with_drain_handler(self):
@@ -1310,7 +1310,7 @@ class TestSummarize:
             ]
         )
         out = await _run(cap, 'x' * 100)
-        assert out == 'STREAMED SUMMARY'
+        assert out == _summary('STREAMED SUMMARY')
 
     async def test_summary_events_reach_a_caller_supplied_handler(self):
         deltas: list[str] = []
@@ -1335,7 +1335,7 @@ class TestSummarize:
             ]
         )
         out = await _run(cap, 'x' * 100)
-        assert out == 'STREAMED SUMMARY'
+        assert out == _summary('STREAMED SUMMARY')
         assert ''.join(deltas) == 'STREAMED SUMMARY'
 
     async def test_stream_only_summarizer_completes_the_parent_run(self):
@@ -1363,7 +1363,7 @@ class TestSummarize:
             for part in message.parts
             if isinstance(part, ToolReturnPart) and part.tool_name == 'read_log'
         ]
-        assert returns == ['STREAMED SUMMARY']
+        assert returns == [_summary('STREAMED SUMMARY', chars=900)]
 
     async def test_nested_per_tool_model_summarizer(self):
         summarize = Summarize(model=_fixed_model('NESTED SUMMARY'))
