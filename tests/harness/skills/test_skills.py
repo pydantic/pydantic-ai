@@ -743,6 +743,19 @@ class TestUntrustedWorkspaces:
         assert 'evil' not in (requests[0].instructions or '')
         assert _tool_results(requests) == [{'skills': {'evil': 'Evil help.'}}]
 
+    async def test_a_lowered_skill_selected_with_compatibility_characters_loads(self, tmp_path: Path) -> None:
+        # Selections are matched after NFKC normalization, as skill names are, here when `load_skill` reads one again.
+        _write_skill(tmp_path / 'skills', 'foo', description='Foo help.', body='Foo body.')
+        model, requests, _ = _calling(ToolCallPart('list_skills', {}), ToolCallPart('load_skill', {'name': 'foo'}))
+
+        await Agent(model, capabilities=[Skills('skills', include=['\uff46\uff4f\uff4f'])]).run(
+            'go', workspace=_untrusted(tmp_path)
+        )
+
+        results = _tool_results(requests)
+        assert results[0] == {'skills': {'foo': 'Foo help.'}}
+        assert 'Foo body.' in str(results[1])
+
 
 class TestSkillValidation:
     @pytest.mark.parametrize(('include', 'exclude'), [(['alpha'], ['alpha']), ([], [])])

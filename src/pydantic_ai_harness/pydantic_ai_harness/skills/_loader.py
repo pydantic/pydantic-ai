@@ -287,7 +287,8 @@ def _parse_frontmatter(frontmatter: str, source: str) -> _SkillFrontmatter:
         raise ValueError(f'Invalid Agent Skill frontmatter in {source}: {exc}') from exc
 
 
-def _normalize_name(name: str) -> str:
+def normalize_skill_name(name: str) -> str:
+    """`name` in the form skill names and selections are matched in: Unicode NFKC."""
     return unicodedata.normalize('NFKC', name)
 
 
@@ -305,7 +306,7 @@ async def _discover_skills(workspace: Workspace, libraries: Sequence[str]) -> li
                 continue
             skill_file = posixpath.join(library, child.name, 'SKILL.md')
             if await _is_file(workspace, skill_file):
-                discovered.append((_normalize_name(child.name), skill_file))
+                discovered.append((normalize_skill_name(child.name), skill_file))
     return discovered
 
 
@@ -378,7 +379,7 @@ def skip_duplicate_name(name: str, kept: str, skipped: str, duplicate_names: Dup
 
 
 def _validate_name(name: str, source: str) -> str:
-    normalized = _normalize_name(name)
+    normalized = normalize_skill_name(name)
     if (
         not normalized
         or len(normalized) > 64
@@ -403,7 +404,7 @@ def parse_skill(text: str, skill_file: str) -> SkillDefinition:
     directory_name = posixpath.basename(posixpath.dirname(skill_file))
     name = frontmatter.name if frontmatter.name is not None else directory_name
     normalized_name = _validate_name(name, skill_file)
-    if frontmatter.name is not None and normalized_name != _normalize_name(directory_name):
+    if frontmatter.name is not None and normalized_name != normalize_skill_name(directory_name):
         raise ValueError(f'Skill name {name!r} in {skill_file} must match its parent directory {directory_name!r}.')
 
     ignored_fields = tuple(sorted(_BEHAVIORAL_FRONTMATTER_FIELDS.intersection(frontmatter.model_extra or {})))
@@ -450,8 +451,8 @@ async def load_skill_libraries(
     libraries, skipped = await _libraries(workspace, directories, missing_directories)
     discovered = await _discover_skills(workspace, libraries)
     available_names = frozenset(name for name, _ in discovered)
-    normalized_include = None if include is None else frozenset(_normalize_name(name) for name in include)
-    normalized_exclude = frozenset(_normalize_name(name) for name in exclude)
+    normalized_include = None if include is None else frozenset(normalize_skill_name(name) for name in include)
+    normalized_exclude = frozenset(normalize_skill_name(name) for name in exclude)
     if unknown_names == 'error':
         _validate_selection('include', normalized_include, available_names)
         _validate_selection('exclude', normalized_exclude, available_names)
