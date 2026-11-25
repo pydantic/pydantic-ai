@@ -245,6 +245,47 @@ class TestDurability:
         assert primary['calls'] == cheap['calls'] == 1
         assert list(await checkpoints(absurd, ctx.task_id)) == ['a__model.request', 'a__model.request.cheap']
 
+    async def test_diverged_replay_serves_another_calls_result(self, absurd: AsyncAbsurd) -> None:
+        # The retry selects a model whose steps are not checkpointed, as after a deploy that changed it, and
+        # that model calls the tool with its arguments in the opposite order. A tool step is looked up by
+        # name and encounter order alone, so each call is served the other call's checkpoint.
+        lookups = {'calls': 0}
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool_plain
+        def lookup(key: str) -> str:
+            lookups['calls'] += 1
+            return key.upper()
+
+        a = ToolCallPart('lookup', {'key': 'a'}, 'lookup_a')
+        b = ToolCallPart('lookup', {'key': 'b'}, 'lookup_b')
+        agent = Agent(
+            _tool_calling_model(a, b),
+            name='diverge',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability(models={'v2': _tool_calling_model(b, a)})],
+        )
+
+        async with running_task_context(absurd, 'diverge') as ctx:
+            first = await agent.run('go')
+        async with reenter_running_task(absurd, ctx.task_id):
+            replayed = await agent.run('go', model='v2')
+
+        first_returns = {
+            p.tool_call_id: p.content for m in first.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)
+        }
+        replayed_returns = {
+            p.tool_call_id: p.content for m in replayed.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)
+        }
+        assert first_returns == {'lookup_a': 'A', 'lookup_b': 'B'}
+        # Pins today's wrong behavior: https://github.com/pydantic/pydantic-ai/issues/14502. Once a diverged
+        # replay is detected, this run should fail instead, and this test should expect that error.
+        assert replayed_returns == {'lookup_a': 'B', 'lookup_b': 'A'}, (
+            'Absurd no longer serves a diverged replay the checkpoint of another call; '
+            'see https://github.com/pydantic/pydantic-ai/issues/14502 and update this test to expect the error'
+        )
+        assert lookups['calls'] == 2
+
     @pytest.mark.parametrize('kind', ['function', 'dynamic'])
     async def test_runtime_toolset_rejected(self, absurd: AsyncAbsurd, kind: str) -> None:
         calls = {'calls': 0}

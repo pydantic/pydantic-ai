@@ -361,6 +361,51 @@ class TestReplay:
         assert primary['calls'] == cheap['calls'] == 1
         assert list(await checkpoints(pgtask_db, task_id)) == [('a__model.request', 0), ('a__model.request.cheap', 0)]
 
+    async def test_diverged_replay_serves_another_calls_result(self, pgtask_db: PGTaskDatabase) -> None:
+        # The retry selects a model whose steps are not checkpointed, as after a deploy that changed it, and
+        # that model calls the tool with its arguments in the opposite order. A tool step is looked up by
+        # name and occurrence alone, so each call is served the other call's checkpoint.
+        lookups = {'calls': 0}
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool_plain
+        def lookup(key: str) -> str:
+            lookups['calls'] += 1
+            return key.upper()
+
+        a = ToolCallPart('lookup', {'key': 'a'}, 'lookup_a')
+        b = ToolCallPart('lookup', {'key': 'b'}, 'lookup_b')
+        agent = Agent(
+            _tool_calling_model(a, b),
+            name='diverge',
+            toolsets=[toolset],
+            capabilities=[PGTaskDurability(models={'v2': _tool_calling_model(b, a)})],
+        )
+        returned: list[dict[str, object]] = []
+
+        async def body(attempt: int) -> None:
+            result = await agent.run('go', model='v2' if attempt == 2 else None)
+            returned.append(
+                {
+                    p.tool_call_id: p.content
+                    for m in result.all_messages()
+                    for p in m.parts
+                    if isinstance(p, ToolReturnPart)
+                }
+            )
+
+        await run_in_task(pgtask_db, body, attempts=2)
+
+        first_returns, replayed_returns = returned
+        assert first_returns == {'lookup_a': 'A', 'lookup_b': 'B'}
+        # Pins today's wrong behavior: https://github.com/pydantic/pydantic-ai/issues/14502. Once a diverged
+        # replay is detected, this run should fail instead, and this test should expect that error.
+        assert replayed_returns == {'lookup_a': 'B', 'lookup_b': 'A'}, (
+            'pgtask no longer serves a diverged replay the checkpoint of another call; '
+            'see https://github.com/pydantic/pydantic-ai/issues/14502 and update this test to expect the error'
+        )
+        assert lookups['calls'] == 2
+
     async def test_string_default_model_gets_unsuffixed_step_name(self, pgtask_db: PGTaskDatabase) -> None:
         agent = Agent('test', name='strdef', capabilities=[PGTaskDurability()])
 
