@@ -7,7 +7,7 @@ interactive session runs they go to a small rotating file instead, and on a POSI
 
 import logging
 import os
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from contextlib import contextmanager, nullcontext
 from io import TextIOWrapper
 from logging.handlers import RotatingFileHandler
@@ -16,22 +16,48 @@ from pathlib import Path
 from rich.console import Console
 
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.stderr_relay import stderr_to_file
+from pydantic_ai_pax.ui.stderr_relay import capture_stderr
 
 _LOGGERS = ('logfire', 'opentelemetry')
 _MAX_BYTES = 1_000_000
 
 
+class _StandardError(logging.LogRecord):
+    """Text written to standard error during the session, which the log file writes as it came."""
+
+
 class _LogFile(RotatingFileHandler):
-    """A rotating log file that remembers whether it wrote anything and never reports its own failures."""
+    """A rotating log file that remembers what it wrote and never reports its own failures.
+
+    It writes standard error's text too (`append`), so the same lock and size limit govern every rotation.
+    """
 
     wrote = False
+    """Whether it wrote a log record."""
+    appended = False
+    """Whether it wrote standard error's text."""
+    terminator = ''  # `format` ends a record's line itself, so standard error's text is written as it came.
     _failed = False
+
+    def append(self, text: str) -> None:
+        """Write standard error's `text`, rotating first when it would reach the size limit, as a record does."""
+        record = _StandardError(__name__, logging.WARNING, __file__, 0, text, None, None)
+        self.acquire()
+        try:
+            self.emit(record)
+        finally:
+            self.release()
+
+    def format(self, record: logging.LogRecord) -> str:
+        return record.getMessage() if isinstance(record, _StandardError) else f'{super().format(record)}\n'
 
     def emit(self, record: logging.LogRecord) -> None:
         self._failed = False
         super().emit(record)
-        self.wrote = self.wrote or not self._failed
+        if isinstance(record, _StandardError):
+            self.appended = self.appended or not self._failed
+        else:
+            self.wrote = self.wrote or not self._failed
 
     def _open(self) -> TextIOWrapper:
         # Exporter errors can quote endpoint details, so the file (and each rotation's new one) is owner-only.
@@ -78,7 +104,7 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     A logger that already reaches a handler, one the embedding application configured on it, an ancestor, or a
     descendant, is left alone: only records no handler would write out are redirected, whether they would fall
     through to `logging.lastResort` or be discarded by a `NullHandler`. When `console` is the terminal, everything
-    written to standard error goes to `path` too (`stderr_to_file`), including what such a handler writes there.
+    written to standard error goes to `path` too (`capture_stderr`), including what such a handler writes there.
     """
     # `delay` opens the file on the first record, so a session without problems creates nothing.
     handler = _LogFile(path, maxBytes=_MAX_BYTES, backupCount=1, encoding='utf-8', delay=True)
@@ -90,15 +116,14 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
     loggers = [logger for name in _LOGGERS if not _shown(logger := logging.getLogger(name))]
     for logger in loggers:
         logger.addHandler(handler)
-    stderr_written: Callable[[], bool] = _nothing
     try:
-        with stderr_to_file(path) if console.is_terminal else nullcontext(_nothing) as stderr_written:
+        with capture_stderr(handler.append) if console.is_terminal else nullcontext():
             yield
     finally:
         for logger in loggers:
             logger.removeHandler(handler)
         handler.close()
-        if stderr_written():
+        if handler.appended:
             notice = f'Warnings and errors from this session are in {path}.'
         elif handler.wrote:
             notice = f'Logfire or OpenTelemetry reported problems, such as failed exports. See {path}.'
@@ -106,7 +131,3 @@ def telemetry_log(path: Path, *, console: Console) -> Generator[None]:
             notice = None
         if notice is not None:
             console.print(notice, style=theme.color(theme.MUTED), markup=False)
-
-
-def _nothing() -> bool:
-    return False

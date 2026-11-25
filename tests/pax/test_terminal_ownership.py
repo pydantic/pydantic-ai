@@ -29,7 +29,7 @@ from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.settings_store import SettingsStore
-from pydantic_ai_pax.ui import stderr_relay
+from pydantic_ai_pax.ui import stderr_relay, telemetry_log as telemetry_log_module
 from pydantic_ai_pax.ui.menus.text_editor import run_editor
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr, terminal_stderr
 from pydantic_ai_pax.ui.telemetry_log import telemetry_log
@@ -148,6 +148,24 @@ def test_an_editor_still_draws_on_the_terminal(tmp_path: Path) -> None:
     assert edited == 'saved\n'
     assert b'drawn' in b''.join(shown)
     assert not (tmp_path / 'telemetry.log').exists()
+
+
+def test_standard_error_rotates_the_log_like_its_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """At the log's size limit the file rotates, keeping one previous file, as it does for the records written to it.
+
+    With the limit and the read size patched down, one write of three reads' worth rotates twice: the first read
+    is dropped with the oldest file, and nothing after it is lost.
+    """
+    monkeypatch.setattr(telemetry_log_module, '_MAX_BYTES', 1000)
+    monkeypatch.setattr(stderr_relay, '_CHUNK', 600)
+    written = b''.join(f'{index:03} '.encode() + b'x' * 95 + b'\n' for index in range(18))
+    log = tmp_path / 'telemetry.log'
+    with _terminal() as (console, shown):
+        with telemetry_log(log, console=console):
+            os.write(2, written)
+    assert (log.with_name('telemetry.log.1').read_bytes(), log.read_bytes()) == (written[600:1200], written[1200:])
+    assert not log.with_name('telemetry.log.2').exists()
+    assert b'Warnings and errors from this session are in' in b''.join(shown)
 
 
 def test_an_unwritable_log_loses_standard_error_quietly(tmp_path: Path) -> None:
