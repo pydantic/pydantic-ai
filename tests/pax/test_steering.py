@@ -602,7 +602,7 @@ async def test_an_edit_left_once_idle_keeps_the_draft_up_set_aside(
 
 @asynccontextmanager
 async def running(live: LivePrompt) -> AsyncGenerator[list[bool]]:
-    """Run an operation Esc and Ctrl-C can cancel, yielding whether it completed once it ends."""
+    """Run an operation Esc and Ctrl+C can cancel, yielding whether it completed once it ends."""
     started = anyio.Event()
     completed: list[bool] = []
 
@@ -1020,7 +1020,7 @@ async def test_a_draft_a_search_hides_keeps_its_images() -> None:
         assert live.buffer.text == 'old'
         # As the session's read loop does before each read.
         live.images.retain(live.drafts)
-        # Ctrl-G cancels the search, bringing back the draft it hid.
+        # Ctrl+G cancels the search, bringing back the draft it hid.
         live.feed('ctrl-g')
         assert live.images.resolve(live.buffer.text) == ('look', [image])
 

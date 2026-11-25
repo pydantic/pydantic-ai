@@ -42,7 +42,7 @@ class Terminal(Generic[DepsT, OutputT]):
     """The terminal Pax runs in, showing one live session of its process at a time.
 
     The session shown prints to the console, reads the editor (or the line prompt when the console is
-    not a terminal), and takes Ctrl-C. Every other one prints nowhere and reads only what `send_input`
+    not a terminal), and takes Ctrl+C. Every other one prints nowhere and reads only what `send_input`
     gives it, as one the browser opened does. `/resume` of a session live in another shows that one.
     """
 
