@@ -394,6 +394,9 @@ class SandboxPlugin(Plugin):
 
     async def on_turn_start(self, event: TurnStart) -> None:
         del event
+        if self._minting is not None and not self._minting.done():
+            # A resume's mint is still running: wait for it rather than ask for a second link.
+            await asyncio.wait([self._minting])
         await self._mint_watch_link()
 
     def render(self, event: AgentStreamEvent) -> RenderableType | None:

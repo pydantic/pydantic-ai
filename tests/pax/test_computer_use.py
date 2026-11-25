@@ -516,8 +516,11 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(
     await resumed_loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
     await resumed_loaded.dispatch(ConversationChanged(conversation_id='resumed', title=None))
     assert row(plugin_of(resumed_loaded)) == ['fake sandbox (computer-use)', '']
-    linked.booted.set()
-    await anyio.wait_all_tasks_blocked()
+    async with anyio.create_task_group() as tg:
+        # A prompt sent at once waits for that mint instead of starting another.
+        tg.start_soon(resumed_loaded.dispatch, TurnStart(text='go'))
+        await anyio.wait_all_tasks_blocked()
+        linked.booted.set()
     assert row(plugin_of(resumed_loaded)) == ['fake sandbox', watch(1)]
     assert len(linked.links) == 2, 'one mint at a time'
     await plugin.on_session_end(SessionEnd(reason='exit'))
