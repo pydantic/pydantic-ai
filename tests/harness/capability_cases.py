@@ -197,6 +197,13 @@ def _workspace(build: Callable[[], AbstractCapability[None]]) -> Fixture:
     return lambda tmp_path: [build(), LocalWorkspace(tmp_path)]
 
 
+def _coder_repo(tmp_path: Path) -> list[AbstractCapability[None]]:
+    """`Coder` in a repo of its own: its `.git` ends the walk up for the repo root, which would otherwise make a
+    workspace call per parent directory, so the units its calls record depend on how deep the directory is."""
+    (tmp_path / '.git').mkdir()
+    return [Coder(), LocalWorkspace(tmp_path)]
+
+
 def _repo_context(tmp_path: Path) -> list[AbstractCapability[None]]:
     (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
     return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
@@ -800,12 +807,12 @@ CASES: dict[str, CapabilityCase] = {
                 ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
                 ('read_file', {'path': 'notes.md'}),
             ),
-            _workspace(Coder),
+            _coder_repo,
             durable_steps=DurableSteps(
                 streams=True,
-                dbos=_workspace_steps(36),
+                dbos=_workspace_steps(34),
                 # `write_file` and `edit_file` run in the workflow, so their workspace calls are activities.
-                temporal=(*('capability__workspace__call',) * 31, 'toolset__file_system__call_tool'),
+                temporal=(*('capability__workspace__call',) * 27, 'toolset__file_system__call_tool'),
             ),
         ),
     ),
