@@ -313,6 +313,33 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
 @pytest.mark.temporal
 @pytest.mark.xdist_group(name='harness-temporal')
 @ignore_source_reads_left_open
+@dataclass
+class _NoDurability(AbstractCapability[None]):
+    """Stands in for an engine where only the error handling is under test."""
+
+
+async def test_an_unexpected_error_propagates() -> None:
+    """An error that isn't the engine's refusal fails the test instead of becoming the observed outcome."""
+
+    async def run(agent: Agent[None, str], gate: _Gate) -> str:
+        raise RuntimeError('unrelated')
+
+    def run_sync(agent: Agent[None, str]) -> str:
+        raise RuntimeError('unrelated')
+
+    with pytest.raises(RuntimeError, match='unrelated'):
+        await _check('BackgroundTools.runs_in_background', 'temporal', run, _NoDurability)
+    with pytest.raises(RuntimeError, match='unrelated'):
+        _check_sync('BackgroundTools.runs_in_background', 'aws_lambda', run_sync, _NoDurability)
+
+
+@pytest.mark.skipif(not temporal_imports() or not azure_imports(), reason='temporalio or durabletask not installed')
+def test_engine_unwraps_ignore_other_errors() -> None:
+    """Only the engine's wrapped `UserError` counts as a refusal; a table check, so no request to record."""
+    assert _temporal_user_error(RuntimeError()) is None
+    assert _azure_user_error(RuntimeError()) is None
+
+
 @pytest.mark.skipif(not temporal_imports(), reason='temporalio not installed')
 @parametrize_scenarios
 async def test_temporal(scenario: Scenario, temporal_env: WorkflowEnvironment) -> None:
