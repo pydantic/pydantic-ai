@@ -348,6 +348,9 @@ inside the workspace, and that directory is carried into subsequent calls. The p
 updated when the command exits `0`. If the recorded directory disappears, the next command reports a retry and resets to the workspace working directory. The record is written out-of-band (not
 to stdout) so command output can never spoof the tracked directory.
 
+The instructions name the working directory through [`AnnounceWorkingDirectory`](../announce_working_directory/), which states it once however
+many capabilities bring it, and starts a sandbox that isn't running to ask for it.
+
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 
 ## Configuration

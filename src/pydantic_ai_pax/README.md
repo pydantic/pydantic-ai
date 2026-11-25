@@ -66,6 +66,7 @@ uv tool install --compile-bytecode pydantic-ai-pax
 ```
 
 This gives you the `pax` command (and `pydantic-ai-pax`, which does the same).
+If `pax` doesn't start Pax right after installing, open a new terminal (or run `rehash`), or run it as `pydantic-ai-pax`.
 The package used to be `pydantic-clai2`, with the command `clai2`. Those names still work and print a note
 pointing here; your settings, sessions, and plugins carry over. A plugin that imports `pydantic_clai2` needs
 the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_pax`.
