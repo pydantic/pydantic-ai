@@ -1,0 +1,5 @@
+{
+  "against": "v2.74.0",
+  "reason": "The default is now a private marker type equal to the same value (#14515), so a `FileSystem` or `Shell` combined with another can tell a stated value from an unstated default; the value and its behavior are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14538"
+}
