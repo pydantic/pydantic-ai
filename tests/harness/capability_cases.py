@@ -177,6 +177,12 @@ def _skills(tmp_path: Path) -> list[AbstractCapability[None]]:
     return [Skills(tmp_path / 'skills'), LocalWorkspace(tmp_path)]
 
 
+def _lowered_skills(tmp_path: Path) -> list[AbstractCapability[None]]:
+    # Below `'operator'`, so the skill is held back from the instructions and `list_skills` and `load_skill` offer it.
+    capabilities = _skills(tmp_path)
+    return [capabilities[0], LocalWorkspace(tmp_path, authority='none')]
+
+
 def _read_file_key(call: ToolCallPart) -> str | None:
     args = call.args_as_dict()
     return str(args['path']) if call.tool_name == 'read_file' else None
@@ -376,6 +382,7 @@ CASES: dict[str, CapabilityCase] = {
             _check_skills,
         ),
         build=_skills,
+        calls=Calls((('list_skills', {}), ('load_skill', {'name': 'weather'})), _lowered_skills),
     ),
     'Memory': CapabilityCase(
         Narrows(
