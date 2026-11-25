@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Annotated
 
 from anyio import CancelScope, open_process, run_process, to_thread
+from packaging.version import InvalidVersion, Version
 from pydantic import StringConstraints, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
@@ -209,10 +210,19 @@ class Update:
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
-    """Offer `target` unless it is what runs; a Git install on `stable` is offered the release."""
+    """Offer `target` unless it is what runs, or on `stable` a release no newer than it; a Git install is offered the release.
+
+    The version check endpoint can lag PyPI just after a release, so its answer may be older than what runs.
+    """
     if channel == 'main':
         return None if current.commit == target else Update(channel=channel, target=target)
-    return None if current.commit is None and current.version == target else Update(channel=channel, target=target)
+    if current.commit is None:
+        try:
+            if Version(target) <= Version(current.version):
+                return None
+        except InvalidVersion:
+            return None
+    return Update(channel=channel, target=target)
 
 
 def find_uv(*, environ: Mapping[str, str] = os.environ, windows: bool = os.name == 'nt') -> str | None:

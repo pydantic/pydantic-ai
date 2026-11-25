@@ -60,6 +60,8 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.38.0",
     "genai-prices>=0.1.7",
+    # `/update` offers a `stable` release only when it is newer than the running one.
+    "packaging>=24",
     # 1.0 adds `termflow.live` (ScreenBuffer, render_diff, Widget), which paints the transcript panel.
     "termflow-md>=1.0.0,<2",
     "pyfiglet>=1.0.4",

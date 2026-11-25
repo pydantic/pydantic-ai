@@ -234,6 +234,11 @@ def test_find_update() -> None:
     release = Installed(version='0.52.0')
     assert find_update('stable', release, '0.52.0') is None
     assert find_update('stable', release, '0.53.0') == Update(channel='stable', target='0.53.0')
+    # The version check endpoint can lag PyPI just after a release: never offer a downgrade.
+    assert find_update('stable', Installed(version='0.74.0'), '0.73.0') is None
+    assert find_update('stable', Installed(version='1.0.0b2'), '1.0.0b1') is None
+    assert find_update('stable', Installed(version='1.0.0b1'), '1.0.0') == Update(channel='stable', target='1.0.0')
+    assert find_update('stable', release, 'not a version') is None
     # A `main` install switching back to stable is offered the release, even at the same base version.
     assert find_update('stable', Installed(version='0.52.0', commit=SHA), '0.52.0') is not None
     assert find_update('main', TOOL, SHA) is None
