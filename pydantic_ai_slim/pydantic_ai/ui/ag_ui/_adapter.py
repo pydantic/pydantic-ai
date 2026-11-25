@@ -798,9 +798,9 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         - `TextPart.id` and `.citations` are lost, and so are `.provider_name` and `.provider_details`
           when `ag_ui_version < '0.1.11'`. From 0.1.11 those two ride the `AssistantMessage`'s
           `encrypted_value`, so Gemini's thought signatures come back.
-        - Text parts dumped into one `AssistantMessage` reload as one `TextPart`, holding the
-          `.provider_name` and `.provider_details` of the first of them that has either. The others'
-          are lost.
+        - Text parts dumped into one `AssistantMessage` reload as one `TextPart`. It keeps the
+          `.provider_name` and `.provider_details` the parts that have either agree on, and none when
+          they differ.
         - `ToolCallPart.id` is lost, and so are `.provider_name` and `.provider_details` when
           `ag_ui_version < '0.1.11'`. From 0.1.11 those two ride the `ToolCall`'s `encrypted_value`.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
@@ -1351,8 +1351,8 @@ class _DumpResponseContext:
     builtin_returns: dict[str, NativeToolReturnPart]
     result: list[Message] = field(default_factory=list[Message])
     text_content: list[str] = field(default_factory=list[str])
-    text_provider: PartProviderMetadata = field(default_factory=PartProviderMetadata)
-    """The provider fields the text in `text_content` reloads with: those of its first `TextPart` that has any."""
+    text_providers: list[PartProviderMetadata] = field(default_factory=list[PartProviderMetadata])
+    """The provider fields of each `TextPart` in `text_content` that has any."""
     tool_calls_list: list[ToolCall] = field(default_factory=list[ToolCall])
     tool_messages: list[ToolMessage] = field(default_factory=list[ToolMessage])
 
@@ -1360,17 +1360,24 @@ class _DumpResponseContext:
 def _flush_assistant_content(context: _DumpResponseContext) -> None:
     if not context.text_content and not context.tool_calls_list:
         return
+    # The message's text reloads as one `TextPart`, so it keeps provider fields only when every part that has any
+    # agrees on them. Combining different ones would send one part's data as another's: a `'commentary'` phase on a
+    # final answer, or one Gemini signature for two parts, which Gemini forbids.
+    providers = context.text_providers
+    text_provider: PartProviderMetadata = (
+        providers[0] if providers and all(provider == providers[0] for provider in providers) else {}
+    )
     context.result.append(
         AssistantMessage(
             id=_new_message_id(),
             content='\n'.join(context.text_content) if context.text_content else None,
             tool_calls=context.tool_calls_list if context.tool_calls_list else None,
-            **text_provider_encrypted_value_kwargs(context.text_provider, supported=context.use_encrypted_value),
+            **text_provider_encrypted_value_kwargs(text_provider, supported=context.use_encrypted_value),
         )
     )
     context.result.extend(context.tool_messages)
     context.text_content = []
-    context.text_provider = {}
+    context.text_providers = []
     context.tool_calls_list = []
     context.tool_messages = []
 
@@ -1383,12 +1390,10 @@ def _dump_text_part(part: TextPart, index: int, context: _DumpResponseContext) -
         context.text_content[-1] += part.content
     else:
         context.text_content.append(part.content)
-    # The message's text reloads as one `TextPart`, so it can keep only one part's provider fields. They come from
-    # the first part that has any, not simply the first part: Gemini can sign the final part of a response.
-    if not context.text_provider:
-        context.text_provider = part_provider_metadata(
-            part, canonical_system=part_canonical_system(context.msg, part.provider_name)
-        )
+    if provider := part_provider_metadata(
+        part, canonical_system=part_canonical_system(context.msg, part.provider_name)
+    ):
+        context.text_providers.append(provider)
 
 
 def _dump_thinking_part(part: ThinkingPart, context: _DumpResponseContext) -> None:
