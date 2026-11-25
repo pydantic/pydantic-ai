@@ -592,10 +592,12 @@ async def test_calibration_preserves_paste_after_incomplete_escape_and_hides_uns
         live.keys.dispatch(KeyPress(Keys.BracketedPaste, 'sensitive pasted payload'))
         assert live.buffer.text == 'sensitive pasted payload'
         assert 'sensitive' not in '\n'.join(live.frame())
-        live.keys.unknown('\x1b[secret')
+        # An unsupported CSI report reaches calibration through the decoder, without its contents.
+        for char in '\x1b[999u':
+            live.keys.dispatch(KeyPress(Keys.Escape if char == '\x1b' else char, char))
         assert live.key_test is not None
         assert 'Unsupported terminal key report' in live.key_test.report
-        assert 'secret' not in live.key_test.report
+        assert '999' not in live.key_test.report
         assert live.queued_messages == ()
 
 
