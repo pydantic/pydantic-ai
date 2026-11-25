@@ -603,7 +603,8 @@ class TestCoder:
         parts = model.last_model_request_parameters.instruction_parts or []
         assert _DELEGATION_RULE not in '\n'.join(part.content for part in parts)
         assert 'delegation' not in {part.name for part in parts}
-        assert not any(part.dynamic for part in parts)
+        # No model-specific block is registered; the one dynamic part is `AnnounceWorkingDirectory`'s line.
+        assert [part.content for part in parts if part.dynamic] == [f'The working directory is `{tmp_path.resolve()}`.']
 
     @pytest.mark.parametrize('autonomy', ['high', 'max'])
     @pytest.mark.parametrize('flag', [None, *_MAX_GUIDANCE_FLAGS])
