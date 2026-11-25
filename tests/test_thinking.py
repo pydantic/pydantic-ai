@@ -3834,6 +3834,52 @@ _CROSS_SCOPE_SUMMARY_CASES = [
         overrides=False,
         marks=_SKIP_WITHOUT_OPENAI,
     ),
+    _CrossScopeCase(
+        'bedrock-anthropic-thinking-display',
+        _bedrock_probe('us.anthropic.claude-opus-5-5'),
+        lambda: BedrockModelSettings(bedrock_thinking_display='omitted'),
+        True,
+        _bedrock_sent,
+        overrides=True,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    _CrossScopeCase(
+        'bedrock-anthropic-thinking',
+        _bedrock_probe('us.anthropic.claude-opus-5-5'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'thinking': {'type': 'adaptive'}}),
+        True,
+        _bedrock_sent,
+        overrides=True,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    _CrossScopeCase(
+        'bedrock-openai-include-reasoning',
+        _bedrock_probe('openai.gpt-oss-120b-1:0'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'include_reasoning': True}),
+        False,
+        _bedrock_sent,
+        overrides=True,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    _CrossScopeCase(
+        'bedrock-openai-responses-reasoning',
+        _bedrock_probe('us.openai.gpt-5.6-luna'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'low'}}),
+        True,
+        _bedrock_sent,
+        overrides=True,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
+    _CrossScopeCase(
+        # GPT-5.6 and GPT-6 only take `True`, so a `False` has nothing to be replaced.
+        'bedrock-openai-responses-reasoning-false',
+        _bedrock_probe('us.openai.gpt-5.6-luna'),
+        lambda: BedrockModelSettings(bedrock_additional_model_requests_fields={'reasoning': {'effort': 'low'}}),
+        False,
+        lambda p: (_bedrock_sent(p) or {}).get('reasoning', {}).get('summary'),
+        overrides=False,
+        marks=_SKIP_WITHOUT_BEDROCK,
+    ),
 ]
 
 
@@ -3869,46 +3915,22 @@ async def test_cross_scope_thinking_summary_override_warning_matches_the_wire(
 
 @pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
 @pytest.mark.parametrize(
-    ('variant', 'settings', 'expected'),
+    ('variant', 'settings'),
     [
-        ('anthropic', {'bedrock_thinking_display': 'omitted'}, ('bedrock_thinking_display',)),
-        (
-            'anthropic',
-            {'bedrock_additional_model_requests_fields': {'thinking': {'type': 'adaptive'}}},
-            ('bedrock_additional_model_requests_fields',),
-        ),
-        (
-            'openai',
-            {'thinking_summary': False, 'bedrock_additional_model_requests_fields': {'include_reasoning': True}},
-            ('bedrock_additional_model_requests_fields',),
-        ),
         # gpt-oss only takes `False`, so a `True` has nothing to be replaced.
-        (
-            'openai',
-            {'thinking_summary': True, 'bedrock_additional_model_requests_fields': {'include_reasoning': True}},
-            (),
-        ),
-        (
-            'openai_responses',
-            {'thinking_summary': True, 'bedrock_additional_model_requests_fields': {'reasoning': {'effort': 'low'}}},
-            ('bedrock_additional_model_requests_fields',),
-        ),
-        # GPT-5.6 and GPT-6 only take `True`, so a `False` has nothing to be replaced.
-        (
-            'openai_responses',
-            {'thinking_summary': False, 'bedrock_additional_model_requests_fields': {'reasoning': {'effort': 'low'}}},
-            (),
-        ),
-        ('openai', {'bedrock_thinking_display': 'omitted'}, ()),
-        ('qwen', {'bedrock_additional_model_requests_fields': {'reasoning_config': 'high'}}, ()),
+        ('openai', {'thinking_summary': True, 'bedrock_additional_model_requests_fields': {'include_reasoning': True}}),
+        ('openai', {'bedrock_thinking_display': 'omitted'}),
+        ('qwen', {'bedrock_additional_model_requests_fields': {'reasoning_config': 'high'}}),
     ],
 )
-def test_bedrock_settings_overriding_thinking_summary(
-    variant: Any, settings: dict[str, Any], expected: tuple[str, ...]
-):
-    """Mirrors `_add_thinking_fields`: the settings Bedrock lets win over `thinking_summary`, per variant."""
+def test_bedrock_settings_not_overriding_thinking_summary(variant: Any, settings: dict[str, Any]):
+    """The Bedrock settings that leave `thinking_summary` alone, so nothing warns.
+
+    Not a wire test: on these variants `thinking_summary` sends nothing, so there's no field for
+    `test_cross_scope_thinking_summary_override_warning_matches_the_wire` to compare. The overriding cases are there.
+    """
     model = _bedrock_model(BedrockModelProfile(bedrock_thinking_variant=variant, supports_thinking=True))
-    assert model._settings_overriding_thinking_summary(settings) == expected
+    assert model._settings_overriding_thinking_summary(settings) == ()
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
