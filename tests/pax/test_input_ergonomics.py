@@ -275,6 +275,29 @@ async def test_follow_up_choice_does_not_answer_and_cancel_preserves_draft() -> 
         assert live.buffer.text == 'keep this draft'
 
 
+async def test_remembered_follow_up_queues_the_draft_without_routing() -> None:
+    async with editor() as (live, _, _):
+        live.questions.preference = lambda: 'follow-up'
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await live.questions.ask(question_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            live.feed('paste', 'next step')
+            live.feed('enter')
+            assert not live.questions.routing
+            assert live.queued_messages == ('next step',) and live.buffer.text == ''
+            assert live.questions.menu is not None and responses == []
+            live.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            live.feed('ctrl-c')
+        assert responses[0].cancelled
+        assert live.queued_messages == ('next step',)
+
+
 async def test_batch_requires_explicit_next_question_intent_and_paste_never_selects() -> None:
     async with editor() as (live, _, _):
         live.questions.preference = lambda: 'answer'
