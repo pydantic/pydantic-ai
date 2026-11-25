@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
-from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField
+from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField, TrustLevel
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -56,7 +56,7 @@ class Status:
     model: str = 'agent default'
     workspace: str = ''
     """The session's working directory; hidden while empty."""
-    trust: Callable[[], Literal['trusted', 'untrusted'] | None] = lambda: None
+    trust: Callable[[], TrustLevel | None] = lambda: None
     """Whether you trust the session's directory, painted after it; hidden for `None`, as for a host that decides."""
     context_tokens: int | None = None
     context_estimated: bool = False

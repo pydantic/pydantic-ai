@@ -14,6 +14,7 @@ from pydantic_ai_pax.runtime.live_runtimes import LiveRuntimes
 from pydantic_ai_pax.runtime.session import step_store
 from pydantic_ai_pax.runtime.session_naming import SessionNamer
 from pydantic_ai_pax.runtime.tasks import TaskRouter
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust, trust_scope
 
 if TYPE_CHECKING:
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
@@ -40,6 +41,28 @@ class ClaiProcess(Generic[DepsT]):
     """The live sessions, by ID and by conversation, which process-scoped plugins reach as `host.live`."""
     codex_providers: 'dict[str, OpenAICodexProvider]' = field(default_factory=dict[str, 'OpenAICodexProvider'])
     """The native Codex provider per account, shared by every session's `ModelResolver`, so each refreshes once."""
+    trusts: dict[Path, WorkspaceTrust] = field(default_factory=dict[Path, WorkspaceTrust])
+    """Shared folder trust per `TrustScope.key`, so `/trust` and the first-run prompt reach every live session in scope."""
+
+    def trust_for(self, directory: Path, *, initial: WorkspaceTrust | None = None) -> WorkspaceTrust:
+        """The shared `WorkspaceTrust` for `directory`'s scope; `initial` seeds its key (for `/reload`)."""
+        if initial is not None:
+            self.trusts[initial.scope.key] = initial
+            return initial
+        scope = trust_scope(directory)
+        if (existing := self.trusts.get(scope.key)) is not None:
+            return existing
+        trust = WorkspaceTrust.from_scope(self.store, scope)
+        self.trusts[scope.key] = trust
+        return trust
+
+    def refresh_trust(self, changed: WorkspaceTrust) -> None:
+        """Refresh other live non-repository scopes under `changed.scope.key` after a parent folder's trust changes."""
+        if changed.scope.repository or not changed.scope.remembered:
+            return
+        for key, other in self.trusts.items():
+            if not other.scope.repository and key != changed.scope.key and key.is_relative_to(changed.scope.key):
+                other.refresh(self.store)
 
     @classmethod
     def open(cls, store: SettingsStore | None = None, *, builtin_plugins: Sequence[PluginSettings] = ()) -> Self:

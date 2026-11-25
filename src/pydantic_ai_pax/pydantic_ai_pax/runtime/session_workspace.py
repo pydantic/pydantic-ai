@@ -49,6 +49,8 @@ class SessionWorkspace:
     """The settings Pax starts with beside a project file: saved ones, then the project's, then launch flags."""
     busy: Callable[[], bool] = lambda: False
     """Whether a background fork or a delegated task runs."""
+    trust_for: Callable[[Path], WorkspaceTrust] | None = None
+    """Looks up the process-shared `WorkspaceTrust` for the target directory; defaults to reading the store."""
 
     def attach(self, *, sessions: Sessions[None, str], commands: Commands) -> None:
         """Make `/resume ID` move into the session's directory, and add `/workspace`."""
@@ -74,7 +76,11 @@ class SessionWorkspace:
         if self.session.running or self.busy():
             raise RuntimeError('Something is running. Switch directories once it ends.')
         project = await to_thread.run_sync(lambda: load_project_settings(directory, store=self.context.store))
-        trust = await to_thread.run_sync(WorkspaceTrust.saved, self.context.store, directory)
+        trust = (
+            await to_thread.run_sync(self.trust_for, directory)
+            if self.trust_for is not None
+            else await to_thread.run_sync(WorkspaceTrust.saved, self.context.store, directory)
+        )
         settings = self.settings(project)
         self.session.workspace = self.status.workspace = str(directory)
         # The new directory gets its own decision, as if Pax had started there; it is never asked here.

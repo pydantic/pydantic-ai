@@ -214,27 +214,35 @@ def _attach_trust(
     session: Session[DepsT, OutputT],
     trust: WorkspaceTrust | None,
     *,
-    store: SettingsStore,
+    process: ClaiProcess[DepsT],
     status: Status,
     commands: Commands,
 ) -> None:
-    """Give `session` its folder's trust, `trust` or the one saved for the folder, with its footer field and `/trust`."""
-    session.trust = trust if trust is not None else WorkspaceTrust.saved(store, Path(session.workspace))
+    """Give `session` its folder's shared trust on `process`, with its footer indicator and `/trust`."""
+    session.trust = process.trust_for(Path(session.workspace), initial=trust)
     status.trust = lambda: None if session.trust is None else session.trust.level
     commands.register(
         Command(
             name='trust',
             description="Show whether you trust this session's folder, or change it: /trust [yes|no]",
-            handler=lambda args: _trust_command(session, store, args),
+            handler=lambda args: _trust_command(session, process, args),
             complete=lambda args: ('yes', 'no') if len(args) <= 1 else (),
         )
     )
 
 
-async def _trust_command(session: Session[DepsT, OutputT], store: SettingsStore, args: list[str]) -> str:
+async def _trust_command(session: Session[DepsT, OutputT], process: ClaiProcess[DepsT], args: list[str]) -> str:
     """`/trust` for `session`, whose folder `create_shell` always gave a trust decision; it reads the folder's names."""
     assert session.trust is not None, 'create_shell sets the trust of every session it builds'
-    return await to_thread.run_sync(trust_command, session.trust, store, Path(session.workspace), args)
+    trust = session.trust
+
+    def run() -> str:
+        reply = trust_command(trust, process.store, Path(session.workspace), args)
+        if args:
+            process.refresh_trust(trust)
+        return reply
+
+    return await to_thread.run_sync(run)
 
 
 def create_shell(
@@ -547,7 +555,7 @@ def create_shell(
     )
     screen = Screen()
     status = Status(fields=lambda: context.settings.footer_fields)
-    _attach_trust(session, trust, store=store, status=status, commands=commands)
+    _attach_trust(session, trust, process=process, status=status, commands=commands)
     status.restore_text_age(session.messages)
     loader = SessionPlugins[DepsT](
         process=process.plugins,

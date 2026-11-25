@@ -21,14 +21,13 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Self
+from typing import Self
 
 from pydantic_ai.messages import Authority
+from pydantic_ai_pax.config import TrustLevel
 from pydantic_ai_pax.config.project_settings import PROJECT_FILE, repository_directories
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
-
-TrustLevel = Literal['trusted', 'untrusted']
 
 _INSTRUCTION_FILES = ('AGENTS.md', 'CLAUDE.md')
 """What `repo_context` loads from each folder: the first of these it finds there."""
@@ -166,14 +165,25 @@ class WorkspaceTrust:
     """The folder the decision in effect was made for; `None` while you have not decided."""
 
     @classmethod
+    def from_scope(cls, store: SettingsStore, scope: TrustScope) -> Self:
+        """The saved trust for `scope`; untrusted when you never decided."""
+        trust = cls(scope=scope)
+        trust.refresh(store)
+        return trust
+
+    @classmethod
     def saved(cls, store: SettingsStore, directory: Path) -> Self:
         """The trust for a session in `directory`, as you decided it before; untrusted when you never did."""
-        scope = trust_scope(directory)
-        saved = saved_trust(store, scope)
+        return cls.from_scope(store, trust_scope(directory))
+
+    def refresh(self, store: SettingsStore) -> None:
+        """Reload this scope's saved decision from `store`, if one exists for it or an ancestor."""
+        saved = saved_trust(store, self.scope)
         if saved is None:
-            return cls(scope=scope)
-        trusted, folder = saved
-        return cls(scope=scope, trusted=trusted, decided_for=folder)
+            self.trusted = False
+            self.decided_for = None
+            return
+        self.trusted, self.decided_for = saved
 
     @property
     def decided(self) -> bool:

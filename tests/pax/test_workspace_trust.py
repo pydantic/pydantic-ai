@@ -22,7 +22,9 @@ from pydantic_ai_pax.commands import config_command
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings, load_project_settings
 from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
+from pydantic_ai_pax.runtime.session_workspace import SessionWorkspace
 from pydantic_ai_pax.runtime.workspace_trust import (
     WorkspaceTrust,
     repository_files,
@@ -470,3 +472,98 @@ async def test_web_launch_names_an_undecided_folder(tmp_path: Path, monkeypatch:
     assert 'untrusted' not in await launch()
     assert levels == [False, True]
     assert undecided_notice(None) is None
+
+
+async def test_trust_changes_reach_other_live_sessions_in_the_same_process(repository: Path, tmp_path: Path) -> None:
+    """`/trust` in one session updates every other live session sharing its scope, including repo subfolders and `$HOME`."""
+    store = SettingsStore(tmp_path / 'config.db')
+    process: ClaiProcess[None] = ClaiProcess.open(store)
+    sub = repository / 'sub'
+    sub.mkdir()
+    probe_root, probe_sub = AuthorityProbe(), AuthorityProbe()
+
+    def open_in(directory: Path, probe: AuthorityProbe) -> SessionRuntime[None, str]:
+        return create_shell(
+            Agent(TestModel(call_tools=[]), deps_type=type(None), output_type=str),
+            deps=None,
+            plugins=(probe,),
+            usage_limits=None,
+            console=Console(file=io.StringIO()),
+            settings=Settings(model=None),
+            store=None,
+            process=process,
+            builtin_plugins=(),
+            project=ProjectSettings(),
+            headless=True,
+            workspace=directory,
+        )
+
+    first = open_in(repository, probe_root)
+    second = open_in(sub, probe_sub)
+    try:
+        assert first.session.trust is second.session.trust
+        await first.commands.execute_async('/trust yes')
+        await second.session.prompt('trusted-run')
+        assert 'untrusted' not in second.status.text() and 'trusted' in second.status.text()
+
+        await first.commands.execute_async('/trust no')
+        await second.session.prompt('revoked-run')
+        assert 'untrusted' in second.status.text()
+        assert (await second.commands.execute_async('/trust')).startswith('This folder is untrusted.\n')
+        assert probe_sub.seen == ['operator', 'none']
+    finally:
+        await second.close('exit')
+        await first.close('exit')
+
+    # Moving a session into the repository through `SessionWorkspace` joins the same shared trust.
+    other = tmp_path / 'other'
+    other.mkdir()
+    mover = open_in(other, probe_root)
+    try:
+        workspace = SessionWorkspace(
+            session=mover.session,
+            context=mover.context,
+            loader=mover.loader,
+            status=mover.status,
+            settings=lambda _: Settings(model=None),
+            trust_for=process.trust_for,
+        )
+        await workspace.move(str(sub))
+        assert mover.session.trust is process.trusts[repository]
+    finally:
+        await mover.close('exit')
+
+    # Non-repo parent changes refresh live descendant scopes unless a child has its own decision.
+    parent = tmp_path / 'notes'
+    child = parent / 'drafts'
+    child.mkdir(parents=True)
+    probe_child = AuthorityProbe()
+    parent_shell = open_in(parent, AuthorityProbe())
+    child_shell = open_in(child, probe_child)
+    try:
+        await parent_shell.commands.execute_async('/trust yes')
+        await child_shell.session.prompt('inherited-yes')
+        await parent_shell.commands.execute_async('/trust no')
+        await child_shell.session.prompt('inherited-no')
+        await child_shell.commands.execute_async('/trust yes')
+        await parent_shell.commands.execute_async('/trust no')
+        await child_shell.session.prompt('own-yes-wins')
+        assert probe_child.seen == ['operator', 'none', 'operator']
+    finally:
+        await child_shell.close('exit')
+        await parent_shell.close('exit')
+
+    # Session-only `$HOME` trust is shared across live sessions in the same process and seeded on reload.
+    home = Path.home().resolve()
+    home.mkdir(parents=True, exist_ok=True)
+    home_a = open_in(home, AuthorityProbe())
+    home_b = open_in(home, AuthorityProbe())
+    try:
+        await home_a.commands.execute_async('/trust yes')
+        assert home_b.session.trust is not None and home_b.session.trust.trusted
+        reloaded: ClaiProcess[None] = ClaiProcess.open(store)
+        assert reloaded.trust_for(home, initial=home_a.session.trust) is home_a.session.trust
+        assert reloaded.trust_for(home) is home_a.session.trust
+    finally:
+        await home_b.close('exit')
+        await home_a.close('exit')

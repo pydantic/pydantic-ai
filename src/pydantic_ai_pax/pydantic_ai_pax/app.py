@@ -413,7 +413,9 @@ async def _decide_trust(
             markup=False,
         )
         return
-    await to_thread.run_sync(partial(trust.decide, shell.context.store, trusted=trusted))
+    await to_thread.run_sync(
+        lambda: (trust.decide(shell.context.store, trusted=trusted), shell.process.refresh_trust(trust))
+    )
     level = 'Trusted' if trusted else "Untrusted: the agent can still work here, with its files as the repository's"
     held = '' if trust.scope.remembered else ' for this session'
     console.print(f'{level}{held}. /trust changes it.', style=theme.color(theme.INFO), markup=False)
@@ -554,10 +556,9 @@ def _opener(
     launched_in, launch_project = Path(shell.session.workspace), shell.context.project
 
     def build(directory: Path | None) -> SessionRuntime[DepsT, OutputT]:
-        launch_directory = directory in (None, launched_in)
         project = (
             with_current_approvals(launch_project, store=shell.context.store)
-            if launch_directory
+            if directory in (None, launched_in)
             else load_project_settings(directory, store=shell.context.store)
         )
         return create_shell(
@@ -576,8 +577,6 @@ def _opener(
             process=shell.process,
             signals=False,
             settings_for=settings,
-            # The launch directory shares the terminal's decision; another one gets the one you saved for it.
-            trust=shell.session.trust if launch_directory else None,
         )
 
     return build
