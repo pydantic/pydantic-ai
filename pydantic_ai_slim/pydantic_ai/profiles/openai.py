@@ -768,6 +768,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # it gets the announcement from the first request (see the field's docstring). Here rather than in
         # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
         profile['default_framing_announcement'] = 'always'
+    elif model_name.startswith('gpt-'):
+        # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the field's docstring).
+        profile['delegates_unprompted'] = True
     return profile
 
 

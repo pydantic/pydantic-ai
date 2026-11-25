@@ -324,6 +324,24 @@ def test_openai_compatible_endpoints_fall_back_from_max_effort():
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'delegates'),
+    [
+        ('gpt-6.1-terra', True),
+        ('gpt-5.5', True),
+        ('gpt-4o', True),
+        ('gpt-oss-120b', False),
+        ('o3', False),
+        ('claude-opus-5-5', False),
+    ],
+)
+def test_delegates_unprompted(model_name: str, delegates: bool):
+    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API."""
+    profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(profile, dict)
+    assert profile.get('delegates_unprompted', False) is delegates
+
+
+@pytest.mark.parametrize(
     'key', ['openai_chat_streaming_repeats_usage_totals', 'openai_chat_completion_tokens_omit_reasoning']
 )
 @pytest.mark.parametrize(
