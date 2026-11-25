@@ -90,7 +90,10 @@ def _table(engine: Engine) -> ModuleType:
 
 
 def test_every_durability_capability_is_an_engine() -> None:
-    """A new engine can't land unnamed: its durability capability must be in `ENGINE_CAPABILITIES`."""
+    """A new engine can't land unnamed: its durability capability must be in `ENGINE_CAPABILITIES`.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     found = {
         ref.name for ref in discover_capabilities(DURABILITY_PACKAGES).values() if _is_durability(ref.name, ref.module)
     }
@@ -98,7 +101,10 @@ def test_every_durability_capability_is_an_engine() -> None:
 
 
 def test_every_durability_capability_has_a_suite() -> None:
-    """Every engine runs `DurableEngineSuite` against a support table of its own, or is still pending."""
+    """Every engine runs `DurableEngineSuite` against a support table of its own, or is still pending.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     assert set(SUITES).isdisjoint(PENDING_ENGINES)
     assert {*SUITES, *PENDING_ENGINES} == set(ENGINES) == set(ENGINE_CAPABILITIES)
     assert PENDING_ENGINES == snapshot(('prefect', 'aws_lambda', 'absurd', 'pgtask', 'azure_durable_task', 'render'))
@@ -112,6 +118,8 @@ def test_measured_cells_only_go_up() -> None:
     """How many cases each engine's suite measures: an engine that joins the suite raises its count, and none lowers it.
 
     Every cell of an engine with a suite is measured, whatever its level; an engine still pending measures none.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     measured = sum(name in PUBLIC and case.calls is not None for name, case in CASES.items())
     counts = {engine: measured if engine in SUITES else 0 for engine in ENGINES}
@@ -130,7 +138,10 @@ def test_measured_cells_only_go_up() -> None:
 
 
 def test_the_manifest_and_the_docs_name_every_engine() -> None:
-    """Adding an engine touches the contract manifest's roots, the docs tables and the suites alike."""
+    """Adding an engine touches the contract manifest's roots, the docs tables and the suites alike.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     assert set(durable_exec_contract.ENGINES) - {'durable_exec'} == set(ENGINES)
     assert {engine: module for engine, (_, module) in durable_exec_support.TABLES.items()} == ENGINE_SUPPORT_MODULES
     assert durable_exec_support.PENDING == set(PENDING_ENGINES)
@@ -141,6 +152,8 @@ def test_every_cell_names_a_real_case_or_scenario(engine: Engine) -> None:
     """A cell only means something for a case whose calls the suite runs, or for a scenario.
 
     An engine with a suite lists only the cells that aren't `supported`; one still pending lists what is measured.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     table = _table(engine)
     cells: Mapping[str, Support] = table.SUPPORT
@@ -156,12 +169,20 @@ def test_every_cell_names_a_real_case_or_scenario(engine: Engine) -> None:
 
 
 def test_temporal_refuses_the_id_less_toolsets() -> None:
+    """Temporal refuses exactly the cases whose toolset has no id.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     cells: Mapping[str, Support] = _table('temporal').SUPPORT
     refused = {name for name, cell in cells.items() if cell.issue == 9233}
     assert refused == set(ID_LESS_TOOLSETS)
 
 
 def test_the_d1_exemptions_are_the_cases_a_table_refuses_or_breaks() -> None:
+    """D1's exemptions are the cases an engine's table refuses or breaks, and no others.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     contracts: dict[Engine, Contract] = {'dbos': DURABLE_DBOS, 'temporal': DURABLE_TEMPORAL}
     for engine, contract in contracts.items():
         cells: Mapping[str, Support] = _table(engine).SUPPORT
@@ -187,6 +208,10 @@ _check: Callable[[EngineRun], None] = lambda run: None  # noqa: E731
     ],
 )
 def test_a_declaration_says_what_it_needs(make: Callable[[], object], error: str) -> None:
+    """A support declaration missing what its level or mode needs is rejected when built.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     with pytest.raises(ValueError, match=error):
         make()
 
@@ -196,7 +221,10 @@ SCENARIO_OWNERS_BESIDES_CAPABILITIES = ('RunContext',)
 
 
 def test_every_scenario_names_its_owner() -> None:
-    """A scenario is `<owner>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it."""
+    """A scenario is `<owner>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     for scenario in SCENARIOS:
         owner, _, name = scenario.partition('.')
         assert (owner in PUBLIC or owner in SCENARIO_OWNERS_BESIDES_CAPABILITIES) and name, scenario
@@ -204,13 +232,19 @@ def test_every_scenario_names_its_owner() -> None:
 
 
 def test_the_suites_run_every_run_context_scenario() -> None:
-    """No capability's tests run a `RunContext` scenario, so the engine suites must, through `SCENARIO_RUNS`."""
+    """No capability's tests run a `RunContext` scenario, so the engine suites must, through `SCENARIO_RUNS`.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
     assert run_context <= set(SCENARIO_RUNS)
 
 
 def test_the_compatibility_page_is_current(capsys: pytest.CaptureFixture[str]) -> None:
-    """`docs/durable_execution/compatibility.md` shows the tables as the engines declare them."""
+    """`docs/durable_execution/compatibility.md` shows the tables as the engines declare them.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     for engine in ENGINES:
         _table(engine)
     assert durable_exec_support.main([]) == 0, capsys.readouterr().err
