@@ -572,7 +572,8 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     async def _close_paused(self, ctx: RunContext[AgentDepsT], parent: str, value: object, error: str) -> None:
         for call_id in list(self._deferred):
             # A paused launch is shown only once claimed, under a nested id.
-            if call_id.rpartition('__')[0] != parent or _speculative(call_id):
+            nested = NESTED_CALL.fullmatch(call_id)
+            if nested is None or nested['parent'] != parent or nested['speculative'] is not None:
                 continue
             call = self._deferred.pop(call_id)
             result = _nested_return(value, call_id)
