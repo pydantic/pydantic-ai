@@ -20,6 +20,7 @@ from pydantic_ai_pax.plugins.loader import SessionPlugins
 from pydantic_ai_pax.runtime.imported_sessions import ImportSource
 from pydantic_ai_pax.runtime.launch import launch_session_id
 from pydantic_ai_pax.runtime.session_runtime import create_shell
+from pydantic_ai_pax.runtime.workspace_trust import undecided_notice
 
 
 @asynccontextmanager
@@ -80,6 +81,9 @@ async def run_headless(
             load_plugins=load_plugins,
             only_plugins=only_plugins,
         )
+        # Nobody is asked in a headless run, so a folder you never decided about stays untrusted.
+        if (notice := undecided_notice(shell.session.trust)) is not None:
+            print(notice, file=sys.stderr)
         async with agent:
             with shell.screen.bound(no_screen):  # pragma: no branch -- bound never suppresses exceptions.
                 try:

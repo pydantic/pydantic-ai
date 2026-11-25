@@ -26,6 +26,7 @@ STORED_MAIN_CHANNEL = 'bleeding'
 """`main`'s former name, still what is saved for it: older builds accept only this name."""
 ToolCallDisplay = Literal['detailed', 'grouped']
 TOOL_CALL_DISPLAYS: tuple[ToolCallDisplay, ...] = get_args(ToolCallDisplay)
+TrustLevel = Literal['trusted', 'untrusted']
 FooterField = Literal[
     'model',
     'workspace',

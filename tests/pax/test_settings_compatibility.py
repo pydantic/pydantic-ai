@@ -1847,3 +1847,22 @@ def test_worktree_command_symlink_key_is_canonical_and_menu_is_json(tmp_path: Pa
     assert source.current(row) == '{"/repo": ["remove"]}'
     context.reset_setting('worktrees.remove_commands')
     assert source.current(row) == '{}'
+
+
+def test_database_from_before_folder_trust_keeps_its_settings_and_trusts_nothing(tmp_path: Path) -> None:
+    """A database an older build wrote has no `workspace_trust` table: it gains an empty one, and keeps the rest."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"test"'))
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('future.setting', '1'))
+    store = SettingsStore(path)
+    assert store.workspace_trust(tmp_path) is None
+    store.set_workspace_trust(tmp_path, trusted=True)
+    reopened = SettingsStore(path)
+    assert reopened.workspace_trust(tmp_path) is True
+    assert reopened.overrides() == {'model': 'test'}
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT value_json FROM settings WHERE key = 'future.setting'").fetchone() == ('1',)
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)

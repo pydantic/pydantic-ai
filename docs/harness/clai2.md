@@ -118,12 +118,22 @@ Pax reads `AGENTS.md` (or `CLAUDE.md`) from the folder you start it in and the f
 it, then a subfolder's as it works there, and follows what they say (not yet on Windows). If
 the folder (or a parent) has a `.env` file, Pax loads it at startup.
 
+The first time you start Pax in a folder, it asks whether you trust the files in it, and lists
+the instruction files, skills, and agent folders it found there. Answer **Yes** for your own
+projects. **No**, the default, keeps the folder untrusted: the agent still reads, edits, and runs
+code there, and capabilities that check workspace authority treat the folder's files as the
+repository's, not yours (walk-up instruction files, skills, and agent folders still load as before
+until they check authority). Pax remembers the answer for the whole repository, and `/trust` shows
+or changes it. The status row says `trusted` or `untrusted`. See
+[folder trust](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#folder-trust)
+in the reference.
+
 ### Where Pax keeps things
 
 Your settings, saved sessions, and plugins live in `~/.config/pydantic-clai2/`, or in
 `$XDG_CONFIG_HOME/pydantic-clai2/` if you set `XDG_CONFIG_HOME`:
 
-- `config.db`: settings, saved models, and plugin choices
+- `config.db`: settings, saved models, plugin choices, and which folders you trust
 - `sessions.db`: saved conversations
 - `plugins/`: plugins you drop in
 - `input-history`: what you typed, for the <kbd>↑</kbd> arrow
