@@ -91,11 +91,25 @@ _TOOLSET_INSTRUCTION = InstructionId(ToolsetInstructionSource(id='plugin'), name
 
 async def _history(directory: Path) -> list[ModelMessage]:
     """A history with every kind of capability part, each source, and the request parts that address instructions."""
+    # The framework's own kinds, looked up by the tag a replay finds them by.
     content_part = CAPABILITY_PART_TYPES['pydantic_ai.capability_content']
     instruction_part = CAPABILITY_PART_TYPES['pydantic_ai.capability_instruction']
+    assert issubclass(content_part, DataCapabilityPart) and issubclass(instruction_part, InstructionCapabilityPart)
     (directory / 'notes.md').write_text('Sunny.')
     workspace = AuthorityWorkspace(Workspace(LocalWorkspaceBackend(directory)), authority='none')
     workspace_source = await WorkspaceSource.from_workspace(workspace, 'notes.md')
+    capability_parts: list[CapabilityPart] = [
+        content_part(content='the page says hello', source=ToolResultSource(tool_name='fetch')),
+        content_part(content='the judge says fine', source=ModelSource('trajectory judge')),
+        content_part(content='from the notes', source=workspace_source),
+        instruction_part(content='Be brief.', source=OperatorSource()),
+        instruction_part(content='Prefer metric.', source=UserSource()),
+        instruction_part(content='Check twice.', source=CapabilitySource('plugin', authority='none')),
+        ThirdPartyReportPart(content='All 12 pass.', source=OperatorSource(), label='ci', attempt=2),
+        ThirdPartyReportPart(content='Fetched.', source=ToolResultSource(tool_name='fetch'), label='page'),
+        ThirdPartyReminderPart(content='Stay on task.', source=OperatorSource()),
+        ThirdPartyReminderPart(content='Lowered.', source=CapabilitySource('plugin', authority='user')),
+    ]
     return [
         ModelRequest(
             parts=[
@@ -106,20 +120,7 @@ async def _history(directory: Path) -> list[ModelMessage]:
             ]
         ),
         ModelResponse(parts=[TextPart('working')]),
-        ModelRequest(
-            parts=[
-                content_part(content='the page says hello', source=ToolResultSource(tool_name='fetch')),
-                content_part(content='the judge says fine', source=ModelSource('trajectory judge')),
-                content_part(content='from the notes', source=workspace_source),
-                instruction_part(content='Be brief.', source=OperatorSource()),
-                instruction_part(content='Prefer metric.', source=UserSource()),
-                instruction_part(content='Check twice.', source=CapabilitySource('plugin', authority='none')),
-                ThirdPartyReportPart(content='All 12 pass.', source=OperatorSource(), label='ci', attempt=2),
-                ThirdPartyReportPart(content='Fetched.', source=ToolResultSource(tool_name='fetch'), label='page'),
-                ThirdPartyReminderPart(content='Stay on task.', source=OperatorSource()),
-                ThirdPartyReminderPart(content='Lowered.', source=CapabilitySource('plugin', authority='user')),
-            ]
-        ),
+        ModelRequest(parts=list(capability_parts)),
     ]
 
 
