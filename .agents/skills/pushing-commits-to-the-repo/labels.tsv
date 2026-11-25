@@ -5,6 +5,7 @@ approved:dependencies	Maintainer approval for changes to pyproject.toml or uv.lo
 area:absurd	Absurd durable execution integration (`AbsurdDurability`).
 area:agent	The Agent class and run loop: instructions, deps, retries, cancellation, timeouts, AgentSpec.
 area:agentic-workflows	This repo's own agentic workflows and bots: runs, incidents, quotas. Engine code is area:gh-aw.
+area:batch	Batch model requests: Batch, BatchResult, BatchModelRequests, and provider batch adapters.
 area:caching	Prompt caching, cache retention, cached-token usage, and cache-bust detection.
 area:capabilities	The capability framework: lifecycle, loading, composition, hooks. Not any single capability.
 area:clai2-web-ui	The clai2 web UI: its web plugin, front end, and npm dependencies (src/pydantic_ai_pax/web-ui).
