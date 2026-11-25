@@ -131,13 +131,17 @@ in the reference.
 
 ### Where Pax keeps things
 
-Your settings, saved sessions, and plugins live in `~/.config/pydantic-clai2/`, or in
-`$XDG_CONFIG_HOME/pydantic-clai2/` if you set `XDG_CONFIG_HOME`:
+Your settings, saved sessions, and plugins live in `~/.config/pydantic-ai-pax/`, or in
+`$XDG_CONFIG_HOME/pydantic-ai-pax/` if you set `XDG_CONFIG_HOME`:
 
 - `config.db`: settings, saved models, plugin choices, and which folders you trust
 - `sessions.db`: saved conversations
 - `plugins/`: plugins you drop in
 - `input-history`: what you typed, for the <kbd>↑</kbd> arrow
+
+Bookkeeping that isn't a preference, such as your workspaces and which Pax processes are running, lives in
+`~/.local/state/pydantic-ai-pax/`, or `$XDG_STATE_HOME/pydantic-ai-pax/`. An earlier Pax kept both under
+`pydantic-clai2/`: the first launch moves them and leaves a link at the old path.
 
 Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
 keychain, they are saved unencrypted in a file only you can read. A
@@ -426,7 +430,7 @@ Turn on more when you need them, such as `github`, `linear`, `notion`, `slack`,
 `google_workspace`, and `logfire_mcp`.
 
 To install a plugin, clone it from Git, name a plugin or a harness capability by its import
-path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
+path, or drop a file in `~/.config/pydantic-ai-pax/plugins/`:
 
 ```text
 /plugins add https://github.com/your-org/my-plugin.git
