@@ -1,17 +1,26 @@
 ---
 title: Pax
-description: "Pax is a coding agent for your terminal, built on Pydantic AI and the Pydantic AI Harness."
+description: "Pax is a coding agent TUI built on the Pydantic AI Harness SDK's Coder, and a terminal interface for any Pydantic AI agent."
 ---
 
 # Pax
 
-A coding agent for your terminal, built on [Pydantic AI](../index.md).
+A coding agent TUI built on the [Pydantic AI Harness](index.md)
+SDK's [`Coder`](coder.md), ready to run as it comes or
+with a harness of your own. Pax is also a terminal
+[interface](../interfaces.md) for any
+[Pydantic AI](../index.md) agent.
 
 Pax reads your code, edits files, and runs commands, and you see every step as it
 happens. Use the model you like: sign in with your ChatGPT or GitHub Copilot
 subscription, or bring an API key for OpenAI, Anthropic, or another provider Pydantic AI
-supports. The coding tools and integrations are plugins, so you can add tools,
-commands, and menus without forking anything.
+supports.
+
+Everything in Pax is a plugin, the coding agent included, so you can add tools,
+commands and menus without forking anything, or swap any piece out. Sandboxes and
+workspaces are plugins too, so where the agent runs and where it works are yours to
+choose. To run an agent of your own instead, use `pax --agent my_module:agent`, which
+loads that agent on its own without Pax's plugins.
 
 ![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 

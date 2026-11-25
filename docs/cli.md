@@ -9,6 +9,7 @@ description: "Chat with LLMs from your terminal using clai, the Pydantic AI comm
 !!! note "Pax is the coding agent"
     For a coding agent in your terminal, use [Pax](harness/pax.md), which runs `Coder` by default and your own agent with `--agent`. `clai` is the chat CLI: it is not deprecated, and it stays the way to hold a quick conversation with a model, serve the [Web Chat UI](web.md) with `clai web`, or open a chat from your own code with [`to_cli_sync()`](#custom-agents).
 
+
 ## Installation
 
 You can run the `clai` using [`uvx`](https://docs.astral.sh/uv/guides/tools/):

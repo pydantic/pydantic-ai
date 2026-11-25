@@ -21,7 +21,7 @@ Three packages, each built on the one before it. Start with the one that matches
 |---|---|---|
 | [Pydantic AI](../index.md) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
 | [Pydantic AI Harness](#capabilities) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
-| [Pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+| [Pax](clai2.md) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
 
 Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. Pax is not the [`clai` chat CLI](../cli.md) that ships with Pydantic AI.
 
@@ -59,10 +59,11 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 Coder provides six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`, plus `delegate_task` to hand a sub-task to a fresh run of the same agent, repository context, and context controls. Shell commands are unrestricted and can persist beyond individual runs. Default instructions guide autonomous investigation, editing, and verification; pass `instructions=` to add your own guidance.
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:large }}
+uv tool install pydantic-ai-pax
+pax
 ```
 
-The bundled `coder_agent` is the example above without a model.
+Point it at your own agent with `pax --agent mymodule:agent`, or at the bundled export with `pax --agent pydantic_ai_harness.coder:coder_agent -m {{ anthropic:large }}`, which is the example above without a model.
 
 Every model works: swap the string for [any provider's](../models/overview.md). Need more? Add capabilities to the list; here's the same coder on `{{ openai:medium.name }}`, with web search and cross-session memory:
 
@@ -228,6 +229,7 @@ Finding and reading things on the open web.
 | [You.com Research](youdotcom.md) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
 | [Keenable Search](keenable-search.md) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
 | [Browser Use](browser-use.md) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
+| [CDP Browser](cdp-browser.md) | Harness | Drive a throwaway Chrome tab with raw DevTools Protocol commands, best from Code Mode |
 | [Playwright Browser](playwright.md) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
 | [Computer Use](computer-use.md) | Harness | See and control the desktop of the run's workspace with screenshots, mouse, and keyboard |
 
@@ -294,7 +296,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool Call Judge](tool-call-judge.md) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
 | [Approval Reviewer](approval-reviewer.md) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
 | [Permissions](permissions.md) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only; allow, ask about, or deny tool calls and shell commands by rule |
-| [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
+| [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on Temporal and AWS Lambda |
 | [System Reminders](system-reminders.md) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](detect-loops.md) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
 | [Report Tool Errors](report-tool-errors.md) | Harness | Send an exception a tool raises to the model as a failed tool result, so the run continues |
