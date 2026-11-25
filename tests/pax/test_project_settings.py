@@ -52,6 +52,7 @@ from pydantic_ai_pax.runtime.project_instructions import ProjectInstructions, Pr
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.ui.rendering.welcome import print_welcome
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
+from tests.pax.test_headless import untrusted_notice
 
 
 def write(directory: Path, content: dict[str, JsonValue]) -> Path:
@@ -675,7 +676,7 @@ async def test_headless_ignores_unapproved_keys_with_a_notice(
     assert captured.out == 'done\n'
     assert captured.err == (
         'Project settings not applied until you approve them with /project approve in a Pax session: '
-        'tool_retries, permissions\n'
+        f'tool_retries, permissions\n{untrusted_notice(store)}'
     )
 
 
@@ -809,7 +810,7 @@ async def test_a_headless_run_keeps_to_a_stricter_project_mode(
     assert await headless.run_headless(text='go', settings=settings_for(project), store=store, project=project) == 0
     written = {path for path in tmp_path.rglob('*') if path.is_file()} - before - {tmp_path / 'sessions.db'}
     assert bool({path for path in written if not path.name.startswith('sessions.db')}) is not declared
-    assert capsys.readouterr().err == '', 'the mode applied, so nothing is reported as left out'
+    assert capsys.readouterr().err == untrusted_notice(store), 'the mode applied, so only trust is reported'
 
 
 def shell_in(directory: Path, store: SettingsStore) -> SessionRuntime[None, str]:

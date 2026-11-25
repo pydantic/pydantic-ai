@@ -147,6 +147,11 @@ class SettingsStore:
                 'CREATE TABLE IF NOT EXISTS accounts (provider TEXT NOT NULL, profile TEXT NOT NULL, label TEXT, '
                 'plugin_login TEXT, position INTEGER NOT NULL, PRIMARY KEY (provider, profile))'
             )
+            # Folder trust decisions, by the absolute folder they were made for, sit beside the rest for the
+            # same reason. A repository's own files never reach this table: only `/trust` and the trust prompt write it.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS workspace_trust (path TEXT PRIMARY KEY, trusted INTEGER NOT NULL)'
+            )
             connection.execute('PRAGMA user_version = 1')
 
     @contextmanager
@@ -491,6 +496,20 @@ class SettingsStore:
             connection.executemany(
                 'DELETE FROM approved_project_settings WHERE root = ? AND key = ?',
                 [(str(root.resolve()), key) for key in keys],
+            )
+
+    def workspace_trust(self, path: Path) -> bool | None:
+        """Whether you trusted the folder at `path`, by its absolute path; `None` when you never decided."""
+        with self._connect() as connection:
+            row = connection.execute('SELECT trusted FROM workspace_trust WHERE path = ?', (str(path),)).fetchone()
+        return None if row is None else bool(row[0])
+
+    def set_workspace_trust(self, path: Path, *, trusted: bool) -> None:
+        """Remember whether you trust the folder at `path`, by its absolute path, replacing an earlier decision."""
+        with self._connect() as connection:
+            connection.execute(
+                'INSERT INTO workspace_trust VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET trusted = excluded.trusted',
+                (str(path), int(trusted)),
             )
 
     def model_settings(self, model: str) -> dict[str, JsonValue]:
