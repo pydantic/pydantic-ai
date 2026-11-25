@@ -55,16 +55,19 @@ def _registered_kinds() -> dict[str, type[CapabilityPart]]:
         for package_name in _PACKAGES:
             try:
                 package = importlib.import_module(package_name)
-            except ModuleNotFoundError as exc:  # pragma: no cover - Pax and clai2 are optional next to the harness
+            # Pax and clai2 are optional next to the harness.
+            except ModuleNotFoundError as exc:  # pragma: no cover
                 if exc.name != package_name:
                     raise
                 continue
             for module_info in pkgutil.walk_packages(package.__path__, f'{package_name}.'):
                 try:
                     importlib.import_module(module_info.name)
-                except Exception as exc:  # A module whose optional dependency isn't installed is skipped.
+                # A module whose optional dependency isn't installed is skipped.
+                except Exception as exc:
                     if not caused_by_missing_dependency(exc):  # pragma: no branch
-                        raise  # pragma: no cover - only a real import error gets here
+                        # Only a real import error gets here.
+                        raise  # pragma: no cover
     return dict(sorted(CAPABILITY_PART_TYPES.items()))
 
 
