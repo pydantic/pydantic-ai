@@ -20,7 +20,7 @@ import anyio
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import RetryFeedbackPart, UsageLimitUnavailableWarning
+from pydantic_ai import CancellationToken, RetryFeedbackPart, UsageLimitUnavailableWarning
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, capture_run_messages
 from pydantic_ai.capabilities import (
@@ -32,10 +32,12 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.capabilities.abstract import AbstractCapability, AgentNode, NodeResult, WrapNodeRunHandler
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import (
+    AgentRunError,
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
     RunCancelled,
+    RunTimedOut,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
@@ -2773,6 +2775,65 @@ class TestRunSuccessHooks:
 
         await anyio.to_thread.run_sync(run_sync)
         assert log.count('recorder:on_run_success') == 4
+
+    async def test_the_runs_deadline_and_cancellation_token_still_apply(self):
+        """It runs inside the run's deadline and cancellation, so a timeout or a token cancels a hook that blocks."""
+
+        @dataclass
+        class BlockingCommit(AbstractCapability[Any]):
+            cancel: Callable[[RunContext[Any]], None]
+
+            async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+                self.cancel(ctx)
+                await asyncio.Event().wait()
+
+        def expire(ctx: RunContext[Any]) -> None:
+            # As the run's timer would, without racing a real timer against the run.
+            cancellation = ctx._cancellation  # pyright: ignore[reportPrivateUsage]
+            assert cancellation is not None
+            cancellation.expire()
+
+        with pytest.raises(RunTimedOut) as timed_out:
+            await Agent(TestModel(), capabilities=[BlockingCommit(expire)]).run('hello', timeout=60)
+        assert len(timed_out.value.all_messages()) == 2
+
+        token = CancellationToken()
+        with pytest.raises(RunCancelled):
+            await Agent(TestModel(), capabilities=[BlockingCommit(lambda ctx: token.cancel())]).run(
+                'hello', cancellation_token=token
+            )
+
+    async def test_not_called_when_a_toolset_exit_absorbs_the_runs_cancellation(self):
+        log: list[str] = []
+        token = CancellationToken()
+
+        class AbsorbingToolset(FunctionToolset[Any]):
+            async def __aexit__(self, *args: Any) -> bool | None:
+                await super().__aexit__(*args)
+                token.cancel()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    log.append('toolset:absorbed')
+                return None
+
+        agent = Agent(TestModel(), capabilities=[self.Recorder(log)], toolsets=[AbsorbingToolset(tools=[])])
+        with pytest.raises(RunCancelled):
+            await agent.run('hello', cancellation_token=token)
+
+        assert log == ['recorder:after_run', 'toolset:absorbed']
+
+    async def test_an_agent_run_error_carries_the_runs_conversation(self):
+        @dataclass
+        class FailingCommit(AbstractCapability[Any]):
+            async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+                raise AgentRunError('commit failed')
+
+        with pytest.raises(AgentRunError, match='commit failed') as failed:
+            await Agent(TestModel(), capabilities=[FailingCommit()]).run('hello')
+
+        assert failed.value.conversation is not None
+        assert len(failed.value.conversation.messages) == 2
 
     async def test_unloaded_deferred_capability_is_skipped(self):
         log: list[str] = []

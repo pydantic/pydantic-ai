@@ -484,18 +484,50 @@ class _SessionSuccess:
             await success.lifecycle.dispatch_success()
 
 
+@dataclasses.dataclass
+class _RunSuccess:
+    """Calls `on_run_success` from the run's exit stack, for a run that exits it cleanly."""
+
+    run_capability: AbstractCapability[Any]
+    cancellation: RunCancellation
+    agent_run: AgentRun[Any, Any] | None = None
+    run_ctx: RunContext[Any] | None = None
+
+    def bind(self, agent_run: AgentRun[Any, Any], run_ctx: RunContext[Any]) -> None:
+        self.agent_run = agent_run
+        self.run_ctx = run_ctx
+
+    async def __call__(self, exc_type: type[BaseException] | None, *_: object) -> None:
+        if exc_type is not None:
+            return
+        # Bound before the run's body starts, and nothing before that point can exit the stack cleanly.
+        assert self.agent_run is not None and self.run_ctx is not None
+        await _dispatch_run_success(
+            self.run_capability, self.run_ctx, self.agent_run.result, cancellation=self.cancellation
+        )
+
+
 async def _dispatch_run_success(
-    run_capability: AbstractCapability[Any], run_ctx: RunContext[Any], result: AgentRunResult[Any] | None
+    run_capability: AbstractCapability[Any],
+    run_ctx: RunContext[Any],
+    result: AgentRunResult[Any] | None,
+    *,
+    cancellation: RunCancellation | None = None,
 ) -> None:
-    """Call `on_run_success` for a run that returned `result` and has released everything it entered.
+    """Call `on_run_success` for a run that returned `result` and has released the resources it entered.
 
     `None` is a run the caller left before it produced a result, which didn't succeed.
     """
     if result is None:
         return
-    # A cancellation that arrived as the run finished still ends it cancelled, so nothing is committed for it.
+    # A cancellation requested or delivered as the run finished, even one a toolset's exit absorbed, still ends the
+    # run cancelled, so nothing is committed for it.
+    if cancellation is not None and cancellation.cancel_requested:
+        raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
     _utils.raise_if_cancelling()
-    await run_capability.on_run_success(run_ctx, result=result)
+    # The run's own context, so a nested run's durable operations dispatch through its run, not the enclosing one.
+    with set_current_run_context(run_ctx):
+        await run_capability.on_run_success(run_ctx, result=result)
 
 
 def _is_model(value: object) -> TypeIs[models.Model[Any]]:
@@ -5225,6 +5257,10 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
+            # Registered before the models, the graph run and the toolset, so it exits after them, and after the run's
+            # hooks; but still inside the run's deadline, cancellation and error handling, which exit after it.
+            run_success = _RunSuccess(self.run_capability, graph_deps.cancellation)
+            stack.push_async_exit(run_success)
             # On a stack of their own, so a model selected later in the run, whose exit is registered then, is still
             # exited after the run's pending response is settled below.
             self.model_resources.bind_stack(await stack.enter_async_context(AsyncExitStack()))
@@ -5271,6 +5307,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
 
             # Build RunContext for run lifecycle hooks
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
+            run_success.bind(agent_run, run_ctx)
             if not run_ctx.in_durable_context:
                 # A model the run uses without entering it keeps its HTTP client between runs, which needs replacing
                 # when this run is on another event loop. A durable run sends its requests from the engine's
@@ -5316,9 +5353,6 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 finally:
                     if agent_run.result is not None:
                         self.resolve_metadata(agent_run.ctx)
-
-        # Only now has every resource the run entered been released, so nothing left can fail the run.
-        await _dispatch_run_success(self.run_capability, run_ctx, agent_run.result)
 
 
 @contextmanager

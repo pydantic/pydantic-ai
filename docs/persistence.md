@@ -137,7 +137,7 @@ To have a [UI adapter](ui/overview.md#saving-to-a-conversation-store) load and s
 
 ### Saving from a capability
 
-To save every run of an agent without repeating the `save` call around each one, save it from a capability's [`on_run_success`][pydantic_ai.capabilities.AbstractCapability.on_run_success] hook. It runs once the run has returned its result and released its toolsets and models, and isn't called for a run that raises or is cancelled, so the store never holds a turn the caller didn't get:
+To save every run of an agent without repeating the `save` call around each one, save it from a capability's [`on_run_success`][pydantic_ai.capabilities.AbstractCapability.on_run_success] hook. It runs once the run has its result and its toolsets and models have exited, and isn't called for a run that raises or is cancelled before that, so a failed run isn't saved:
 
 ```python {title="save_on_success.py"}
 from dataclasses import dataclass
@@ -179,7 +179,7 @@ async def main():
     #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
-A save that raises, like a [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict], fails the run. Saving a failed turn from [`error.conversation`][pydantic_ai.exceptions.AgentRunError.conversation], as above, stays with the code that catches the error.
+A save that raises, like a [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict], fails the run, which then returns no result. A save can still outlive the run: another capability's `on_run_success`, or the run's `timeout=`, can fail the run after it. Saving a failed turn from [`error.conversation`][pydantic_ai.exceptions.AgentRunError.conversation], as above, stays with the code that catches the error.
 
 ## Recording what each run did
 
