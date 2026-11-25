@@ -336,7 +336,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 
 Core also ships loop-customization capabilities for production servers: [Select Model](../capabilities/select-model.md), [Resolve Model ID](../capabilities/resolve-model-id.md), [Prepare Tools / Prepare Output Tools](../capabilities/prepare-tools.md), [Prefix Tools](../capabilities/prefix-tools.md), [Set Tool Metadata](../capabilities/set-tool-metadata.md), [Include Tool Return Schemas](../capabilities/include-tool-return-schemas.md), [Process History](../capabilities/process-history.md), [Process Event Stream](../capabilities/process-event-stream.md), [Reinject System Prompt](../capabilities/reinject-system-prompt.md), and [Raise Content Filter Error](../capabilities/raise-content-filter-error.md).
 
-And the agent plugs into any interface: [ACP](acp.md) *(experimental, Harness)* serves it to editors like Zed over the [Agent Client Protocol](https://agentclientprotocol.com), and core ships the [web chat UI](../web.md), [CLI](../cli.md), [frontend adapters](../ui/overview.md) (AG-UI, Vercel AI), and [realtime voice](../realtime/overview.md).
+And the agent plugs into any interface: [ACP](acp.md) *(experimental, Harness)* serves it to editors like Zed over the [Agent Client Protocol](https://agentclientprotocol.com), core ships the [web chat UI](../web.md), the [legacy CLI](../cli.md), [frontend adapters](../ui/overview.md) (AG-UI, Vercel AI), and [realtime voice](../realtime/overview.md); and [Pax](pax.md), in its own package, is the terminal interface, as a TUI or headless with `pax -p "..."`.
 
 Community packages extend the same capability system further; see [third-party capabilities](../capabilities/third-party.md).
 

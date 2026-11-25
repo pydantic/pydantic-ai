@@ -775,7 +775,7 @@ navigation:
         slug: "pax"
         aliases:
           - "harness/pax"
-      - page: "Legacy clai"
+      - page: "Legacy CLI"
         path: "cli.md"
         slug: "integrations/cli"
         aliases:

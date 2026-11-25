@@ -481,7 +481,7 @@ The screenshots are real Pax sessions. Only the model is scripted (`demo:tour`),
 need no account and cost nothing. To make them again, run
 `src/pydantic_ai_pax/scripts/screenshots/capture.sh`.
 
-## Legacy clai
+## Legacy CLI
 
 Pydantic AI also ships [`clai`](../cli.md), the chat CLI that came before Pax. It is not
 deprecated: it stays the quickest way to hold a conversation with a model, it serves the

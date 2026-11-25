@@ -2,12 +2,12 @@
 description: "Chat with LLMs from your terminal using clai, the Pydantic AI command line interface, or serve your own Pydantic AI agents in a browser chat UI."
 ---
 
-# Legacy clai
+# Legacy CLI
 
-**Pydantic AI** comes with a CLI, `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.
+Pydantic AI's legacy command line interface is `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.
 
-!!! note "Pax is the coding agent"
-    For a coding agent in your terminal, use [Pax](harness/pax.md), which runs `Coder` by default and your own agent with `--agent`. `clai` is the chat CLI: it is not deprecated, and it stays the way to hold a quick conversation with a model, serve the [Web Chat UI](web.md) with `clai web`, or open a chat from your own code with [`to_cli_sync()`](#custom-agents).
+!!! note "Pax is the terminal interface now"
+    [Pax](harness/pax.md) is where the terminal is going: a coding agent TUI that runs any Pydantic AI agent with `--agent`, and a headless mode, `pax -p "..."`, for one prompt and one answer. `clai` is the older chat CLI. It still works and is not going away in this release, and it is still how you serve the [Web Chat UI](web.md) with `clai web` or open a chat from your own code with [`to_cli_sync()`](#custom-agents), but new work belongs in Pax.
 
 ## Installation
 
