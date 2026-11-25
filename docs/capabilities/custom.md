@@ -459,7 +459,7 @@ A capability can cap the authority of everything it enqueues with its [`authorit
 
 To lower one instance rather than a whole class, call [`with_authority()`][pydantic_ai.capabilities.AbstractCapability.with_authority], which returns a lowered copy: with two instances of the reviewer above in one agent, one of them lowered with `.with_authority('none')`, only what that one enqueues is framed as data. `with_authority('operator')` on a capability whose class sets `'none'` leaves it at `'none'`.
 
-The ceiling covers what the capability sends mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It doesn't cap the capability's instructions, its tool names and descriptions, or its tools' return values, which reach the model as the application configured them: review or leave those out yourself, and for an MCP server you don't trust, also pass `include_instructions=False`. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
+The ceiling covers what the capability sends mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It also covers the capability's [instructions](#lowered-instructions). It doesn't cap its tool names and descriptions or its tools' return values, which reach the model as the application configured them: review or leave those out yourself. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
 
 Below `'operator'`, `ctx.enqueue` treats what the capability sends by kind, so nothing reaches the model as the application's or the user's words:
 
@@ -483,6 +483,35 @@ A downgraded instruction part with `scope='request'` still applies to its own re
 A capability's `authority` is the most its content can carry. For a workspace capability, such as [`LocalWorkspace(authority=...)`](../workspace-custom.md#workspace-authority), it's also the default authority of the workspace's files. A file another capability reads through a workspace carries the workspace's level for that file, capped again by the reader's own `authority`.
 
 Text in a part's content that looks like a framework frame, such as its own `<pyai:data>` frame, gets a note in the application's voice naming who wrote it: the tool, the model, the file's author or the user, by the part's source. Text from an `OperatorSource` is the application's own and gets none.
+
+### Instructions below operator authority {#lowered-instructions}
+
+A capability's [instructions](#providing-instructions) follow its authority too. At `'operator'`, the default, they're part of the agent's instructions, as above. Below it, whether lowered by the `authority` class attribute or by `with_authority()`, they never enter the instructions: everything the capability tells the model through [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], and through the toolsets it contributes, such as an [MCP server's instructions](mcp.md#lowering-an-untrusted-server), goes out as one block of framed data at that authority, like a part the capability enqueues: in a `<pyai:data kind="pydantic_ai.capability_instructions" capability="<id>">` frame on the user channel, behind a note naming the capability.
+
+The block is stated in the message history as an [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] with the capability's [`authority`][pydantic_ai.messages.InstructionDeltaPart.authority], keyed `'capability:<capability id>'` (for a capability without an `id`, `'capability::<class name in snake case>'`, such as `'capability::mcp'`, which no `id` can spell, since an `id` can't contain `:`; capabilities of one class without an `id` share the block, at the lower of their authorities): first on the request it first applies to, then once more whenever its text changes, whatever its parts' `on_change`, with a note in the application's voice saying the earlier block no longer applies. So the instructions the model gets, and the conversation cached behind them, stay the same. The authority is stored on the part when it's recorded, and each model renders the part from it alone. A [compaction](../message-history.md) ends the block, and the next request states it again. A [`before_model_request` hook](#model-request-hooks) sees its parts in `instruction_parts`, with [`instruction_visibility_of(part)`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of] `'via_history'`, as for an [on-demand capability](on-demand.md).
+
+```python {title="lowered_instructions.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import InstructionDeltaPart, ModelRequest
+from pydantic_ai.models.test import TestModel
+
+plugin = Capability(id='plugin', instructions='Prefer the cheapest option.')
+agent = Agent(TestModel(), instructions='Be brief.', capabilities=[plugin.with_authority('none')])
+result = agent.run_sync('Which plan should I pick?')
+
+request = result.all_messages()[0]
+assert isinstance(request, ModelRequest)
+print(request.instructions)
+#> Be brief.
+delta = next(part for part in request.parts if isinstance(part, InstructionDeltaPart))
+print(delta.content, delta.authority)
+#> Prefer the cheapest option. none
+```
+
+A container or [wrapper](#wrapping-capabilities) whose subclass overrides `get_instructions()` decides what the model gets: below `'operator'` its text is one lowered block, and at `'operator'` its override replaces a lowered child's own `get_instructions()`, which then aren't sent at all (Pydantic AI warns once), since lowered text never goes out in a higher-authority override. The instructions of the child's toolsets, such as an MCP server's, are still sent as data. To send them as data, leave the child's instructions to the framework rather than merging them into the override.
+
+A realtime session has no channel for such a block, so a lowered capability's instructions aren't sent to one.
 
 ### Stored with the history
 
