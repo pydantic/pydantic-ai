@@ -385,13 +385,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _lowered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
         # A container whose subclass took `get_instructions` over decides what it says, so below operator authority it's
         # one block. Otherwise each source is judged on its own: `with_authority` lowers a container's children too.
-        if type(self).get_instructions is not CombinedCapability.get_instructions:
-            return super()._lowered_instruction_sources()
-        return [
+        children = [
             source
             for capability in self._ordered_instruction_sources()
             for source in capability._lowered_instruction_sources()
         ]
+        if type(self).get_instructions is CombinedCapability.get_instructions:
+            return children
+        own = super()._lowered_instruction_sources()
+        if not own:
+            self._warn_replaced_lowered_instructions(children)
+        return own
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
         # Collect settings in order, preserving each capability's position in the merge chain.

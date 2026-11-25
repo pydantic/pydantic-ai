@@ -688,12 +688,32 @@ async def test_a_wrapper_that_replaces_its_lowered_childs_instructions_is_what_t
         received.instructions.append(info.instructions)
         return ModelResponse(parts=[TextPart('Done.')])
 
-    child = Capability[None](instructions='Child note.').with_authority('none')
-    agent = Agent(
-        FunctionModel(model_fn, profile=INLINE),
-        capabilities=[_ReplacingWrapper(wrapped=CombinedCapability([child]), prefix='n')],
-    )
-    result = await agent.run('Hi')
+    child = Capability[None](id='replaced_child', instructions='Child note.').with_authority('none')
+    with pytest.warns(
+        UserWarning, match="capability 'replaced_child' are below operator authority, but _ReplacingWrapper"
+    ):
+        agent = Agent(
+            FunctionModel(model_fn, profile=INLINE),
+            capabilities=[_ReplacingWrapper(wrapped=CombinedCapability([child]), prefix='n')],
+        )
+        result = await agent.run('Hi')
 
     assert received.instructions == ['Replaced.']
     assert statements(result.all_messages()) == []
+
+
+async def test_an_operator_container_that_writes_its_own_instructions_warns_it_replaces_a_lowered_childs():
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.instructions.append(info.instructions)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    child = Capability[None](id='contained_child', instructions='Child note.').with_authority('none')
+    with pytest.warns(UserWarning, match="'contained_child' are below operator authority") as caught:
+        agent = Agent(FunctionModel(model_fn, profile=INLINE), capabilities=[_AuthoringCombined([child])])
+        await agent.run('Hi')
+        await agent.run('Again')
+
+    assert received.instructions == ['Combined note.', 'Combined note.']
+    assert len([w for w in caught if 'contained_child' in str(w.message)]) == 1

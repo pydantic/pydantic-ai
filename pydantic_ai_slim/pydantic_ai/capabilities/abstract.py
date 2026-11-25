@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from abc import ABC
 from collections import Counter
 from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
@@ -16,6 +17,7 @@ from pydantic_ai._instructions import (
     AgentInstruction,
     AgentInstructions,
     SourcedInstruction,
+    lowered_block_id,
     normalize_instructions,
     sourced_instruction,
 )
@@ -218,6 +220,9 @@ class CapabilityOrdering:
 
 
 _AUTHORITIES: Final[tuple[object, ...]] = get_args(Authority)
+
+_warned_replaced_instructions: set[str] = set()
+"""The overriding capabilities and lowered capabilities whose replaced instructions were warned about, as their ids."""
 
 
 class _CapabilityAuthority:
@@ -627,6 +632,26 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         if self.defer_loading is True or self._effective_authority == 'operator':
             return []
         return [self]
+
+    def _warn_replaced_lowered_instructions(self, replaced: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        """Warn, once for each, that this capability's `get_instructions()` override replaces lowered instructions.
+
+        Lowered text never rides in a capability's own instructions at a higher authority, so the instructions of
+        `replaced`, capabilities below `'operator'` within this one, aren't sent at all.
+        """
+        for capability in replaced:
+            key = f'{lowered_block_id(self)} > {lowered_block_id(capability)}'
+            if key in _warned_replaced_instructions or not capability._collect_instructions():
+                continue
+            _warned_replaced_instructions.add(key)
+            warnings.warn(
+                f'The instructions of capability {lowered_block_id(capability)!r} are below operator authority, but '
+                f'{type(self).__name__} overrides `get_instructions()`, which replaces them, so they are not sent. To send '
+                "them as data, leave the capability's instructions to the framework rather than merging them into "
+                'the override.',
+                UserWarning,
+                stacklevel=2,
+            )
 
     def _keep_authority(self, resolved: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Carry this instance's authority to what its `for_run` or `for_agent` returned.
