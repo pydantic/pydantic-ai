@@ -281,8 +281,9 @@ class EgressPolicy:
     resolved_kinds: frozenset[RequestKind] = DEFAULT_RESOLVED_KINDS
     """Which kinds have their host resolved so `block_private_addresses` can see where a name points.
 
-    This sets what the request guards look up. The proxy a launched browser connects through checks every name it
-    connects to, whatever this holds.
+    This sets what the request guards and `CDPBrowser`'s WebSocket proxy look up. The proxy that carries
+    `CDPBrowser`'s `http` and `https` connections, and every connection of a launched `PlaywrightBrowser`, checks
+    every name it connects to whatever this holds.
     """
 
     def __post_init__(self) -> None:

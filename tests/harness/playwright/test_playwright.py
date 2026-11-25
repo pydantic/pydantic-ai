@@ -69,6 +69,7 @@ from tests.harness._socks_client import (
     PUBLIC_ADDRESS,
     dial_public_on_loopback,
     name as socks_name,
+    rebind_after_first_lookup,
     serve_echo,
     socks_connect,
 )
@@ -4381,12 +4382,7 @@ class TestConnectionProxy:
         lookup answers with loopback. Ending the session closes the connection it relayed.
         """
         cm = _install_fake_driver(monkeypatch, _FakePage())
-        answers = iter([(PUBLIC_ADDRESS,)])
-
-        async def rebinding(host: str) -> tuple[str, ...]:
-            return next(answers, ('127.0.0.1',))
-
-        monkeypatch.setattr(egress_module, 'getaddrinfo', rebinding)
+        rebind_after_first_lookup(monkeypatch)
         dialed = dial_public_on_loopback(monkeypatch)
         async with serve_echo() as echo:
             async with PlaywrightBrowserSession() as session:

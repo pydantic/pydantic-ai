@@ -297,7 +297,7 @@ async def _check_rebinding_name() -> None:
             egress_module.getaddrinfo = real_getaddrinfo
             proxy_module.resolve_host = egress_module.resolve_host  # pyright: ignore[reportPrivateImportUsage]
             egress_module.resolution_cache.clear()
-        assert 'errorText' in navigated, navigated
+        assert 'net::ERR_SOCKS_CONNECTION_FAILED' in navigated, navigated
         assert not secret.hits, (secret.hits, navigated)
         await _run_tools(CDPBrowser[object](chrome_sandbox=_SANDBOX, block_private_addresses=False), [_navigate(url)])
         assert secret.hits, 'control failed, server unreachable'

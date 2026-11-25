@@ -1,4 +1,4 @@
-"""Speak SOCKS5 to the browser capabilities' loopback proxy the way Chromium does, and give it a peer to reach."""
+"""Speak SOCKS5 to the browser capabilities' loopback proxy the way Chromium does, and give it names and peers to reach."""
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 
 import pytest
+
+from pydantic_ai_harness import _browser_egress as egress_module
 
 PUBLIC_ADDRESS = '93.184.216.34'
 """What the suites' stub resolver answers with: an address the private-address block lets through."""
@@ -74,6 +76,16 @@ async def serve_echo() -> AsyncGenerator[EchoServer]:
     yield EchoServer(server.sockets[0].getsockname()[1], connections)
     server.close()
     await server.wait_closed()
+
+
+def rebind_after_first_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer the first lookup with `PUBLIC_ADDRESS` and every later one with loopback, as a rebinding name can."""
+    answers = iter([(PUBLIC_ADDRESS,)])
+
+    async def rebinding(host: str) -> tuple[str, ...]:
+        return next(answers, ('127.0.0.1',))
+
+    monkeypatch.setattr(egress_module, 'getaddrinfo', rebinding)
 
 
 def dial_public_on_loopback(monkeypatch: pytest.MonkeyPatch) -> list[str]:

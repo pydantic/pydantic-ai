@@ -244,7 +244,7 @@ async def _check_rebinding_name() -> None:
     """
     try:
         await asyncio.get_running_loop().getaddrinfo('127.0.0.1.nip.io', None)
-    except OSError:  # pragma: no cover - network-dependent
+    except OSError:
         print('rebinding name SKIPPED (127.0.0.1.nip.io did not resolve)')
         return
     real_getaddrinfo = egress_module.getaddrinfo

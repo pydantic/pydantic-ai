@@ -56,6 +56,7 @@ from tests.harness._socks_client import (
     ipv4,
     ipv6,
     name,
+    rebind_after_first_lookup,
     serve_echo,
     socks_connect,
     socks_handshake,
@@ -818,12 +819,7 @@ class TestConnectionGuard:
         While the guard's answer is cached, the proxy dials the address the guard checked. Once it has expired, the
         proxy looks the name up again and refuses the private answer it gets.
         """
-        answers = iter([(PUBLIC_ADDRESS,)])
-
-        async def rebinding(host: str) -> tuple[str, ...]:
-            return next(answers, ('127.0.0.1',))
-
-        monkeypatch.setattr(egress_module, 'getaddrinfo', rebinding)
+        rebind_after_first_lookup(monkeypatch)
         monkeypatch.setattr(egress_module, 'RESOLUTION_TTL_SECONDS', ttl)
         connections = dial_public_on_loopback(monkeypatch)
         async with CDPBrowserToolset[None]() as toolset:
