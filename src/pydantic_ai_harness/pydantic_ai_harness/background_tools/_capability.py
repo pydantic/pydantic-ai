@@ -347,7 +347,6 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                 'executes tools sequentially (parallel execution mode `sequential`, which a durable engine such as '
                 'AWS Lambda, Absurd or pgtask sets), and does not tell the model about background calls.',
                 UserWarning,
-                stacklevel=2,
             )
         return prepared
 

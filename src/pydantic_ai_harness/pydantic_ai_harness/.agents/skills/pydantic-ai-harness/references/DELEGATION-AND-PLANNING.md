@@ -507,6 +507,9 @@ Gotchas:
 - Delivered results skip tool-result/tool-error hooks; an unexpected tool failure shows the model only the error type.
 - Sequential tools and realtime sessions run normally. Do not call `ctx.enqueue()` inside a durable
   activity.
+- A run that executes tools sequentially (AWS Lambda in every durable run, Absurd and pgtask by default,
+  DBOS with a workspace attached) runs background tools in the foreground, gives the model no background
+  instructions, and emits one `UserWarning` per run naming the affected tools.
 
 ## See also
 

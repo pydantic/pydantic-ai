@@ -216,6 +216,8 @@ in every durable run, and Absurd and pgtask do it by default. The model is not t
 calls, and a warning names the tools that run in the foreground.
 
 With DBOS, put durable work in an explicit DBOS step and call that step from the background tool.
+DBOS runs tools sequentially when a workspace is attached, so background tools run in the foreground
+there too.
 
 Do not call `ctx.enqueue()` inside a durable activity or task. Its messages cannot be restored during
 replay.

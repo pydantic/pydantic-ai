@@ -917,6 +917,8 @@ The user wants you to delete X.\
                 "`BackgroundTools` runs 'selected' in the foreground because this run executes tools sequentially (parallel execution mode `sequential`, which a durable engine such as AWS Lambda, Absurd or pgtask sets), and does not tell the model about background calls."
             ]
         )
+        # Attributed to the capability's module, so it can be filtered by module as well as by message.
+        assert warned[0].filename.endswith('background_tools/_capability.py')
         assert instructions == [None, None, None]
         assert [
             (part.tool_name, part.content)
