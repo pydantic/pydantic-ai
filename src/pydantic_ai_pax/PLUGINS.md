@@ -3221,7 +3221,8 @@ background task, and is hidden while a full-screen interface owns the terminal.
 The editor and transcript share a Termflow live cell buffer on the alternate
 screen. Only changed cells paint. PageUp/PageDown and mouse-wheel input scroll
 output without changing the draft. New output does not move a scrolled view.
-A mouse drag selects painted cells, and releasing it copies them to the clipboard.
+A mouse drag selects painted cells, a double-click a word, and a triple-click a line, and
+releasing the button copies them to the clipboard, with no line break where the panel wrapped a line.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
 Assistant Markdown renders again at the new width and theme once its part

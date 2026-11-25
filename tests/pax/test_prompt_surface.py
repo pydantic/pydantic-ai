@@ -824,6 +824,25 @@ def test_a_copy_joins_the_rows_its_frame_painted() -> None:
     assert screen.surface.transcript_key('mouse', release(5, 2)) == 'y' * 25
 
 
+def test_a_paint_reads_each_items_wrap_flags_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A selection needs the frame's wrap flags, so every paint reads them; an unfinished line wraps again per read."""
+    read: list[int] = []
+    continued = TranscriptBuffer.continued
+
+    def counting(transcript: TranscriptBuffer, item: int, *, width: int) -> tuple[bool, ...]:
+        read.append(item)
+        return continued(transcript, item, width=width)
+
+    monkeypatch.setattr(TranscriptBuffer, 'continued', counting)
+    screen = Screen(width=20, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('y' * 50)
+    assert screen.lines()[:3] == ['y' * 20, 'y' * 20, 'y' * 10]
+    read.clear()
+    screen.write('y')
+    assert read == [screen.surface.transcript.end]
+
+
 def test_question_selection_opt_in_does_not_leak_into_editor_rows() -> None:
     screen = Screen(width=40, height=10)
     screen.surface.paint(ROWS, select_pinned=True)

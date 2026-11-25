@@ -118,7 +118,7 @@ class PromptSurface(io.StringIO):
         self._hint_on_transcript = False
         """Whether `SCROLLED_HINT` covers the last transcript row, as when no editor rule is pinned."""
         self._select_pinned = False
-        """Whether a drag can also highlight and copy pinned rows, not only the transcript."""
+        """Whether a drag or multi-click can also highlight and copy pinned rows, not only the transcript."""
         self._paint_scheduled = False
         self._paint_delayed = False
         """A paint waits for the frame interval to end; see `changed`."""
@@ -334,7 +334,7 @@ class PromptSurface(io.StringIO):
     def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
         """Pin `rows` under the transcript and enable the editor's input modes.
 
-        `select_pinned` lets a drag highlight and copy the pinned rows too. The default excludes
+        `select_pinned` lets a drag or multi-click highlight and copy the pinned rows too. The default excludes
         editor and status rows from selection.
 
         The editor also repaints on a timer to pick up status changes, so a frame identical to the
