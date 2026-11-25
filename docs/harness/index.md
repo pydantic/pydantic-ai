@@ -95,7 +95,7 @@ agent = Agent(
 
 On a remote sandbox, `Coder` loads repo instructions at run start and may create the sandbox before the first model tool call. Use `Coder(repo_context=False)` for lazy creation.
 
-Compose your own when you want a different agent, not a safer one. A code reader that greps and reads but never writes or runs anything is a few capabilities, and nothing `Coder` exposes turns it into that:
+Compose your own when `Coder`'s own settings cannot give you the agent you want. A code reader that greps and reads but never writes or runs anything is a few capabilities, and nothing `Coder` exposes turns it into that:
 
 ```python
 from pydantic_ai import Agent
@@ -125,7 +125,7 @@ That is the whole pattern: pick the capabilities you want, configure them, and l
 
 Leaving a capability out bounds an agent, but it is not containment: an agent that *has* `Shell` can run anything the user running it can. `allowed_commands` and `allowed_patterns` are guardrails against accidents, not a security boundary. Validation checks only the first token of a command, and an allowlisted `git` or `python` can spawn whatever it likes; see the warning on [Shell](shell.md#command-controls).
 
-Containment is the workspace's job, because that is the layer with the kernel behind it. Wrapping one puts `Coder` unchanged inside it:
+The workspace is the layer that bounds where commands run, and how far it bounds them depends on which one you pick. Wrapping one puts `Coder` unchanged inside it:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -141,9 +141,9 @@ agent = Agent(
 )
 ```
 
-What that is: commands and the file tools can write only inside the working directory, the rest of the host is read-only, `/tmp` is private, and there is no network at all unless you pass `network=True`.
+That keeps a **trusted** agent from accidentally writing outside its working directory: the file tools and commands can write only there, the rest of the host is mounted read-only, `/tmp` is private, and there is no network unless you pass `network=True`.
 
-What it is not: a VM, or a boundary against a kernel exploit. Background jobs outlive the run and commands share the host's process list, so a wrapped agent is contained, not sealed. [`BubblewrappedWorkspace`](bubblewrap-sandbox.md) documents the edges, and the other [sandbox providers](#workspaces) trade local speed for a remote machine.
+It is **not a security boundary, and not a sandbox for untrusted code or an untrusted agent**, which is how [`BubblewrappedWorkspace`](bubblewrap-sandbox.md) puts it itself. Commands share the host kernel and can read every file the host user can, SSH keys and cloud credentials included, and show them to the model; they can signal the user's other processes, and background jobs outlive the run. An agent you do not trust belongs on a machine that is not yours: [E2B](e2b-sandbox.md), [Modal](modal-sandbox.md) and [Smol](smol-sandbox.md) run commands in an isolated cloud sandbox, and the [workspace list](#workspaces) has the rest.
 
 ## Workspaces
 
