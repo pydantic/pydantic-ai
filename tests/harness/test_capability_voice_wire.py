@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     StructuredContent,
     TextContent,
     ToolResultSource,
+    UserContent,
 )
 
 from ..provider_capture import CAPTURED_PROVIDERS, CapturedProvider, CapturedRequest, Voice, capture
@@ -279,8 +280,10 @@ def test_the_check_flags_a_part_above_its_authority(messages: list[dict[str, obj
         pytest.param('  ', [], id='blank'),
     ],
 )
-def test_a_part_is_found_by_each_line_of_its_text(content: object, expected: list[str]) -> None:
-    part = PagePart(content=content, source=ToolResultSource(tool_name='fetch'))  # pyright: ignore[reportArgumentType]
+def test_a_part_is_found_by_each_line_of_its_text(
+    content: str | StructuredContent | Sequence[UserContent], expected: list[str]
+) -> None:
+    part = PagePart(content=content, source=ToolResultSource(tool_name='fetch'))
     assert markers(part) == expected
 
 

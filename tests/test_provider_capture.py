@@ -20,7 +20,7 @@ from .provider_capture import CAPTURED_PROVIDERS, CapturedProvider, capture
 HISTORY: list[ModelMessage] = [
     ModelRequest(parts=[SystemPromptPart('SYSTEM_MARK'), UserPromptPart('USER_MARK')]),
     ModelResponse(parts=[TextPart('ASSISTANT_MARK'), ToolCallPart('fetch', {'url': 'x'}, tool_call_id='call_1')]),
-    ModelRequest(parts=[ToolReturnPart('fetch', 'RESULT_MARK', tool_call_id='call_1')]),
+    ModelRequest(parts=[ToolReturnPart('fetch', {'text': 'RESULT_MARK "quoted" é', 'n': 1}, tool_call_id='call_1')]),
 ]
 
 

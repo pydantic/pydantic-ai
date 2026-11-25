@@ -169,18 +169,13 @@ class CapturedRequest:
         return pieces
 
 
-async def capture(
-    provider: CapturedProvider,
-    messages: Sequence[ModelMessage],
-    params: ModelRequestParameters | None = None,
-) -> CapturedRequest:
+async def capture(provider: CapturedProvider, messages: Sequence[ModelMessage]) -> CapturedRequest:
     """The request body `provider`'s model builds for `messages`, through its `prepare_messages` and `request`."""
     if not _INSTALLED[provider]():
         pytest.skip(f'the {provider} extra is not installed')
     recorder = _Capture()
     model = _model(provider, recorder)
-    params = params or ModelRequestParameters()
-    params = model.customize_request_parameters(params)
+    params = model.customize_request_parameters(ModelRequestParameters())
     try:
         await model.request(model.prepare_messages(list(messages), params), None, params)
     except ModelHTTPError:
@@ -228,8 +223,18 @@ def _frame_voice(tag: str) -> Voice:
     return 'system' if tag == 'system' else 'data'
 
 
+def _strings(value: Any) -> Iterator[str]:
+    """Every string nested in a JSON value, as the model reads it."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict | list):
+        items = cast(dict[str, Any], value).values() if isinstance(value, dict) else cast(list[Any], value)
+        for item in items:
+            yield from _strings(item)
+
+
 def _role_voice(role: str) -> Voice:
-    return {'model': 'assistant', 'function': 'tool'}.get(role, role)  # pyright: ignore[reportReturnType]
+    return cast(Voice, {'model': 'assistant', 'function': 'tool'}.get(role, role))
 
 
 def _anthropic_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
@@ -275,7 +280,8 @@ def _google_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
         role = _role_voice(content.get('role', 'user'))
         for part in content.get('parts', []):
             if 'functionResponse' in part:
-                yield 'tool', json.dumps(part['functionResponse'].get('response'))
+                for text in _strings(part['functionResponse'].get('response')):
+                    yield 'tool', text
             else:
                 for text in _texts(part):
                     yield role, text
