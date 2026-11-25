@@ -45,6 +45,7 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
+    _LoweredInstructionSource,  # pyright: ignore[reportPrivateUsage]
     _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -91,6 +92,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
     # subclass attribute of the same name must not be able to override it.
+    def __readopt_wrapped_identity(self) -> None:
+        # An adopted `id` belongs to the instance it was adopted from. The new wrapped capability
+        # can be a container holding that instance, which keeps the `id` itself, so adopt afresh.
+        if self._adopted_wrapped_id:
+            self.id = None
+            self._adopted_wrapped_id = False
+        self.__adopt_wrapped_identity()
+
     def __adopt_wrapped_identity(self) -> None:
         # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
         # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
@@ -269,7 +278,7 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         if new_wrapped is self.wrapped:
             return self
         new_self = replace_no_init(self, wrapped=new_wrapped)
-        new_self.__adopt_wrapped_identity()
+        new_self.__readopt_wrapped_identity()
         return new_self
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -299,6 +308,17 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # capability it wraps, but a wrapper over a container has none to adopt and would
         # otherwise flatten every leaf's contribution into one unaddressable part.
         return self.wrapped._collect_instructions()
+
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
+        # A wrapper at operator authority passes its wrapped capability's instructions along, so any below it are the
+        # wrapped tree's. One that took `get_instructions` over decides what they say instead, but not what their
+        # toolsets say, which is still stated.
+        if self.defer_loading is True or self._effective_authority != 'operator':
+            return super()._lowered_instruction_sources()
+        sources = self.wrapped._lowered_instruction_sources()
+        if type(self).get_instructions is WrapperCapability.get_instructions:
+            return sources
+        return self._replace_lowered_instructions(sources)
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         return self.wrapped.get_model_settings()

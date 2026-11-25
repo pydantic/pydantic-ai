@@ -335,6 +335,19 @@ model reads with file tools; short values are masked everywhere).
   `setsid` for process-group stops.
 - `persist_cwd` does not apply to `shell`. A read-only workspace gets no Shell tools.
 
+## AnnounceWorkingDirectory
+
+`AnnounceWorkingDirectory()` adds one instruction line naming the workspace's working directory (The working directory is `/repo`.), so the model uses relative paths. `Shell` and `FileSystem` bring it themselves (not when `defer_loading=True`), and copies merge by its fixed `id`, so the line appears once. Add it yourself when your own tools work in `ctx.workspace`. Asking the workspace starts a sandbox that isn't running before the first request; without a workspace, or with one that is gone, the line is left out.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import AnnounceWorkingDirectory
+
+agent = Agent('test', capabilities=[LocalWorkspace('.'), AnnounceWorkingDirectory()])
+```
+
 ## Sandbox workspaces
 
 | | `ModalSandbox` | `E2BSandbox` | `RenderSandbox` | `SpritesSandbox` | `DaytonaSandbox` | `BoxdSandbox` |
