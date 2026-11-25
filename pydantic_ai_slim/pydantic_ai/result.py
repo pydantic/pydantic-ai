@@ -755,9 +755,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
         from ._appended_messages import AppendedMessages
 
-        if self._full_history_from is None:
-            return AppendedMessages()
-        record, start = self._full_history_from
+        record, start = self._full_history_from or (AppendedMessages(), 0)
         if not record.full or record.messages is None:
             return AppendedMessages()
         # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
