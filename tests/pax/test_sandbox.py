@@ -3029,4 +3029,6 @@ async def test_provider_reopen_desktop_wiring(
         lambda: prov.reopen(WorkspaceRef(provider=ref_prov, id=ref_id), desktop=True)
     )
     assert isinstance(backend, SupportsDisplay) and backend.display is not None, prov.name
+    # Only these can't add a desktop to a running sandbox, so `/computer-use on` asks for a new one.
+    assert prov.desktop_at_create is (prov.name in {'e2b', 'modal', 'opensandbox', 'local boxlite'}), prov.name
     await prov.close(backend)

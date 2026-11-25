@@ -540,6 +540,24 @@ async def test_an_expiring_link_is_renewed_before_it_stops_opening(
     await plugin.on_session_end(SessionEnd(reason='exit'))
 
 
+async def test_a_link_that_never_expires_is_got_once(
+    checkout: Path, linked: LinkedProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # boxd's console link needs the owner's login, not a token, so it never expires.
+    linked.desktop_link_seconds = None
+    now = [1000.0]
+    monkeypatch.setattr(sandbox, 'monotonic', lambda: now[0])
+    loaded = load(checkout)
+    plugin = plugin_of(loaded)
+    await plugin.computer_use_command(['on'])
+    await plugin.command(['fake'])
+    now[0] += 24 * 3600
+    await loaded.dispatch(TurnStart(text='go'))
+    assert row(plugin) == ['fake sandbox', watch(0)]
+    assert len(linked.links) == 1
+    await plugin.on_session_end(SessionEnd(reason='exit'))
+
+
 async def test_a_link_that_cannot_be_got_leaves_the_row_without_one(
     checkout: Path, linked: LinkedProvider, caplog: pytest.LogCaptureFixture
 ) -> None:
