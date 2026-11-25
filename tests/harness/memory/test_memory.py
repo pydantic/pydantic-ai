@@ -1742,6 +1742,7 @@ class TestInjection:
         assert isinstance(put_back.source, WorkspaceSource)
         assert put_back.source.authority == 'none'
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_a_legacy_latest_snapshot_is_put_back_as_the_agents(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
