@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, assert_never
+from typing import Literal, assert_never
 
 from rich.console import RenderableType
 from rich.text import Text
@@ -15,7 +15,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.computer_use import (
-    COMPUTER_KIND,
     Click,
     ComputerCallPart,
     ComputerResult,
@@ -34,9 +33,7 @@ from pydantic_ai.computer_use import (
     Wait,
     Zoom,
 )
-from pydantic_ai.exceptions import SkipToolExecution
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, SupportsDisplay
 from pydantic_ai_pax.ui.rendering import theme
@@ -65,7 +62,6 @@ def computer_use_on(messages: Sequence[ModelMessage]) -> bool:
     return computer_use_state(messages) is True
 
 
-_LOOKS = (Screenshot, Zoom, CursorPosition, Wait)
 """The actions that only look at the screen, which run whatever `/permissions` is."""
 
 
@@ -219,25 +215,9 @@ class _ObservedComputerUse(WrapperCapability[None]):
     """Wraps harness `ComputerUse` to hand each screenshot, with the actions that led to it, to `on_frame`."""
 
     on_frame: FrameCallback = field(repr=False)
-    full_access: Callable[[], bool] = field(repr=False)
     _calls: dict[str, Sequence[ComputerToolAction]] = field(
         default_factory=dict[str, Sequence[ComputerToolAction]], init=False, repr=False
     )
-
-    async def before_tool_execute(
-        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Refuse a click or keystroke outside `/permissions full`: harness `Permissions` checks commands, not these."""
-        args = await super().before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
-        if tool_def.tool_kind != COMPUTER_KIND.id or self.full_access():
-            return args
-        actions: Sequence[object] = args.get('actions') or ()
-        if all(isinstance(action, _LOOKS) for action in actions):
-            return args
-        raise SkipToolExecution(
-            'The computer tool only looks at the screen unless /permissions is full, so this call did not act. '
-            'Tell the user; /permissions full lets it click and type.'
-        )
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         if isinstance(event, FunctionToolCallEvent) and isinstance(event.part, ComputerCallPart):
@@ -258,13 +238,17 @@ class DesktopComputerUse(AbstractCapability[None]):
 
     on_frame: FrameCallback = field(repr=False)
     full_access: Callable[[], bool] = field(repr=False)
-    """Whether `/permissions` is `full`, read on each call."""
+    """Whether `/permissions` is `full`, read at each run: like harness on a read-only workspace, no `computer` tool
+    otherwise, as the screen can change anything."""
     _computer_use: ComputerUse[None] = field(default_factory=ComputerUse[None], init=False, repr=False)
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
         backend = ctx.workspace.backend
-        if computer_use_on(ctx.messages) and isinstance(backend, SupportsDisplay) and backend.display is not None:
-            return _ObservedComputerUse(
-                await self._computer_use.for_run(ctx), on_frame=self.on_frame, full_access=self.full_access
-            )
+        if (
+            computer_use_on(ctx.messages)
+            and self.full_access()
+            and isinstance(backend, SupportsDisplay)
+            and backend.display is not None
+        ):
+            return _ObservedComputerUse(await self._computer_use.for_run(ctx), on_frame=self.on_frame)
         return AbstractCapability[None]()

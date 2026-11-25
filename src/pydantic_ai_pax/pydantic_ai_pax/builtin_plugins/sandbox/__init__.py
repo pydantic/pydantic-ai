@@ -155,11 +155,14 @@ class _ConversationSandbox(ConversationWorkspace[None]):
         if (ref := _owned(ctx.workspace.ref)) is None:
             return ''
         provider = self.plugin.sandbox(ref, ctx.messages).provider
-        desktop = (
-            ' The sandbox also has a desktop, which you see and control with the `computer` tool.'
-            if computer_use_on(ctx.messages)
-            else ''
-        )
+        desktop = ''
+        if computer_use_on(ctx.messages):
+            desktop = (
+                ' The sandbox also has a desktop, which you see and control with the `computer` tool.'
+                if self.plugin.full_access()
+                else ' The sandbox also has a desktop, but you get the `computer` tool for it only once the user '
+                'runs /permissions full.'
+            )
         return (
             f'Your shell and file tools run in a {provider.title} sandbox. {provider.working_dir} '
             "is a copy of the user's checkout, made when this conversation started; the user sees changes there "
@@ -296,10 +299,15 @@ class SandboxPlugin(Plugin):
     def get_capabilities(self) -> Sequence[AbstractCapability[None]]:
         return (
             _ConversationSandbox(self),
-            DesktopComputerUse(
-                on_frame=self._record_frame, full_access=lambda: self.host.setting(PERMISSIONS_SETTING) == 'full'
-            ),
+            DesktopComputerUse(on_frame=self._record_frame, full_access=self.full_access),
         )
+
+    def full_access(self) -> bool:
+        """Whether `/permissions` is `full`, which the `computer` tool needs."""
+        return self.host.setting(PERMISSIONS_SETTING) == 'full'
+
+    def _needs_full(self) -> str:
+        return '' if self.full_access() else ' The model gets the computer tool only under /permissions full.'
 
     def get_commands(self) -> Sequence[Command]:
         return (
@@ -441,7 +449,7 @@ class SandboxPlugin(Plugin):
         if sandbox is None:
             self._armed_for = self.host.conversation.conversation_id if on else None
             if on:
-                return 'Computer use is on: /sandbox PROVIDER now makes a sandbox with a desktop.'
+                return 'Computer use is on: /sandbox PROVIDER now makes a sandbox with a desktop.' + self._needs_full()
             return 'Computer use is off.'
         if sandbox.deleted:
             raise ValueError(f"This conversation's {sandbox.provider.title} sandbox was deleted. Run /new.")
@@ -456,7 +464,10 @@ class SandboxPlugin(Plugin):
             return await self._restart_with_desktop(sandbox)
         sandbox.add_desktop()
         await self._record_computer_use(sandbox, on=True)
-        return 'Computer use is on: the model can see and control the desktop. /computer-use view shows it.'
+        return (
+            'Computer use is on: the model can see and control the desktop. /computer-use view shows it.'
+            + self._needs_full()
+        )
 
     async def _restart_with_desktop(self, sandbox: _Sandbox) -> str:
         """Replace a sandbox whose provider gives a desktop only at create with a new one that has it.
@@ -551,7 +562,7 @@ class SandboxPlugin(Plugin):
             raise
         self._armed_for = None
         self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, desktop=desktop, backend=backend)
-        return _started(provider, ref, checkout, github=github, desktop=desktop)
+        return _started(provider, ref, checkout, github=github, desktop=desktop, needs_full=self._needs_full())
 
     async def _delete(self) -> str:
         sandbox = self.current()
@@ -643,8 +654,9 @@ def _started(
     *,
     github: GitHubCredential | None,
     desktop: bool,
+    needs_full: str,
 ) -> str:
-    """What `/sandbox PROVIDER` says once the sandbox holds the checkout."""
+    """What `/sandbox PROVIDER` says once the sandbox holds the checkout; `needs_full` follows the desktop line."""
     if checkout.head is None and checkout.work is None:
         holds = 'an empty folder: this folder is not in a Git repository with files'
     else:
@@ -652,7 +664,9 @@ def _started(
         holds = f'{at}{", with your uncommitted changes" if checkout.changed else ""}'
     lines = [f'This conversation now runs in {provider.title} sandbox {ref.id}. {provider.working_dir} holds {holds}.']
     if desktop:
-        lines.append('Computer use is on: the model can see and control its desktop. /computer-use view shows it.')
+        lines.append(
+            'Computer use is on: the model can see and control its desktop. /computer-use view shows it.' + needs_full
+        )
     if github is None:
         lines.append(
             'gh has no GitHub login here, so the sandbox cannot push or reach private repositories. '

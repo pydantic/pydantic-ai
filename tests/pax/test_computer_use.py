@@ -433,43 +433,44 @@ async def test_computer_use_toggle_upgrade_and_errors(
         await on_screen_sandbox(used_plugin).screenshot()
 
 
-async def test_outside_full_permissions_the_model_only_looks(
+@pytest.mark.moves_cache_prefix(reason='`/permissions full` mid-conversation adds the `computer` tool')
+async def test_the_computer_tool_needs_full_permissions(
     checkout: Path, provider: FakeProvider, display: FakeDisplay
 ) -> None:
     settings: dict[str, JsonValue] = {PERMISSIONS_SETTING: 'read-only'}
     loaded = load(checkout, settings=settings)
     plugin = plugin_of(loaded)
     planned: list[dict[str, JsonValue]] = []
-    outcomes: list[str] = []
+    offered: list[list[str]] = []
+    instructions: list[str] = []
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        del info
-        last = messages[-1].parts[-1]
-        if isinstance(last, ToolReturnPart):
-            outcomes.append(str(last.content))
+        offered.append([tool.name for tool in info.function_tools])
+        instructions.append(info.instructions or '')
+        if 'computer' not in offered[-1] or isinstance(messages[-1].parts[-1], ToolReturnPart):
             yield 'done'
         else:
             args = json.dumps({'actions': planned}) if planned else '{'
             yield {0: DeltaToolCall(name='computer', json_args=args, tool_call_id='cu')}
 
     session = on_screen(loaded, checkout, model=FunctionModel(stream_function=respond))
-    await plugin.computer_use_command(['on'])
-    await plugin.command(['fake'])
+    needs_full = 'The model gets the computer tool only under /permissions full.'
+    assert needs_full in await plugin.computer_use_command(['on'])
+    assert needs_full in await plugin.command(['fake'])
+
+    # The screen can change anything, so outside `full` there is no `computer` tool, as harness offers none on a
+    # read-only workspace; the model is told why.
+    await session.prompt('click it')
+    assert 'computer' not in offered[-1]
+    assert 'only once the user runs /permissions full' in instructions[-1]
+
+    settings[PERMISSIONS_SETTING] = 'full'
+    assert needs_full not in await plugin.computer_use_command(['on'])
 
     # Arguments that are not JSON go back to the model as a retry, and the viewer records nothing.
     await session.prompt('garbled')
     assert display.actions == [] and viewer_frames(plugin, WorkspaceRef(provider='fake', id='sbx-1')) is None
 
-    planned[:] = [{'type': 'click', 'x': 1, 'y': 2}]
-    await session.prompt('click it')
-    assert display.actions == []
-    assert '/permissions full lets it click and type' in outcomes[-1]
-
-    planned[:] = [{'type': 'screenshot'}]
-    await session.prompt('look')
-    assert '/permissions full' not in outcomes[-1]
-
-    settings[PERMISSIONS_SETTING] = 'full'
     planned[:] = [{'type': 'click', 'x': 1, 'y': 2}]
     await session.prompt('click it now')
     assert display.actions == [Click(x=1, y=2)]

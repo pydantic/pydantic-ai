@@ -2276,8 +2276,8 @@ can be asked in, such as `pax -p` or a web session with questions turned off, us
 harness default text, and answers questions from `AskUser` with "No one is available to answer in this run", so
 the run finishes. A session with the terminal picker or the web UI's approval cards does not deny these. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`pax --agent`), which gets `/permissions`
-per run rather than bound to the agent. The model is told to do the work itself instead. The same goes for a
-[`computer`](#computer-use-computer-use) call that would click or type: outside `full` the model can only look.
+per run rather than bound to the agent. The model is told to do the work itself instead. Outside `full` the model also gets no
+[`computer`](#computer-use-computer-use) tool.
 
 ### Compacting the conversation
 
@@ -3247,8 +3247,8 @@ not in the web UI.
   no `!` line), and otherwise asks you to run `/new`, `/computer-use`, then `/sandbox PROVIDER`.
 - **Turning it off**: `/computer-use off` removes the `computer` tool from the next turn. The sandbox
   keeps running until `/sandbox delete`.
-- **Permissions**: outside `/permissions full`, the model can only look at the desktop (screenshots,
-  zoom, the pointer position, and waits). A call that would click or type does not run, and the model is told `/permissions full` allows it.
+- **Permissions**: the model gets the `computer` tool only under `/permissions full`, since the screen can
+  change anything. Under another mode it is told the desktop needs `/permissions full`, and `/computer-use` says so too.
 - `local smol` needs `smolmachines` for a desktop (`pydantic-ai-pax[local]`, on macOS Apple silicon
   or Linux), so not on Windows. With a `gh` login, `opensandbox` allows `deb.debian.org` and
   `security.debian.org` while it installs the desktop, before your GitHub token reaches its proxy.
