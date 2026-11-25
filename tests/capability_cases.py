@@ -842,7 +842,7 @@ DECLARES_CALLS = Contract(
         ),
         'BubblewrappedWorkspace': Exempt('needs a sandbox backend: the `bwrap` binary and user namespaces'),
         'PlaywrightBrowser': Exempt('needs a browser that Playwright launches'),
-        **dict.fromkeys(('BackgroundTools', 'CodeMode', 'IPythonCodeMode', 'ToolBridge', 'ToolSearch'), Exempt(_ROUTE)),
+        **dict.fromkeys(('CodeMode', 'IPythonCodeMode', 'ToolBridge', 'ToolSearch'), Exempt(_ROUTE)),
         **dict.fromkeys(
             (
                 'AskUser',

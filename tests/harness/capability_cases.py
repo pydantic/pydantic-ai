@@ -692,7 +692,8 @@ CASES: dict[str, CapabilityCase] = {
             'one background scheduler per agent; selectors combine without wrapping a tool twice',
             lambda: (BackgroundTools[None](tools=['first']), BackgroundTools[None](tools=['second'])),
             _check_background_tools,
-        )
+        ),
+        calls=Calls(ECHO, with_echo(lambda: BackgroundTools(tools=['echo'])), durable_steps=ECHO_STEPS),
     ),
     'BenchmarkInstructions': CapabilityCase(
         Combines(
