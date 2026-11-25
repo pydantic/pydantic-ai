@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any
 
 import pytest
 
@@ -94,7 +93,7 @@ def _make_agent(calls: list[tuple[int, int]], mode: str = 'go') -> Agent[None, s
         calls.append((a, b))
         return a + b
 
-    def os_access(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
+    def os_access(*, name: OsFunction, args: tuple[object, ...], kwargs: dict[str, object], **_: object) -> object:
         return mode if name == 'os.getenv' and args[0] == 'MODE' else NOT_HANDLED
 
     return Agent(
