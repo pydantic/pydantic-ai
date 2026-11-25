@@ -265,6 +265,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         """Wait with `DBOS.sleep_async`, a recorded step, so recovery skips a completed wait."""
         await sleep_in_workflow(seconds)
 
+    @property
+    def in_durable_unit(self) -> bool:
+        return DBOS.step_id is not None or super().in_durable_unit
+
     def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
             return None
