@@ -114,6 +114,7 @@ from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
+from pydantic_ai_harness.sub_agents._parent_message import DelegatedTask
 from pydantic_ai_harness.system_reminders import Reminder
 
 from ..append_only import CLOCK, Fixture, discover_capabilities
@@ -639,6 +640,10 @@ CASES: dict[str, CapabilityCase] = {
         Anonymous('repairing valid arguments again is a no-op'), calls=Calls(ECHO, with_echo(RepairToolArguments))
     ),
     'ServingModelRecorder': CapabilityCase(Anonymous('one per sub-agent run, added by the delegating toolset')),
+    'DelegatedTask': CapabilityCase(
+        Anonymous("one per sub-agent run, added by the delegating toolset with that run's task"),
+        build=lambda _: DelegatedTask('Summarize the report.', authority='none'),
+    ),
     '_Skill': CapabilityCase(
         Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name')
     ),
