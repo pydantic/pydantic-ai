@@ -2394,10 +2394,11 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
     A name registered while the module is collected is recorded under the module's node; one the test registers itself
     isn't recorded. The Temporal worker polls and completes activations through a stand-in for its core: the runs are
     recorded in a set order, a run context's set sorted, the activation that evicts a run issues nothing, and a
-    failure's stack trace is left out. A forked DBOS workflow's operations show which steps it replayed. The compound
-    default policy's key, the key of the policy for the flow run's ID it combines, and a key computed from a generated
-    ID are run-scoped; the calls handed the same inputs as the call they're made in leave them out, and inputs that hold
-    a reference cycle are recorded as the error writing them raised.
+    failure's stack trace is left out. A forked DBOS workflow is recorded with its original's name, and its operations
+    show which steps it replayed. The compound default policy's key, the key of the policy for the flow run's ID it
+    combines, and a key computed from a generated ID are run-scoped; the calls handed the same inputs as the call
+    they're made in leave them out, and inputs that hold a reference cycle are recorded as the error writing them
+    raised.
 
     The Prefect modules are imported before the capture starts, as a conftest can import them, so they hold the `task`
     decorator they imported, which the capture rebinds.
@@ -2528,17 +2529,21 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
                 'class_name': None,
                 'config_name': None,
                 'parent_workflow_id': None,
+                'forked_from': 'UUID',
                 'operations': [
-                    {'function_id': 1, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': False},
+                    {'function_id': 1, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': True},
                     {'function_id': 2, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': False},
                 ],
             },
             {
                 'node': 'test_capture_durable.py::test_dbos_workflow',
-                'target': None,
+                'target': 'test_dbos_workflow.<locals>.quadruple',
                 'workflow_id': 'UUID',
+                'class_name': None,
+                'config_name': None,
+                'parent_workflow_id': None,
                 'operations': [
-                    {'function_id': 1, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': True},
+                    {'function_id': 1, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': False},
                     {'function_id': 2, 'function_name': 'test_dbos_workflow.<locals>.double', 'recorded': False},
                 ],
             },

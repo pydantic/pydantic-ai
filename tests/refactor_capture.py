@@ -150,7 +150,9 @@ completion that issues nothing, like the one for the activation that evicts a ru
 nothing. Each DBOS workflow is one line of kind `dbos`, with its name as the target, its ID, class name, config name and
 parent workflow's ID, and each operation it checks for a recorded result, in order: its function ID and name, and
 whether a result was recorded, unless the check raised, like on a step that isn't the one recorded, whose error reaches
-the test. The capture wraps the system database's `_insert_workflow_status` and `_check_operation_execution_txn`.
+the test. A forked workflow's line also has the ID of the workflow it was forked from, whose name, class name and config
+name it takes, when the test started that one. The capture wraps the system database's `_insert_workflow_status`,
+`_check_operation_execution_txn` and `fork_workflow`.
 
 Each `compute_key` call on a Prefect cache policy is one line of kind `cache_key`, with the policy's class as the
 target, the inputs it's handed, and the key it returns or the error it raises. The capture wraps `compute_key` where
@@ -1898,7 +1900,7 @@ class RefactorCapture:
             self._monkeypatch.setattr(DBOS, name, classmethod(recording))
 
     def _wrap_dbos_system_database(self) -> None:
-        """Record each workflow DBOS starts, with the operations it checks for a recorded result, in order."""
+        """Record each workflow DBOS starts or forks, with the operations it checks for a recorded result, in order."""
         from dbos._sys_db import SystemDatabase
 
         insert: Callable[..., object] = vars(SystemDatabase)['_insert_workflow_status']
@@ -1936,8 +1938,34 @@ class RefactorCapture:
             operation['recorded'] = result is not None
             return result
 
+        fork: Callable[..., object] = vars(SystemDatabase)['fork_workflow']
+        fork_signature = inspect.signature(fork)
+
+        @functools.wraps(fork)
+        def recording_fork(database: SystemDatabase, *args: object, **kwargs: object) -> object:
+            # A fork's status row takes its original's name, class and config, so its record takes them from the
+            # original's, when the test started it. It's made before the fork, which can run before this returns.
+            arguments = fork_signature.bind(database, *args, **kwargs).arguments
+            original_ids: list[str] = arguments['original_workflow_ids']
+            forked_ids: list[str] = arguments['forked_workflow_ids']
+            for original_id, forked_id in zip(original_ids, forked_ids):
+                original = self._dbos_workflows.get(original_id, ({}, []))[0]
+                record: dict[str, object] = {
+                    'kind': 'dbos',
+                    'node': self.node,
+                    'target': original.get('target'),
+                    'workflow_id': forked_id,
+                    'class_name': original.get('class_name'),
+                    'config_name': original.get('config_name'),
+                    'parent_workflow_id': None,
+                    'forked_from': original_id,
+                }
+                self._workflow_steps(self._dbos_workflows, forked_id, record, 'operations')
+            return fork(database, *args, **kwargs)
+
         self._monkeypatch.setattr(SystemDatabase, '_insert_workflow_status', recording_insert)
         self._monkeypatch.setattr(SystemDatabase, '_check_operation_execution_txn', recording_check)
+        self._monkeypatch.setattr(SystemDatabase, 'fork_workflow', recording_fork)
 
     def _wrap_prefect_task(self) -> None:
         # `from prefect import task` reads it from `prefect.main` each time.
