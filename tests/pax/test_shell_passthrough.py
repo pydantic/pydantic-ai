@@ -182,7 +182,7 @@ class TestShellPassthrough:
         assert 'Interrupted (' in output.getvalue()
 
     async def test_ctrl_c_interrupts_command_not_clai(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The shell signals Pax as the terminal would on Ctrl-C, and Pax forwards it to the command.
+        # The shell signals Pax as the terminal would on Ctrl+C, and Pax forwards it to the command.
         started = time.monotonic()
         text = await shell_session(
             tmp_path, monkeypatch, ['!kill -INT $PPID; exec sleep 30', '!printf after > marker.txt', '/exit']
@@ -193,7 +193,7 @@ class TestShellPassthrough:
 
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_is_forwarded_before_kill(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A command in its own session still gets Ctrl-C, so it can clean up before the grace kill."""
+        """A command in its own session still gets Ctrl+C, so it can clean up before the grace kill."""
         loop = asyncio.get_running_loop()
         spawn = loop.subprocess_shell
 
@@ -207,7 +207,7 @@ class TestShellPassthrough:
             stderr: int,
             cwd: str,
         ) -> tuple[asyncio.SubprocessTransport, asyncio.SubprocessProtocol]:
-            # Press Ctrl-C only once the spawn has returned and the shell has installed its trap.
+            # Press Ctrl+C only once the spawn has returned and the shell has installed its trap.
             process = await spawn(
                 factory,
                 command,
@@ -232,7 +232,7 @@ class TestShellPassthrough:
         assert 'Interrupted (' in text
         assert (tmp_path / 'cleanup.txt').read_text() == 'cleaned'
 
-    @pytest.mark.subprocess(reason="needs a real process tree to check Ctrl-C reaches the shell's descendants")
+    @pytest.mark.subprocess(reason="needs a real process tree to check Ctrl+C reaches the shell's descendants")
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_kills_shell_descendants(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cancelling a shell command must also terminate a background child."""
@@ -588,7 +588,7 @@ async def test_terminal_command_runs_with_the_screen_released(
 async def test_forced_terminal_command_saves_only_its_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
-    """`!!` hands over the terminal; Ctrl-C reaches the command, not Pax, and output stays unsaved."""
+    """`!!` hands over the terminal; Ctrl+C reaches the command, not Pax, and output stays unsaved."""
     requests: list[ModelRequestContext] = []
     handler = signal.getsignal(signal.SIGINT)
     command = "kill -INT $PPID; printf 'hid''den'; : > marker"
@@ -668,7 +668,7 @@ async def test_ctrl_c_is_left_alone_off_the_main_thread() -> None:
 
 @pytest.mark.skipif(sys.platform == 'win32', reason='needs a POSIX pseudo-terminal')
 async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ctrl-C reaches Pax as a key, not SIGINT, which the Daytona SDK's socket client takes to cancel every task."""
+    """Ctrl+C reaches Pax as a key, not SIGINT, which the Daytona SDK's socket client takes to cancel every task."""
     import termios
 
     leader, follower = os.openpty()
@@ -686,7 +686,7 @@ async def test_ctrl_c_stops_a_sandbox_command_without_sigint(tmp_path: Path, mon
             env: Mapping[str, str] | None = None,
             timeout: float | None = None,
         ) -> CommandResult:
-            # While the command runs, the terminal cannot turn Ctrl-C into SIGINT. Press it, as a user would.
+            # While the command runs, the terminal cannot turn Ctrl+C into SIGINT. Press it, as a user would.
             assert not termios.tcgetattr(follower)[3] & termios.ISIG
             os.write(leader, b'\x03')
             await anyio.sleep_forever()

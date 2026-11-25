@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
-from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField
+from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField, TrustLevel
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -56,6 +56,8 @@ class Status:
     model: str = 'agent default'
     workspace: str = ''
     """The session's working directory; hidden while empty."""
+    trust: Callable[[], TrustLevel | None] = lambda: None
+    """Whether you trust the session's directory, painted after it; hidden for `None`, as for a host that decides."""
     context_tokens: int | None = None
     context_estimated: bool = False
     """`context_tokens` is a character estimate, made before any response reported usage; painted with `~`."""
@@ -215,13 +217,16 @@ class Status:
         path = _short_path(terminal_text(shown.workspace, keep=''))
         folder = f'…/{PurePath(path).name}'
         figure = (theme.WARNING if shown.context_alert else theme.MUTED, context)
+        trust = shown.trust()
+        trust_parts = [(theme.WARNING if trust == 'untrusted' else theme.MUTED, trust)] if trust is not None else []
+        short_path = folder if cell_len(folder) < cell_len(path) else path
         shorter: dict[FooterField, list[tuple[str, str]]] = {
-            'workspace': [(theme.MUTED, folder if cell_len(folder) < cell_len(path) else path)],
+            'workspace': _workspace_with_trust(short_path, trust_parts),
             'context': [figure],
         }
         return {
             'model': [*named, (theme.MUTED, shown.model)],
-            'workspace': [(theme.MUTED, path)],
+            'workspace': _workspace_with_trust(path, trust_parts),
             'context': [(theme.MUTED, 'context: '), figure, (theme.MUTED, ' tokens')],
             'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
             'cost': [(theme.MUTED, cost)],
@@ -324,7 +329,7 @@ class StatusLine:
             task.cancel()
             try:
                 # `asyncio.wait` never forwards our cancellation to the animation, so a
-                # `CancelledError` here is ours and propagates: Ctrl-C must still abort.
+                # `CancelledError` here is ours and propagates: Ctrl+C must still abort.
                 await asyncio.wait({task})
                 with contextlib.suppress(asyncio.CancelledError):
                     task.result()  # Surface an animation failure; its cancellation was ours.
@@ -364,7 +369,7 @@ class StatusLine:
         if rows == 4:
             inner_width = width - 3
             glyph = self.spinner().frame(self.clock())
-            hint = set_cell_size(f'> Working {glyph} Ctrl-C to interrupt', inner_width)
+            hint = set_cell_size(f'> Working {glyph} Ctrl+C to interrupt', inner_width)
             border = '─' * inner_width
             for row, line in enumerate((f'┌{border}┐', f'│{hint}│', f'└{border}┘'), start=height - 3):
                 prefix += f'\x1b[{row};1H\x1b[2K{theme.sgr(theme.MUTED)}{line}\x1b[0m'
@@ -376,6 +381,12 @@ class StatusLine:
             # Refresh live counts at least ten times a second, whatever the spinner's speed.
             self._draw()
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
+
+
+def _workspace_with_trust(path: str, trust: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    if path and trust:
+        return [(theme.MUTED, path), (theme.MUTED, ' | '), *trust]
+    return trust or [(theme.MUTED, path)]
 
 
 def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[FooterField]) -> list[tuple[str, str]]:
