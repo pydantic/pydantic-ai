@@ -89,7 +89,12 @@ export function PluginsPanel({
         <aside className="plugin-list">
           <label className="search">
             <SearchIcon size={14} />
-            <input value={query} placeholder="Search plugins" onChange={(event) => setQuery(event.target.value)} />
+            <input
+              value={query}
+              placeholder="Search plugins"
+              aria-label="Search plugins"
+              onChange={(event) => setQuery(event.target.value)}
+            />
           </label>
           <nav>
             {rows === null && <div className="empty-list">Loading plugins…</div>}

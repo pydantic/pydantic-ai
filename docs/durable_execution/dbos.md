@@ -182,7 +182,106 @@ A function tool running in the workflow can load an [on-demand capability](../ca
 
 A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] applies its `sequential=True` and `defer_loading=True` to the [`Tool`][pydantic_ai.tools.Tool] instances it holds. Workflows started before Pydantic AI did so keep listing those tools without them, so that they recover with the steps they recorded: a run holding such a tool [patches](https://docs.dbos.dev/python/tutorials/upgrading-workflows) its workflow when it starts, and a workflow without the patch marker gets the old listing.
 
+A [custom toolset](../toolsets.md#building-a-custom-toolset) subclassing [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] isn't one of the types above, so its own `get_tools()` and `call_tool()` run in workflow code rather than in a step. That's fine if they perform no I/O and are deterministic. If they do perform I/O, either move that I/O into function tools on a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], each decorated with `@DBOS.step` as described above (DBOS otherwise runs function tools in workflow code), or return the toolset from a dynamic toolset or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], whose tool listing and tool calls both run inside steps. DBOS wraps neither a function toolset's listing nor its calls, so an overridden `get_tools()` or `call_tool()` is not covered either: the I/O belongs in tool functions decorated with `@DBOS.step`. See [Custom toolsets and durable execution](../toolsets.md#custom-toolsets-and-durable-execution).
+
 All other agents and toolsets are supported.
+
+### Tools with Side Effects
+
+A plain function tool runs as workflow code. Recovering a workflow runs its code again from the start and skips only the recorded steps, so every tool call the workflow made runs again, even one whose effect happened many steps before the crash. A tool that charges a card, sends an email or writes to another system can therefore repeat its effect each time the workflow recovers.
+
+Put the call in a `@DBOS.step`, so a recovered workflow replays its recorded result instead of calling again. A crash in the middle of the step, after the effect happened but before DBOS recorded the result, still runs the step again, so also pass the external system an idempotency key. Key it on `f'{DBOS.workflow_id}:{ctx.run_step}:{ctx.tool_call_id}'`:
+
+```python {title="dbos_side_effects.py" test="skip"}
+import httpx
+from dbos import DBOS
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+agent = Agent('{{ openai:medium }}', name='support', capabilities=[DBOSDurability()])
+
+
+@DBOS.step()  # (1)!
+async def issue_refund(order_id: str, idempotency_key: str) -> str:
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            'https://payments.example.com/refunds',
+            json={'order_id': order_id},
+            headers={'Idempotency-Key': idempotency_key},  # (2)!
+        )
+        response.raise_for_status()
+        return response.json()['refund_id']
+
+
+@agent.tool
+async def refund_order(ctx: RunContext, order_id: str) -> str:
+    """Refund an order."""
+    key = f'{DBOS.workflow_id}:{ctx.run_step}:{ctx.tool_call_id}'  # (3)!
+    return await issue_refund(order_id, key)
+```
+
+1. A recovered workflow replays the step's recorded result instead of calling the payments API again.
+2. Covers a crash in the middle of the step, which runs it again.
+3. Computed in workflow code, where it comes out the same when the workflow is recovered.
+
+The key is stable across recovery: the tool call ID, including the `pyd_ai_` ID Pydantic AI generates when a provider sends none, comes from the response of the model request step, which DBOS recorded. The tool call ID isn't unique on its own, as some providers reuse tool call IDs across responses, so the key includes the run step as well.
+
+A workflow forked with [`DBOS.fork_workflow`](https://docs.dbos.dev/python/reference/contexts#fork_workflow) gets a new workflow ID, so its keys differ from the original's and a tool call the fork runs again repeats its effect. If a forked workflow must not repeat it, build the key from an ID you pass in as a workflow input instead of `DBOS.workflow_id`. DBOS only recovers a workflow on the [application version](https://docs.dbos.dev/python/tutorials/upgrading-workflows) it started on, so after a deploy that changes the version, an older workflow continues only through a fork.
+
+To find out after a crash which tool calls completed and which may or may not have had their effect, Pydantic AI Harness's [`StepPersistence`](../harness/step-persistence.md) keeps a [tool-effect ledger](../harness/step-persistence.md#what-it-gives-you) that works alongside `DBOSDurability`.
+
+### Human-in-the-Loop
+
+A tool that [requires approval](../deferred-tools.md#human-in-the-loop-tool-approval) or is executed externally ends the run with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output. On DBOS, end the workflow there as well, and resume the conversation in a new workflow with the stored history and the [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults]. Nothing stays pending while a person decides, so you can deploy in between:
+
+```python {title="dbos_human_in_the_loop.py" test="skip"}
+from dbos import DBOS
+
+from pydantic_ai import Agent, Conversation, DeferredToolRequests, DeferredToolResults
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+agent = Agent(
+    '{{ openai:medium }}',
+    name='support',
+    output_type=[str, DeferredToolRequests],
+    capabilities=[DBOSDurability()],
+)
+
+
+@agent.tool_plain(requires_approval=True)
+async def close_account(user_id: str) -> str:
+    """Close a user's account."""
+    return f'Account {user_id} closed'
+
+
+@DBOS.workflow()
+async def chat(
+    prompt: str | None,
+    conversation: Conversation | None = None,
+    deferred_tool_results: DeferredToolResults | None = None,
+) -> Conversation:
+    result = await agent.run(
+        prompt, conversation=conversation, deferred_tool_results=deferred_tool_results
+    )
+    return result.conversation  # (1)!
+
+
+async def main():
+    conversation = await chat('Please close my account, my user ID is 42.')
+    requests = conversation.deferred_tool_requests
+    if requests is not None:  # (2)!
+        results = requests.build_results(approve_all=True)  # (3)!
+        conversation = await chat(None, conversation, results)
+```
+
+1. The conversation keeps the pending [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests], so it's everything the next workflow needs. Workflow inputs and outputs are stored with DBOS's serializer, like any other.
+2. In an application, store the conversation, as [Pausing a conversation](../deferred-tools.md#pausing-a-conversation) shows, and start the next workflow once someone has answered.
+3. The approved call runs in the new workflow, so key its side effects as in [Tools with Side Effects](#tools-with-side-effects).
+
+A [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler that takes a [resume token](../capabilities/handle-deferred-tool-calls.md#a-handler-that-takes-a-token) raises a [`UserError`][pydantic_ai.exceptions.UserError] on DBOS until a DBOS waiter lands ([#13200](https://github.com/pydantic/pydantic-ai/issues/13200)). A handler with two parameters, `(ctx, requests)`, runs in workflow code, so it may wait inside the workflow by awaiting [`DBOS.recv_async`](https://docs.dbos.dev/python/reference/contexts#recv_async), which DBOS records, and return the `DeferredToolResults` your approval endpoint sends with `DBOS.send_async`. Put the notification that asks for a decision in a `@DBOS.step`, so recovery doesn't send it again. Set `timeout_seconds` explicitly, as the default is 60 seconds; on a timeout, `recv_async` returns `None`, the handler declines, and the run ends with `DeferredToolRequests` output. While it waits, the workflow stays `PENDING`, and the run's [`timeout=`](#run-timeouts) and any `SetWorkflowTimeout` keep counting. A waiting workflow only recovers on the application version it started on, which DBOS computes from a hash of your workflow source unless you set it, so pin `application_version` if you may deploy while it waits.
+
+Tools that [run in the background](../harness/background-tools.md) finish before the run pauses for deferred calls, but they're in-process tasks that aren't recovered after a crash.
 
 ### Agent Run Context and Dependencies
 
@@ -233,6 +332,15 @@ An event emitted with [`ctx.emit()`][pydantic_ai.tools.RunContext.emit] inside a
 
     Reserving handler positions changes the recorded step sequence of tools that emit events and make durable calls. Before upgrading, let in-flight workflows finish or deploy the upgrade as a new DBOS application version. Recovering an older workflow with the new code can raise `DBOSUnexpectedStepError`. Runs without a durability handler and legacy-wrapper workflows retain their existing step sequence.
 
+!!! warning "Compatibility impact: upgrading across v2.60.0 or v2.62.0 with an event stream handler"
+
+    Two releases added events that a durability `event_stream_handler=` receives, each in an event-handler step of its own, so they change the recorded step sequence of the workflows that emit them:
+
+    - v2.60.0 ([#9405](https://github.com/pydantic/pydantic-ai/pull/9405)) emits a [`ToolAvailabilityDeltaEvent`][pydantic_ai.messages.ToolAvailabilityDeltaEvent] when a tool joins the agent's tools mid-run, such as one a [`PrepareTools`][pydantic_ai.capabilities.PrepareTools] callback or a dynamic toolset starts offering after the first model request. Its step starts before the next model request.
+    - v2.62.0 ([#11111](https://github.com/pydantic/pydantic-ai/pull/11111)) emits a [`ModelSettingsDeltaEvent`][pydantic_ai.messages.ModelSettingsDeltaEvent] when a model request's `thinking` effort level differs from the one in effect: on the first model request that names a level, as `thinking='low'` in model settings or [`Thinking(effort='high')`][pydantic_ai.capabilities.Thinking] do, and again whenever it changes after that. Its step starts before that model request. A run whose `thinking` never names a level, such as one that only uses `thinking=True`, emits none.
+
+    A workflow that got past one of those points on an earlier release has a model-request step recorded where the upgraded code now starts an event-handler step, so recovering it can raise `DBOSUnexpectedStepError`. This affects workflows with a durability `event_stream_handler=` that are in flight across the upgrade. Workflows without one, and workflows started after the upgrade, are unaffected. Before upgrading past either release, let those workflows finish or deploy the upgrade as a new DBOS application version.
+
 Alternatively, register [`ProcessEventStream`][pydantic_ai.capabilities.ProcessEventStream]. Its handler runs in workflow code and must be deterministic because it re-runs on workflow replay. Tool and final-output events arrive live, while model events are replayed from the final response after each model request completes. For examples, see the [streaming docs](../agent.md#streaming-all-events).
 
 A durability `event_stream_handler=` and a separately registered `ProcessEventStream` are two distinct handlers, and each fires once. The durability handler receives live events inside the durable step, while `ProcessEventStream` sees the buffered replay in workflow code.
@@ -264,6 +372,14 @@ With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token c
 ### Suspended Turns and Background Mode
 
 When a provider pauses a model turn mid-flight (Anthropic `pause_turn`) or runs it as a server-side job that's polled until it's ready ([OpenAI background mode](../models/openai.md#background-mode)), each segment runs in a separate model request step, and the wait between polls is a durable `DBOS.sleep` step, so recovery skips completed waits. The suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] and background job ID are checkpointed between segments, while the final response is merged and usage is recorded once. A [`message_history`](../message-history.md) ending in a suspended response is passed to the first step. Size step timeouts for one provider round trip. If an error abandons a suspended job, its provider teardown runs in a dedicated cancellation step. [Batched requests](../batch.md#durable-execution) work the same way: submitting a request and each check on its batch are separate steps, with durable sleeps between checks.
+
+### Delegating to Another Agent
+
+A tool that [delegates to another agent](../multi-agent-applications.md#agent-delegation) needs that agent to have its own `DBOSDurability` with a unique `name`: the nested agent's step and child workflow names are prefixed with it, and without the capability its model requests would run as unrecorded workflow code.
+
+Called from a plain function tool, the nested run records its steps in the parent workflow's history, alongside the parent's own. When parallel tool calls run the nested agent at the same time, recovery can hand one call's recorded results to another, as [Concurrent Agent Runs](#concurrent-agent-runs) describes. Don't call the nested agent from inside a `@DBOS.step`: DBOS runs a step called from a step as a plain function, so none of the nested run's model requests are recorded.
+
+Run the delegating tool in a [child workflow](#child-workflows) instead, so the nested run gets a history of its own. To select it for a tool you don't decorate yourself, pass `SetToolMetadata(tools=[...], dbos={'child_workflow': ChildWorkflowConfig(...)})` to the parent agent.
 
 ### Child workflows
 
@@ -305,7 +421,52 @@ async def lead_workflow(prompt: str) -> str:
 
 Each `research` call starts a `lead__function_toolset__delegation.call_tool__child_workflow` workflow. Tools registered on the agent itself (with `Agent(tools=...)`) start a `lead__function_toolset__<agent>.call_tool__child_workflow` workflow. The tool arguments, the serialized run context, and `deps` are the child's workflow inputs, so they must be serializable. Context fields that aren't serialized, like `ctx.messages`, as well as `ctx.emit()` and `ctx.enqueue()`, raise a `UserError` in the tool. An exception raised by the tool body fails the child workflow and reaches the parent's tool call.
 
+Only the tool's result is recorded as the child's output. The child runs in the parent's process and gets the parent run's `deps` and `usage` objects, so changes the tool makes to them, including the usage a nested run given `usage=ctx.usage` adds, reach the parent only when the parent's own execution runs the child body. They're lost when recovery hands the parent the child's recorded result instead, and when it resumes an interrupted child, which DBOS reruns from its recorded inputs. So the same code accounts differently from one execution to the next, as a [step's mutations](temporal.md#agent-run-context-and-dependencies) do. A per-run budget the tool keeps in `deps`, like a cap on how often it runs, therefore becomes unreliable when the tool moves from the parent workflow, where function tools run by default, into a child workflow. Enforce it from the parent instead: in a tool hook like `before_tool_execute`, which runs in the parent workflow with its live `deps`, or with [usage limits](../agent.md#usage-limits) on the nested run, as the [Temporal example](temporal.md#child-workflows) shows. Carrying usage back across durable boundaries is discussed in [pydantic-ai#6886](https://github.com/pydantic/pydantic-ai/issues/6886), and what nested runs inherit from their parent in [pydantic-ai#13135](https://github.com/pydantic/pydantic-ai/issues/13135).
+
 Child workflows are only supported for async tools in a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] with a unique `id`. Select the child workflow before the agent is constructed, in the tool's metadata or with a `SetToolMetadata` passed to the agent: that's when its toolset registers the child workflow, which DBOS must have before `DBOS.launch()` to recover it. A tool decorated with `@agent.tool` after construction raises a `UserError` inside a workflow, and a `SetToolMetadata` passed at run time, or a `prepare` function that adds the metadata, is only honored in toolsets that already register a child workflow: in any other toolset the tool runs in the parent workflow. DBOS hashes registered workflows into the [application version](https://docs.dbos.dev/python/tutorials/upgrading-workflows) it computes, so adding a child workflow, or renaming its toolset `id` or agent `name`, is a version change: let in-flight workflows finish or pin `application_version` before such deploys.
+
+A child workflow inherits its parent's deadline. `ChildWorkflowConfig(workflow_timeout_sec=...)` gives it a timeout of its own, and DBOS's [`SetWorkflowTimeout(None)`](https://docs.dbos.dev/python/reference/contexts#setworkflowtimeout) around a workflow you start yourself gives it none. DBOS currently derives a child's workflow ID from its parent's and its position in the parent's steps, `{parent}-{n}`; matching child workflows to their tool calls by a stable ID instead is tracked in [#13893](https://github.com/pydantic/pydantic-ai/pull/13893).
+
+The child workflows Pydantic AI starts don't go through a queue. If a tool enqueues workflows itself and waits for them, don't enqueue them on a queue with a concurrency limit whose slots their waiting parents also hold: once parents fill every slot, no child can start, and the parents wait forever. Give the children a queue of their own, or start them directly. To give such a workflow a deterministic ID of your own, use [`SetWorkflowID`](https://docs.dbos.dev/python/reference/contexts#setworkflowid) with an ID built from the run, which stays the same when the parent is recovered:
+
+```python {title="dbos_enqueue_children.py" test="skip"}
+import asyncio
+
+from dbos import DBOS, SetWorkflowID, SetWorkflowTimeout
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.durable_exec.dbos import DBOSDurability
+
+researcher = Agent('{{ openai:medium }}', name='researcher', capabilities=[DBOSDurability()])
+
+
+@DBOS.workflow()
+async def research(topic: str) -> str:
+    result = await researcher.run(f'Research: {topic}')
+    return result.output
+
+
+lead = Agent('{{ openai:medium }}', name='lead', capabilities=[DBOSDurability()])
+
+
+@lead.tool
+async def research_topics(ctx: RunContext, topics: list[str]) -> list[str]:
+    """Research several topics in parallel."""
+    handles = []
+    for index, topic in enumerate(topics):
+        workflow_id = f'{ctx.run_id}:{ctx.run_step}:{ctx.tool_call_id}:{index}'
+        with SetWorkflowTimeout(None), SetWorkflowID(workflow_id):  # (1)!
+            handles.append(await DBOS.enqueue_workflow_async('research', research, topic))
+    return list(await asyncio.gather(*(handle.get_result() for handle in handles)))
+
+
+async def main():
+    DBOS.launch()
+    await DBOS.register_queue_async('research', worker_concurrency=4)  # (2)!
+```
+
+1. `SetWorkflowTimeout(None)` keeps the parent's deadline off the child. Unless you pass `run_id=` to the run, the run ID is derived from the workflow ID, so like the key in [Tools with Side Effects](#tools-with-side-effects) it's stable when the parent is recovered and changes in a fork. The run step tells apart tool calls that reuse an ID.
+2. A queue only for the children: the workflows running `lead` don't take its slots, so a waiting parent can't keep its children from starting.
 
 ### Concurrent Agent Runs
 

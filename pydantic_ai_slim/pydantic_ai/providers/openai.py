@@ -172,6 +172,11 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # GPT-5.1 through GPT-5.5 reject `reasoning_effort='minimal'` on every OpenAI API that serves them
+                # (verified live, 2026-11). Set here rather than in `openai_model_profile` because OpenRouter accepts
+                # it for these models.
+                openai_supports_minimal_reasoning_effort=profile.get('openai_supports_minimal_reasoning_effort', True)
+                and not model_name.startswith(('gpt-5.1', 'gpt-5.2', 'gpt-5.3', 'gpt-5.4', 'gpt-5.5')),
                 supported_native_tools=supported_native_tools,
                 # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
                 # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
@@ -218,6 +223,14 @@ class OpenAIProvider(_OpenAISDKProvider):
                 rejects_unpaired_tool_calls=True,
             ),
             special_token_route_profile('openai', model_name),
+            # `gpt-5-search-api` matches the shared `'gpt-5'` reasoning row, but OpenAI's API rejects any
+            # `reasoning_effort` on it with a 400, so unified `thinking` sends none; sampling parameters stay dropped,
+            # as it rejects `temperature` too (verified live, 2026-11). Set here rather than in `openai_model_profile`
+            # because the restriction is unverified on the OpenAI-compatible endpoints that share it.
+            # `OpenAIProvider(base_url=...)` keeps it, as a proxy to OpenAI should.
+            OpenAIModelProfile(openai_reasoning_efforts=frozenset())
+            if model_name.startswith('gpt-5-search-api')
+            else OpenAIModelProfile(),
             # The OpenAI models drop it for an Azure OpenAI client, as Azure retires models on its own schedule.
             OpenAIModelProfile()
             if (deprecation := OPENAI_MODEL_DEPRECATIONS.get(model_name)) is None

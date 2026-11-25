@@ -247,7 +247,7 @@ from pydantic_ai.messages import InstructionPart
 
 
 @dataclass
-class KnowsCurrentDate(AbstractCapability[Any]):
+class AnnounceCurrentDate(AbstractCapability[Any]):
     """Tells the agent what day it is."""
 
     def get_instructions(self):
@@ -257,7 +257,7 @@ class KnowsCurrentDate(AbstractCapability[Any]):
         return _get_date
 
 
-agent = Agent('{{ openai:medium }}', capabilities=[KnowsCurrentDate(id='current_date')])
+agent = Agent('{{ openai:medium }}', capabilities=[AnnounceCurrentDate(id='current_date')])
 result = agent.run_sync("What is today's date?")
 print(result.output)
 #> Today is January 2, 2032.
