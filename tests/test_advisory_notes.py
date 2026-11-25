@@ -38,6 +38,15 @@ _FOLLOWS = re.compile(
 _SCOPED = re.compile(r"the user's task|unless the user asked", re.IGNORECASE)
 """Wording that limits that content to the user's task."""
 
+_UNSCOPED: dict[str, str] = {
+    'pydantic_ai_harness.trajectory_judge._capability._steering_note': (
+        'it introduces the judge feedback that follows it, whose own note carries the scope '
+        "(`trajectory_judge._capability._JUDGE_FEEDBACK_SCOPE`); scoping this note too didn't change how models "
+        'follow genuine feedback or what they refuse'
+    ),
+}
+"""Texts that may tell the model to follow content without limiting it themselves, each with the reason."""
+
 
 @cache
 def _registered_kinds() -> dict[str, type[CapabilityPart]]:
@@ -107,4 +116,11 @@ def test_advisory_notes_are_scoped_to_the_users_task(where: str, text: str) -> N
 @pytest.mark.parametrize(('where', 'text'), [pytest.param(*case, id=case[0]) for case in _module_texts()])
 def test_advisory_instructions_are_scoped_to_the_users_task(where: str, text: str) -> None:
     """Any other text next to a kind that tells the model to follow content also limits it to the user's task."""
+    if where in _UNSCOPED:
+        return
     assert _SCOPED.search(text), f'{where}: {text}'
+
+
+def test_unscoped_texts_still_exist() -> None:
+    """Each text `_UNSCOPED` lets through is still in the source, so the list can't outlive what it excuses."""
+    assert _UNSCOPED.keys() <= {where for where, _ in _module_texts()}
