@@ -1038,7 +1038,7 @@ SCENARIO_SUPPORT: Mapping[Scenario, Mapping[Engine, Support]] = {
         'render': Support('supported'),
     },
     'BackgroundTools.survives_approval_wait': {
-        'temporal': Support('broken', _NO_WAIT, issue=14443),
+        'temporal': Support('supported'),
         'dbos': Support('broken', _NO_WAIT, issue=14443),
         'prefect': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
         'aws_lambda': Support('limited', f'{_FOREGROUND}, so no call is in flight across the wait'),
