@@ -16,6 +16,7 @@ from pydantic_ai.capabilities import (
     LocalWorkspace,
     WindowsWorkspace,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -121,6 +122,22 @@ async def test_skills_read_the_workspace_next_to_a_capability_function(
     [seen] = instructions
     assert '- review: Review the change.' in seen
     assert ('From the plugin.' in seen) == (contribution == 'instructions')
+
+
+async def test_a_workspaceless_capability_function_that_returns_a_workspace_fails_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    sandbox = tmp_path / 'sandbox'
+    sandbox.mkdir()
+
+    def dynamic(ctx: RunContext[None]) -> AbstractCapability[None]:
+        return LocalWorkspace(sandbox, id='sandbox')
+
+    agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
+    session = Session(agent, deps=None, plugins=[WorkspacelessCapability[None](dynamic)])
+    with pytest.raises(UserError, match="A capability's `for_run` changed the workspace"):
+        await session.prompt('go')
 
 
 async def test_static_default_is_available_during_for_run(tmp_path: Path) -> None:
