@@ -171,6 +171,15 @@ def openai_error_fields(error: Mapping[str, object]) -> tuple[str | None, str | 
     return str(code) if code is not None else None, error_type if isinstance(error_type, str) else None
 
 
+def openai_error_message(error: Mapping[str, object], text: str) -> str:
+    """The message to classify an error status by, as `openai` classifies its own.
+
+    That's the error object's `message`, or the whole response `text` when the error object has no string `message`.
+    """
+    message = error.get('message')
+    return message if isinstance(message, str) else text
+
+
 def parse_error_body(text: str | None) -> tuple[object, object, dict[str, str]]:
     """Read an error response body that no SDK read, the way the provider SDKs read one.
 
