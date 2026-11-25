@@ -482,15 +482,21 @@ class _ConversationInputs(NamedTuple):
 async def _continue_loaded_conversation(
     capability: AbstractCapability[AgentDepsT], deps: AgentDepsT, inputs: _ConversationInputs
 ) -> _ConversationInputs:
-    """Continue the conversation a capability loads for a run given only its `conversation_id`, if it loads one."""
+    """Continue the conversation a capability loads for a run given only its `conversation_id`, if it loads one.
+
+    A run given any other piece of a conversation (`conversation=`, `message_history=` or `usage=`) isn't asked.
+    """
     conversation_id = inputs.conversation_id
     if (
         inputs.message_history is not None
+        or inputs.usage is not None
         or conversation_id is None
         or conversation_id == _agent_graph.NEW_CONVERSATION
     ):
         return inputs
-    conversation = await capability.load_conversation(conversation_id, deps=deps)
+    # Without the context of a run this one was started from, so what the load calls doesn't dispatch through it.
+    with set_current_run_context(None):
+        conversation = await capability.load_conversation(conversation_id, deps=deps)
     if conversation is None:
         return inputs
     if conversation.conversation_id != conversation_id:
@@ -499,9 +505,7 @@ async def _continue_loaded_conversation(
             'Return the conversation with the `conversation_id` it was asked for, or `None`.'
         )
     return _ConversationInputs(
-        *_agent_graph.resolve_conversation(
-            conversation, message_history=None, usage=inputs.usage, conversation_id=None
-        ),
+        *_agent_graph.resolve_conversation(conversation, message_history=None, usage=None, conversation_id=None),
         conversation.deferred_tool_requests,
     )
 

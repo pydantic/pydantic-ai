@@ -1808,6 +1808,21 @@ async def test_load_conversation_is_only_asked_for_a_run_given_just_an_id() -> N
     await agent.run('Hello', conversation_id='new', deps=user)
     await agent.run('Hello', message_history=history, conversation_id='chat-1', deps=user)
     await agent.run('Hello', conversation=Conversation(conversation_id='chat-1'), deps=user)
+    # `usage=` is part of a conversation too, as for a delegate that counts on from its caller's usage.
+    await agent.run('Hello', conversation_id='chat-1', usage=RunUsage(), deps=user)
+
+    assert loader.calls == []
+
+
+async def test_a_deferred_capability_is_not_asked_to_load_a_conversation() -> None:
+    store = InMemoryConversationStore()
+    loader = _LoadFromStore(store)
+    loader.id = 'loader'
+    loader.description = 'Loads stored conversations.'
+    loader.defer_loading = True
+    agent = Agent(TestModel(call_tools=[]), deps_type=_User, capabilities=[loader])
+
+    await agent.run('Hello', conversation_id='chat-1', deps=_User('user-1'))
 
     assert loader.calls == []
 

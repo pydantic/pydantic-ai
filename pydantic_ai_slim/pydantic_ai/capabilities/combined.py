@@ -595,7 +595,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     async def load_conversation(self, conversation_id: str, *, deps: AgentDepsT) -> Conversation | None:
         for capability in reversed(self._dispatch):
-            if (conversation := await capability.load_conversation(conversation_id, deps=deps)) is not None:
+            if (
+                capability.defer_loading is not True
+                and (conversation := await capability.load_conversation(conversation_id, deps=deps)) is not None
+            ):
                 return conversation
         return None
 

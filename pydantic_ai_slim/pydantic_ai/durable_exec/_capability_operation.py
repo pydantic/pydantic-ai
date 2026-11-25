@@ -55,6 +55,7 @@ _NEVER_DURABLE_HOOKS = {
     'get_wrapper_toolset': '`get_wrapper_toolset` returns a live toolset and cannot be a durable operation.',
     'get_wrapper_model': '`get_wrapper_model` returns a live model and cannot be a durable operation.',
     'get_workspace': '`get_workspace` returns a live workspace backend and cannot be a durable operation.',
+    'load_conversation': '`load_conversation` is called before the run exists, so it cannot be a durable operation.',
 }
 
 

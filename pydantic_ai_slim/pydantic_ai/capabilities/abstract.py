@@ -855,18 +855,23 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     async def load_conversation(self, conversation_id: str, *, deps: AgentDepsT) -> Conversation | None:
         """Return the conversation a run given only its `conversation_id` continues, or `None` to start it empty.
 
-        Called before the run is assembled, when it's started with `conversation_id=` but without
-        `conversation=` or `message_history=`. The run uses the returned conversation as if it were passed as
-        `conversation=`: its messages, usage and pending deferred tool requests continue, and its revision is
-        carried to the result, so a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can
-        check the next save. Return the conversation with that `conversation_id`; any other raises `UserError`.
-        When several capabilities return one, the one listed last wins, so a capability passed to the run takes
+        Called before the run is assembled, for a run started with `conversation_id=` and none of
+        `conversation=`, `message_history=` or `usage=`. `conversation_id='new'` isn't loaded. The run
+        uses the returned conversation as if it were passed as `conversation=`: its messages, usage and
+        pending deferred tool requests continue, and its revision is carried to the result, so a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can check the next save.
+        Return the conversation with that `conversation_id`; any other raises `UserError`. When several
+        capabilities return one, the one listed last wins, so a capability passed to the run takes
         precedence over the agent's.
 
-        `deps` are the run's dependencies, to scope the load to their owner. Not called for a realtime
-        session. Under [durable execution](../durable_execution/overview.md) it's called where the run starts
-        (in a Temporal workflow, inside the workflow) and isn't a durable operation, so load through the engine's
-        own durable step.
+        `deps` are the run's dependencies: scope the load to the user they authorize, since a
+        `conversation_id` can come from a client. Like the other hooks called before the run is assembled,
+        it isn't asked of a deferred capability or of one that only `for_run()` or a
+        [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] returns, and it runs before the run's
+        `timeout=` starts and its cancellation token is watched. Not called for a realtime session. Under
+        [durable execution](../durable_execution/overview.md) it runs where the run starts (in a Temporal
+        workflow, inside the workflow) and can't be a durable operation, so load through the engine's own
+        durable step.
         """
         return None
 

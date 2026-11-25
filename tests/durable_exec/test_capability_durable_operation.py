@@ -15,7 +15,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic_core import PydanticSerializationError
 
-from pydantic_ai import Agent, AgentStreamEvent, FinalResultEvent, ModelMessage, ModelSettings
+from pydantic_ai import Agent, AgentStreamEvent, Conversation, FinalResultEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
@@ -1790,6 +1790,45 @@ def test_capability_can_opt_its_id_less_instances_out_of_binding() -> None:
     assert durability._bound_capability_operations == {}  # pyright: ignore[reportPrivateUsage]
 
 
+class LoadsThroughAnOperation(AbstractCapability[Any]):
+    """Loads the conversation through a durable operation that takes no context."""
+
+    id = 'loads_through_an_operation'
+
+    def __init__(self) -> None:
+        self.fetched: list[str] = []
+
+    async def load_conversation(self, conversation_id: str, *, deps: Any) -> Conversation | None:
+        await self.fetch(conversation_id=conversation_id)
+        return None
+
+    @durable_operation('fetch')
+    async def fetch(self, *, conversation_id: str) -> None:
+        self.fetched.append(conversation_id)
+
+
+async def test_a_nested_runs_conversation_load_does_not_dispatch_through_the_enclosing_run() -> None:
+    """A run started from a tool loads its conversation as its own setup, not as an operation of the enclosing run."""
+    child_capability = LoadsThroughAnOperation()
+    child = Agent(TestModel(custom_output_text='child'), name='child', capabilities=[child_capability])
+    parent = Agent(
+        TestModel(custom_output_text='parent'),
+        name='parent',
+        capabilities=[LoadsThroughAnOperation(), RecordingDurability()],
+    )
+
+    @parent.tool_plain
+    async def delegate() -> str:
+        return (await child.run('test', conversation_id='child-chat')).output
+
+    await parent.run('test')
+
+    durability = RecordingDurability.from_agent(parent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == []
+    assert child_capability.fetched == ['child-chat']
+
+
 def test_duplicate_operation_names_fail_during_agent_construction() -> None:
     class Duplicate(AbstractCapability[Any]):
         id = 'duplicate'
@@ -1820,6 +1859,7 @@ def test_duplicate_operation_names_fail_during_agent_construction() -> None:
         'wrap_output_validate',
         'wrap_output_process',
         'wrap_run_event_stream',
+        'load_conversation',
     ],
 )
 def test_never_durable_hooks_fail_at_bind(hook: str) -> None:
