@@ -230,8 +230,9 @@ class ModelProfile(TypedDict, total=False):
     When `True`, the request starts with exactly one system message holding the standing system prompts, the
     framing announcement and the instructions, in that order and joined with two newlines. On the Responses API, that
     means the instructions go in that message instead of the top-level `instructions` field, except on a request that
-    continues a stored response or conversation (`openai_previous_response_id` or `openai_conversation_id`) or a
-    compacted history, whose stored input already starts with its system messages. With the `'user'`
+    continues a stored response (`openai_previous_response_id`, including an `'auto'` chain after its first request),
+    adds to a conversation (`openai_conversation_id`) or continues a compacted history, whose stored input already
+    starts with its system messages. With the `'user'`
     [`openai_system_prompt_role`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_system_prompt_role],
     nothing is merged, as a system prompt sent as a user message can't be told apart from a real one.
 

@@ -4,6 +4,10 @@ gpt-oss's reference chat template keeps only the first system message, and Bedro
 ignores the top-level `instructions` for `gpt-oss-120b` (https://github.com/pydantic/pydantic-ai/issues/14451). So on
 Chat Completions and on Responses, the standing system prompt, the framing announcement and the instructions go out
 as exactly one leading system message, and every other model's request is unchanged.
+
+The tests before the last use a mock transport rather than recordings: their claim is the exact request body, which
+cassette matching doesn't check, across a route and profile matrix that has no recordings. The last test records the
+real exchange on Mantle.
 """
 
 from __future__ import annotations as _annotations
@@ -151,7 +155,10 @@ def leading_items(body: dict[str, Any]) -> list[dict[str, Any]]:
 async def test_gpt_oss_gets_one_leading_system_message(
     route: str, system_prompt: str | None, instructions: str | None, expected: str
 ):
-    """The announcement that gpt-oss gets from the first request, the system prompt and the instructions share it."""
+    """The announcement that gpt-oss gets from the first request, the system prompt and the instructions share it.
+
+    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
+    """
     body = await run_and_capture(GPT_OSS_ROUTES[route], system_prompt=system_prompt, instructions=instructions)
 
     assert 'instructions' not in body
@@ -172,7 +179,10 @@ def history_with_a_mid_conversation_system_prompt() -> list[ModelMessage]:
 
 @pytest.mark.parametrize('route', list(GPT_OSS_ROUTES))
 async def test_the_when_needed_announcement_joins_the_one_system_message(route: str):
-    """With `'when_needed'`, the announcement joins the same single message once a `<system>` block needs it."""
+    """With `'when_needed'`, the announcement joins the same single message once a `<system>` block needs it.
+
+    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
+    """
     settings = ModelSettings(framing_announcement='when_needed')
     before = await run_and_capture(
         GPT_OSS_ROUTES[route], system_prompt=SYSTEM_PROMPT, instructions=INSTRUCTIONS, model_settings=settings
@@ -196,7 +206,10 @@ async def test_the_when_needed_announcement_joins_the_one_system_message(route: 
 
 @pytest.mark.parametrize('route', list(GPT_OSS_ROUTES))
 async def test_the_single_system_message_keeps_the_prefix_stable(route: str):
-    """Each request's input is a prefix of the next one's: the single message leads every request unchanged."""
+    """Each request's input is a prefix of the next one's: the single message leads every request unchanged.
+
+    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
+    """
     bodies: list[dict[str, Any]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -214,7 +227,10 @@ async def test_the_single_system_message_keeps_the_prefix_stable(route: str):
 
 
 async def test_a_dynamic_system_prompt_still_joins_the_one_system_message():
-    """A dynamic system prompt keeps other models' instructions in the top-level field, but not gpt-oss's."""
+    """A dynamic system prompt keeps other models' instructions in the top-level field, but not gpt-oss's.
+
+    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
+    """
     bodies: list[dict[str, Any]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -236,7 +252,11 @@ async def test_a_dynamic_system_prompt_still_joins_the_one_system_message():
 
 
 async def test_a_continued_response_keeps_the_instructions_in_the_top_level_field():
-    """A stored response already starts with the leading system message, so a request continuing it doesn't resend it."""
+    """A request continuing a stored response sends its instructions in the top-level field, not a new system item.
+
+    The stored input already starts with the leading system message. Not a VCR test: the claim is the request body,
+    which cassette matching doesn't check.
+    """
     bodies: list[dict[str, Any]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -252,10 +272,80 @@ async def test_a_continued_response_keeps_the_instructions_in_the_top_level_fiel
     [body] = bodies
     assert body['instructions'] == INSTRUCTIONS
     assert body['previous_response_id'] == 'resp_0'
+    assert body['input'] == [{'role': 'user', 'content': 'What color is the sky?'}]
+
+
+async def test_an_auto_chain_starts_with_the_one_system_message():
+    """With `openai_previous_response_id='auto'`, the request that starts the chain holds the instructions in it.
+
+    The next request continues the stored response, whose input already starts with them. Not a VCR test: the claim
+    is the request body, which cassette matching doesn't check.
+    """
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return chat_or_responses(request)
+
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        agent = Agent(GPT_OSS_ROUTES['mantle-responses'](client), instructions=INSTRUCTIONS, model_settings=settings)
+        first = await agent.run('What color is the sky?')
+        await agent.run('And at night?', message_history=first.all_messages())
+
+    started, continued = bodies
+    assert 'instructions' not in started and 'previous_response_id' not in started
+    assert started['input'] == [
+        {'role': 'system', 'content': f'{ANNOUNCEMENT}\n\n{INSTRUCTIONS}'},
+        {'role': 'user', 'content': 'What color is the sky?'},
+    ]
+    assert continued['previous_response_id'] == 'resp_1'
+    assert continued['input'] == [{'role': 'user', 'content': 'And at night?'}]
+
+
+@pytest.mark.parametrize(
+    'profile,settings',
+    [
+        pytest.param(
+            OpenAIModelProfile(openai_supports_prompt_cache_breakpoints=True),
+            OpenAIResponsesModelSettings(openai_cache_instructions=True),
+            id='cache-instructions',
+        ),
+        pytest.param(
+            OpenAIModelProfile(openai_responses_stable_instructions_as_input=True),
+            None,
+            id='stable-instructions-as-input',
+        ),
+    ],
+)
+async def test_instruction_caching_leaves_the_one_system_message_whole(
+    profile: OpenAIModelProfile, settings: OpenAIResponsesModelSettings | None
+):
+    """The instruction breakpoint and the stable/rewriting split both need a boundary the merge removes, so neither applies.
+
+    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
+    """
+    body = await run_and_capture(
+        lambda client: OpenAIResponsesModel(
+            'openai/gpt-oss-120b', provider=compatible_provider(client), profile=profile
+        ),
+        system_prompt=SYSTEM_PROMPT,
+        instructions=INSTRUCTIONS,
+        model_settings=settings,
+    )
+
+    assert 'instructions' not in body
+    assert body['input'] == [
+        {'role': 'system', 'content': f'{ANNOUNCEMENT}\n\n{SYSTEM_PROMPT}\n\n{INSTRUCTIONS}'},
+        {'role': 'user', 'content': 'What color is the sky?'},
+    ]
 
 
 async def test_the_user_system_prompt_role_merges_nothing():
-    """A system prompt sent as a user message can't be told apart from a real one, so nothing is merged."""
+    """A system prompt sent as a user message can't be told apart from a real one, so nothing is merged.
+
+    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
+    """
     body = await run_and_capture(
         lambda client: OpenAIResponsesModel(
             'openai/gpt-oss-120b',
@@ -275,7 +365,10 @@ async def test_the_user_system_prompt_role_merges_nothing():
 
 
 async def test_a_leading_cache_point_keeps_its_breakpoint_on_the_merged_message():
-    """A breakpoint a leading `CachePoint` puts on the system prompt goes at the end of the merged message."""
+    """A breakpoint a leading `CachePoint` puts on the system prompt goes at the end of the merged message.
+
+    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
+    """
     bodies: list[dict[str, Any]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -364,6 +457,7 @@ async def test_other_models_send_the_same_request(route: str):
     """Models without `honors_only_first_system_message` send what they sent before it existed.
 
     The system prompt and the instructions stay separate, and on Responses the instructions stay in the top-level field.
+    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
     """
     body = await run_and_capture(UNFLAGGED_ROUTES[route], system_prompt=SYSTEM_PROMPT, instructions=INSTRUCTIONS)
 

@@ -1029,8 +1029,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _sends_instructions_as_input(self, model_request_parameters: ModelRequestParameters) -> bool:
         """Whether a request's instructions go out as a system input message rather than the `instructions` field.
 
-        `json_object` output needs the word "JSON" in an input message, so prompted output moves them there.
+        `json_object` output needs the word "JSON" in an input message, so prompted output moves them there, and a
+        model whose profile sets `honors_only_first_system_message` gets them in its one leading system message. The
+        history digest then records them, so an `openai_previous_response_id='auto'` chain only continues while they
+        are unchanged.
         """
+        if self.profile.get('honors_only_first_system_message', False) and (
+            self.profile.get('openai_system_prompt_role', None) != 'user'
+        ):
+            return True
         return model_request_parameters.output_mode == 'prompted' and self.profile.get(
             'supports_json_object_output', False
         )
@@ -1709,6 +1716,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             messages,
             openai_messages,
             uses_server_side_state=uses_server_side_state,
+            continues_chain=continues_chain,
         ):
             single_system_message = profile.get('honors_only_first_system_message', False)
             return self._relocate_instructions(
@@ -1826,6 +1834,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         openai_messages: list[responses.ResponseInputItemParam],
         *,
         uses_server_side_state: bool,
+        continues_chain: bool,
     ) -> bool:
         """Whether the instructions move into the input, to be cached, carry a breakpoint or join the one system message.
 
@@ -1834,17 +1843,21 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if (
             # A `'user'` system prompt role can't be told apart from a real user turn.
             system_prompt_role == 'user'
-            # Instructions relocated into a stored response's input would be replayed to any request
-            # that continues it, next to that request's own instructions.
-            or uses_server_side_state
             # A compaction item retains the window's leading system items, so they aren't resent.
             or any(isinstance(item, dict) and item.get('type') == 'compaction' for item in openai_messages)
         ):
             return False
         if profile.get('honors_only_first_system_message', False):
             # The host follows only the first leading system message and may ignore the top-level field (Bedrock
-            # Mantle's Responses endpoint does for gpt-oss), so they move even next to a dynamic system prompt.
-            return True
+            # Mantle's Responses endpoint does for gpt-oss), so they move even next to a dynamic system prompt, and on
+            # the request that starts an `openai_previous_response_id` chain: its stored input then starts with them.
+            # A request continuing a response, or adding to a conversation, which may already hold items, doesn't
+            # resend them.
+            return not continues_chain and model_settings.get('openai_conversation_id') is None
+        # Instructions relocated into a stored response's input would be replayed to any request
+        # that continues it, next to that request's own instructions.
+        if uses_server_side_state:
+            return False
         return bool(
             (
                 self._adds_instruction_breakpoint(model_settings, profile)
