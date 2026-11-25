@@ -732,18 +732,21 @@ the model-aware request and thinking controls described below. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
 
-Pax installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
-missing from the Python Pax runs on fails right away, naming the install command, instead
-of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+Pax installs the SDKs for OpenAI, Anthropic, and Google. Every other model provider
+has a Pax extra of the same name as its `pydantic-ai-slim` extra, such as `bedrock`,
+`groq`, `mistral`, or `typesafe` (TypeSafe's Jev), and `all` installs every provider
+and every `/sandbox` provider but `local`. Selecting a model whose provider SDK is
+missing from the Python Pax runs on fails right away, naming the extra to install,
+instead of on the next prompt:
 
 ```bash
-pip install "pydantic-ai-pax[typesafe]"
+uv tool install "pydantic-ai-pax[bedrock]"
 ```
 
 From a pydantic-ai checkout, run Pax with the extra instead:
 
 ```bash
-uv run --package pydantic-ai-pax --extra typesafe pax
+uv run --package pydantic-ai-pax --extra bedrock pax
 ```
 
 #### Model settings and custom parameters
