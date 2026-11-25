@@ -142,6 +142,13 @@ def test_installed_reads_metadata_and_receipt(
     assert installed().tool
 
 
+@pytest.fixture(autouse=True)
+def version_check_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The background check honors the version check's opt-outs; tests opt out explicitly, not via the shell."""
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK', raising=False)
+    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
+
+
 def test_labels() -> None:
     assert TOOL.label == '4bd401a55'
     assert Installed(version='0.52.0').label == '0.52.0'
@@ -174,10 +181,8 @@ def test_latest_reads_pypi_and_the_bleeding_release(monkeypatch: pytest.MonkeyPa
     ]
 
 
-def test_latest_stable_asks_the_version_check(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_latest_stable_asks_the_version_check() -> None:
     """Not a VCR test: the endpoint's answer is pinned to show Pax reads it and skips PyPI."""
-    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK', raising=False)
-    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
     seen: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -201,10 +206,8 @@ def test_latest_stable_asks_the_version_check(monkeypatch: pytest.MonkeyPatch) -
         pytest.param(httpx.Response(200, text='not json'), id='not-json'),
     ],
 )
-def test_latest_stable_falls_back_to_pypi(monkeypatch: pytest.MonkeyPatch, endpoint: httpx.Response) -> None:
+def test_latest_stable_falls_back_to_pypi(endpoint: httpx.Response) -> None:
     """Not a VCR test: the live endpoint can't be made to fail, omit Pax, or send terminal escapes on demand."""
-    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK', raising=False)
-    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
 
     def respond(request: httpx.Request) -> httpx.Response:
         if str(request.url) == PYPI_URL:
@@ -395,6 +398,23 @@ def test_segment_is_quiet_offline_and_outside_uv_tool() -> None:
     assert updates.segment() == ''
     source, _ = _updates(['main'], current=Installed(version='0.52.0'), fetch=offline)
     assert source.segment() == ''
+
+
+@pytest.mark.parametrize('variable', ['PYDANTIC_AI_NO_VERSION_CHECK', 'DO_NOT_TRACK'])
+def test_segment_never_checks_when_the_version_check_is_off(monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
+    fetched: list[UpdateChannel] = []
+
+    def fetch(channel: UpdateChannel) -> str:
+        fetched.append(channel)
+        return NEWER
+
+    monkeypatch.setenv(variable, '1')
+    updates, _ = _updates(['stable'], current=TOOL, fetch=fetch)
+    assert updates.segment() == ''
+    assert fetched == []
+    # Asking for it, as `/update` does, still looks.
+    assert updates.check() is not None
+    assert fetched == ['stable']
 
 
 def test_segment_ignores_a_result_for_another_channel() -> None:

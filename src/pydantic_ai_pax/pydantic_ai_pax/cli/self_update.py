@@ -519,9 +519,10 @@ class Updates:
     def segment(self) -> str:
         """A status-row hint once a background check finds an update; checks again on a channel change or after an hour.
 
-        Only `uv tool` installs check, so a source checkout never contacts PyPI or GitHub on its own.
+        Only `uv tool` installs check, so a source checkout never contacts PyPI or GitHub on its own; neither does
+        any install with `PYDANTIC_AI_NO_VERSION_CHECK` or `DO_NOT_TRACK` set. `/update` still looks when asked.
         """
-        if not self.current.tool:
+        if not self.current.tool or not _version_check.version_check_enabled():
             return ''
         found = self.check()
         return f'update {found.update.label}: /update' if found is not None and found.update is not None else ''
