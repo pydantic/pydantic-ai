@@ -1008,6 +1008,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         child.model_chosen = model is not None or self.session.model_chosen
         child.tool_retries = self.session.tool_retries
         child.instructions = self.session.instructions
+        child.trust = self.session.trust
         child.resolve_model = self.session.resolve_model
         child.expand_model = self.session.expand_model
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))

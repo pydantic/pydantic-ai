@@ -111,10 +111,12 @@ def _gitdir_target(dot_git: Path) -> str | None:
 
 def _read_first_line(path: Path) -> str | None:
     try:
-        text = path.read_text(encoding='utf-8')
+        if not path.is_file():
+            return None
+        with path.open(encoding='utf-8') as file:
+            first = file.readline(4096)
     except (OSError, UnicodeDecodeError):
         return None
-    first, _, _ = text.partition('\n')
     return first.strip() or None
 
 

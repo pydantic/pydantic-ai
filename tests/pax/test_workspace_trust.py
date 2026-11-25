@@ -95,6 +95,9 @@ async def test_a_folder_is_untrusted_until_you_trust_it(tmp_path: Path) -> None:
         await shell.session.prompt('three')
         assert (await shell.commands.execute_async('/trust')).startswith('This folder is untrusted.\n')
         assert probe.seen == ['none', 'operator', 'none']
+        forked = await shell.fork_session(None, ())
+        await forked.prompt('four')
+        assert probe.seen == ['none', 'operator', 'none', 'none']
         assert store.workspace_trust(tmp_path.resolve()) is False
         with pytest.raises(ValueError, match=r'Usage: /trust \[yes\|no\]'):
             await shell.commands.execute_async('/trust maybe')
@@ -291,6 +294,18 @@ def test_a_git_file_cannot_borrow_a_trusted_repository(repository: Path, tmp_pat
     empty.mkdir()
     (empty / '.git').write_bytes(b'\xff\xfe')
     assert trust_scope(empty).key == empty.resolve()
+
+    # 6. Non-regular metadata file (directory or FIFO) is rejected without blocking.
+    non_regular = tmp_path / 'non-regular'
+    non_regular_gitdir = non_regular / 'wt'
+    non_regular_gitdir.mkdir(parents=True)
+    (non_regular / '.git').write_text('gitdir: ./wt\n')
+    if hasattr(os, 'mkfifo'):
+        os.mkfifo(non_regular_gitdir / 'gitdir')
+    else:  # pragma: no cover -- Windows has no mkfifo; a directory exercises the same `not is_file()` guard.
+        (non_regular_gitdir / 'gitdir').mkdir()
+    (non_regular_gitdir / 'commondir').write_text(f'{repository / ".git"}\n')
+    assert trust_scope(non_regular).key == non_regular.resolve()
 
 
 def test_bare_repository_worktree_gets_its_own_scope(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
