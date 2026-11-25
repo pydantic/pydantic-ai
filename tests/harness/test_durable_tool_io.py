@@ -134,7 +134,7 @@ class TestDBOS(BuiltInEngineSuite):
     recovery = dbos_conformance.RECOVERY
     cases = suite_cases(DURABLE_DBOS)
     durable_steps = 'dbos'
-    model_request_unit = 'model.request'
+    model_request_units = ('model.request', 'model.request_stream')
 
     @pytest.fixture(scope='class')
     @classmethod

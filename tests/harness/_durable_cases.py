@@ -8,6 +8,7 @@ and pins the units each case records to its `durable_steps`.
 from __future__ import annotations
 
 import os
+import tempfile
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
@@ -49,10 +50,14 @@ class SuiteCase:
 
     name: str
     made: tuple[ToolCall, ...]
+    follow_ups: int = 0
 
     def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
         skip_unless_installed(self.name, CASES[self.name].requires)
-        return build_case(self.name, directory)
+        # A fresh directory right under the system's temporary one, rather than the test's own: `RepoContext` (and
+        # `Coder`) makes a workspace call per parent directory, so the units the `durable_steps` pin depend on depth.
+        del directory
+        return build_case(self.name, Path(tempfile.mkdtemp(prefix=f'durable_engine_suite_{self.name}_')))
 
 
 @dataclass(frozen=True)
@@ -61,6 +66,7 @@ class SuiteScenario:
 
     name: Scenario
     made: tuple[ToolCall, ...] = (('work', {}),)
+    follow_ups: int = 0
 
     @property
     def observed(self) -> tuple[str, ...]:
@@ -127,12 +133,14 @@ def counting_requests(monkeypatch: pytest.MonkeyPatch, directory: Path) -> Calla
 class BuiltInEngineSuite(DurableEngineSuite):
     """`DurableEngineSuite` with the built-in cases and scenarios, the stand-ins' counts, and the case units pinned.
 
-    The cases' units are pinned by their `durable_steps`; a scenario's run streams, which renames its model request
-    unit, so its units aren't.
+    The cases' units are pinned by their `durable_steps`, and their model request unit by `durable_steps.streams`; a
+    scenario's run streams for its recorder, so its units aren't pinned.
     """
 
     durable_steps: ClassVar[Literal['dbos', 'temporal']]
     """The `DurableSteps` field that pins the units each case records under the engine."""
+    model_request_units: ClassVar[tuple[str, str]]
+    """The engine's unit for a model request, and for a streamed one."""
     scenarios = SUITE_SCENARIOS
 
     @pytest.fixture
@@ -143,8 +151,20 @@ class BuiltInEngineSuite(DurableEngineSuite):
         calls = CASES[name].calls if name in CASES else None
         return None if calls is None else getattr(calls.durable_steps, self.durable_steps)
 
+    def model_request_unit(self, name: str) -> str | None:
+        calls = CASES[name].calls if name in CASES else None
+        if calls is None:
+            return None
+        requested, streamed = self.model_request_units
+        return streamed if calls.durable_steps.streams else requested
+
     def marks(self, name: str) -> Collection[pytest.MarkDecorator]:
         calls = CASES[name].calls if name in CASES else None
-        if calls is not None and (reason := calls.moves_cache_prefix):
-            return (pytest.mark.moves_cache_prefix(reason=reason),)
-        return ()
+        if calls is None:
+            return ()
+        marks: list[pytest.MarkDecorator] = []
+        if reason := calls.moves_cache_prefix:
+            marks.append(pytest.mark.moves_cache_prefix(reason=reason))
+        if reason := calls.launches_python:
+            marks.append(pytest.mark.subprocess(reason=reason, conditional=True))
+        return marks

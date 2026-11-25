@@ -38,6 +38,12 @@ SUPPORT: Mapping[str, Support] = {
         match='cannot be added at runtime with Temporal',
         issue=14403,
     ),
+    'IPythonCodeMode': Support(
+        'refused',
+        "it refuses durable execution, as an engine can't replay a kernel's state",
+        match='`IPythonCodeMode` is not supported under durable execution',
+        issue=14494,
+    ),
     'Planning': Support(
         'refused',
         'its tools emit plan events, which Temporal refuses from an activity',

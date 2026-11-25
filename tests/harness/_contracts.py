@@ -25,14 +25,24 @@ PUBLIC = {**discover_capabilities(CORE_CAPABILITY_PACKAGES), **discover_capabili
 
 
 def contract_cases(contract: Contract) -> list[ParameterSet]:
-    """The cases `contract` applies to, each whose calls rewrite history marked `moves_cache_prefix`."""
+    """The cases `contract` applies to, each whose calls rewrite history marked `moves_cache_prefix`, and each whose
+    calls launch a Python interpreter marked `subprocess`."""
     return [
-        pytest.param(name, marks=pytest.mark.moves_cache_prefix(reason=reason))
-        if case.calls is not None and (reason := case.calls.moves_cache_prefix)
-        else pytest.param(name)
+        pytest.param(name, marks=_marks(case))
         for name, case in sorted(CASES.items())
         if name in PUBLIC and contract.applies(name, case)
     ]
+
+
+def _marks(case: CapabilityCase) -> list[pytest.MarkDecorator]:
+    if case.calls is None:
+        return []
+    marks: list[pytest.MarkDecorator] = []
+    if reason := case.calls.moves_cache_prefix:
+        marks.append(pytest.mark.moves_cache_prefix(reason=reason))
+    if reason := case.calls.launches_python:
+        marks.append(pytest.mark.subprocess(reason=reason, conditional=True))
+    return marks
 
 
 def assert_holds(contract: Contract, name: str, breaks: Sequence[str]) -> None:

@@ -420,4 +420,4 @@ def test_a_capability_that_runs_with_tools_declares_calls(
 def test_pending_calls_backfill() -> None:
     """The cases whose `calls` are still to be written: a PR that writes one lowers the count, and none raises it."""
     pending = sorted(name for name, exempt in DECLARES_CALLS.exempt.items() if exempt.reason.startswith(PENDING_CALLS))
-    assert len(pending) == 15, pending
+    assert len(pending) == 10, pending

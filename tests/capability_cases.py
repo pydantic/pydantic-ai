@@ -192,6 +192,10 @@ class DurableSteps:
     """Temporal activity names, without the `agent__<agent name>__` prefix: `toolset__<toolset id>__call_tool` for a
     function tool, which runs in its activity, `capability__<id>__<operation>` for a `durable_operation` that
     workflow code calls, and `mcp_server__<toolset id>__<operation>` for an MCP server."""
+    streams: bool = False
+    """Whether the run's model requests are streamed units (`model.request_stream`, `model_request_stream`), as they
+    are when a capability listens for events. The unit's name is persisted like the others, so a case whose model
+    unit flips between the two fails."""
 
 
 @dataclass(frozen=True)
@@ -208,6 +212,9 @@ class Calls:
     moves_cache_prefix: str | None = None
     """Why running the calls rewrites earlier history by design, which moves the prompt-cache prefix: a suite
     that runs them one per response marks the run `moves_cache_prefix` with it."""
+    launches_python: str | None = None
+    """Why running the calls launches a Python interpreter, such as a kernel process: a suite that runs them marks
+    the test `subprocess` with it, as `conditional`, since a durable engine may refuse the case before it launches."""
 
 
 @dataclass(frozen=True)
@@ -712,6 +719,14 @@ RENAMED = Contract(
             'its documented `file_key` example matches `read_file` by name, so under a prefix it never '
             'deduplicates: https://github.com/pydantic/pydantic-ai/issues/13967'
         ),
+        **dict.fromkeys(
+            ('CodeMode', 'IPythonCodeMode', 'ToolBridge'),
+            Exempt(
+                'its tools come from its wrapper toolset, which `PrefixTools` leaves unprefixed: '
+                'https://github.com/pydantic/pydantic-ai/issues/14537'
+            ),
+        ),
+        'Skills': Exempt("the model loads a skill with core's `load_capability` tool, which a prefix doesn't rename"),
     },
 )
 """A capability's tools behave the same under `prefix_tools()`: a tool, hook or event found by name breaks it."""
@@ -844,15 +859,13 @@ DECLARES_CALLS = Contract(
         ),
         'BubblewrappedWorkspace': Exempt('needs a sandbox backend: the `bwrap` binary and user namespaces'),
         'PlaywrightBrowser': Exempt('needs a browser that Playwright launches'),
-        **dict.fromkeys(('BackgroundTools', 'CodeMode', 'IPythonCodeMode', 'ToolBridge', 'ToolSearch'), Exempt(_ROUTE)),
+        **dict.fromkeys(('BackgroundTools', 'ToolSearch'), Exempt(_ROUTE)),
         **dict.fromkeys(
             (
                 'AskUser',
                 'ComputerUse',
                 'Peers',
-                'Permissions',
                 'Pixeltable',
-                'RepoContext',
                 'RequireVerification',
                 'ToolCallJudge',
                 'ToolOutputLimits',

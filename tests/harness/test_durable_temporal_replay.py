@@ -157,7 +157,7 @@ class TestTemporal(BuiltInEngineSuite):
     recovery = temporal_conformance.RECOVERY
     cases = suite_cases(DURABLE_TEMPORAL)
     durable_steps = 'temporal'
-    model_request_unit = 'model_request'
+    model_request_units = ('model_request', 'model_request_stream')
 
     @pytest.fixture(scope='class')
     @classmethod

@@ -82,6 +82,11 @@ class _Script(Protocol):
         """The tool calls the suite's model makes, one per response, before it answers."""
         ...
 
+    @property
+    def follow_ups(self) -> int:
+        """How many more model requests the calls' results cause in all, such as a background call's later result."""
+        ...
+
     def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
         """The capabilities and toolsets the calls run against, built offline in `directory`."""
         ...
@@ -93,6 +98,11 @@ class _ScenarioScript(Protocol):
     @property
     def made(self) -> Sequence[_ToolCall]:
         """The tool calls the suite's model makes, one per response, before it answers."""
+        ...
+
+    @property
+    def follow_ups(self) -> int:
+        """How many more model requests the calls' results cause in all, such as a background call's later result."""
         ...
 
     def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
@@ -133,8 +143,11 @@ class DurableEngine(Protocol):
         ...
 
 
-def _scripted_model(made: Sequence[_ToolCall], *, stream: bool) -> FunctionModel:
+def _scripted_model(made: Sequence[_ToolCall]) -> FunctionModel:
     """A model that makes the calls in `made`, one per response, then answers `ANSWER`; call `i` has the ID `call_{i}`.
+
+    Every request past the calls, such as one a call's follow-up causes, gets the answer. It streams when the run
+    does, as it does when a capability listens for events.
 
     A request whose first message isn't the run's `PROMPT` is a capability's own run on the run's model: it gets the
     answer and is counted, as recovery must not make it again.
@@ -150,9 +163,6 @@ def _scripted_model(made: Sequence[_ToolCall], *, stream: bool) -> FunctionModel
             return ModelResponse(parts=[TextPart(ANSWER)])
         tool_name, args = made[step]
         return ModelResponse(parts=[ToolCallPart(tool_name, args, tool_call_id=f'call_{step}')])
-
-    if not stream:
-        return FunctionModel(respond)
 
     async def stream_response(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         for part in respond(messages, info).parts:
@@ -241,8 +251,6 @@ class DurableEngineSuite:
     """The cases the suite runs, by capability class name."""
     scenarios: ClassVar[Mapping[str, _ScenarioScript]] = {}
     """The scenarios the suite runs, named `<owner>.<scenario>`."""
-    model_request_unit: ClassVar[str | None] = None
-    """The name of the unit the engine records for one of a case's model requests, which `expected_units` leaves out."""
 
     @pytest.fixture
     def engine(self) -> DurableEngine | AsyncIterator[DurableEngine]:
@@ -264,7 +272,14 @@ class DurableEngineSuite:
     def expected_units(self, name: str) -> Sequence[str] | None:
         """The units a run of the case `name` records besides its model requests, in order, to pin their names.
 
-        `None`, the default, leaves them unpinned. Pinning needs `model_request_unit`.
+        `None`, the default, leaves them unpinned. Pinning needs `model_request_unit` too.
+        """
+        return None
+
+    def model_request_unit(self, name: str) -> str | None:
+        """The unit the engine records for a model request of the case `name`, which `expected_units` leaves out.
+
+        A run streams its requests when a capability listens for events, which can rename the unit. Pinning needs it.
         """
         return None
 
@@ -348,11 +363,12 @@ class DurableEngineSuite:
         if observed is not None and tuple(run.observed) != observed:
             breaks.append(f'the run observed {run.observed}, not {list(observed)}')
         expected = self.expected_units(name)
-        if expected is not None and (model_request := self.model_request_unit) is not None:
+        if expected is not None and (model_request := self.model_request_unit(name)) is not None:
             requests = run.units.count(model_request)
-            if requests != len(script.made) + 1:
+            if requests != len(script.made) + script.follow_ups + 1:
                 breaks.append(
-                    f'the run recorded {requests} `{model_request}` units, not one per call and one to answer'
+                    f'the run recorded {requests} `{model_request}` units, not one per call, one per follow-up and '
+                    'one to answer'
                 )
             recorded = tuple(unit for unit in run.units if unit != model_request)
             if recorded != tuple(expected):
@@ -448,7 +464,7 @@ def _agent(
     With an `observer`, it streams, and records what it observes under that name.
     """
     return Agent(
-        _scripted_model(made, stream=observer is not None),
+        _scripted_model(made),
         name=name,
         deps_type=type(None),
         toolsets=[part for part in built if isinstance(part, AbstractToolset)],

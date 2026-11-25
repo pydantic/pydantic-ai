@@ -34,6 +34,7 @@ REFUSAL = UserError('not supported inside a durable unit')
 @dataclass
 class _Script:
     made: tuple[tuple[str, dict[str, object]], ...] = (('work', {}),)
+    follow_ups: int = 0
 
     def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
         raise NotImplementedError
@@ -124,16 +125,21 @@ def test_the_first_run_must_answer_once_and_observe_what_it_should() -> None:
     def expected_units(self: DurableEngineSuite, name: str) -> tuple[str, ...]:
         return ('tool',)
 
-    suite = _suite(model_request_unit='model', expected_units=expected_units)
+    def model_request_unit(self: DurableEngineSuite, name: str) -> str:
+        return 'model'
+
+    suite = _suite(model_request_unit=model_request_unit, expected_units=expected_units)
     run = EngineRun('', 'other', ['model', 'tool', 'model'], ['event:a'])
     assert suite._run_breaks('case', _Script(), ('event:b',), run, Counter({'search': 2})) == [
         f"the run returned 'other', not {ANSWER!r}",
         "a request was made more than once: {'search': 2}",
         "the run observed ['event:a'], not ['event:b']",
     ]
+    followed = EngineRun('', ANSWER, ['model', 'tool', 'model', 'model'])
+    assert suite._run_breaks('case', _Script(follow_ups=1), None, followed, Counter()) == []
     drifted = suite._run_breaks('case', _Script(), None, EngineRun('', ANSWER, ['model', 'other']), Counter())
     assert drifted == [
-        'the run recorded 1 `model` units, not one per call and one to answer',
+        'the run recorded 1 `model` units, not one per call, one per follow-up and one to answer',
         "the calls record ('other',), not ('tool',). A recorded name is what a run from an earlier release recovers "
         'by: change it only with a compatibility note',
     ]
@@ -143,6 +149,7 @@ def test_the_defaults_pin_nothing_and_count_nothing() -> None:
     suite = _suite()
     assert suite.expected_units('case') is None
     assert suite.marks('case') == ()
+    assert suite.model_request_unit('case') is None
     assert DurableEngineSuite.count_requests._get_wrapped_function()(suite)() == {}
     assert suite._run_breaks('case', _Script(), None, EngineRun('', ANSWER, ['model']), Counter()) == []
 
@@ -191,7 +198,7 @@ async def test_a_refusal_mid_run_must_leave_its_record_unaffected() -> None:
 async def test_a_nested_run_on_the_suite_model_is_answered_and_counted() -> None:
     """A capability's own run on the run's model is counted, so a recovery that repeats it breaks the cell."""
     conformance._NESTED.clear()
-    model = conformance._scripted_model((('ask', {}),), stream=False)
+    model = conformance._scripted_model((('ask', {}),))
 
     async def ask() -> str:
         return (await Agent(model).run('nested')).output

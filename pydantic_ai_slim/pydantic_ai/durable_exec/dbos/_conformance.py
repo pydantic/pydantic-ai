@@ -25,6 +25,12 @@ SUPPORT: Mapping[str, Support] = {
         match=_WAIT_REFUSED,
         issue=14443,
     ),
+    'IPythonCodeMode': Support(
+        'refused',
+        "it refuses durable execution, as an engine can't replay a kernel's state",
+        match='`IPythonCodeMode` is not supported under durable execution',
+        issue=14494,
+    ),
     'RunContext.emit_in_unit': Support(
         'broken',
         'an event emitted in a step is not emitted again when recovery replays the step',

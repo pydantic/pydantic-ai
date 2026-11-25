@@ -48,6 +48,7 @@ Every capability not listed here is supported under each engine above.
 |---|---|---|
 | `BrowserUse` | Supported | [**Refused**](https://github.com/pydantic/pydantic-ai/issues/9233): its toolset has no id, which Temporal names the activity of a function tool after |
 | `CompactOnRequest` | Supported | [**Broken**](https://github.com/pydantic/pydantic-ai/issues/14403): its `for_run` copy builds a new toolset, which Temporal refuses as one added at run time |
+| `IPythonCodeMode` | [**Refused**](https://github.com/pydantic/pydantic-ai/issues/14494): it refuses durable execution, as an engine can't replay a kernel's state | [**Refused**](https://github.com/pydantic/pydantic-ai/issues/14494): it refuses durable execution, as an engine can't replay a kernel's state |
 | `Planning` | Supported | [**Refused**](https://github.com/pydantic/pydantic-ai/issues/7971): its tools emit plan events, which Temporal refuses from an activity |
 | `PydanticAIDocs` | Supported | [**Refused**](https://github.com/pydantic/pydantic-ai/issues/9233): its toolset has no id, which Temporal names the activity of a function tool after |
 
