@@ -13,7 +13,7 @@ from termflow.live.buffer import REVERSE
 from termflow.themes import reset_palette
 
 from pydantic_ai_pax.ui.prompt import prompt_surface
-from pydantic_ai_pax.ui.prompt.prompt_selection import MouseReport, Selection, mouse_report
+from pydantic_ai_pax.ui.prompt.prompt_selection import MouseReport, Selection, hyperlink, mouse_report
 from pydantic_ai_pax.ui.prompt.prompt_surface import (
     ENTER,
     FRAME_INTERVAL,
@@ -715,22 +715,28 @@ def test_clicking_a_url_opens_it() -> None:
     assert len(screen.opened) == 3, 'a drag over a URL selects it instead'
 
 
-def test_clicking_a_hyperlink_opens_its_target() -> None:
-    """Painted cells drop OSC 8 hyperlinks, so the frame keeps which cells each one covers, as a computer row's link."""
+def test_clicking_a_pinned_hyperlink_opens_its_target_and_a_transcript_one_does_not() -> None:
+    """Painted cells drop OSC 8 hyperlinks, so the frame keeps which cells the shell's own rows link.
+
+    A transcript label, as a model's `[label](url)`, hides where it goes, so it does not open on a click.
+    """
     screen = Screen(width=60, height=10)
-    screen.surface.paint(ROWS)
-    row = Text('2 actions · ')
-    row.append('watch live ↗', style='link http://127.0.0.1:8/?token=t')
-    row.append(' · ')
-    row.append('notes', style='link file:///etc/hosts')
+    footer = f'fake sandbox | {hyperlink("watch live ↗", url="http://127.0.0.1:8/?token=t")} | ' + hyperlink(
+        'notes', url='file:///etc/hosts'
+    )
+    screen.surface.paint(('TOP', 'DRAFT', 'BOTTOM', footer))
+    row = Text('read ')
+    row.append('continue', style='link https://example.com/?q=secret')
     Console(file=screen.surface, force_terminal=True, color_system='truecolor', width=60).print(row)
     screen.now += FRAME_INTERVAL
     screen.surface.refresh()
-    assert screen.lines()[0] == '2 actions · watch live ↗ · notes'
-    assert click(screen, 13, 1) == ['http://127.0.0.1:8/?token=t'], 'the first cell'
-    assert click(screen, 24, 1) == ['http://127.0.0.1:8/?token=t'], 'the arrow'
-    assert click(screen, 25, 1) == []
-    assert click(screen, 28, 1) == [], 'other schemes open only through the terminal'
+    assert screen.lines()[0] == 'read continue'
+    assert screen.lines()[-1] == 'fake sandbox | watch live ↗ | notes'
+    assert click(screen, 6, 1) == [], 'a transcript label'
+    assert click(screen, 16, 10) == ['http://127.0.0.1:8/?token=t'], 'the first cell'
+    assert click(screen, 27, 10) == ['http://127.0.0.1:8/?token=t'], 'the arrow'
+    assert click(screen, 28, 10) == []
+    assert click(screen, 31, 10) == [], 'other schemes open only through the terminal'
 
 
 def test_clicking_a_url_wrapped_across_rows_opens_all_of_it() -> None:

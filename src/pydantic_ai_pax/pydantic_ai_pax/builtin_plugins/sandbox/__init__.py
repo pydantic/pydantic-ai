@@ -345,7 +345,8 @@ class SandboxPlugin(Plugin):
         sandbox = self.current()
         if sandbox is None:
             return 'computer-use' if self._armed() else ''
-        return f'{sandbox.provider.name} sandbox{" (computer-use)" if self._on() and not self._live_url() else ""}'
+        watched = self._viewer.started_url(sandbox.ref) is not None
+        return f'{sandbox.provider.name} sandbox{" (computer-use)" if not watched and self._on() else ""}'
 
     def _watch_live(self) -> StatusLink | str:
         url = self._live_url()

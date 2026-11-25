@@ -2,7 +2,6 @@
 
 from termflow.live import Region, Widget
 
-from pydantic_ai_pax.ui.prompt.prompt_selection import PaintedLink, paint_row
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 
 _Position = tuple[int, int]
@@ -30,8 +29,6 @@ class TranscriptView(Widget):
         self._memo: dict[int, tuple[str, ...]] = {}
         self._shown: list[_Position] = []
         """The rows the last `window` returned, top to bottom."""
-        self.links: list[PaintedLink] = []
-        """The hyperlinks the last `draw` painted."""
 
     def follow(self) -> None:
         """Show the newest rows again."""
@@ -131,6 +128,5 @@ class TranscriptView(Widget):
 
     def draw(self, region: Region, focused: bool) -> None:
         """Paint into `region`; `PromptSurface` shows `SCROLLED_HINT` while scrolled away from the newest output."""
-        self.links = []
         for y, row in enumerate(self.window(width=max(1, region.width), height=region.height)):
-            paint_row(region, y=y, row=row, links=self.links)
+            region.ansi(0, y, row)

@@ -156,7 +156,8 @@ def paint_row(region: Region, *, y: int, row: str, links: list[PaintedLink]) -> 
     for match in _LINK.finditer(row + LINK_END):
         column = visible_length(row[: match.start()])
         if url.startswith(('http://', 'https://')) and column > start:
-            links.append(PaintedLink(row=region.rect.y + y, start=start, end=column, url=url))
+            x = region.rect.x
+            links.append(PaintedLink(row=region.rect.y + y, start=x + start, end=x + column, url=url))
         url, start = match[1], column
 
 

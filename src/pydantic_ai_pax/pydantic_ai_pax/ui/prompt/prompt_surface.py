@@ -118,7 +118,10 @@ class PromptSurface(io.StringIO):
         self._frame: ScreenBuffer | None = None
         """The cells last painted, which a selection copies from."""
         self._links: list[PaintedLink] = []
-        """The hyperlinks last painted, in the transcript and the pinned rows, which a click opens."""
+        """The hyperlinks last painted in the pinned rows, which the shell writes, so a click opens them.
+
+        The transcript's are left out: a model's `[label](url)` hides where it goes, so only a URL shown as text opens.
+        """
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript."""
         self._hint_on_transcript = False
@@ -259,7 +262,7 @@ class PromptSurface(io.StringIO):
         Reporting the wheel stops most terminals from selecting text themselves, so a left-button
         drag highlights cells here and its release copies them to the clipboard. It also stops them
         opening links on Cmd/Ctrl+click, and mouse reports cannot say Cmd was held, so a click
-        without a drag on a hyperlink, such as a status row link, or on a transcript URL opens it here.
+        without a drag on a status row link, or on a URL the transcript shows as text, opens it here.
         """
         if key != 'mouse':
             self.scroll(self.page if key == 'pageup' else -self.page)
@@ -385,7 +388,7 @@ class PromptSurface(io.StringIO):
         bottom = height - len(rows)
         frame = ScreenBuffer(width, height)
         self.view.draw(frame.region(Rect(0, 0, width, bottom)), False)
-        links = [*self.view.links]
+        links: list[PaintedLink] = []
         for index, row in enumerate(rows):
             paint_row(frame.region(Rect(0, bottom + index, width, 1)), y=0, row=row, links=links)
         # A URL the hint covers part of is not opened.
