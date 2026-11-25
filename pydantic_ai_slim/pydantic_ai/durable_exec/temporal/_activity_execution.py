@@ -34,7 +34,7 @@ from typing import Any
 
 import anyio
 from temporalio import workflow
-from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
+from temporalio.workflow import ActivityConfig, ChildWorkflowConfig, LocalActivityConfig
 from typing_extensions import Unpack
 
 CancelledResultHandler = Callable[[asyncio.CancelledError, Any], None]
@@ -61,6 +61,11 @@ async def execute_activity(
         on_cancelled_result=on_cancelled_result,
         skips_wait_on_cancel=skips_wait_on_cancel,
     )
+
+
+async def execute_local_activity(activity: Any, *, args: Sequence[Any], **config: Unpack[LocalActivityConfig]) -> Any:
+    """Drop-in replacement for `workflow.execute_local_activity()`, for the same reason as `execute_activity`."""
+    return await _await_with_single_cancel(workflow.start_local_activity(activity, args=args, **config))
 
 
 async def execute_child_workflow(
