@@ -693,7 +693,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda: (BackgroundTools[None](tools=['first']), BackgroundTools[None](tools=['second'])),
             _check_background_tools,
         ),
-        calls=Calls(ECHO, with_echo(lambda: BackgroundTools(tools=['echo'])), durable_steps=ECHO_STEPS),
+        calls=Calls(ECHO, with_echo(lambda: BackgroundTools(tools=['echo'])), durable_steps=ECHO_STEPS, follow_ups=1),
     ),
     'BenchmarkInstructions': CapabilityCase(
         Combines(

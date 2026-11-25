@@ -179,7 +179,7 @@ class DurableSteps:
 
     The names are persisted: a workflow recorded by one release replays by them in the next, so `DURABLE_DBOS` and
     `DURABLE_TEMPORAL` fail when a case records anything else. The run's own model requests are left out, as
-    every case makes one per call and one to answer. A case whose tools do no I/O through a durable unit records
+    every case makes one per call, one per follow-up its calls' `follow_ups` counts, and one to answer. A case whose tools do no I/O through a durable unit records
     nothing, which is checked too.
     """
 
@@ -203,6 +203,9 @@ class Calls:
     registers a workflow before launch. A toolset it builds has an `id`, which Temporal names its activities by."""
     durable_steps: DurableSteps = DurableSteps()
     """What the calls record under each durable engine, run one per response."""
+    follow_ups: int = 0
+    """The extra model requests a call's result causes when it arrives as a follow-up message: `BackgroundTools`
+    delivers each backgrounded call's result in a later request."""
     moves_cache_prefix: str | None = None
     """Why running the calls rewrites earlier history by design, which moves the prompt-cache prefix: a suite
     that runs them one per response marks the run `moves_cache_prefix` with it."""

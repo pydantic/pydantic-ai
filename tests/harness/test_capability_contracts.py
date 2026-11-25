@@ -80,7 +80,8 @@ def test_every_exemption_names_a_case_the_contract_applies_to() -> None:
 
 
 def _one_call_per_response(made: tuple[ToolCall, ...], prefix: str) -> FunctionModel:
-    """A model that streams the calls in order, one per response, then answers; call `i` gets the ID `call_{i}`.
+    """A model that streams the calls in order, one per response, then answers every request past them, such as one a
+    call's follow-up causes; call `i` gets the ID `call_{i}`.
 
     The run streams its requests, so a request that isn't streamed is a capability's own run on the run's model, such
     as `BrowserUse`'s browser agent, and gets the answer.
@@ -89,7 +90,7 @@ def _one_call_per_response(made: tuple[ToolCall, ...], prefix: str) -> FunctionM
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         del info
         step = sum(isinstance(message, ModelResponse) for message in messages)
-        if step == len(made):
+        if step >= len(made):
             yield 'done'
             return
         name, args = made[step]
@@ -442,7 +443,7 @@ def test_a_drifted_journal_breaks_the_durable_contracts() -> None:
 
     def read(units: list[str]) -> list[str]:
         return journal_breaks(
-            units, prefix='a__', model_request='model.request', calls=1, expected=expected, engine='dbos'
+            units, prefix='a__', model_request='model.request', calls=1, follow_ups=0, expected=expected, engine='dbos'
         )
 
     assert read(recorded) == []
@@ -450,10 +451,10 @@ def test_a_drifted_journal_breaks_the_durable_contracts() -> None:
     assert len(read(renamed)) == 1
     assert len(read(['a__model.request', 'a__model.request'])) == 1, 'a dropped unit breaks them'
     assert read(['a__capability__memory.write_memory', 'a__model.request']) == [
-        'the run recorded 1 `model.request` units, not one per call and one to answer'
+        'the run recorded 1 `model.request` units, not one per call, one per follow-up and one to answer'
     ]
     assert read([*recorded, 'a__model.request', 'a__capability__memory.read_memory']) == [
-        'the run recorded 3 `model.request` units, not one per call and one to answer',
+        'the run recorded 3 `model.request` units, not one per call, one per follow-up and one to answer',
         "the calls record `dbos=('capability__memory.write_memory', 'capability__memory.read_memory')`, not "
         "('capability__memory.write_memory',). A recorded name is what a workflow from an earlier release replays by: "
         'change the case only with a compatibility note (agent_docs/capability-conformance.md, "Durable execution")',

@@ -156,6 +156,7 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
         prefix=f'{_AGENTS[name].name}__',
         model_request='model.request',
         calls=len(calls.made),
+        follow_ups=calls.follow_ups,
         expected=calls.durable_steps.dbos,
         engine='dbos',
     )
