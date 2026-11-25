@@ -342,13 +342,15 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 Engines that hand out tokens map onto this directly: AWS Lambda callbacks, Restate awakeables,
 Trigger.dev waitpoint tokens, Vercel Workflow hooks. Engines that address external events by name
 instead (Temporal signals, Azure Durable Task external events, DBOS messages) can encode the
-execution's ID and an event key in the token, and have whoever resolves it send the named event. Two
+execution's ID and an event key in the token, and have whoever resolves it send the named event. These
 implementations are references: the AWS Lambda one in Pydantic AI Harness's
 [`aws_lambda` package](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda)
 hands out Lambda callback IDs, and the
 [Temporal one](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_external_events.py)
 encodes the workflow ID and an event key, calls `ask` in a local activity, and waits for a signal that
-[`resolve_external_event`][pydantic_ai.durable_exec.temporal.resolve_external_event] sends.
+[`resolve_external_event`][pydantic_ai.durable_exec.temporal.resolve_external_event] sends. The
+[DBOS one](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_external_events.py)
+does the same with steps and a DBOS message.
 
 Code inside a durable unit, such as a tool, can't wait: the wait has to be recorded in the run
 itself. `wait_for_external_event` rejects a call made inside

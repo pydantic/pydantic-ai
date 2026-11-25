@@ -38,6 +38,7 @@ from pydantic_ai.durable_exec._toolset import (
 )
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.external_events import external_event_scope
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
@@ -46,6 +47,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
 
 from ._agent import DBOSParallelExecutionMode
+from ._external_events import DBOSExternalEventWaiter
 from ._function_toolset import ToolInstanceDefaultsGateToolset
 from ._operation_backend import DBOSBoundOperation, DBOSOperationBackend, DBOSOperationConfig
 from ._operation_names import DBOSOperationNamer
@@ -498,7 +500,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
-        """Apply the configured parallel-execution mode, and make agent-graph waits durable in workflows."""
+        """Apply the configured parallel-execution mode, and make agent-graph waits and external-event waits durable in workflows."""
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
@@ -515,7 +517,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         if reserve_events:
             self._event_step_reservations[key] = {}
         try:
-            with agent.parallel_tool_call_execution_mode(mode), using_durable_sleep():
+            with (
+                agent.parallel_tool_call_execution_mode(mode),
+                using_durable_sleep(),
+                external_event_scope(DBOSExternalEventWaiter(self.name)) if self.in_durable_context else nullcontext(),
+            ):
                 return await super().wrap_run(ctx, handler=handler)
         finally:
             if reserve_events:

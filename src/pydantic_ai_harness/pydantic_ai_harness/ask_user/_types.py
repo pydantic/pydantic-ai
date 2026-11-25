@@ -276,7 +276,8 @@ class TokenAnswerer(Protocol[AgentDepsT]):
     as the other forms do, or `None` after delivering `token` to whoever will answer, such as in a
     Slack message. The run then waits until the token is resolved with the JSON form of an
     `AskUserResponse`: with `pydantic_ai.external_events.resolve_external_event` in process, or
-    through the durable engine's API, such as AWS Lambda's `SendDurableExecutionCallbackSuccess`.
+    through the durable engine's API, such as `pydantic_ai.durable_exec.dbos.resolve_external_event` or AWS
+    Lambda's `SendDurableExecutionCallbackSuccess`.
     """
 
     async def __call__(

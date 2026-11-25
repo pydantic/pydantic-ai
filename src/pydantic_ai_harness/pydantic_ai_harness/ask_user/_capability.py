@@ -67,7 +67,8 @@ class AskUser(AbstractCapability[AgentDepsT]):
     `handle_deferred_tool_calls` through `wait_for_external_event`, as `HandleDeferredToolCalls` calls a
     handler that takes a resume token.
     So the wait is in process in a plain run, and recorded by the engine in a durable run on an
-    engine that supports it, such as AWS Lambda durable functions; other durable engines refuse it.
+    engine that supports it, such as Temporal, DBOS or AWS Lambda durable functions; other durable
+    engines refuse it.
 
     ```python
     from pydantic_ai import Agent
