@@ -20,9 +20,10 @@ recovery from failed actions), and the tool returns a text result.
     This page covers the browser-use integration: one `browse_web` tool that
     hands a goal to an autonomous agent. To have the host model drive the
     browser itself with typed actions -- navigate, click, type, screenshot --
-    see [Playwright Browser](playwright.md). Give an agent one or the other:
-    each capability runs its own browser, so a session opened by one is not
-    visible to the other.
+    see [Playwright Browser](playwright.md), or for one raw Chrome DevTools
+    Protocol tool that code calls in loops, [CDP Browser](cdp-browser.md). Give
+    an agent one of them: each capability runs its own browser, so a session
+    opened by one is not visible to the others.
 
 ```mermaid
 flowchart TB

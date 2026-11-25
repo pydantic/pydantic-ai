@@ -216,6 +216,36 @@ tools included, even if the user takes the question back ("never mind") in the m
 model may still speak its result. Put tools that change state behind
 [approval](tools.md#deferred-and-approval-required-tools) if a retracted request must not go through.
 
+### Steering the voice mid-call {#voice-instructions}
+
+`openai_live_instructions` can't be changed once the session has started, but it can be added to.
+[`append_voice_instructions()`][pydantic_ai.realtime.RealtimeSession.append_voice_instructions] gives the Live
+model instructions of its own, which steer how it speaks from then on, while the agent's instructions stay the
+backend's:
+
+```python
+from pydantic_ai.realtime import RealtimeSession
+
+
+async def on_key_menu(session: RealtimeSession) -> None:
+    await session.append_voice_instructions(
+        'The caller is choosing from a key menu: stay quiet until they have pressed a key.'
+    )
+```
+
+In our testing, the model followed an appended instruction from its next reply on. Each call takes at most 500
+tokens, and longer text raises [`UserError`][pydantic_ai.exceptions.UserError] before anything is sent. The
+instructions aren't part of the conversation, so history doesn't record them, and the session doesn't wait for
+Live to acknowledge them: one Live refuses is reported as a recoverable
+[`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]. Send only instructions you wrote:
+Live treats them as the application's own. To change what the backend knows or does instead, change the agent's
+instructions (see [instructions that change](capabilities.md#instructions-that-change)).
+
+A [reconnect](lifecycle.md#reconnecting) keeps the instructions added so far. A session stored with
+`openai_live_store=True` is forked, which carries them over. Any other session is replaced by one that starts with
+`openai_live_instructions` followed by those instructions, as many of the newest as fit in the 16,384 tokens a
+session can start with: the oldest are dropped first.
+
 ### The turn boundary is inferred
 
 Live sends no end-of-response frame and no transcript-done event, so there is nothing on the wire
@@ -393,7 +423,7 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 | Setting | Purpose |
 | --- | --- |
 | `openai_voice` | The Live voice, e.g. `marin` (the provider default), or a [custom voice](https://developers.openai.com/api/docs/guides/custom-voices) created through OpenAI's voice API, selected by its ID as `{'id': 'voice_1234'}`. Immutable once the session has started |
-| `openai_live_instructions` | The Live model's prompt: persona, language, pacing, style, and when to delegate. The agent's instructions [go to the backend instead](#how-delegation-works) |
+| `openai_live_instructions` | The Live model's prompt: persona, language, pacing, style, and when to delegate. The agent's instructions [go to the backend instead](#how-delegation-works). Add to it mid-call with [`append_voice_instructions()`](#voice-instructions) |
 | `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `reasoning_summary`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
 | `openai_live_store` | Whether OpenAI retains the session, which lets it be forked or downloaded later and a dropped connection [reconnect](#gpt-live-feature-support-and-limitations) with the conversation intact. Defaults to `False` |
@@ -562,8 +592,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio],
   [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response], and
   [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt].
-- An image sent without `respond=True`, `respond=False` text over the 500-token cap, and seeded history that contains
-  audio or images.
+- An image sent without `respond=True`, `respond=False` text or
+  [`append_voice_instructions()`](#voice-instructions) text over the 500-token cap, and seeded history that
+  contains audio or images.
 - A WebRTC sideband whose `message_history` differs from what the offer seeded, including none at all
   when the offer seeded some, or that sets `openai_live_idle_audio`.
 - [`create_client_secret()`][pydantic_ai.agent.AgentRealtime.create_client_secret], since Live has no

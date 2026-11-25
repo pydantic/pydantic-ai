@@ -1,6 +1,6 @@
 import type { Palette } from './protocol'
 
-// The slots CLAI paints its roles with in the terminal (`ui/rendering/theme.py`), so `/theme` looks the same here.
+// The slots Pax paints its roles with in the terminal (`ui/rendering/theme.py`), so `/theme` looks the same here.
 const ACCENT = 12
 const ERROR = 1
 const THINKING = 5

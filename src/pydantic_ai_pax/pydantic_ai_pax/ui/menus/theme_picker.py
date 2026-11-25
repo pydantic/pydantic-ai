@@ -26,7 +26,7 @@ def theme_preview(name: str, *, width: int) -> str:
     output = StringIO()
     console = Console(file=output, width=width - 2, force_terminal=True, color_system='truecolor', highlight=False)
     with theme.use(lambda: name):
-        console.print('CLAI 2.0', style=theme.LOGO)
+        console.print('Pax', style=theme.LOGO)
         console.print('> Summarize this change')
         console.print('Thinking Checking the files...', style=theme.color(theme.THINKING))
         print_tool_header(console, name='read_file', argument='src/app.py')
@@ -36,13 +36,10 @@ def theme_preview(name: str, *, width: int) -> str:
             for event in parser.parse_line(line):
                 renderer.render(event)
         palette = theme.current()
+        # Over another palette, the default's colours still need the terminal's own light background.
+        canvas = palette.bg if palette else theme.light_background()
         console.print(
-            Syntax(
-                'return "ready"',
-                'python',
-                theme=theme.syntax_theme(),
-                background_color=palette.bg if palette else 'default',
-            )
+            Syntax('return "ready"', 'python', theme=theme.syntax_theme(), background_color=canvas or 'default')
         )
         console.print('Warning: output truncated', style=theme.color(theme.WARNING))
         console.print('Error: example.py not found', style=theme.color(theme.ERROR))
@@ -50,7 +47,10 @@ def theme_preview(name: str, *, width: int) -> str:
         console.print('> Ask a follow-up')
         console.print('─' * (width - 2), style=theme.color(theme.MUTED))
         console.print('test | context: 2.4k | ready', style=theme.color(theme.MUTED))
-        background = Style(color=palette.fg, bgcolor=palette.bg) if palette is not None else Style()
+        if palette is not None:
+            background = Style(color=palette.fg, bgcolor=palette.bg)
+        else:
+            background = Style(color='#000000', bgcolor=canvas) if canvas else Style()
     sample = Text.from_ansi(output.getvalue().rstrip('\n'))
     preview = Console(file=StringIO(), width=width, force_terminal=True, color_system='truecolor')
     with preview.capture() as capture:

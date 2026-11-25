@@ -1,4 +1,4 @@
-"""`pax --web`: CLAI with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
+"""`pax --web`: Pax with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
 
 import os
 from collections.abc import Callable
@@ -41,21 +41,21 @@ async def run_web(
     token: str | None = None,
     restart: WebHandoff | None = None,
 ) -> None:
-    """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl-C.
+    """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl+C.
 
     `console` gets the transcript as plain text. Nothing saved changes: `web` loads for this launch only.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
 
-    `project` is the launch directory's project file and `settings_for` the settings CLAI starts with
+    `project` is the launch directory's project file and `settings_for` the settings Pax starts with
     beside a project file. Each session runs in its own directory: `resume` starts there, `/resume ID`
     moves there, and `/workspace DIRECTORY` starts a new session in another one (see `SessionWorkspace`).
 
     `port` replaces the saved port for this launch. `token` replaces the token `web` makes, for a launcher
-    that keeps it, such as the `workspaces` plugin: CLAI then listens on 127.0.0.1 whatever the saved
+    that keeps it, such as the `workspaces` plugin: Pax then listens on 127.0.0.1 whatever the saved
     address, prints the address without the token as `Web UI running at http://127.0.0.1:PORT/`, which
     is how a launcher that passed port 0 learns the port, and opens no browser.
 
-    `restart` is the web UI the build before `/update` served: CLAI serves it again on that port with that
+    `restart` is the web UI the build before `/update` served: Pax serves it again on that port with that
     token, opening no browser, so the pages it had reconnect. After `/update`, this raises `Relaunch`.
     """
     if resume == '':
@@ -121,7 +121,7 @@ def _web_session(
         headless=True,
         workspace=workspace,
         process=process,
-        # Ctrl-C reaches the session CLAI started with, which ends CLAI; the others are interrupted from the browser.
+        # Ctrl+C reaches the session Pax started with, which ends Pax; the others are interrupted from the browser.
         signals=process is None,
         settings_for=settings_for,
     )
@@ -148,7 +148,7 @@ async def _serve_web(
     token: str | None,
     restart: WebHandoff | None,
 ) -> None:
-    """Run `shell`, the session CLAI started with, serving the web UI until it ends; other live sessions end first."""
+    """Run `shell`, the session Pax started with, serving the web UI until it ends; other live sessions end first."""
     reason: SessionEndReason = 'error'
     served: WebHandoff | None = None
     async with shell.agent, create_task_group() as workers:
@@ -168,7 +168,7 @@ async def _serve_web(
                 shell.session.record_resumed()
             if notice:
                 console.print(notice, markup=False)
-            # Before the page is reachable, so a browser opening a session at once finds CLAI serving them.
+            # Before the page is reachable, so a browser opening a session at once finds Pax serving them.
             async with shell.process.live.serving():
                 web.port = port
                 if restart is not None:
@@ -182,7 +182,7 @@ async def _serve_web(
                     url = await web.start()
                     # A launcher keeps its token, so the address it reads leaves the token out.
                     console.print(f'Web UI running at {url if token is None else url.partition("?")[0]}', markup=False)
-                console.print('Prompts entered in the browser run here. Press Ctrl-C to quit.', markup=False)
+                console.print('Prompts entered in the browser run here. Press Ctrl+C to quit.', markup=False)
                 reason = await shell.run()
         except get_cancelled_exc_class():
             reason = 'exit'
@@ -211,7 +211,7 @@ def serving(loader: SessionPlugins[DepsT]) -> WebHandoff | None:
 
 
 async def serve_again(loader: SessionPlugins[DepsT], handoff: WebHandoff) -> str:
-    """Serve the web UI on the port and with the token CLAI used before `/update`, opening no browser."""
+    """Serve the web UI on the port and with the token Pax used before `/update`, opening no browser."""
     web = _loaded_web(loader)
     if web is None:
         return 'The web UI did not start again: the web plugin is off. Turn it on with /plugins enable web.'

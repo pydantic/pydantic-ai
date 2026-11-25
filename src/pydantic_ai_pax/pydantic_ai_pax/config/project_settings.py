@@ -25,7 +25,7 @@ _FILE: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 _PLUGINS: TypeAdapter[list[PluginSettings]] = TypeAdapter(list[PluginSettings])
 _HOOKS: TypeAdapter[HookTable] = TypeAdapter(HookTable)
 SAFE_PROJECT_KEYS = frozenset(key for key in SETTING_FIELDS if key.startswith('display.'))
-"""Keys a project file sets at once: how CLAI shows things, which cannot change what the agent may do or is told.
+"""Keys a project file sets at once: how Pax shows things, which cannot change what the agent may do or is told.
 
 Every other key a project file may set waits for `/project approve`: it grants permissions, adds
 instructions, picks the model or account, or configures how runs execute. A new key waits too unless
@@ -75,7 +75,7 @@ class ProjectSettings:
 
     @property
     def pending_instructions(self) -> str | None:
-        """The file's `instructions` while they wait for approval, which CLAI sends as the repository's, not yours."""
+        """The file's `instructions` while they wait for approval, which Pax sends as the repository's, not yours."""
         text = self.pending.get('run.instructions')
         return text if isinstance(text, str) and text else None
 
@@ -85,7 +85,7 @@ class ProjectSettings:
         if not self.pending:
             return None
         names = ', '.join(SETTING_FIELDS[key] for key in self.pending)
-        return f'Project settings not applied until you approve them with /project approve in a CLAI session: {names}'
+        return f'Project settings not applied until you approve them with /project approve in a Pax session: {names}'
 
 
 def _present(path: Path) -> bool:
@@ -133,7 +133,7 @@ def _unapproved(plugin: PluginSettings, *, root: Path) -> PluginSettings:
     """`plugin` switched off, with its file anchored to the project `root`.
 
     Approval saves the declaration to the user store, which every repository shares. A path left
-    relative there would resolve against whichever directory CLAI starts in next, so another
+    relative there would resolve against whichever directory Pax starts in next, so another
     repository could put its own file at that path and have it run under this approval.
     """
     update: dict[str, object] = {'enabled': False}

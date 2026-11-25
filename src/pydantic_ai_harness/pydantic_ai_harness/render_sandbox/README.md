@@ -105,6 +105,18 @@ if __name__ == '__main__':
 
 The `finally` terminates the sandbox even when setup or the run fails, so read any files you want to keep before it. To keep the sandbox, store `backend.ref` instead.
 
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[RenderSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another.
+
+Render's default image has none of [the display's programs](../computer_use/#what-the-display-needs), so the first use of the screen installs them with `apt-get`, with no web browser. That needs `allow_internet_access`: creating a new sandbox without it raises `UserError`. An attached sandbox without internet access must already have the programs, or the first use of the screen raises `WorkspaceUnavailableError` naming what's missing.
+
+To give the agent a browser or other programs, install them before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `RenderSandboxBackend(desktop=True)`, or let the agent install them with `Shell`.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
 ## Clean up
 
 Terminate a sandbox with the ref you stored:
@@ -172,10 +184,11 @@ Then terminate it: `await RenderSandbox().destroy(WorkspaceRef(provider='render'
 | `sandbox_timeout` | Seconds a new sandbox lives before Render terminates it, at most `86_400`. Default: `3_600`. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve from. Default: `None`, the sandbox's home directory. Created on a new sandbox. On an attached one, it must already exist. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The first use installs the desktop's programs with `apt-get`, so a new sandbox needs `allow_internet_access`. The size applies when the display first starts. Default: `False`. |
 | `authority` | Who wrote the sandbox's files. A capability that puts a file's text in the prompt gives it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
 | `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the sandbox, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`client`, `working_dir`, `env`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new sandbox.
+`client`, `working_dir`, `env`, `desktop`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new sandbox.
 
 ## Limits
 

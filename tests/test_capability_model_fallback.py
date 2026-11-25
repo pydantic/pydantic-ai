@@ -69,6 +69,7 @@ from pydantic_ai.exceptions import (
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
+    ModelEmptyResponseError,
     ModelRateLimitError,
     ModelRetry,
     OutputTokenLimitExceeded,
@@ -174,6 +175,21 @@ async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
 async def test_streaming_open_failure_falls_back():
     agent = Agent(
         FunctionModel(stream_function=failure_stream),
+        capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
+    )
+    async with agent.run_stream('x') as stream:
+        assert await stream.get_output() == 'hello'
+
+
+async def test_streaming_empty_response_falls_back_by_default():
+    """A stream that ends before its first event, which adapters raise as `ModelEmptyResponseError`, falls back."""
+
+    async def empty_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelEmptyResponseError('primary', 'Streamed response ended without content or tool calls')
+        yield ''  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=empty_stream),
         capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
     )
     async with agent.run_stream('x') as stream:

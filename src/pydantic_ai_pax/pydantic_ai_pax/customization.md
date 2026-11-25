@@ -1,15 +1,15 @@
-# Customizing CLAI 2
+# Customizing Pax
 
 This guide describes the installed pydantic_ai_pax shell. Read relevant installed
 source before editing: versions of Pydantic AI and Termflow can differ. Do not
-invent registration APIs. PLUGINS.md in the CLAI repository is the full plugin
+invent registration APIs. PLUGINS.md in the Pax repository is the full plugin
 contract; this guide is shipped with the package for use without a checkout.
 
 ## Choose the extension point
 
 A plugin is a `Plugin` subclass from pydantic_ai_pax.plugins. Like a Pydantic AI
 AbstractCapability, it declares what it contributes by overriding `get_*`
-methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
+methods, each defaulting to nothing; Pax calls them once when the plugin loads.
 
 - Add tools, instructions, or agent hooks: return Pydantic AI capabilities
   (including `Hooks`) from get_capabilities, or install a capability class
@@ -20,7 +20,7 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   each returning a short string.
 - Add a working animation: return build_spinner(name, frames, interval=...,
   description=...) values from get_spinners, or add an entry in spinners.json next
-  to CLAI's settings (/spinner init writes a starter). /spinner picks one; the
+  to Pax's settings (/spinner init writes a starter). /spinner picks one; the
   choice persists as display.spinner.
 - React to prompts or session lifecycle: override on_session_start,
   on_session_end, on_turn_start, on_turn_end, on_conversation_changed, or
@@ -48,15 +48,15 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
   once it succeeds. ModelProvider(settings_from='anthropic') gives its models
   Anthropic's /model settings controls.
 - Give the model standing instructions without a plugin: /system_prompt edits
-  run.instructions, which CLAI sends after its built-in, AGENTS.md, and plugin
+  run.instructions, which Pax sends after its built-in, AGENTS.md, and plugin
   instructions, and shows the full system prompt read-only. A plugin adds
   instructions with get_capabilities instead.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
-  selects directly and persists display.theme. /theme default restores CLAI's
+  selects directly and persists display.theme. /theme default restores Pax's
   existing appearance. Browsing previews a sample conversation without applying
   the candidate. /set exposes the same preference.
 - Replace the prompt editor, splash, streaming Markdown, built-in model catalog,
-  or add custom palettes: currently a CLAI source change, not a supported
+  or add custom palettes: currently a Pax source change, not a supported
   plugin extension. A command can own its own UI instead. You can add a
   fragment to the status row with get_status_segments; you cannot redesign or
   replace the row itself.
@@ -72,15 +72,15 @@ worktree** saves that choice for this checkout in the settings database; a new
 checkout reusing the same path is asked again.
 
 Pydantic AI core owns the agent loop, model/provider protocols, hooks and tools.
-Harness owns reusable, non-terminal capabilities. CLAI owns the prompt loop,
+Harness owns reusable, non-terminal capabilities. Pax owns the prompt loop,
 commands, plugin loading and rendering. Do not implement a second agent loop in
-CLAI or print terminal output from a reusable Harness capability.
+Pax or print terminal output from a reusable Harness capability.
 
 ## Create and install a plugin
 
 The quickest plugin is an existing Pydantic AI capability. Pydantic AI Harness
 ships several; ExaSearch adds web_search and get_page tools backed by Exa. It
-needs the exa extra installed in CLAI's Python environment and EXA_API_KEY set,
+needs the exa extra installed in Pax's Python environment and EXA_API_KEY set,
 then one command, no file:
 
 ```text
@@ -126,10 +126,10 @@ class Search(Plugin):
         )
 ```
 
-Restart CLAI to discover the drop-in, or use /plugins enable search while running.
+Restart Pax to discover the drop-in, or use /plugins enable search while running.
 The agent has the search tools on the next prompt and /greet Ada prints Hello Ada.
 Use /plugins reload search after editing. Alternatively install an importable
-Python package in CLAI's Python environment and run /plugins add search
+Python package in Pax's Python environment and run /plugins add search
 my_package.search. A module defining exactly one public Plugin subclass can be
 named on its own; module:Class names one Plugin subclass or a bare capability
 class. For a bare capability class, the optional JSON supplies constructor
@@ -150,9 +150,9 @@ second Coder under another name. To change its options, declare coder again
 with the same name and different JSON; that replaces the built-in. Keep
 "repo_context": false in that JSON: the second built-in, repo_context
 (pydantic_ai_pax.builtin_plugins.repo_context), already reads AGENTS.md or CLAUDE.md from the
-launch directory, and Coder's bundled RepoContext would load it again. CLAI
+launch directory, and Coder's bundled RepoContext would load it again. Pax
 enables task delegation in the stock Coder plugin. When the active plugin
-capabilities change, CLAI rebuilds its stock agent before the next prompt with
+capabilities change, Pax rebuilds its stock agent before the next prompt with
 those capabilities bound to it. A delegated task gets a fresh conversation with
 the same plugin tools, instructions, and guardrails. Supplied agents are unchanged
 and still receive plugins per run; self-delegation on them requires capabilities
@@ -196,10 +196,10 @@ for loading and backend requirements.
 
 ### Git plugins
 
-Inside a CLAI session only, /plugins add GIT_URL clones and loads a trusted
+Inside a Pax session only, /plugins add GIT_URL clones and loads a trusted
 repository over HTTPS or SSH (or a local file:// URL). Its root __init__.py or
 plugin.py must define one public Plugin subclass; dependencies must already be
-installed in CLAI's environment. Checkouts live in plugins/_git/ID under the
+installed in Pax's environment. Checkouts live in plugins/_git/ID under the
 configuration directory. Reload reads local code, not Git updates: pull into the
 checkout with Git first, then /plugins reload ID. Removing a Git plugin forgets
 its declaration but keeps its checkout; clear the printed checkout directory
@@ -218,7 +218,7 @@ own async answerer; see PLUGINS.md.
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
 multi-select questions. Enter submits nonblank text. Esc returns to the choices
-and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
+and keeps your draft; Ctrl+C declines the whole request. Backspace and arrow keys
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
@@ -226,7 +226,7 @@ appear in the transcript and reach the model as a one-item list under the questi
 The built-in observability plugin (pydantic_ai_pax.builtin_plugins.logfire) is enabled by default in the
 stock CLI. It contributes core's Instrumentation capability using an isolated
 Logfire instance. It exports to Logfire only when credentials are present, with
-no interactive setup or console logging. Errors CLAI shows and recovers from (plugin
+no interactive setup or console logging. Errors Pax shows and recovers from (plugin
 load failures, failed turns, unexpected slash command failures, failing plugin
 handlers) are recorded with their traceback, or only their type with include_content
 false; usage errors are not. Prompts, results, and binary images are left out by
@@ -238,6 +238,9 @@ settings with:
 ```text
 /plugins add observability pydantic_ai_pax.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
+
+Traces carry Pax's own version as service.version; LOGFIRE_SERVICE_VERSION
+and OTEL_SERVICE_VERSION do not change it.
 
 Other options are service_name (default pydantic-clai2), send_to_logfire
 (default "if-token-present", or false), token (the name of a /keys entry
@@ -284,7 +287,7 @@ guard it on what was acquired. Drop-in entry modules reload from fresh source;
 installed modules use importlib.reload, which can retain globals absent from the
 new source. Do not mutate another plugin or the agent to add a plugin's tools.
 
-## Finding CLAI source
+## Finding Pax source
 
 The package root keeps the shell entry point (`app.py`) and the documented
 plugin-author imports `pydantic_ai_pax.plugins` and `pydantic_ai_pax.commands`.
@@ -314,7 +317,7 @@ and report the error; correct the source and retry. Import-time side effects
 cannot be undone.
 
 Reload ordering follows module-scope imports in the current source, including
-newly added dependencies between CLAI modules and new local modules. Function-local
+newly added dependencies between Pax modules and new local modules. Function-local
 imports and `TYPE_CHECKING` guards do not create eager dependencies. Literal
 guards and direct platform/version comparisons select their active branch without
 executing source expressions. Other conditions are analyzed conservatively and
@@ -326,7 +329,7 @@ are not recursively reloaded. Use `/plugins reload NAME` to reload only one plug
 
 ## Hooks, tools and settings
 
-The CLAI moments are async methods returning None:
+The Pax moments are async methods returning None:
 
 | Method | Event | Use |
 | --- | --- | --- |
@@ -377,7 +380,7 @@ Hooks into the agent run are Pydantic AI capabilities: return a Hooks capability
 (or your own AbstractCapability subclass) from get_capabilities, using Hooks().on
 names and signatures. Check https://pydantic.dev/docs/ai/core-concepts/hooks/ and
 installed source. For example, before_model_request returns its
-ModelRequestContext; it is not a None-returning host observer. Do not add CLAI
+ModelRequestContext; it is not a None-returning host observer. Do not add Pax
 moments for core behaviour. Raising before_tool_execute fails the run; consult
 core's documented SkipToolExecution when only one tool execution should be skipped.
 Any bound Hooks leaves code mode's workspace unmounted, since its checked tools
@@ -391,7 +394,7 @@ cancel(), use its documented cancellation semantics.
 
 ## Settings that need a feature: requirement tags
 
-Every CLAI on a machine shares one settings database (~/.config/pydantic-clai2/config.db),
+Every Pax on a machine shares one settings database (~/.config/pydantic-clai2/config.db),
 whatever code it runs: other worktrees, branches, and installs. A plugin setting that one
 build supports can break another. Version numbers cannot tell them apart, because worktrees
 are diverging branches that report the same dev version. Feature names can.
@@ -476,11 +479,11 @@ the notice. A build older than tags still applies true; with fail-soft, only its
 ### Fail-soft at run setup
 
 A setting that slips through untagged costs one turn and then one capability, not every
-turn. CLAI guards each capability it builds itself from a module:Class declaration's saved
+turn. Pax guards each capability it builds itself from a module:Class declaration's saved
 settings (such as coder), unless any part of it is a Hooks. Capabilities a plugin's get_capabilities
 returns, and every policy hook, are never guarded. When a guarded one raises UserError while
 the run is set up (in for_run, or in wrap_run before it hands over to the run), that turn fails
-closed with the plugin named, and CLAI leaves the capability out of later turns until
+closed with the plugin named, and Pax leaves the capability out of later turns until
 /plugins reload. The turn is not retried, so no other capability's setup runs twice, and a
 capability that refuses to run never gets skipped within the turn it refused.
 Errors from the model, tools, or hooks once the run is under way propagate as before, and
@@ -494,7 +497,7 @@ unique, including built-ins. Unknown command-shaped input such as `/missing`
 does not reach the model. Path-like input (a slash, dot, or backslash in the first
 token after `/`) is passed through as a prompt instead. Routing itself does not
 read files. Separately, the editor converts bracketed pastes of existing image
-paths into attachments. Ctrl-V or Alt-V attaches clipboard images. Attachment
+paths into attachments. Ctrl+V or Alt+V attaches clipboard images. Attachment
 markers are removed before host turn hooks run; those hooks receive the text
 caption, while core hooks receive the multimodal request. Quoted paths are also
 prompts.
@@ -517,13 +520,13 @@ class Writes(Plugin):
 ```
 
 Return a Rich renderable, or None to let the next renderer/default handle it.
-CLAI flushes streaming text before printing it. First matching non-None renderer
+Pax flushes streaming text before printing it. First matching non-None renderer
 wins. Do not print from an event observer when a renderer can do the job.
 Use self.host.console for plugin-owned console output outside streaming handlers.
 Resolve pydantic_ai_pax.ui.rendering.theme roles ACCENT, INFO, WARNING, ERROR, MUTED, THINKING
 with theme.color(role) at render time, not hard-coded colours. Raw ANSI uses
 theme.sgr(role), which resolves the selected colours itself. Choices are default
-(the unchanged CLAI appearance) and termflow.themes.PALETTES. theme.current()
+(the unchanged Pax appearance) and termflow.themes.PALETTES. theme.current()
 returns the selected TerminalPalette or None for default. Starting and exiting
 in default leaves terminal colours untouched. For bundled palettes, Termflow
 applies foreground, background, and ANSI slots via OSC; returning to default or
@@ -549,12 +552,12 @@ class Where(Plugin):
 Fragments form the main footer's `plugins` group and are painted muted. Users
 control the group's position and visibility with `display.footer_fields`; see the
 [status-line reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#status-line).
-The row repaints about ten times a second while CLAI works and once a second while idle,
+The row repaints about ten times a second while Pax works and once a second while idle,
 so it runs that often: no blocking IO, no awaits, no printing. Return an empty
-string to contribute nothing that frame. Fragments are truncated from the right
-on narrow terminals and cannot set their own colours. get_status_segments adds
-to the row; replacing the row, prompt editor, splash, or adding custom palettes
-is still a CLAI source change.
+string to contribute nothing that frame. On a narrow terminal the whole group is
+hidden before the model. Fragments cannot set their own colours. get_status_segments
+adds to the row; replacing the row, prompt editor, splash, or adding custom palettes
+is still a Pax source change.
 
 Offer a working animation with get_spinners; the user selects it with /spinner:
 
@@ -579,7 +582,7 @@ without frames only retunes an existing spinner's interval or description.
 Register an async slash command that builds and runs a Termflow MenuBuilder.
 Keep the builder pure so tests can drive it without a terminal. The existing
 plugin_menu.py, model_menu.py and field_menu.py are working source examples.
-The following uses CLAI's internal UI helpers; check them when upgrading:
+The following uses Pax's internal UI helpers; check them when upgrading:
 
 ```python
 from termflow.tui import MenuBuilder, MenuItem
@@ -614,7 +617,7 @@ class MyMenu(Plugin):
 
 Termflow owns the alternate screen. Do not print while it is open. Put errors and
 empty states in disabled rows or the preview. Use .on_key for single-key actions,
-apply changes immediately, then replace_items to redraw. Esc and Ctrl-C should
+apply changes immediately, then replace_items to redraw. Esc and Ctrl+C should
 close normally. menu_key and run_worker cooperate on cancellation, keeping the
 terminal owned until the worker restores its screen. Do not fire-and-forget a
 thread that is still reading input. If a menu key needs an async action, follow
@@ -622,7 +625,7 @@ plugin_menu.py's bridge back to the main event loop.
 
 Pass during_turn=True to Command when the menu is safe to open mid-turn, so the
 bare command opens at once instead of queueing behind the running turn. While
-run_worker runs, CLAI leaves the live panel temporarily. The turn's output stays
+run_worker runs, Pax leaves the live panel temporarily. The turn's output stays
 in the transcript and paints when the menu closes.
 Only opt in when the running turn cannot observe what the menu changes.
 during_turn_subcommands=('add',) does the same for a bare subcommand such as
@@ -631,7 +634,7 @@ mid-turn; it then runs at once with arguments too, ahead of queued follow-ups,
 as /plugins does.
 
 Pass live=True to Command for a slow handler that only prints, such as /compact,
-so the editor stays live while it runs: the working spinner shows, Esc or Ctrl-C
+so the editor stays live while it runs: the working spinner shows, Esc or Ctrl+C
 cancels it, and Enter queues a follow-up. Leave it off for anything that reads
 keys or opens a menu; those need the suspended editor.
 
@@ -654,7 +657,7 @@ In `/model`, Ctrl+D or Delete removes a saved model and its per-model settings
 after confirmation. The current model and saved default are protected; select
 another model or change the default with `/set model NAME` first. Provider
 credentials and plugins are left alone.
-Adding a model also selects it and saves it for later sessions. Install optional provider dependencies in the same environment as CLAI
+Adding a model also selects it and saves it for later sessions. Install optional provider dependencies in the same environment as Pax
 and supply credentials via the provider's supported environment variables.
 
 For an OpenAI-compatible endpoint, write a Python launcher:
@@ -667,7 +670,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_pax import chat
-from pydantic_ai_pax.clai_docs import ClaiDocs
+from pydantic_ai_pax.pax_docs import PaxDocs
 
 model = OpenAIChatModel(
     'my-model',
@@ -676,11 +679,11 @@ model = OpenAIChatModel(
         api_key=os.environ['MY_MODEL_API_KEY'],
     ),
 )
-agent = Agent(model, capabilities=[Coder(), ClaiDocs()])
+agent = Agent(model, capabilities=[Coder(), PaxDocs()])
 asyncio.run(chat(agent, deps=None))
 ```
 
-CLAI attaches the launch directory as the workspace, so Coder() needs none of
+Pax attaches the launch directory as the workspace, so Coder() needs none of
 its own. Here it restricts file tools to that directory, unlike the stock CLI's
 unrestricted Coder. A launcher gets no built-in plugins unless it passes them.
 Choose one source of coding tools, never both: either keep Coder() in
@@ -693,14 +696,14 @@ https://pydantic.dev/docs/ai/models/overview/ and inspect installed core abstrac
 classes for required methods. Supply that Model instance to Agent as above.
 To chat with an Agent instance you already have, skip the launcher and run
 pax --agent MODULE:ATTR (or -a), for example
-pax --agent pydantic_ai.main:my_cool_agent. CLAI appends the launch directory to
-sys.path, after installed packages, so a module next to where you start CLAI
+pax --agent pydantic_ai.main:my_cool_agent. Pax appends the launch directory to
+sys.path, after installed packages, so a module next to where you start Pax
 resolves without installing it. It does so only when nothing installed has the
 module's top-level name. A module there whose top-level name is also installed
 resolves against the installed package instead, so it usually fails with "module
 not found". ATTR must
 name an Agent instance, not a class or factory; the agent runs with deps=None.
-For that session only, CLAI loads no plugins at all: no built-ins (so no stock
+For that session only, Pax loads no plugins at all: no built-ins (so no stock
 Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and
 /plugins reports that plugins are off. Nothing saved changes, so the next plain
 pax loads plugins as before. The agent keeps its own model unless -m or
@@ -714,7 +717,7 @@ chat preserves a supplied agent's model when no settings override selects anothe
 one. /model or /set model changes subsequent turns to the selected core model
 identifier, not an alias for your custom instance. Noninteractive Session exposes
 resolve_model for translating overrides; chat configures its own resolver for
-Codex and CLAI's other connections, then for prefixes plugins register.
+Codex and Pax's other connections, then for prefixes plugins register.
 
 To offer a Model you build from a plugin, keeping the stock agent, Coder, and
 every other plugin, register a prefix of your own:
@@ -741,7 +744,7 @@ without the prefix and runs in a worker thread before every run with that
 model, so it may read the keyring; raise UserError with setup instructions
 when it cannot build the model. The prefix starts with a lowercase letter,
 followed by lowercase letters, digits, and hyphens. A prefix Pydantic AI or
-CLAI already runs, aliases like openai-chat included, is rejected with
+Pax already runs, aliases like openai-chat included, is rejected with
 ValueError.
 
 `/effort` shows the active model's configured reasoning effort and supported values.
@@ -758,7 +761,7 @@ branch; `/pr confirm` then pushes the branch and opens exactly that with `gh`,
 and `/pr TITLE` does so with your title instead. The web UI's git chip
 does the same, with a file list and the drafts to edit first. A plugin's own
 `/commit`, `/push`, or `/pr` replaces these; a skill of the same name is hidden
-by them, and CLAI says so.
+by them, and Pax says so.
 
 For `openai-codex` models, open `/model settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Speed**. GPT-6.2 Astra, GPT-6.2 Sol,
@@ -768,7 +771,7 @@ GPT-6.1 Sol, and GPT-6 Astra, the Codex models that offer
 both off. Faster speeds use more ChatGPT credits and depend on your plan. They do
 not lower reasoning effort. Reset restores the model's default. Picking a tier in
 the **Service Tier** row replaces the speed, and a custom `service_tier` body
-parameter takes precedence over both. Older CLAI builds see a speed as its nearest
+parameter takes precedence over both. Older Pax builds see a speed as its nearest
 service tier, `priority` for fast and ultrafast, and a different tier they save picks
 the speed here.
 
@@ -782,7 +785,7 @@ reports an unknown command. If a custom `service_tier` parameter is set, `/fast`
 asks you to remove it first with `/model settings` rather than saving an
 ineffective change.
 
-To extend the built-in picker in a CLAI source change, add a source returning
+To extend the built-in picker in a Pax source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings
 are declared in ModelSettingsForm in model_settings.py; extend that form, not a
@@ -801,7 +804,7 @@ for agent/tool integration; no real model or credentials are required. Use real
 cancel scopes and Events, not sleeps, to order cancellation tests. Drive menu
 builders headlessly, with injected runners instead of a real terminal.
 
-In a CLAI checkout run Ruff format/check, strict Pyright on changed source/tests,
+In a Pax checkout run Ruff format/check, strict Pyright on changed source/tests,
 and focused pytest tests. Check /plugins list for loading errors, reload after
 edits, and verify disable removes your commands and tools. Keep README.md, docs/reference.md, and
 PLUGINS.md aligned with user-facing API changes. For UI capabilities not exposed
@@ -810,7 +813,7 @@ than monkeypatching a private global registry.
 
 ## Headless invocation
 
-`pax --web` (or `/web` in a session, once `/plugins enable web` is on) drives CLAI
+`pax --web` (or `/web` in a session, once `/plugins enable web` is on) drives Pax
 from a local browser UI instead; the built-in `web` plugin is a worked example of
 `host.send_input`, `host.complete`, `host.sessions`, `host.plugins`, and `on_command_end`.
 
@@ -829,7 +832,7 @@ pydantic_ai_pax is an async context manager that yields the CLI's stock agent wi
 terminal, for agent.run, run_stream_events, iter, or harness run_acp_stdio. It binds the
 coder, repo_context, and compaction built-ins, then `capabilities`, so delegated tasks carry
 them. The tools work in `workspace` unless a passed capability supplies a workspace, such as
-a sandbox. Model names resolve as in the CLI, with CLAI's per-model defaults.
+a sandbox. Model names resolve as in the CLI, with Pax's per-model defaults.
 `plugin_settings` merges settings over a built-in's stock ones, for example
 {'coder': {'sub_agents': False, 'agent_folders': []}}. Saved, drop-in, and project plugins,
 .clai/settings.json, saved model settings, and chain: fallback chains do not apply; nor do

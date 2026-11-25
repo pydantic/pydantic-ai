@@ -72,9 +72,13 @@ jobs:
 
   # Labels a pull request that changes a core definition the durable engines depend on
   # (`scripts/durable_exec_contract.json`), and unlabels it once a later push no longer does.
+  # A durable-exec reviewer who signs off comments the line `--signoff-marker` prints and removes
+  # the label; it then stays off while `--signed-off` finds that the newest marker comment by a
+  # user with write access carries the current fingerprint of the pull request's own durable
+  # changes, which merging the base branch in leaves unchanged.
   # Nothing here checks out or runs the pull request's files: the classifier and the manifest are
   # fetched at `github.sha`, the base branch commit this workflow runs from, and the classifier
-  # reads the pull request's files through the API and only parses them.
+  # reads the pull request's files and comments through the API and only parses them.
   durable-exec-label:
     name: Durable-Exec Review Label
     if: github.event.action == 'opened' || github.event.action == 'synchronize'
@@ -117,7 +121,12 @@ jobs:
           HAS_LABEL=$(jq --arg label "$LABEL" 'index($label) != null' <<<"$LABELS")
 
           if [ "$COUNT" -gt 0 ] && [ "$HAS_LABEL" = false ]; then
-            gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --method POST -f "labels[]=$LABEL"
+            # Any failure, like no covering sign-off, adds the label.
+            if SIGNOFF=$(python3 -I "$GATE/scripts/durable_exec_contract.py" --signed-off "$REPO" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA"); then
+              printf '%s\n' "$SIGNOFF" >> "$GITHUB_STEP_SUMMARY"
+            else
+              gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --method POST -f "labels[]=$LABEL"
+            fi
           elif [ "$COUNT" -eq 0 ] && [ "$HAS_LABEL" = true ]; then
             gh api "repos/${REPO}/issues/${PR_NUMBER}/labels/${LABEL}" --method DELETE
           fi
@@ -344,13 +353,15 @@ jobs:
                 | select($body | test("\n\n<!-- douwebot:review run=[1-9][0-9]* head=" + $head + "( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"))
                 | (($body | capture(" engine=(?<engine>claude|opencode|opencode-zai|opencode-deepinfra) -->\\z") | .engine) // "") as $engine
                 | ($body | sub("\n\n<!-- douwebot:review run=[0-9]+ head=[a-f0-9]{40}( engine=(claude|opencode|opencode-zai|opencode-deepinfra))? -->\\z"; "")) as $marked
-                | (if $engine == "claude" then "\n\nReviewer: Claude Code (claude-opus-5-5)"
-                   elif $engine == "opencode" then "\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"
-                   elif $engine == "opencode-zai" then "\n\nReviewer: OpenCode (zai-coding-plan/glm-5.3-flash)"
-                   elif $engine == "opencode-deepinfra" then "\n\nReviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)"
-                   else "" end) as $attribution
-                | (if $attribution == "" then $marked
-                   elif $marked | endswith($attribution) then $marked | rtrimstr($attribution)
+                # Each engine attribution, then those of its earlier models (`EARLIER_REVIEW_ATTRIBUTIONS`).
+                | (if $engine == "claude" then ["\n\nReviewer: Claude Code (claude-opus-5-5)"]
+                   elif $engine == "opencode" then ["\n\nReviewer: OpenCode (opencode-go/deepseek-v4.1-flash)"]
+                   elif $engine == "opencode-zai" then ["\n\nReviewer: OpenCode (zai-coding-plan/glm-5.4)", "\n\nReviewer: OpenCode (zai-coding-plan/glm-5.3-flash)"]
+                   elif $engine == "opencode-deepinfra" then ["\n\nReviewer: OpenCode (deepinfra/deepseek-ai/DeepSeek-V4.1-Flash)"]
+                   else [] end) as $attributions
+                | (first($attributions[] | select(. as $text | $marked | endswith($text))) // "") as $attribution
+                | (if $attributions == [] then $marked
+                   elif $attribution != "" then $marked | rtrimstr($attribution)
                    else $marked + "\nMissing engine attribution" end) as $verdict
                 | select($verdict | startswith("Review incomplete.") | not)
                 | select(.id as $id | any($commented[]; . == $id) or ($verdict != "No blocking findings." and $verdict != "Blocking findings are recorded inline."))

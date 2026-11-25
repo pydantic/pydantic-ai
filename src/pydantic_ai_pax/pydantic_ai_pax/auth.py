@@ -67,7 +67,7 @@ async def login_command(
     dialogs: Dialogs | None = None,
     select_default: Callable[[str], bool] = lambda model: False,
 ) -> str:
-    """`/login NAME[@PROFILE]` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` asks which.
+    """`/login NAME[@PROFILE]` signs in to Pax's subscriptions or one a plugin adds; bare `/login` asks which.
 
     `@PROFILE` signs in another account, used by models named `PROVIDER@PROFILE:MODEL`. Providers that
     take an API key or a connection (`openrouter`, `vllm`, `openai`, ...) sign in to a profile too.
@@ -77,7 +77,7 @@ async def login_command(
     `dialogs` asks wherever a menu was opened, such as the web UI: subscriptions wait on their waiting
     screen and API keys come from `/keys`;
     connections and plugin sign-ins, which ask in the terminal, raise `ValueError` saying so.
-    Without them, where CLAI has no terminal, Codex waits on `remote_dialogs`' screen and a plugin's
+    Without them, where Pax has no terminal, Codex waits on `remote_dialogs`' screen and a plugin's
     handler asks there through `line_input.read_line`.
     """
     plugins = plugins or {}
@@ -386,7 +386,7 @@ class CodexAuth:
     async def _receive(self, flow: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
         """Race the localhost callback against a pasted redirect; the first to succeed wins.
 
-        A listener that cannot bind its port (another login, or a second CLAI) loses the race
+        A listener that cannot bind its port (another login, or a second Pax) loses the race
         instead of ending it: the paste path exists for exactly that case. Anything else the
         callback reports, such as a denial in the browser, is a real outcome and ends the login.
         """
@@ -415,7 +415,7 @@ class CodexAuth:
             await asyncio.gather(callback, paste, return_exceptions=True)
 
     async def _exchange_paste(self, flow: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
-        """Prompt until something is pasted; Esc or Ctrl-C abandons the login."""
+        """Prompt until something is pasted; Esc or Ctrl+C abandons the login."""
         while True:
             text = await self.read_line(_PASTE_PROMPT)
             if text is None:

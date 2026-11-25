@@ -73,7 +73,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(_ssrf\.py|common_tools/web_fetch\.py'
             r'|capabilities/(web_fetch|file_understanding)\.py)'
-            r'|src/pydantic_ai_harness/pydantic_ai_harness/(playwright|browser_use)/.*'
+            r'|src/pydantic_ai_harness/pydantic_ai_harness/(_browser_egress\.py|(playwright|browser_use|cdp_browser)/.*)'
             r'|tests/test_(ssrf|web_fetch)\.py'
         ),
         diff_tokens=re.compile(
@@ -86,7 +86,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
     SpecialistCheck(
         name='ui',
         title='UI adapters and local web UI',
-        scope="the UI adapters' client/server trust boundary, CLAI 2's local web control UI and its live-session socket",
+        scope="the UI adapters' client/server trust boundary, Pax's local web control UI and its live-session socket",
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/ui/.*'
             r'|src/pydantic_ai_pax/(web-ui/.*|pydantic_ai_pax/builtin_plugins/web/.*|pydantic_ai_pax/cli/web\.py'
@@ -116,13 +116,13 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
     SpecialistCheck(
         name='sandboxes',
         title='Sandboxes and Code Mode',
-        scope='sandboxes, workspaces, shells and Code Mode execution boundaries',
+        scope='sandboxes, workspaces, shells, computer use and Code Mode execution boundaries',
         paths=re.compile(
             r'src/pydantic_ai_harness/pydantic_ai_harness/'
-            r'([^/]*_sandbox|docker_container|code_mode|ipython_code_mode|ssh_workspace|shell)/.*'
+            r'([^/]*_sandbox|docker_container|code_mode|ipython_code_mode|ssh_workspace|shell|computer_use)/.*'
             r'|src/pydantic_ai_harness/pydantic_ai_harness/_monty_(exec|turns)\.py'
             r'|src/pydantic_ai_harness/pydantic_ai_harness/_smolvm_cli\.py'
-            r'|pydantic_ai_slim/pydantic_ai/workspaces/windows\.py'
+            r'|pydantic_ai_slim/pydantic_ai/(workspaces/windows|computer_use)\.py'
         ),
     ),
     SpecialistCheck(

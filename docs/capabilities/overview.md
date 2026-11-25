@@ -112,7 +112,9 @@ Finding and reading things on the open web.
 | [You.com Research](https://pydantic.dev/docs/ai/harness/youdotcom/) | Harness | Cited answers and multi-step research via the You.com Answer, Research, and Finance Research APIs |
 | [Keenable Search](../harness/keenable-search.md) | Harness | Web research via [Keenable](https://keenable.ai): excerpted search and full-page reads, keyless and with no extra to install |
 | [Browser Use](https://pydantic.dev/docs/ai/harness/browser-use/) | Harness | Hand web tasks to an autonomous [browser-use](https://github.com/browser-use/browser-use) agent driving a real browser |
+| [CDP Browser](https://pydantic.dev/docs/ai/harness/cdp-browser/) | Harness | Drive a throwaway Chrome tab with raw DevTools Protocol commands, best from Code Mode |
 | [Playwright Browser](https://pydantic.dev/docs/ai/harness/playwright/) | Harness | Drive a real Chromium page yourself: navigate, click, type, read, and inspect what the page did |
+| [Computer Use](https://pydantic.dev/docs/ai/harness/computer-use/) | Harness | See and control the desktop of the run's workspace with screenshots, mouse, and keyboard |
 
 ### Reasoning, planning & delegation {#reasoning-planning-delegation}
 
@@ -171,7 +173,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Spend Limits](https://pydantic.dev/docs/ai/harness/spend/) | Harness | Cross-window USD/token budgets and per-response cost tracking, per model and per tenant |
 | [Ask User](https://pydantic.dev/docs/ai/harness/ask-user/) | Harness | Let the model ask the user multiple-choice questions mid-run; you supply the answerer (terminal, web, test) |
 | [Tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) | Core | Flag tool calls that need human approval before they run |
-| [Handle Deferred Tool Calls](handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
+| [Handle Deferred Tool Calls](handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on Temporal and AWS Lambda |
 | [System Reminders](https://pydantic.dev/docs/ai/harness/system-reminders/) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](https://pydantic.dev/docs/ai/harness/detect-loops/) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
 | [Trajectory Judge](https://pydantic.dev/docs/ai/harness/trajectory-judge/) | Harness | A second model reviews the live run every N requests over a sliding token window and steers it mid-run |
