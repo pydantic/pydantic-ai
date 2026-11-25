@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/usage.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type 'Add a --units flag for Fahrenheit' Enter
 Wait+Screen /All three tests still pass/
