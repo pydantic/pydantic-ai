@@ -9,7 +9,11 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai._instructions import LoadedInstructionValues, _recorded_instruction_values, instruction_window
+from pydantic_ai._instructions import (
+    LoadedInstructionValues,
+    _recorded_instruction_values,  # pyright: ignore[reportPrivateUsage]
+    instruction_window,
+)
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Caching,
