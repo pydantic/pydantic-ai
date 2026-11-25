@@ -36,7 +36,8 @@ class MemoryReplStore:
     async def save(self, ctx: RunContext[None], state: bytes | None) -> None:
         assert ctx.conversation_id is not None
         if self.save_hangs:
-            await anyio.sleep_forever()  # pragma: lax no cover -- reached only when the dump beats the cancellation
+            # Reached only when the dump finishes before the cancellation does.
+            await anyio.sleep_forever()  # pragma: lax no cover
         if self.save_error is not None:
             raise self.save_error
         self.saves.append((ctx.conversation_id, state is not None))
