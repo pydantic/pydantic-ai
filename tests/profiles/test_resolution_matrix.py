@@ -748,7 +748,10 @@ def test_openrouter_gpt_6_2(model_name: str):
     ],
 )
 def test_gpt_6_2_stable_instructions_as_input_beyond_openai(provider: str, model_name: str, expected: bool):
-    """GPT-6.2 puts the top-level `instructions` after `input` wherever it's served, so the flag is the model's."""
+    """GPT-6.2 puts the top-level `instructions` after `input` wherever it's served, so the flag is the model's.
+
+    Not a VCR test: this validates local provider-profile capability resolution.
+    """
     provider_class = {
         'azure': AzureProvider,
         'bedrock-mantle': BedrockMantleProvider,
