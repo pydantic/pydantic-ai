@@ -2682,6 +2682,38 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path, monkey
     )
 
 
+async def test_capture_records_a_stream_response_it_cant_build_as_the_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A stream that still lives when the test ends, but can't build its response then, is recorded with the error
+    building it raised, which the test never sees.
+    """
+    monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
+
+    async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'hello'
+
+    def unbuildable(stream: StreamedResponse) -> ModelResponse:
+        raise RuntimeError('unbuildable')
+
+    capture = RefactorCapture(tmp_path)
+    capture.install()
+    try:
+        async with model_request_stream(
+            FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
+        ) as stream:
+            async for _ in stream:
+                pass
+        monkeypatch.setattr(type(stream), 'get', unbuildable)
+        capture.write('test_streams.py::test_unbuildable')
+    finally:
+        capture.pytest_unconfigure()
+    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
+    assert [record['response'] for record in records if record['kind'] == 'stream'] == snapshot(
+        [{'unrecorded': 'RuntimeError: unbuildable'}]
+    )
+
+
 def test_capture_wraps_a_module_now_or_once_it_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A module imported already is wrapped at once, and one imported later once it has run, leaving its loader as it
     was; a spec found but never run leaves the wrap for the import. Other imports pass through, and a module that can't
