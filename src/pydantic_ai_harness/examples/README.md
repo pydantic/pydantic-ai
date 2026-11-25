@@ -3,8 +3,8 @@
 Complete agents to read, run, and copy into your own code.
 
 If you just want the assembled version, use the packaged harnesses instead
-([`Coder`](../../../docs/harness/coder.md), [`Researcher`](../../../docs/harness/researcher.md)), or run one
-with zero setup: `uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent`.
+([`Coder`](../../../docs/harness/coder.md), [`Researcher`](../../../docs/harness/researcher.md)), and
+[`Coder`](../../../docs/harness/coder.md) needs no setup at all: `uvx pydantic-ai-pax` runs it.
 
 ## Setup
 

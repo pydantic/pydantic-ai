@@ -36,7 +36,9 @@ from ..capability_cases import (
     CONTRACTS as CORE_CONTRACTS,
     CORE_CAPABILITY_PACKAGES,
     CUSTOM_ID,
+    DECLARES_CALLS,
     FORWARDS_USAGE,
+    PENDING_CALLS,
     RENAMED,
     UNSET_ID,
     WORKSPACE_FROM_FUNCTION,
@@ -399,3 +401,47 @@ async def test_a_workspace_from_a_function_works_like_a_static_one(
         name,
         [] if actual == expected else [f'from a capability function, the first request is {actual}, not {expected}'],
     )
+
+
+_RUNS_WITH_TOOLS = (
+    'get_wrapper_toolset',
+    'before_tool_validate',
+    'after_tool_validate',
+    'wrap_tool_validate',
+    'on_tool_validate_error',
+    'before_tool_execute',
+    'after_tool_execute',
+    'wrap_tool_execute',
+    'on_tool_execute_error',
+)
+"""The methods that run when a tool is called, besides the toolset `get_toolset` returns."""
+
+
+def _tool_contributions(capability: AbstractCapability[DepsT]) -> list[str]:
+    """What `capability` contributes that runs when a tool is called, or nothing when it is made of others."""
+    if leaf_capabilities(capability) != [capability]:
+        return []
+    contributes = ['get_toolset'] if capability.get_toolset() is not None else []
+    return contributes + [
+        method
+        for method in _RUNS_WITH_TOOLS
+        if getattr(type(capability), method) is not getattr(AbstractCapability, method)
+    ]
+
+
+@pytest.mark.parametrize('name', _cases(DECLARES_CALLS))
+def test_a_capability_that_runs_with_tools_declares_calls(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contributes = _tool_contributions(_built(name, tmp_path, monkeypatch))
+    if not contributes:
+        _assert_not_exempt(DECLARES_CALLS, name, 'contributes no toolset or tool hook')
+        return
+    declared = CASES[name].calls is not None
+    _assert_holds(DECLARES_CALLS, name, [] if declared else [f'it contributes {contributes} but declares no `calls`'])
+
+
+def test_pending_calls_backfill() -> None:
+    """The cases whose `calls` are still to be written: a PR that writes one lowers the count, and none raises it."""
+    pending = sorted(name for name, exempt in DECLARES_CALLS.exempt.items() if exempt.reason.startswith(PENDING_CALLS))
+    assert len(pending) == 15, pending
