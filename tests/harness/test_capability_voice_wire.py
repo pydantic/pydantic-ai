@@ -19,6 +19,7 @@ fails the suite until its entry is removed.
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -114,13 +115,23 @@ def _matrix() -> Iterator[ParameterSet]:
             yield pytest.param(name, provider, marks=marks, id=f'{name}-{provider}')
 
 
+_HISTORIES: dict[str, list[ModelMessage]] = {}
+"""Each case's native history, run once and sent to every provider: the native run doesn't depend on the provider."""
+
+
+async def _history(name: str, directory: Path) -> list[ModelMessage]:
+    if name not in _HISTORIES:
+        _HISTORIES[name] = (await run_native(case_calls(name), directory / 'native')).messages
+    return deepcopy(_HISTORIES[name])
+
+
 @pytest.mark.parametrize(('name', 'provider'), list(_matrix()))
 async def test_capability_parts_reach_each_provider_in_their_voice(
-    name: str, provider: CapturedProvider, tmp_path: Path, allow_model_requests: None
+    name: str, provider: CapturedProvider, tmp_path_factory: pytest.TempPathFactory, allow_model_requests: None
 ) -> None:
-    native = await run_native(case_calls(name), tmp_path / 'native')
-    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(native.messages))
-    for messages in (native.messages, stored):
+    native = await _history(name, tmp_path_factory.mktemp(name.replace(':', '_')))
+    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(native))
+    for messages in (native, stored):
         captured = await capture(provider, messages)
         assert voice_violations(captured, messages) == []
 
