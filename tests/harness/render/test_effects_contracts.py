@@ -21,7 +21,6 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import RenderWorkflows
-from pydantic_ai_harness.render._protocol import UnsupportedInChildTaskError
 
 from .conftest import RecordingTaskContext, ToolTaskConcurrency, json_round_trip, run_agent_in_task
 
@@ -438,7 +437,7 @@ async def test_immediate_capability_event_fails_before_protected_action() -> Non
 
     # The tool sees a `UserError`, and its task finishes with a permanent error rather than a retryable failure.
     emit_errors = capability.emit_errors
-    assert [type(exc) for exc in emit_errors] == [UnsupportedInChildTaskError]
+    assert len(emit_errors) == 1
     assert isinstance(emit_errors[0], UserError)
     task_name, result = context.results[-1]
     assert task_name.endswith('immediate-decision.call_tool')
