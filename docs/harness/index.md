@@ -95,12 +95,12 @@ agent = Agent(
 
 On a remote sandbox, `Coder` loads repo instructions at run start and may create the sandbox before the first model tool call. Use `Coder(repo_context=False)` for lazy creation.
 
-Reach for your own composition when a setting you need is not one `Coder` exposes. A common one is narrowing what the agent reaches for by default: `Coder` deliberately takes no allowlist, so steering it towards your test and lint commands is something you assemble yourself.
+Compose your own when you want a different agent, not a safer one. A researcher that reads and greps but never writes or runs anything is a few capabilities, and nothing `Coder` exposes turns it into that:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai_harness import FileSystem, RepoContext, Shell
+from pydantic_ai_harness import FileSystem, RepoContext
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 
@@ -108,20 +108,41 @@ agent = Agent(
     '{{ openai:medium }}',
     capabilities=[
         LocalWorkspace('.'),
-        FileSystem(allowed_patterns=['src/**', 'tests/**', '*.md']),  # the files it edits
-        Shell(allowed_commands=['pytest', 'ruff', 'git']),  # the commands it reaches for
+        FileSystem(tools=['read_file', 'list_files', 'grep']),  # no write or edit tool
         RepoContext(),  # your AGENTS.md and CLAUDE.md
-        ClearToolResults(keep_pairs=3),  # keeps long runs inside the window
+        ClearToolResults(max_fraction=0.8, keep_pairs=3),  # keeps long runs inside the window
         ToolOutputLimits(),  # one large file cannot flood the context
     ],
-    instructions='Change only what the task asks for, and run the tests before you finish.',
+    instructions='Answer from the code. Quote the file and line you got each claim from.',
 )
 ```
 
-That is the whole pattern: pick the capabilities you want, configure them, and leave out the ones you do not. Each one is documented on its own page, and swapping [`LocalWorkspace`](filesystem.md) for a [sandbox](#workspaces) moves the same harness onto a remote machine without touching the rest.
+There is no `Shell` and no write tool in that list, so the agent has no way to run a command or change a file: the capabilities an agent does not have are the clearest statement of what it cannot do.
 
-!!! warning "Best-effort, not a security boundary"
-    `allowed_commands` and `allowed_patterns` are guardrails against accidents, not enforcement. Command validation checks only the first token, and an allowlisted command such as `git` can spawn arbitrary processes that the file patterns do not constrain. For untrusted work, run it in an [isolated workspace](#workspaces) instead of on the agent's machine; see [Shell](shell.md#command-controls).
+That is the whole pattern: pick the capabilities you want, configure them, and leave out the ones you do not. Each one is documented on its own page.
+
+### Containing what an agent may do
+
+Leaving a capability out bounds an agent, but it is not containment: an agent that *has* `Shell` can run anything the user running it can. `allowed_commands` and `allowed_patterns` are guardrails against accidents, not a security boundary. Validation checks only the first token of a command, and an allowlisted `git` or `python` can spawn whatever it likes; see the warning on [Shell](shell.md#command-controls).
+
+Containment is the workspace's job, because that is the layer with the kernel behind it. Wrapping one puts `Coder` unchanged inside it:
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai_harness import BubblewrappedWorkspace, Coder, LocalWorkspace
+
+agent = Agent(
+    '{{ anthropic:large }}',
+    capabilities=[
+        BubblewrappedWorkspace(LocalWorkspace('/srv/app')),
+        Coder(),
+    ],
+)
+```
+
+What that is: commands and the file tools can write only inside the working directory, the rest of the host is read-only, `/tmp` is private, and there is no network at all unless you pass `network=True`.
+
+What it is not: a VM, or a boundary against a kernel exploit. Background jobs outlive the run and commands share the host's process list, so a wrapped agent is contained, not sealed. [`BubblewrappedWorkspace`](bubblewrap-sandbox.md) documents the edges, and the other [sandbox providers](#workspaces) trade local speed for a remote machine.
 
 ## Workspaces
 
