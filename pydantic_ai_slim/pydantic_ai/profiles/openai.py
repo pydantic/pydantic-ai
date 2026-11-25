@@ -449,7 +449,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `openai_supports_reasoning_effort_none` and `openai_supports_minimal_reasoning_effort`. When unset, unified
     levels map one-to-one (see `openai_supports_minimal_reasoning_effort`), and `thinking=False` sends nothing on a
     model that always reasons.
-    Explicit `openai_reasoning_effort` settings are passed through unchanged."""
+    Explicit `openai_reasoning_effort` settings are passed through unchanged.
+
+    `OpenAIProvider` sets an empty set for `gpt-5-search-api`, which OpenAI's API answers with a 400 for any
+    `reasoning_effort` (verified live, 2026-11). `openai_model_profile` keeps the `'gpt-5'` efforts, as the
+    restriction is unverified on the OpenAI-compatible endpoints that share it. `OpenAIProvider(base_url=...)` keeps
+    the empty set, as a proxy to OpenAI should; for another server that serves this model name and accepts an effort,
+    pass `profile=OpenAIModelProfile(openai_reasoning_efforts=...)` with the efforts it accepts."""
 
     openai_chat_supports_max_reasoning_effort: bool
     """Whether the Chat Completions API accepts `reasoning_effort='max'` for this model. Default: `False`.
