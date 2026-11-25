@@ -37,7 +37,7 @@ from ._citations import (
 )
 from ._errors import map_api_errors
 from ._model_names import OpenAIModelName
-from ._response_fields import map_usage
+from ._response_fields import add_reasoning_tokens_omitted_from_completion_tokens, map_usage
 from ._settings import OpenAIChatModelSettings
 
 
@@ -407,7 +407,10 @@ class OpenAIStreamedResponse(StreamedResponse):
         return None
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        return map_usage(response, self._provider_name, self._provider_url, self.model_name)
+        request_usage = map_usage(response, self._provider_name, self._provider_url, self.model_name)
+        if self._model_profile.get('openai_chat_completion_tokens_omit_reasoning', False):
+            add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
+        return request_usage
 
     def _map_finish_reason(
         self, key: Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
