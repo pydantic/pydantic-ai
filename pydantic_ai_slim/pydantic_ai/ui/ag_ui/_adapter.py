@@ -800,7 +800,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           `encrypted_value`, so Gemini's thought signatures come back.
         - Text parts dumped into one `AssistantMessage` reload as one `TextPart`. It keeps the
           `.provider_name` and `.provider_details` the parts that have either agree on, and none when
-          they differ.
+          they differ. Parts that have neither don't count, so the merged text can carry fields that
+          only some of its parts had.
         - `ToolCallPart.id` is lost, and so are `.provider_name` and `.provider_details` when
           `ag_ui_version < '0.1.11'`. From 0.1.11 those two ride the `ToolCall`'s `encrypted_value`.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
@@ -1362,7 +1363,9 @@ def _flush_assistant_content(context: _DumpResponseContext) -> None:
         return
     # The message's text reloads as one `TextPart`, so it keeps provider fields only when every part that has any
     # agrees on them. Combining different ones would send one part's data as another's: a `'commentary'` phase on a
-    # final answer, or one Gemini signature for two parts, which Gemini forbids.
+    # final answer, or two Gemini signatures merged into one, which Google says not to do (see
+    # `_thought_signature_details` in `models/google.py`). Parts without fields don't count, so a signature Gemini
+    # put on the last part of a text still comes back.
     providers = context.text_providers
     text_provider: PartProviderMetadata = (
         providers[0] if providers and all(provider == providers[0] for provider in providers) else {}
