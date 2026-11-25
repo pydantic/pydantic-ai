@@ -2871,88 +2871,53 @@ class TestRunSuccessHooks:
             async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
                 return result
 
-        def never_called(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
-            raise AssertionError('an unloaded deferred hook is never called')  # pragma: no cover
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            capabilities=[AfterRunOnly(), Hooks[Any]()],
+            toolsets=[AbsorbingToolset(tools=[])],
+        )
+        result = await agent.run('hello', cancellation_token=token)
 
-        # An unloaded deferred capability's hook calls nothing, so it doesn't change how the run ends either.
-        unloaded = Hooks[Any](run_success=never_called, id='unloaded', description='Never loaded.', defer_loading=True)
-        for capabilities in ([AfterRunOnly(), Hooks[Any]()], [AfterRunOnly(), unloaded]):
-            token = CancellationToken()
-            agent = Agent(
-                TestModel(custom_output_text='done', call_tools=[]),
-                capabilities=capabilities,
-                toolsets=[AbsorbingToolset(tools=[])],
-            )
-            result = await agent.run('hello', cancellation_token=token)
+        assert result.output == 'done'
 
-            assert result.output == 'done'
-
-    async def test_a_hook_that_absorbs_the_cancellation_does_not_let_the_next_one_commit(self):
-        log: list[str] = []
-
+    async def test_a_hook_that_absorbs_the_cancellation_still_ends_the_run_cancelled(self):
         async def absorb(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
             ctx.cancel()
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
-                log.append('absorbed')
+                pass
 
-        def commit(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
-            log.append('committed')  # pragma: no cover
-
-        # Innermost first, so the capability listed last is called first.
-        capabilities = [Hooks[Any](run_success=commit), Hooks[Any](run_success=absorb)]
         with pytest.raises(RunCancelled) as cancelled:
-            await Agent(TestModel(), capabilities=capabilities).run('hello')
-        assert log == ['absorbed']
+            await Agent(TestModel(), capabilities=[Hooks[Any](run_success=absorb)]).run('hello')
+
         assert len(cancelled.value.all_messages()) == 2
 
-        # In one `Hooks`, entries are called in the order they were registered.
-        hooks = Hooks[Any]()
-        hooks.on.run_success(absorb)
-        hooks.on.run_success(commit)
-        log.clear()
-        with pytest.raises(RunCancelled):
-            await Agent(TestModel(), capabilities=[hooks]).run('hello')
-        assert log == ['absorbed']
-
-        log.clear()
-        with pytest.raises(RunCancelled):
-            await Agent(TestModel(), capabilities=[Hooks[Any](run_success=absorb)]).run('hello')
-        assert log == ['absorbed']
-
-    async def test_an_enclosing_scope_cancelled_during_a_hook_stops_the_next_one(self):
-        """The scope catches its own cancellation, whether the hook shielded itself or caught it, and nothing commits."""
-        log: list[str] = []
+    async def test_an_enclosing_scope_cancelled_during_a_hook_is_caught_by_that_scope(self):
+        """Whether the hook shielded itself or caught the cancellation, the run doesn't return and the scope catches it."""
         outer = anyio.CancelScope()
 
-        async def shielded_commit(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+        async def shielded(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
             with anyio.CancelScope(shield=True):
                 outer.cancel()
                 await anyio.lowlevel.checkpoint()
-            log.append('shielded')
 
-        async def absorbing_commit(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+        async def absorbing(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
             outer.cancel()
             try:
                 await anyio.lowlevel.checkpoint()
             except asyncio.CancelledError:
-                log.append('absorbed')
+                pass
 
-        async def commit(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
-            # Commits without awaiting, so only a checkpoint before it delivers the scope's cancellation.
-            log.append('committed')  # pragma: no cover
-
-        for first, logged in ((shielded_commit, 'shielded'), (absorbing_commit, 'absorbed')):
-            log.clear()
+        for hook in (shielded, absorbing):
+            returned = False
             outer = anyio.CancelScope()
-            agent = Agent(TestModel(), capabilities=[Hooks[Any](run_success=commit), Hooks[Any](run_success=first)])
             with outer:
-                await agent.run('hello')
-                log.append('returned')  # pragma: no cover
+                await Agent(TestModel(), capabilities=[Hooks[Any](run_success=hook)]).run('hello')
+                returned = True  # pragma: no cover
 
             assert outer.cancelled_caught
-            assert log == [logged]
+            assert not returned
 
     async def test_an_agent_run_error_carries_the_runs_conversation(self):
         @dataclass

@@ -482,8 +482,8 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     def _has_on_node_run_error(self) -> bool:
         return type(self).on_node_run_error is not AbstractCapability.on_node_run_error
 
-    def _dispatches_on_run_success(self, ctx: RunContext[AgentDepsT]) -> bool:
-        """Whether `on_run_success` calls a hook for this run, so a run that calls none ends as before it existed."""
+    @property
+    def _has_on_run_success(self) -> bool:
         return type(self).on_run_success is not AbstractCapability.on_run_success
 
     @property
@@ -1142,29 +1142,15 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         *,
         result: AgentRunResult[Any],
     ) -> None:
-        """Called once the run has succeeded, after its toolsets and models have exited.
+        """Called once the run has ended with `result`, after its toolsets and models have exited.
 
-        `result` is the result the run returns. [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run]
-        runs inside `wrap_run`, before the toolsets and models exit, and the run can still fail or end
-        cancelled after it. This is called only for a run that ends with its result: not when the run
-        raises or is cancelled before it, or is left before it produced a result, and not when a
-        toolset's exit raises and nothing recovers it. That makes it the place to commit what a run
-        produced, such as saving its conversation. It is also called for a result that `on_run_error`
-        recovered or `wrap_run` returned without calling its handler.
+        Unlike [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run], which the run can
+        still fail or be cancelled after, this isn't called for a run that raises, is cancelled or is
+        left before it produces a result, so it's the place to commit what a run produced, such as
+        saving its conversation. It is called for a result `on_run_error` or `wrap_run` recovered too.
 
-        It still runs inside the run's `timeout=`, cancellation and concurrency limit, so a run
-        cancelled or timed out while it runs raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] or
-        [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut]. An exception raised here fails the run,
-        and the capabilities after this one in the dispatch order aren't called; what earlier ones
-        committed stays committed. An [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] raised
-        here carries the run's [`conversation`][pydantic_ai.exceptions.AgentRunError.conversation],
-        except for a realtime session.
-
-        The run's tools can no longer be called, and ContextVars set in `wrap_run` or `before_run`
-        have been reset. The run's span has ended, so spans opened here aren't its children and a
-        failure here isn't recorded on it. A [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]
-        whose failure is recovered before it streams calls it before the caller's block. For a realtime
-        session, it is called once the session has closed, outside the session's cancellation.
+        It runs inside the run's `timeout=` and cancellation, after the run's span has ended. An
+        exception raised here fails the run; what an earlier capability's hook committed stays committed.
         """
 
     # --- Node run lifecycle hooks ---

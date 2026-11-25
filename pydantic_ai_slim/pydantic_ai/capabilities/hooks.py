@@ -30,7 +30,6 @@ import anyio
 from pydantic import ValidationError
 
 from pydantic_ai import _utils
-from pydantic_ai._cancel import raise_if_run_cancelled
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import AgentRunError, ModelRetry, RetryModelRequest
@@ -941,7 +940,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
     def _has_on_node_run_error(self) -> bool:
         return type(self).on_node_run_error is not Hooks.on_node_run_error or bool(self._get('on_node_run_error'))
 
-    def _dispatches_on_run_success(self, ctx: RunContext[AgentDepsT]) -> bool:
+    @property
+    def _has_on_run_success(self) -> bool:
         return type(self).on_run_success is not Hooks.on_run_success or bool(self._get('on_run_success'))
 
     @property
@@ -1034,8 +1034,6 @@ class Hooks(AbstractCapability[AgentDepsT]):
 
     async def on_run_success(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> None:
         for entry in self._get('on_run_success'):
-            # A hook that absorbed the run's cancellation doesn't let the next one commit.
-            await raise_if_run_cancelled(ctx.__dict__.get('_cancellation'))
             await _call_entry(entry, 'on_run_success', ctx, result=result)
 
     async def before_node_run(

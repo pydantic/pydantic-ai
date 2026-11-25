@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Self, cast
 from pydantic import ValidationError
 from typing_extensions import TypeIs
 
-from pydantic_ai._cancel import raise_if_run_cancelled
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
@@ -254,10 +253,11 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     def _has_on_node_run_error(self) -> bool:
         return any(c._has_on_node_run_error for c in self._dispatch)
 
-    def _dispatches_on_run_success(self, ctx: RunContext[AgentDepsT]) -> bool:
-        if type(self).on_run_success is not CombinedCapability.on_run_success:
-            return True
-        return any(_dispatched_run_success(capability, ctx) is not None for capability in self._dispatch)
+    @property
+    def _has_on_run_success(self) -> bool:
+        return type(self).on_run_success is not CombinedCapability.on_run_success or any(
+            c._has_on_run_success for c in self._dispatch
+        )
 
     @property
     def _has_wrap_model_request(self) -> bool:
@@ -674,9 +674,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         result: AgentRunResult[Any],
     ) -> None:
         for capability in reversed(self._dispatch):
-            if (cap_ctx := _dispatched_run_success(capability, ctx)) is not None:
-                # A hook that absorbed the run's cancellation doesn't let the next one commit.
-                await raise_if_run_cancelled(ctx.__dict__.get('_cancellation'))
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 await capability.on_run_success(cap_ctx, result=result)
 
     # --- Node run lifecycle hooks ---
@@ -1342,18 +1340,6 @@ def _ctx_for_cap(capability: AbstractCapability[AgentDepsT], ctx: RunContext[Age
     return _replace_capability_context(
         ctx, capability=capability, capability_active=_capability_active(capability, ctx)
     )
-
-
-def _dispatched_run_success(
-    capability: AbstractCapability[AgentDepsT], ctx: RunContext[AgentDepsT]
-) -> RunContext[AgentDepsT] | None:
-    """The context to call `capability`'s `on_run_success` with, or `None` when it calls no hook for this run.
-
-    An unloaded deferred capability calls none, so it doesn't make the run check its cancellation either.
-    """
-    if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is None or not capability._dispatches_on_run_success(cap_ctx):  # pyright: ignore[reportPrivateUsage]
-        return None
-    return cap_ctx
 
 
 def _ctx_for_active_cap(

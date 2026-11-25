@@ -80,7 +80,6 @@ from .._cancel import (
     current_run_clock,
     inherited_run_deadline,
     provide_run_deadline,
-    raise_if_run_cancelled,
     take_run_binding,
 )
 from .._deferred_capabilities import registered_loaded_capability_ids
@@ -469,72 +468,45 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
 
 @dataclasses.dataclass
-class _SessionSuccess:
-    """Dispatches a realtime session's `on_run_success` once the session it yielded has closed cleanly."""
-
-    lifecycle: _RealtimeSessionLifecycle | None = None
-    """Set once a session is yielded to the caller. A session yielded only after the resolution has exited dispatches
-    its own, after the caller's block."""
-
-    @classmethod
-    @asynccontextmanager
-    async def dispatch_on_clean_exit(cls) -> AsyncGenerator[_SessionSuccess]:
-        success = cls()
-        yield success
-        if success.lifecycle is not None:
-            await success.lifecycle.dispatch_success()
-
-
-@dataclasses.dataclass
 class _RunSuccess:
-    """Calls `on_run_success` from the run's exit stack, for a run that exits it cleanly."""
+    """Calls `on_run_success` from the exit stack of a run that ends with its result.
+
+    Pushed before the run enters its models, graph and toolsets, so it exits after them, and after the
+    run hooks, but inside the run's deadline, cancellation and error handling.
+    """
 
     run_capability: AbstractCapability[Any]
     cancellation: RunCancellation
-    refresh_workspace_ref: Callable[[], None]
-    """Also called later on the stack, for a run that fails; called here so the hook sees the ref the caller gets."""
-    agent_run: AgentRun[Any, Any] | None = None
     run_ctx: RunContext[Any] | None = None
-
-    def bind(self, agent_run: AgentRun[Any, Any], run_ctx: RunContext[Any]) -> None:
-        self.agent_run = agent_run
-        self.run_ctx = run_ctx
+    get_result: Callable[[], AgentRunResult[Any] | None] = lambda: None
 
     async def __call__(self, exc_type: type[BaseException] | None, *_: object) -> None:
-        # A run whose capabilities don't define the hook ends exactly as it did before the hook existed.
-        if exc_type is not None:
+        if exc_type is not None or not self.run_capability._has_on_run_success:  # pyright: ignore[reportPrivateUsage]
             return
-        # Bound before the run's body starts, and nothing before that point can exit the stack cleanly.
-        assert self.agent_run is not None and self.run_ctx is not None
-        if not self.run_capability._dispatches_on_run_success(self.run_ctx):  # pyright: ignore[reportPrivateUsage]
+        if (result := self.get_result()) is None:
             return
-        self.refresh_workspace_ref()
-        await _dispatch_run_success(
-            self.run_capability, self.run_ctx, self.agent_run.result, cancellation=self.cancellation
-        )
+        assert self.run_ctx is not None
+        await self._raise_if_cancelled()
+        with set_current_run_context(self.run_ctx):
+            await self.run_capability.on_run_success(self.run_ctx, result=result)
+        await self._raise_if_cancelled()
+
+    async def _raise_if_cancelled(self) -> None:
+        # A cancellation that arrived as the run finished, or that a toolset's exit or a hook absorbed, still ends
+        # the run cancelled. A cancelled `anyio` scope is delivered by a checkpoint, so the scope catches it.
+        if self.cancellation.cancel_requested:
+            raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
+        if _utils.in_cancelled_anyio_scope():
+            await anyio.lowlevel.checkpoint()
+        _utils.raise_if_cancelling()
 
 
-async def _dispatch_run_success(
-    run_capability: AbstractCapability[Any],
-    run_ctx: RunContext[Any],
-    result: AgentRunResult[Any] | None,
-    *,
-    cancellation: RunCancellation | None = None,
-) -> None:
-    """Call `on_run_success` for a run that returned `result` and has released the resources it entered.
-
-    `None` is a run the caller left before it produced a result, which didn't succeed.
-    """
-    if result is None or not run_capability._dispatches_on_run_success(run_ctx):  # pyright: ignore[reportPrivateUsage]
-        return
-    # A cancellation requested or delivered as the run finished, even one a toolset's exit absorbed, still ends the
-    # run cancelled, so nothing is committed for it. `CombinedCapability` checks again before each capability's hook.
-    await raise_if_run_cancelled(cancellation)
-    # The run's own context, so a nested run's durable operations dispatch through its run, not the enclosing one.
-    with set_current_run_context(run_ctx):
-        await run_capability.on_run_success(run_ctx, result=result)
-    # A hook that absorbed the run's cancellation doesn't let the run return its result.
-    await raise_if_run_cancelled(cancellation)
+def _stamped_result(
+    agent_run: AgentRun[Any, Any], refresh_workspace_ref: Callable[[], None]
+) -> AgentRunResult[Any] | None:
+    """The run's result, with the workspace reference the caller gets stamped on its last response."""
+    refresh_workspace_ref()
+    return agent_run.result
 
 
 def _is_model(value: object) -> TypeIs[models.Model[Any]]:
@@ -4411,11 +4383,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.
-        lifecycle_state = (
-            _RealtimeSessionLifecycle(succeed=functools.partial(_dispatch_run_success, run_capability, run_context))
-            if run_lifecycle
-            else None
-        )
+        lifecycle_state = _RealtimeSessionLifecycle() if run_lifecycle else None
 
         def _build_session_result() -> AgentRunResult[Any]:
             assert lifecycle_state is not None and lifecycle_state.session is not None
@@ -4474,6 +4442,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 await session_stack.enter_async_context(_translate_cancellation())
                 cancellation.bind()
                 session_stack.callback(cancellation.finish)
+                session_stack.push_async_exit(
+                    _RunSuccess(run_capability, cancellation, run_context, lifecycle_state.result)
+                )
                 lifecycle = await session_stack.enter_async_context(
                     _run_lifecycle_hooks(
                         run_capability,
@@ -4733,25 +4704,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
 
         yielded = False
-        async with (
-            # Entered first, so it exits once the session, its toolset and its run hooks have all closed.
-            _SessionSuccess.dispatch_on_clean_exit() as success,
-            self._resolve_realtime_session(
-                model,
-                deps=deps,
-                model_settings=model_settings,
-                instructions=instructions,
-                toolsets=toolsets,
-                capabilities=capabilities,
-                usage=usage,
-                usage_limits=usage_limits,
-                metadata=metadata,
-                conversation_id=conversation_id,
-                run_id=run_id,
-                message_history=message_history,
-                run_lifecycle=True,
-            ) as resolved,
-        ):
+        async with self._resolve_realtime_session(
+            model,
+            deps=deps,
+            model_settings=model_settings,
+            instructions=instructions,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            usage=usage,
+            usage_limits=usage_limits,
+            metadata=metadata,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            message_history=message_history,
+            run_lifecycle=True,
+        ) as resolved:
             lifecycle = resolved.lifecycle
             assert lifecycle is not None
 
@@ -4795,7 +4762,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     yield _closed_session(lifecycle.short_result)
                 finally:
                     yielded = True
-                    success.lifecycle = lifecycle
                 return
 
             if message_history and not resolved.model_profile.get('supports_session_seeding', False):
@@ -4891,7 +4857,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         yield session
                     finally:
                         yielded = True
-                        success.lifecycle = lifecycle
 
         if yielded:
             # Reached on the normal path, and when the run-lifecycle hooks suppressed a session error
@@ -4900,11 +4865,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Opening the connection or building the session failed and `wrap_run`/`on_run_error`
         # recovered with a result: the resolver's lifecycle hooks suppressed the error with nothing
         # yielded yet, which `asynccontextmanager` would report as `RuntimeError: generator didn't
-        # yield`. Yield the short-circuit path's closed placeholder carrying the recovery result, and dispatch
-        # `on_run_success` after the caller's block.
+        # yield`. Yield the short-circuit path's closed placeholder carrying the recovery result.
         assert lifecycle.short_result is not None
         yield _closed_session(lifecycle.short_result)
-        await lifecycle.dispatch_success()
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.
@@ -5264,9 +5227,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                     (*_ACTIVE_AGENT_LIMITERS.get(), (task_id, self.concurrency_limiter))
                 )
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
-            # Registered before the models, the graph run and the toolset, so it exits after them, and after the run's
-            # hooks; but still inside the run's deadline, cancellation and error handling, which exit after it.
-            run_success = _RunSuccess(self.run_capability, graph_deps.cancellation, refresh_workspace_ref)
+            run_success = _RunSuccess(self.run_capability, graph_deps.cancellation)
             stack.push_async_exit(run_success)
             # On a stack of their own, so a model selected later in the run, whose exit is registered then, is still
             # exited after the run's pending response is settled below.
@@ -5314,7 +5275,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
 
             # Build RunContext for run lifecycle hooks
             run_ctx = _agent_graph.build_run_context(agent_run.ctx)
-            run_success.bind(agent_run, run_ctx)
+            run_success.run_ctx = run_ctx
+            run_success.get_result = functools.partial(_stamped_result, agent_run, refresh_workspace_ref)
             if not run_ctx.in_durable_context:
                 # A model the run uses without entering it keeps its HTTP client between runs, which needs replacing
                 # when this run is on another event loop. A durable run sends its requests from the engine's

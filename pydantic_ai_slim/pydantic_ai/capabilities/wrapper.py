@@ -186,10 +186,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             or self.wrapped._has_on_node_run_error
         )
 
-    def _dispatches_on_run_success(self, ctx: RunContext[AgentDepsT]) -> bool:
-        if type(self).on_run_success is not WrapperCapability.on_run_success:
-            return True
-        return self.wrapped._dispatches_on_run_success(ctx)
+    @property
+    def _has_on_run_success(self) -> bool:
+        return type(self).on_run_success is not WrapperCapability.on_run_success or self.wrapped._has_on_run_success
 
     @property
     def _has_wrap_model_request(self) -> bool:

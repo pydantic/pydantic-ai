@@ -809,9 +809,10 @@ async def test_on_run_success_not_called_for_a_failed_session() -> None:
     assert log == []
 
 
-async def test_on_run_success_follows_a_result_only_session() -> None:
-    """A short-circuited session, and one whose connect failure was recovered, are yielded closed with their
-    result; `on_run_success` follows the caller's block."""
+async def test_on_run_success_for_a_result_only_session() -> None:
+    """A short-circuited session is yielded closed and `on_run_success` follows the caller's block. One whose connect
+    failure was recovered has ended before it is yielded, so `on_run_success` comes first, as for a recovered
+    `run_stream()`."""
 
     class ShortCircuitCapability(AbstractCapability[None]):
         async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
@@ -844,7 +845,7 @@ async def test_on_run_success_follows_a_result_only_session() -> None:
         assert session.closed
         log.append('caller:done')
 
-    assert log == ['caller:done', 'on_run_success:short-circuited', 'caller:done', 'on_run_success:recovered']
+    assert log == ['caller:done', 'on_run_success:short-circuited', 'on_run_success:recovered', 'caller:done']
 
 
 async def test_wrap_run_short_circuits_before_session_connects() -> None:
