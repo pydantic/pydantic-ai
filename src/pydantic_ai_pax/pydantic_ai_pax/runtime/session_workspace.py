@@ -73,8 +73,12 @@ class SessionWorkspace:
         if self.session.running or self.busy():
             raise RuntimeError('Something is running. Switch directories once it ends.')
         project = await to_thread.run_sync(lambda: load_project_settings(directory, store=self.context.store))
+        assert self.session.resolve_trust is not None, 'create_shell attaches process trust resolution to every session'
+        trust = await self.session.resolve_trust(directory)
         settings = self.settings(project)
         self.session.workspace = self.status.workspace = str(directory)
+        # The new directory gets its own decision, as if Pax had started there; it is never asked here.
+        self.session.trust = trust
         self.context.use_project(project, settings)
         await self.loader.restart(project=project.plugins)
 
@@ -84,4 +88,7 @@ class SessionWorkspace:
             return f'This session works in {self.session.workspace}.'
         await self.move(args[0])
         await self.session.clear()
-        return f'New session in {self.session.workspace}.'
+        untrusted = self.session.trust is not None and not self.session.trust.trusted
+        return f'New session in {self.session.workspace}.' + (
+            ' This folder is untrusted: /trust shows why.' if untrusted else ''
+        )
