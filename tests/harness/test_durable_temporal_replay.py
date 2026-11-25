@@ -114,6 +114,16 @@ async def temporal(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[_T
     _AGENTS.clear()
 
 
+def _causes(error: BaseException) -> str:
+    """The messages of `error`'s cause chain: the workflow's failure wraps the activity's, which wraps the error."""
+    messages: list[str] = []
+    cause: BaseException | None = error.__cause__ or getattr(error, 'cause', None)
+    while cause is not None:
+        messages.append(f'{type(cause).__name__}: {cause}')
+        cause = cause.__cause__ or getattr(cause, 'cause', None)
+    return ' <- '.join(messages)
+
+
 async def _breaks(name: str, temporal: _Temporal, count_requests: Callable[[], Counter[str]]) -> list[str]:
     """How the case of `name` breaks `DURABLE_TEMPORAL`."""
     if (refusal := temporal.refused.get(name)) is not None:
@@ -130,7 +140,7 @@ async def _breaks(name: str, temporal: _Temporal, count_requests: Callable[[], C
             execution_timeout=timedelta(seconds=READINESS_WAIT_TIMEOUT),
         )
     except WorkflowFailureError as error:
-        return [f'the workflow fails: {error.cause!r}']
+        return [f'the workflow fails: {_causes(error)}']
     assert output == 'done'
     history = await temporal.client.get_workflow_handle(workflow_id).fetch_history()
 

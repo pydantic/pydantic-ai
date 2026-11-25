@@ -947,7 +947,10 @@ ENGINE_SUPPORT: Mapping[str, Mapping[Engine, Support]] = {
     },
     'Planning': {
         'temporal': Support(
-            'broken', 'its tools emit plan events, which Temporal cannot deliver from an activity yet', issue=7971
+            'refused',
+            'its tools emit plan events, which Temporal refuses from an activity',
+            raises='Emitting events from a tool or event stream handler is not supported',
+            issue=7971,
         )
     },
 }
