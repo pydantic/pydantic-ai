@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.announce_current_time import AnnounceCurrentTime
 
@@ -97,3 +98,11 @@ def test_old_spec_block_name_loads() -> None:
     assert [c.timezone for c in agent.root_capability.capabilities if isinstance(c, AnnounceCurrentTime)] == [
         'Europe/Amsterdam'
     ]
+
+
+def test_old_spec_block_name_publishes_its_fields() -> None:
+    """The alias's `init=False` keeps its fields in the `AgentSpec` schema, so old spec blocks keep validating."""
+    old = _import_old_class()
+    properties = AgentSpec.model_json_schema_with_capabilities([old])['$defs']['spec_params_CurrentTime']['properties']
+
+    assert set(properties) == {'id', 'description', 'defer_loading', 'timezone', 'precision'}
