@@ -66,6 +66,7 @@ from pydantic_ai_pax.ui.menus import dialogs, update_menu as update_menu_module
 from pydantic_ai_pax.ui.menus.field_menu import FieldMenu
 from pydantic_ai_pax.ui.menus.set_menu import SettingsSource
 from pydantic_ai_pax.ui.menus.update_menu import ABOUT_MAX_AGE, VERSION, AboutSource, update_menu
+from pydantic_ai_pax.ui.rendering.welcome import print_welcome
 from tests.pax.dialog_script import Back, Confirm, ScriptedDialogs
 from tests.pax.menu_script import Script, make_context, pick
 from tests.pax.test_app_edges import inputs
@@ -153,6 +154,8 @@ def version_check_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path
     monkeypatch.delenv('DO_NOT_TRACK', raising=False)
     monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path / 'cache'))
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'cache'))
+    # A fresh process, which hasn't shown the announcement.
+    monkeypatch.setattr(version_check, '_announced_here', threading.Event())
     return tmp_path / 'cache' / 'pydantic-ai' / 'version-check.json'
 
 
@@ -1416,3 +1419,62 @@ def test_help_lists_update(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captu
     text = capsys.readouterr().out
     assert '{config,plugins,sessions,update}' in text
     assert '--update' in text
+
+
+def _welcome() -> str:
+    output = StringIO()
+    print_welcome(ProjectSettings(), Console(file=output, width=300))
+    return output.getvalue()
+
+
+def test_first_launch_announces_the_version_check(monkeypatch: pytest.MonkeyPatch, version_check_cache: Path) -> None:
+    """Not a VCR test: what's pinned is the launch banner and which host each lookup asks, across launches."""
+    seen: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return _registry(request)
+
+    transport = httpx.MockTransport(respond)
+    # Before any banner announced it, the check is never made.
+    assert latest('stable', transport=transport) == '0.53.0'
+
+    assert _welcome().count(version_check.ANNOUNCEMENT) == 1
+    assert json.loads(version_check_cache.read_text(encoding='utf-8')) == {'checked_at': None, 'latest': {}}
+    # `/clear` shows the welcome again, without the announcement, and the launch that announced never checks.
+    assert version_check.ANNOUNCEMENT not in _welcome()
+    assert latest('stable', transport=transport) == '0.53.0'
+    assert seen == [PYPI_URL, PYPI_URL]
+
+    # The next launch makes the check, and doesn't announce it again.
+    monkeypatch.setattr(version_check, '_announced_here', threading.Event())
+    assert version_check.ANNOUNCEMENT not in _welcome()
+    assert latest('stable', transport=transport) == '1.0.0b2'
+    assert seen == [PYPI_URL, PYPI_URL, VERSION_CHECK_URL]
+
+
+@pytest.mark.parametrize('variable', ['PYDANTIC_AI_NO_VERSION_CHECK', 'DO_NOT_TRACK'])
+def test_version_check_opt_outs_suppress_the_announcement(
+    monkeypatch: pytest.MonkeyPatch, version_check_cache: Path, variable: str
+) -> None:
+    """Not a VCR test: what's pinned is that nothing is announced, written or requested from Pydantic."""
+    monkeypatch.setenv(variable, '1')
+    seen: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return _registry(request)
+
+    assert version_check.ANNOUNCEMENT not in _welcome()
+    assert not version_check_cache.exists()
+    assert latest('stable', transport=httpx.MockTransport(respond)) == '0.53.0'
+    assert seen == [PYPI_URL]
+
+
+def test_announcement_shows_even_when_it_cannot_be_remembered(
+    monkeypatch: pytest.MonkeyPatch, version_check_cache: Path
+) -> None:
+    """Not a VCR test: an unwritable cache can't be recorded, so the check it announces is never made."""
+    monkeypatch.setattr(version_check, '_write_cache', Mock(side_effect=OSError('read-only')))
+    assert version_check.ANNOUNCEMENT in _welcome()
+    assert not version_check_cache.exists()

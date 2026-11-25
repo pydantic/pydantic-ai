@@ -91,7 +91,7 @@ the banner is laid out for, so a reworded line or a wider logo can't quietly cos
 """
 _HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
 _UPDATE_PREFIX = 'update available: '
-_VERSION_CHECK_LINE = 'checks for updates daily from the next run — or PYDANTIC_AI_NO_VERSION_CHECK=1'
+_VERSION_CHECK_LINE = _version_check.ANNOUNCEMENT
 """Announces the check on the one banner before it starts, worded like `_HIDE_LINE` that it follows."""
 
 _MIN_TEXT_WIDTH = len(_LINK_CONTINUATION_INDENT) + max(

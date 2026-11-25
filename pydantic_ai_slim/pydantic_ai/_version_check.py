@@ -25,6 +25,8 @@ anything this doesn't recognise is ignored rather than treated as a malformed re
 """
 
 _CHECK_INTERVAL = 24 * 60 * 60
+ANNOUNCEMENT = 'checks for updates daily from the next run — or PYDANTIC_AI_NO_VERSION_CHECK=1'
+"""The line the first banner shows instead of making the check: the library's banner and Pax's launch banner."""
 _VERSION_PATTERN = re.compile(r'^\d+(?:\.\d+){0,3}$')
 _RELEASE_PATTERN = re.compile(r'^\d+(?:\.\d+)*')
 _PRE_RELEASE_PATTERN = re.compile(r'^\d+(?:\.\d+)*[.-]?(?:a|b|c|rc|alpha|beta|pre|preview|dev)', re.IGNORECASE)
@@ -84,6 +86,27 @@ def start_version_check(cache: VersionCache | None) -> threading.Thread | None:
     return thread
 
 
+_announced_here = threading.Event()
+"""Whether this process showed the announcement, so that it never makes the check it announced for the next run."""
+
+
+def announce() -> bool:
+    """Record the announcement for a client that shows its own banner, such as Pax, and return whether to show `ANNOUNCEMENT`.
+
+    `True` only while no banner has announced the check and it isn't turned off. The check is then made from the
+    next run on, never by this process.
+    """
+    if not announcing(read_cache()):
+        return False
+    _announced_here.set()
+    try:
+        _write_cache({'checked_at': None, 'latest': {}})
+    except Exception:
+        # As in the library's banner, a cache that can't be written means the check is never made.
+        pass
+    return True
+
+
 def claim_due_check() -> float | None:
     """Claim the version check for a client that makes the request itself, such as Pax, and return when it was claimed.
 
@@ -92,7 +115,7 @@ def claim_due_check() -> float | None:
     the banner and every such client make one request per 24 hours between them. Pass the response to
     `record_response` so the banner can show what it found.
     """
-    if (cache := read_cache()) is None or not _is_due(cache, now := time.time()):
+    if _announced_here.is_set() or (cache := read_cache()) is None or not _is_due(cache, now := time.time()):
         return None
     try:
         _write_cache({'checked_at': now, 'latest': cache['latest']})

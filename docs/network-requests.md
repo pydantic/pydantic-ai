@@ -43,7 +43,7 @@ The response is cached in `pydantic-ai/version-check.json` under the user cache 
 
 The cache contains no identifying information and is never sent to the server.
 
-[Pax](harness/clai2.md), the coding agent for your terminal, can make this check when it looks for an update, with the same `User-Agent` plus `pydantic-ai-pax/{version}`. It keeps the same limits: only after a banner has announced the check, and only when no banner or Pax made it in the last 24 hours, so one request per user cache directory per day covers both. Pax's other update lookups ask PyPI (or, on its `main` update channel, GitHub) directly. With the check turned off, Pax never looks for an update on its own, and asks PyPI or GitHub only when you run `/update` or `pax update`.
+[Pax](harness/clai2.md), the coding agent for your terminal, can make this check when it looks for an update, with the same `User-Agent` plus `pydantic-ai-pax/{version}`. It keeps the same limits: only after a banner has announced the check, and only when no banner or Pax made it in the last 24 hours, so one request per user cache directory per day covers both. Pax doesn't show Pydantic AI's banner, so its own launch banner shows the same announcement on its first run. Pax's other update lookups ask PyPI (or, on its `main` update channel, GitHub) directly. With the check turned off, Pax never looks for an update on its own, and asks PyPI or GitHub only when you run `/update` or `pax update`.
 
 ### Turning the version check off {#turning-the-version-check-off}
 
