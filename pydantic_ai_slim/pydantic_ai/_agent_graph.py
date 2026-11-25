@@ -782,7 +782,7 @@ class _StepRecording:
                 # As the step left the request when it resolved no instructions.
                 target.instructions = None
             else:
-                _apply_instruction_parts(target, sent)
+                _apply_instruction_parts(target, sent, self.messages)
         return sent
 
 
@@ -1806,7 +1806,9 @@ def _split_loaded_instruction_parts(
 
 
 def _apply_instruction_parts(
-    request: _messages.ModelRequest, instruction_parts: list[_messages.InstructionPart] | None
+    request: _messages.ModelRequest,
+    instruction_parts: list[_messages.InstructionPart] | None,
+    history: Sequence[_messages.ModelMessage],
 ) -> None:
     """Render the instruction parts being sent onto the request that records them.
 
@@ -1815,10 +1817,32 @@ def _apply_instruction_parts(
     instructions the model never received.
 
     `None` means "unset" rather than "no instructions" — it's what makes `Model._get_instruction_parts`
-    fall back to the request's own `instructions` — so it leaves the request alone.
+    fall back to the request's own `instructions` — so it leaves the request alone. The rendered text reuses
+    the string of the latest earlier request in `history` when equal, so requests share one copy.
     """
     if instruction_parts is not None:
-        request.instructions = _messages.InstructionPart.join(instruction_parts)
+        request.instructions = _shared_instructions(_messages.InstructionPart.join(instruction_parts), request, history)
+
+
+def _shared_instructions(
+    instructions: str | None, request: _messages.ModelRequest, history: Sequence[_messages.ModelMessage]
+) -> str | None:
+    """`instructions`, or the equal string the latest earlier request in `history` holds.
+
+    Every request records the instructions it was sent with, and they rarely change between requests, so
+    sharing one string keeps a long conversation from holding a copy per request.
+    """
+    if instructions is None:
+        return None
+    previous = next(
+        (
+            message.instructions
+            for message in reversed(history)
+            if isinstance(message, _messages.ModelRequest) and message is not request and message.instructions
+        ),
+        None,
+    )
+    return previous if previous == instructions else instructions
 
 
 _NativeToolFactoryResult: TypeAlias = tuple[NativeToolFunc[DepsT], AbstractNativeTool | None]
@@ -3386,7 +3410,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Fetch instructions now that dynamic toolsets have been resolved by for_run_step.
         self._step_instruction_window = instruction_window(ctx.state.message_history) is not None
         instruction_parts = await self._resolve_step_instructions(ctx, run_context)
-        self.request.instructions = _messages.InstructionPart.join(instruction_parts) if instruction_parts else None
+        self.request.instructions = _shared_instructions(
+            _messages.InstructionPart.join(instruction_parts) if instruction_parts else None,
+            self.request,
+            ctx.state.message_history,
+        )
         self._step_instruction_parts = instruction_parts
 
         # Validate after instructions are resolved; self.request was appended above so [:-1] is prior history
@@ -3679,7 +3707,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             if instructions_target is not None:
                 _apply_instruction_parts(
-                    instructions_target, request_context.model_request_parameters.instruction_parts
+                    instructions_target,
+                    request_context.model_request_parameters.instruction_parts,
+                    ctx.state.message_history,
                 )
 
         self.last_request_context = original_request_context
@@ -3758,7 +3788,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             else recording_targets
         )
         for target in instruction_targets:
-            _apply_instruction_parts(target, request_context.model_request_parameters.instruction_parts)
+            _apply_instruction_parts(
+                target, request_context.model_request_parameters.instruction_parts, ctx.state.message_history
+            )
         settings_starts = [len(target.parts) for target in recording_targets]
         effort = _record_model_settings_changes(
             ctx, request_context.model, request_context.model_settings, messages, recording_targets
