@@ -37,6 +37,7 @@ from pydantic_ai_pax.ui.prompt.prompt_surface import LEAVE, PromptSurface
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.history import render_history, turn_starts
 from pydantic_ai_pax.ui.rendering.rendering import StreamRenderer
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 def turn(index: int) -> list[ModelMessage]:
@@ -190,7 +191,7 @@ async def test_resumed_and_typed_prompts_carry_the_palette_tint(
     with (
         create_pipe_input() as pipe,
         create_app_session(input=pipe, output=DummyOutput()),
-        anyio.fail_after(10),
+        anyio.fail_after(READINESS_WAIT_TIMEOUT),
     ):
         pipe.send_text(f'/resume {prior.summary.id}\r/exit\r')
         await chat(
