@@ -442,6 +442,11 @@ def test_a_capability_that_runs_with_tools_declares_calls(
 
 
 def test_pending_calls_backfill() -> None:
-    """The cases whose `calls` are still to be written: a PR that writes one lowers the count, and none raises it."""
+    """The cases whose `calls` are still to be written.
+
+    The count is pinned, so it moves only on purpose: a PR that writes a case's `calls`, or gives a case a reasoned
+    exemption of its own (such as a route other tools run through, which C1 covers), lowers it in the same change, and
+    no PR raises it.
+    """
     pending = sorted(name for name, exempt in DECLARES_CALLS.exempt.items() if exempt.reason.startswith(PENDING_CALLS))
     assert len(pending) == 11, pending
