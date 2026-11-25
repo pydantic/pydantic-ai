@@ -52,7 +52,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/sandbox [local smol\|local boxlite\|e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a sandbox: `local smol` (SmolVM) and `local boxlite` (BoxLite) run a VM on this machine, the others are cloud sandboxes; `/sandbox local` asks which engine, and no argument says where this one runs. See [Sandboxes](#sandboxes-sandbox) |
-| `/computer-use [on\|off\|view]` | Let the model see and control the sandbox's desktop, or show the provider's link to watch it (`view` works during a turn). See [Computer use](#computer-use-computer-use) |
+| `/computer-use [on\|off]` | Let the model see and control the sandbox's desktop. See [Computer use](#computer-use-computer-use) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer Pax is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -3260,16 +3260,14 @@ The setting is saved in the conversation, so `/resume`, `/fork` and compaction k
 #### Watching the desktop
 
 While computer use is on, the status row shows `watch live ↗` next to the sandbox. Click it to open the
-desktop on the provider's own website. Pax runs no viewer of its own. `/computer-use view` prints a fresh
-link as `Desktop: URL`, also during a turn.
+desktop on the provider's own website. Pax runs no viewer of its own.
 
 - **`boxd`**: the machine's Desktop view in boxd's console. It opens in a browser signed in to your
   boxd account.
 - **`daytona`**: the desktop's noVNC page, on a signed link that works for 1 hour. Anyone holding the link
   can see the screen and use the mouse and keyboard until it expires. Pax gets a new link for the status
   row before then, and a page opened earlier stays connected.
-- **Other providers** have no such link: the status row shows no `watch live ↗`, and `/computer-use view`
-  says `E2B has no link to watch its desktop.`
+- **Other providers** have no such link, so the status row shows no `watch live ↗`.
 
 Everything on the sandbox's screen, secrets included, goes to the model's provider in screenshots,
 and text on the screen can steer the model like any tool output.

@@ -1418,7 +1418,7 @@ class TestBoxd:
         assert account.secrets == {}
         assert ref.id not in account.specs
         reopened = provider.reopen(ref)
-        # `/computer-use view` links to the machine's Desktop view in boxd's console; the fake's records leave out
+        # `watch live` links to the machine's Desktop view in boxd's console; the fake's records leave out
         # `access`, which the SDK builds from the console's address and the machine's name.
         from boxd.models import MachineAccess
 
@@ -1754,7 +1754,7 @@ class TestDaytona:
         assert isinstance(with_desktop, SupportsDisplay) and with_desktop.display is not None
         from types import SimpleNamespace
 
-        # `/computer-use view` gets a new signed link to the desktop's noVNC page, after starting the desktop.
+        # `watch live` gets a new signed link to the desktop's noVNC page, after starting the desktop.
         signed: list[tuple[int, int | None]] = []
 
         async def sign(port: int, expires_in_seconds: int | None = None) -> SimpleNamespace:

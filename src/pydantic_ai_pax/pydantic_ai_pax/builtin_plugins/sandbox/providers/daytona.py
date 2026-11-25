@@ -142,7 +142,7 @@ class DaytonaProvider:
         """
         from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
 
-        # `/computer-use view` asks only while computer use is on, so the sandbox was opened with its desktop.
+        # Pax asks only while computer use is on, so the sandbox was opened with its desktop.
         assert isinstance(backend, DaytonaSandboxBackend) and backend.display is not None
         await backend.display.display_size()  # Starts the desktop, which otherwise waits for the first screen call.
         sandbox = await backend.get_sandbox()

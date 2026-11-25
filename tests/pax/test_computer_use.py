@@ -266,10 +266,9 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     await session.prompt('back with desktop')
     assert 'computer' in seen_tools[-1]
 
-    # Resuming in a fresh plugin instance reopens with `desktop=True`. The fake provider has no desktop link.
+    # Resuming in a fresh plugin instance reopens with `desktop=True`.
     resumed_loaded = load(work, Transcript(messages=session.messages))
     resumed = plugin_of(resumed_loaded)
-    assert await resumed.computer_use_command(['view']) == 'Fake has no link to watch its desktop.'
     assert screen(resumed) is display
     assert provider.reopened == [ref, ref] and provider.reopened_desktop == [True, True]
 
@@ -292,10 +291,10 @@ async def test_computer_use_toggle_upgrade_and_errors(
     plugin = plugin_of(load(work))
     computer_use = next(command for command in plugin.get_commands() if command.name == 'computer-use')
     assert computer_use.complete is not None
-    assert list(computer_use.complete([])) == ['on', 'off', 'view']
+    assert list(computer_use.complete([])) == ['on', 'off']
     assert list(computer_use.complete(['on', ''])) == []
 
-    with pytest.raises(ValueError, match=r'^Usage: /computer-use \[on \| off \| view\]$'):
+    with pytest.raises(ValueError, match=r'^Usage: /computer-use \[on \| off\]$'):
         await plugin.computer_use_command(['unknown'])
 
     # Local conversation arm/disarm and automatic disarm when switching to another conversation.
@@ -328,12 +327,10 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert screen(retro_resumed) is display
     assert provider.reopened[-1] == WorkspaceRef(provider='fake', id='sbx-1') and provider.reopened_desktop[-1]
 
-    # A deleted sandbox refuses `/computer-use` and `/computer-use view`.
+    # A deleted sandbox refuses `/computer-use`.
     await plugin.command(['delete'])
     with pytest.raises(ValueError, match='was deleted'):
         await plugin.computer_use_command([])
-    with pytest.raises(ValueError, match='Computer use is not on here'):
-        await plugin.computer_use_command(['view'])
 
     # A provider that gives a desktop only at create never replaces a sandbox to add one, even an unused one: a fork
     # or copy of the conversation may work in it, and only `/sandbox delete` deletes a sandbox.
@@ -347,8 +344,6 @@ async def test_computer_use_toggle_upgrade_and_errors(
     ):
         await refused_plugin.computer_use_command(['on'])
     assert provider.deleted == deleted
-    with pytest.raises(ValueError, match='Computer use is not on here'):
-        await refused_plugin.computer_use_command(['view'])
     assert screen(refused_plugin) is None
 
     # `/computer-use` first makes the sandbox with its desktop. Off and on again keeps it, also once compaction
@@ -383,7 +378,8 @@ async def test_the_computer_tool_needs_full_permissions(
     revoke_mid_turn: list[bool] = []
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        offered.append([tool.name for tool in info.function_tools])
+        native = [type(tool).__name__ for tool in info.model_request_parameters.native_tools]
+        offered.append([tool.name for tool in info.function_tools] + native)
         instructions.append(info.instructions or '')
         if 'computer' not in offered[-1] or isinstance(messages[-1].parts[-1], ToolReturnPart):
             yield 'done'
@@ -415,10 +411,11 @@ async def test_the_computer_tool_needs_full_permissions(
     await session.prompt('click it now')
     assert display.actions == [Click(x=1, y=2)]
 
-    # `/permissions` can leave `full` while a turn runs: the steps after that no longer offer the tool.
+    # `/permissions` can leave `full` while a turn runs: the steps after that offer no computer tool of any kind.
     revoke_mid_turn.append(True)
     await session.prompt('click again')
-    assert 'computer' in offered[-2] and 'computer' not in offered[-1]
+    assert {'computer', 'ComputerTool'} <= set(offered[-2])
+    assert {'computer', 'ComputerTool'}.isdisjoint(offered[-1])
     await plugin.on_session_end(SessionEnd(reason='exit'))
 
 
@@ -499,8 +496,7 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(checkout: Path
 
     await plugin.computer_use_command(['on'])
     assert row(plugin) == ['fake sandbox', watch(0)]
-    # `/computer-use view` gives a new link; the row keeps the one it has, and a turn does not ask again.
-    assert await plugin.computer_use_command(['view']) == 'Desktop: https://desktop.example/sbx-1/vnc.html?token=1'
+    # A turn does not ask for another while the link is fresh.
     await loaded.dispatch(TurnStart(text='go'))
     assert row(plugin) == ['fake sandbox', watch(0)]
 
@@ -510,7 +506,7 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(checkout: Path
     # A Pax resuming the conversation shows a link at once.
     resumed_loaded = load(checkout, Transcript(messages=[*loaded.host.conversation.messages[:-2]]))
     await resumed_loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
-    assert row(plugin_of(resumed_loaded)) == ['fake sandbox', watch(2)]
+    assert row(plugin_of(resumed_loaded)) == ['fake sandbox', watch(1)]
     await plugin.on_session_end(SessionEnd(reason='exit'))
     await plugin_of(resumed_loaded).on_session_end(SessionEnd(reason='exit'))
 

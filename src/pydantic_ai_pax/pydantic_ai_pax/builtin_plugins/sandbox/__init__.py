@@ -12,8 +12,8 @@ A sandbox stays until `/sandbox delete`, which keeps the history: a copy of the 
 `/computer-use` lets the model see and control the sandbox's desktop. The history records whether it is on
 (`computer_use_on`). `/computer-use` before `/sandbox` makes
 the sandbox with a desktop. In a running sandbox it adds one where the provider can; where it cannot, it says how
-to start a sandbox with one. `/computer-use view` gives the provider's own link to watch the desktop, where it
-has one (`SupportsDesktopUrl`).
+to start a sandbox with one. The status row's `watch live ↗` opens the provider's own link to watch the desktop,
+where it has one (`SupportsDesktopUrl`).
 """
 
 import logging
@@ -332,10 +332,9 @@ class SandboxPlugin(Plugin):
             ),
             Command(
                 name='computer-use',
-                description="Let the model see and control the sandbox's desktop, or show the link to watch it",
+                description="Let the model see and control the sandbox's desktop",
                 handler=self.computer_use_command,
-                complete=lambda args: ('on', 'off', 'view') if len(args) <= 1 else (),
-                during_turn_subcommands=('view',),
+                complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
             ),
         )
 
@@ -443,10 +442,8 @@ class SandboxPlugin(Plugin):
                 return await self._computer_use(on=True)
             case ['off']:
                 return await self._computer_use(on=False)
-            case ['view']:
-                return await self._view()
             case _:
-                raise ValueError('Usage: /computer-use [on | off | view]')
+                raise ValueError('Usage: /computer-use [on | off]')
 
     def _where(self) -> str:
         sandbox = self.current()
@@ -498,16 +495,6 @@ class SandboxPlugin(Plugin):
         await self.host.conversation.commit_messages(
             [*self.host.conversation.messages, ModelRequest(parts=[request]), response]
         )
-
-    async def _view(self) -> str:
-        sandbox = self.current()
-        if sandbox is None or sandbox.deleted or not self._on():
-            raise ValueError('Computer use is not on here. Run /computer-use and /sandbox PROVIDER first.')
-        provider = sandbox.provider
-        url = await provider.desktop_url(sandbox.open()) if isinstance(provider, SupportsDesktopUrl) else None
-        if url is None:
-            return f'{provider.title} has no link to watch its desktop.'
-        return f'Desktop: {url}'
 
     async def _start(self, provider: SandboxProvider) -> str:
         current = self.current()
