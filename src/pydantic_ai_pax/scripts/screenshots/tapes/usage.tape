@@ -5,7 +5,7 @@ Hide
 Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type 'Add a --units flag for Fahrenheit' Enter
-Wait+Screen /All three tests still pass/
+Wait+Screen /All three tests still\s+pass/
 Type 'Explain how a forecast is fetched' Enter
 Wait+Screen /tests run offline/
 Wait+Screen /\| ready/

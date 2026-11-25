@@ -5,7 +5,7 @@ Hide
 Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type 'Add a --units flag for Fahrenheit' Enter
-Wait+Screen /All three tests still pass/
+Wait+Screen /All three tests still\s+pass/
 Wait+Screen /\| ready/
 Ctrl+L
 Show
