@@ -193,6 +193,8 @@ class TestCoder:
         assert result.output == 'done'
         assert [(name, getattr(args[0], 'method', None)) for name, args in durability.calls] == [
             ('coder__capability__workspace.call', 'ensure'),
+            # `RepoContext` checks where the working directory leads before trusting nested instruction files.
+            ('coder__capability__workspace.call', 'realpath'),
             ('coder__capability__workspace.call', 'exists'),
             *[('coder__capability__workspace.call', 'stat')] * 4,
             ('coder__model.request_stream', None),

@@ -4888,7 +4888,8 @@ class WorkspaceSource:
     """
 
     path: str
-    """The path the content was read from."""
+    """The path the content was read from, as the model sees it: the `label` passed to
+    [`from_workspace`][pydantic_ai.messages.WorkspaceSource.from_workspace], if any."""
 
     authority: Authority
     """The [authority][pydantic_ai.workspaces.Workspace.authority_of] of the file when the content was read.
@@ -4903,15 +4904,21 @@ class WorkspaceSource:
     """Who wrote content from this source, for the lookalike note."""
 
     @classmethod
-    async def from_workspace(cls, workspace: Workspace, path: str) -> WorkspaceSource:
+    async def from_workspace(cls, workspace: Workspace, path: str, *, label: str | None = None) -> WorkspaceSource:
         """The source for content read from `path` in `workspace`, with the authority of that file.
 
         That's [`workspace.authority_of(path)`][pydantic_ai.workspaces.Workspace.authority_of]: `'operator'` unless an
         [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace] lowers it for the workspace or for the path.
+
+        Args:
+            workspace: The workspace the content was read from.
+            path: The path the content was read from. The authority always comes from this path.
+            label: The path to show the model instead of `path`, such as a file name without the private directory
+                it lives in. It only changes what the model sees, never the authority.
         """
         source = cls.__new__(cls)
         # Frozen, and with no generated `__init__`, so the fields are set the way a frozen dataclass sets them.
-        object.__setattr__(source, 'path', path)
+        object.__setattr__(source, 'path', path if label is None else label)
         object.__setattr__(source, 'authority', await _workspace_authority(workspace, path))
         object.__setattr__(source, 'source_kind', 'workspace')
         return source
