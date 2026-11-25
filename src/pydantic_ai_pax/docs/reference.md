@@ -33,6 +33,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/keys` | Manage saved API keys |
 | `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
 | `/project [approve NAME...\|all \| revoke NAME...\|all]` | Review what `.clai/settings.json` sets, and approve or revoke its keys for this repository |
+| `/trust [yes\|no]` | Show whether you trust this session's folder, or trust it or not; see [Folder trust](#folder-trust) |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
 | `/system_prompt` | View the system prompt and edit your own instructions |
@@ -143,7 +144,7 @@ Paths are under `$XDG_CONFIG_HOME/pydantic-clai2/`, or `~/.config/pydantic-clai2
 
 | Path | Holds |
 |---|---|
-| `config.db` | Settings, saved models and their settings, and plugin declarations |
+| `config.db` | Settings, saved models and their settings, plugin declarations, and which folders you trust |
 | `sessions.db`, `sessions.repl/` | Saved conversations, and code mode's sandbox state per session |
 | `input-history` | Prompts you typed, for Up/Down recall (plaintext) |
 | `credentials-*.enc` | Encrypted sign-ins and saved keys; the key that decrypts them is in your OS keyring |
@@ -202,6 +203,64 @@ function that supplies none leaves the launch directory in use. Commands get
 Pax's environment minus LLM provider API keys. To keep the file tools inside the
 launch directory, set **Unrestricted filesystem** to `false` in
 `/plugins configure coder`. Shell commands are not restricted either way.
+
+### Folder trust
+
+Pax treats every folder as untrusted until you say otherwise, as Claude Code does. The
+first time the interactive shell starts in a folder, before any plugin loads or turn runs,
+it asks **Do you trust the files in this folder?** It names what the answer covers and lists
+what it found there: instruction files (`AGENTS.md`, `CLAUDE.md`), skill folders
+(`.agents/skills`, `.claude/skills`), and agent folders (`.agents/agents`, `.claude/agents`,
+`.codex/agents`), from the folder up to the repository root. Only names are checked, never
+contents.
+
+- **Yes, I trust this folder**: the folder's files are yours. Their text reaches the model
+  as your own instructions.
+- **No, keep it untrusted** (the default):
+  the agent still reads, edits, and runs code there, as before. Pax gives the folder's files
+  no authority (`authority='none'` on its `LocalWorkspace`), so capabilities that check it send
+  their text as the repository's data, not as yours. Use it to look at a repository someone
+  else wrote. Dismissing the prompt with <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> keeps
+  the folder untrusted for this session without saving the answer, so Pax asks again next time.
+
+Trust is not a sandbox, and it does not approve anything else in the folder. Project settings
+still wait for `/project approve`, project plugins and hooks for `/plugins enable`, and project
+MCP files for `/mcp trust`, whatever the answer. The question lists the ones it found. Settings a
+project file may apply at once, such as `display.*` or a stricter `run.permissions`, still apply.
+
+`/trust` shows the decision and what it covers; `/trust yes` and `/trust no` change it. A change
+applies from the next prompt. What the model has already read stays in the conversation, so
+`/clear` starts a new one when you want a clean break. The status row shows `trusted`, or
+`untrusted` in the warning colour, beside the `workspace` directory.
+
+Where the decision is kept:
+
+- It is kept in `config.db`, in your settings, never in the repository, so a repository cannot
+  trust itself: `.clai/settings.json` has no key for it, and `pax config` cannot set it. Pax reads
+  nothing the folder holds to decide whether to ask.
+- Inside a Git repository, it covers the whole repository: every subfolder and every linked
+  worktree share the main checkout's decision. A repository nested inside it, such as a
+  submodule or a clone, is asked about on its own. A folder whose `.git` file points at another
+  repository counts as that repository's worktree only if that repository's worktree metadata
+  points back to it.
+- Outside a repository, it is kept for the folder you started in and covers its subfolders; the
+  nearest folder with a decision wins.
+- In your home folder or the filesystem root, the answer holds for that session only, even if it
+  sits inside a repository or worktree, so Pax asks again next time, and a decision there never
+  covers the folders below.
+
+`pax -p`, `pax --web`, and sessions the web UI opens never ask: they use the decision you made
+before, and a folder you never decided about stays untrusted. `pax -p` says so on stderr and
+`pax --web` in its terminal. `/trust yes` in the web UI trusts the folder of that session. A
+session that moves to another folder (`/workspace`, or `/resume` of a session saved in another
+folder) takes that folder's decision.
+
+Which capabilities change their output for an untrusted folder depends on their support for
+workspace authority. Today `repo_context` marks the instruction files it surfaces as the
+agent works in a subfolder, and the read-only Review specialist keeps the authority for the
+directory it is sent to. `repo_context`'s walk-up files (the `AGENTS.md` it loads at the start),
+Agent Skills, and agent folders do not check it yet, and load as before in both cases. A
+`/sandbox` conversation works in the sandbox's own workspace, which does not take the decision yet.
 
 ### Startup
 
@@ -1795,7 +1854,7 @@ Every field is independently selectable and reorderable:
 | Field | Shows |
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
-| `workspace` | Working directory, abbreviated to its tail; hidden when empty |
+| `workspace` | Working directory, abbreviated to its tail, with its `trusted` / `untrusted` state when folder trust applies; hidden when empty |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
