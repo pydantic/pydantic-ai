@@ -147,6 +147,26 @@ class TestDurableRun:
 
         assert [op.status for op in ctx.failed] == ['failed']
 
+    def test_in_flight_is_refused_in_handler_level_code(self) -> None:
+        """A durable execution runs tool calls sequentially, so no work can run alongside the run."""
+        errors: list[str] = []
+
+        class StartsWork(AbstractCapability[Any]):
+            async def before_run(self, ctx: RunContext[Any]) -> None:
+                with pytest.raises(UserError) as exc_info:
+                    _ = ctx.in_flight
+                errors.append(str(exc_info.value))
+
+        agent = Agent(TestModel(), name='a', capabilities=[StartsWork(), AWSLambdaDurability()])
+
+        run_durable(lambda: agent.run('go'), context=FakeDurableContext())
+
+        assert errors == snapshot(
+            [
+                '`ctx.in_flight` is not supported in this AWS Lambda run, which executes tool calls sequentially: AWS Lambda records its steps in the order they run, so work that runs alongside the run could not be replayed. Run the work in the tool call itself instead.'
+            ]
+        )
+
 
 class TestDurableAgentHandler:
     def test_runs_async_handler(self) -> None:

@@ -5395,9 +5395,10 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
     await agent.run('run')
 
 
-async def test_prefect_rejects_in_flight_in_flow_code_and_tasks() -> None:
-    """`ctx.in_flight` raises in a task, and in flow code, such as a capability hook, until durable runs can use it."""
+async def test_prefect_allows_in_flight_in_flow_code_and_rejects_it_in_tasks() -> None:
+    """`ctx.in_flight` works in flow code, such as a capability hook, and raises in a task."""
     errors: list[str] = []
+    live: list[int] = []
 
     def record(ctx: RunContext[object]) -> None:
         with pytest.raises(UserError) as exc_info:
@@ -5406,7 +5407,7 @@ async def test_prefect_rejects_in_flight_in_flow_code_and_tasks() -> None:
 
     class InFlightInFlowCode(AbstractCapability[object]):
         async def before_run(self, ctx: RunContext[object]) -> None:
-            record(ctx)
+            live.append(len(ctx.in_flight.live()))
 
     async def in_task(ctx: RunContext[object]) -> str:
         record(ctx)
@@ -5425,9 +5426,9 @@ async def test_prefect_rejects_in_flight_in_flow_code_and_tasks() -> None:
         await agent.run('run')
 
     await run_agent()
+    assert live == [0]
     assert errors == snapshot(
         [
-            '`ctx.in_flight` is not supported in a durable run yet: when the run ends would depend on the order its in-flight work finished in, which durable execution engines do not all replay. Until it is, use `ctx.in_flight` only in runs without a durability capability.',
             "`ctx.in_flight` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so work it started or registered would be lost.",
         ]
     )

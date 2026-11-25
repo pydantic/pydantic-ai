@@ -1390,22 +1390,32 @@ class RunContext(Generic[RunContextAgentDepsT]):
         background, tracks it here, so the run waits for it before it ends, or cancels it, and a UI can show
         what is still running.
 
+        In a durable run (see [`in_durable_context`][pydantic_ai.tools.RunContext.in_durable_context]), work
+        started from the durable container runs there alongside the run, and the durable units it calls are
+        recorded as the run's own are. A wait for an external event that the engine records, like a
+        [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler that takes a resume
+        token, applies each piece of work's `on_end` (see [`InFlightOnEnd`][pydantic_ai.in_flight.InFlightOnEnd]).
+
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent in this process (e.g. the synthetic
                 context from `Agent.system_prompt_parts`, or a realtime session), it runs inside a durable
-                execution unit, where work it starts would be lost on replay, or the run is durable (see
-                [`in_durable_context`][pydantic_ai.tools.RunContext.in_durable_context]): when such a run ends
-                would depend on the order its work finished in, which not every engine replays.
+                execution unit, where work it starts would be lost on replay, or the run is durable and executes
+                tool calls sequentially, as AWS Lambda durable functions always do and Absurd and pgtask do by
+                default: their engines record units in the order they ran, so units can't run alongside the run.
         """
         queue = self.pending_messages
         if isinstance(queue, EnqueueGuard):
             raise queue.in_flight_error()
-        if self.in_durable_context:
-            raise UserError(
-                '`ctx.in_flight` is not supported in a durable run yet: when the run ends would depend on the order '
-                'its in-flight work finished in, which durable execution engines do not all replay. Until it is, use '
-                '`ctx.in_flight` only in runs without a durability capability.'
-            )
+        if (durability := self._durability) is not None and durability.in_durable_context:
+            from .tool_manager import _parallel_execution_mode_ctx_var  # pyright: ignore[reportPrivateUsage]
+
+            if _parallel_execution_mode_ctx_var.get() == 'sequential':
+                raise UserError(
+                    f'`ctx.in_flight` is not supported in this {durability.engine_name} run, which executes tool calls '
+                    f'sequentially: {durability.engine_name} records its {durability.durable_unit_plural} in the order '
+                    'they run, so work that runs alongside the run could not be replayed. Run the work in the tool '
+                    'call itself instead.'
+                )
         # Read via `__dict__`, like `_cancellation` in `cancel`: the registry never crosses a durable boundary.
         registry: InFlightRegistry | None = self.__dict__.get('_in_flight')
         if registry is None:

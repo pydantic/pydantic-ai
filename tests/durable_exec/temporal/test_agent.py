@@ -4543,10 +4543,10 @@ def _in_flight_error(ctx: RunContext[Any]) -> str:
 
 @dataclass
 class _InFlightInWorkflowCode(AbstractCapability[Any]):
-    """Reads `ctx.in_flight` from `before_run`, which runs in workflow code, and passes the error to the model."""
+    """Reads `ctx.in_flight` from `before_run`, which runs in workflow code, and passes what it lists to the model."""
 
     async def before_run(self, ctx: RunContext[Any]) -> None:
-        ctx.enqueue(_in_flight_error(ctx))
+        ctx.enqueue(f'live work: {len(ctx.in_flight.live())}')
 
 
 async def _in_flight_in_activity(ctx: RunContext[Any]) -> str:
@@ -4576,8 +4576,8 @@ class InFlightGuardWorkflow:
         ]
 
 
-async def test_temporal_rejects_in_flight_in_workflow_code_and_activities(client: Client) -> None:
-    """`ctx.in_flight` raises in workflow code until durable runs can use it, and in an activity, which can't."""
+async def test_temporal_allows_in_flight_in_workflow_code_and_rejects_it_in_activities(client: Client) -> None:
+    """`ctx.in_flight` works in workflow code, where its tasks run on the workflow loop, and raises in an activity."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -4590,7 +4590,7 @@ async def test_temporal_rejects_in_flight_in_workflow_code_and_activities(client
 
     assert errors == snapshot(
         [
-            '`ctx.in_flight` is not supported in a durable run yet: when the run ends would depend on the order its in-flight work finished in, which durable execution engines do not all replay. Until it is, use `ctx.in_flight` only in runs without a durability capability.',
+            'live work: 0',
             "`ctx.in_flight` is not supported inside a durable activity: the durable runtime replays the activity's recorded result without re-running your code, so work it started or registered would be lost.",
         ]
     )

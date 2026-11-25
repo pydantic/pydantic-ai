@@ -1600,7 +1600,12 @@ class ToolManager(Generic[AgentDepsT]):
         """
         if self.root_capability is None or self.ctx is None:
             return None
-        results = await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
+        from .in_flight import external_waits_apply_on_end
+
+        # A handler that waits for an external event in a durable run applies the run's in-flight work's `on_end`.
+        # Read via `__dict__`, like `RunContext.in_flight`: the registry never crosses a durable boundary.
+        with external_waits_apply_on_end(self.ctx.__dict__.get('_in_flight')):
+            results = await self.root_capability.handle_deferred_tool_calls(self.ctx, requests=requests)
         return filter_deferred_results(requests, results) if results is not None else None
 
     async def _resolve_single_deferred(

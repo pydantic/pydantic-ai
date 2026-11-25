@@ -7,15 +7,19 @@ which no provider takes part in.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 import anyio
 import pytest
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai import Agent, RunCancelled, RunContext
 from pydantic_ai._enqueue import EnqueueGuard
+from pydantic_ai.capabilities import HandleDeferredToolCalls
 from pydantic_ai.exceptions import ApprovalRequired, UserError
+from pydantic_ai.external_events import ExternalEventWaiter, external_event_scope, wait_for_external_event
 from pydantic_ai.in_flight import (
     InFlightRegistry,
     InFlightWork,
@@ -36,7 +40,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PendingModelResponse
-from pydantic_ai.tools import DeferredToolRequests
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage
 
 from .conftest import no_leaked_tasks
@@ -755,6 +759,123 @@ def test_in_flight_needs_a_run_outside_durable_units():
         r'would be lost\.$',
     ):
         _ = in_activity.in_flight
+
+
+@dataclass
+class _EngineWaiter(ExternalEventWaiter):
+    """Stands in for a durable engine that keeps the run's tasks running while it waits: it asks, then lets `on_asked` run."""
+
+    on_asked: Callable[[], None] = lambda: None
+    asked: int = 0
+
+    async def wait(
+        self, name: str, *, ask: Callable[[str], Awaitable[JsonValue]], timeout: timedelta | None
+    ) -> JsonValue:
+        self.asked += 1
+        answer = await ask('token')
+        self.on_asked()
+        return answer
+
+
+def _start_then_delete_then_report(seen: list[list[str]]) -> FunctionModel:
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(_user_texts(messages))
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart(tool_name='delete', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(model_fn)
+
+
+def _approve_all(ctx: RunContext, requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+    return requests.build_results(approve_all=True)
+
+
+async def test_a_durable_wait_cancels_cancel_work_and_returns_once_drain_work_has_finished():
+    """At a wait the engine records, `'cancel'` work is cancelled first, and `'drain'` work runs on through the wait."""
+    seen: list[list[str]] = []
+    handles: dict[str, InFlightWork[None] | InFlightWork[bool]] = {}
+    states_when_asked: dict[str, InFlightWorkState] = {}
+    asked = asyncio.Event()
+
+    def on_asked() -> None:
+        states_when_asked.update({name: work.state for name, work in handles.items()})
+        asked.set()
+
+    agent = Agent(
+        _start_then_delete_then_report(seen),
+        capabilities=[HandleDeferredToolCalls(_approve_all, timeout=timedelta(minutes=1))],
+    )
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        async def report() -> None:
+            # Still running when the approver answers, so the wait has to wait for it.
+            await asked.wait()
+            ctx.enqueue('background result')
+
+        handles['cancel'] = ctx.in_flight.start(
+            asyncio.Event().wait, kind='test', name='cancel', id='cancel', on_end='cancel'
+        )
+        handles['drain'] = ctx.in_flight.start(report, kind='test', name='drain', id='drain')
+        return 'started'
+
+    @agent.tool_plain(requires_approval=True)
+    def delete() -> str:
+        return 'deleted'
+
+    with no_leaked_tasks(), external_event_scope(_EngineWaiter(on_asked=on_asked)):
+        result = await agent.run('go')
+
+    assert result.output == 'done'
+    assert states_when_asked == {'cancel': 'cancelled', 'drain': 'running'}
+    # The result the drain work queued reached the request that followed the wait, with the approved call's return.
+    assert seen == [['go'], ['go'], ['go', 'background result']]
+
+
+async def test_a_failing_cancel_callback_at_a_durable_wait_fails_the_run_without_asking():
+    """The run's other `'cancel'` work is still cancelled, and the error is raised before the engine is asked."""
+    handles: dict[str, InFlightWork[None] | InFlightWork[bool]] = {}
+    waiter = _EngineWaiter()
+
+    def fail_to_cancel() -> None:
+        raise RuntimeError('process already gone')
+
+    agent = Agent(
+        _start_then_delete_then_report([]),
+        capabilities=[HandleDeferredToolCalls(_approve_all, timeout=timedelta(minutes=1))],
+    )
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        handles['job'] = ctx.in_flight.register(
+            kind='test', name='job', id='job', on_end='cancel', cancel=fail_to_cancel
+        )
+        handles['task'] = ctx.in_flight.start(
+            asyncio.Event().wait, kind='test', name='task', id='task', on_end='cancel'
+        )
+        return 'started'
+
+    @agent.tool_plain(requires_approval=True)
+    def delete() -> str:
+        return 'deleted'  # pragma: no cover
+
+    with no_leaked_tasks(), external_event_scope(waiter), pytest.raises(RuntimeError, match='process already gone'):
+        await agent.run('go')
+
+    assert waiter.asked == 0
+    assert handles['job'].state == 'cancelled'
+    assert handles['task'].state == 'cancelled'
+
+
+async def test_a_durable_wait_outside_a_run_has_no_work_to_apply():
+    async def ask(token: str) -> str:
+        return f'answered {token}'
+
+    with external_event_scope(_EngineWaiter()):
+        assert await wait_for_external_event('question', ask=ask) == 'answered token'
 
 
 def test_in_flight_work_event_round_trips():

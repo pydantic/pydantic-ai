@@ -6,8 +6,9 @@ See [Work that outlives a step](../capabilities/custom.md#in-flight-work).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import suppress
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Sequence
+from contextlib import asynccontextmanager, contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 
@@ -54,6 +55,11 @@ InFlightOnEnd: TypeAlias = Literal['drain', 'cancel', 'detach']
 
 A run that ends with an error, is cancelled, times out or hits a usage limit cancels all work except `'detach'`
 work.
+
+A durable run that waits for an external event the engine records, such as an answer to a
+[`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler that takes a resume token,
+applies `on_end` at the wait as well. It cancels `'cancel'` work before it waits. It keeps `'drain'` work running
+through the wait, and only goes on once that work has finished too. It leaves `'detach'` work alone.
 """
 
 InFlightWorkState: TypeAlias = Literal['running', 'succeeded', 'failed', 'cancelled']
@@ -259,6 +265,31 @@ def _snapshot(work: InFlightWork[Any]) -> InFlightWorkSnapshot:
     return InFlightWorkSnapshot(
         id=work.id, kind=work.kind, name=work.name, on_end=work.on_end, durable=work.durable, state=work.state
     )
+
+
+_waiting_registry: ContextVar[InFlightRegistry | None] = ContextVar('_waiting_in_flight_registry', default=None)
+"""The registry of the run whose capability hooks are resolving deferred tool calls, which may wait for an external event."""
+
+
+@contextmanager
+def external_waits_apply_on_end(registry: InFlightRegistry | None) -> Generator[None]:
+    """Make a durable wait for an external event inside apply the `on_end` of `registry`'s work."""
+    token = _waiting_registry.set(registry)
+    try:
+        yield
+    finally:
+        _waiting_registry.reset(token)
+
+
+@asynccontextmanager
+async def durable_wait_scope() -> AsyncIterator[None]:
+    """Apply the `on_end` of the waiting run's work around a wait for an external event that a durable engine records."""
+    registry = _waiting_registry.get()
+    if registry is None:
+        yield
+        return
+    async with registry._durable_wait():  # pyright: ignore[reportPrivateUsage]
+        yield
 
 
 class InFlightRegistry:
@@ -559,6 +590,31 @@ class InFlightRegistry:
             span.set_attribute('in_flight.waited', len(waited))
             self._emit('drained', tuple(waited))
         return result
+
+    @asynccontextmanager
+    async def _durable_wait(self) -> AsyncIterator[None]:
+        """Cancel `'cancel'` work before a durable wait, and wait for `'drain'` work after it.
+
+        The engine keeps the run's tasks running while it waits, so `'drain'` work goes on alongside the wait,
+        and the run continues once both have finished. A wait that raises, like one that timed out or one the
+        engine refuses, raises straight away, and the run's end rule then handles the work as it would after any
+        other step.
+        """
+        cancelling = [work for work in self._live.values() if work.on_end == 'cancel']
+        # As at teardown, a failing `cancel` callback mustn't keep the rest of the work running.
+        errors: list[Exception] = []
+        for work in cancelling:
+            try:
+                work.cancel()
+            except Exception as error:
+                errors.append(error)
+        for work in cancelling:
+            await work.wait()
+        if errors:
+            raise errors[0]
+        yield
+        while self._draining():
+            await self._changed.wait()
 
     async def _close_on_exit(self, exc_type: type[BaseException] | None, *_: object) -> None:
         """Close the registry as the run exits, raising a `cancel` callback's error only if the run itself didn't fail.
