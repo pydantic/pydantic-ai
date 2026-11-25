@@ -13,6 +13,10 @@ with a harness of your own. Pax is also a terminal
 [interface](https://pydantic.dev/docs/ai/overview/interfaces/) for any
 [Pydantic AI](https://pydantic.dev/docs/ai/) agent.
 
+Pax is in beta, on the road to 1.0 alongside the Harness. If you try it out, please let us know
+what you think in [our Slack](https://logfire.pydantic.dev/docs/join-slack/) or in a
+[GitHub issue](https://github.com/pydantic/pydantic-ai/issues).
+
 Pax reads your code, edits files, and runs commands, and you see every step as it
 happens. Use the model you like: sign in with your ChatGPT or GitHub Copilot
 subscription, or bring an API key for OpenAI, Anthropic, or another provider Pydantic AI
