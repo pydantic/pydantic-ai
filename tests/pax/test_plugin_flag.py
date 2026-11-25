@@ -1,11 +1,11 @@
 """`pax -x NAME`: load a plugin for one launch, whatever is saved, and save nothing that says it is enabled."""
 
-import argparse
 import io
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import pytest
+from inline_snapshot import snapshot
 from pydantic import BaseModel
 from rich.console import Console
 
@@ -18,7 +18,7 @@ from pydantic_ai_pax.cli import cli, headless, web
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
-from pydantic_ai_pax.plugins import AgentCapability, Plugin, SessionStart
+from pydantic_ai_pax.plugins import AgentCapability, Plugin, SessionEnd, SessionStart
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from tests.pax.cli_runner import CliRunner
@@ -78,7 +78,11 @@ async def test_headless_loads_a_disabled_plugin_for_the_launch(
 
 
 def _shell(
-    store: SettingsStore, *, project: ProjectSettings | None = None, process: ClaiProcess[None] | None = None
+    store: SettingsStore,
+    *,
+    project: ProjectSettings | None = None,
+    process: ClaiProcess[None] | None = None,
+    builtin: PluginSettings = PROBE,
 ) -> SessionRuntime[None, str]:
     return create_shell(
         Agent(TestModel(call_tools=[])),
@@ -88,7 +92,7 @@ def _shell(
         console=Console(file=io.StringIO()),
         settings=None,
         store=None if process is not None else store,
-        builtin_plugins=[] if process is not None else [PROBE],
+        builtin_plugins=[] if process is not None else [builtin],
         project=project or ProjectSettings(),
         headless=True,
         launch_plugins=['probe'],
@@ -107,6 +111,10 @@ async def test_launched_plugin_loads_disabled_and_is_saved_as_declared(tmp_path:
     assert _loaded(shell) == ['probe']
     # Never saved before, it is saved disabled, as it is declared, along with the settings it saved.
     assert store.plugins() == [PROBE.model_copy(update={'settings': {'started': 1}})]
+    # `/plugins list` says it runs now but stays off next time.
+    assert await shell.loader.command([]) == snapshot(
+        'probe: tests.pax.test_plugin_flag:Probe (disabled, loaded for this launch)'
+    )
     await shell.close('exit')
 
 
@@ -259,11 +267,26 @@ async def test_launch_plugins_need_plugins(tmp_path: Path) -> None:
         )
 
 
-def test_update_restarts_with_the_plugins_still_launched() -> None:
-    """A plugin disabled or removed during the launch stays off after `/update`, as after `/reload`."""
-    args = argparse.Namespace(web=False, agent=None, model=None, request_limit=None, database=None, plugin=['a', 'b'])
-    assert cli.relaunch_argv(args, executable='/b/pax', session_id=None, launch_plugins=['b']) == [
-        '/b/pax',
-        '--plugin',
-        'b',
-    ]
+class Saver(Probe):
+    """A `Probe` that saves its settings again as each session ends, as a plugin keeping state does."""
+
+    async def on_session_end(self, event: SessionEnd) -> None:
+        self.host.save_settings(self.settings)
+
+
+SAVER = PROBE.model_copy(update={'factory': 'tests.pax.test_plugin_flag:Saver'})
+
+
+@pytest.mark.parametrize('change', ['disable', 'remove'])
+async def test_a_plugin_saving_as_it_unloads_stays_off(tmp_path: Path, change: str) -> None:
+    """A launched plugin's other sessions end it after the launch dropped it: what it saves then doesn't enable it."""
+    store = SettingsStore(tmp_path / 'config.db')
+    first = _shell(store, builtin=SAVER)
+    await first.loader.load_all()
+    second = _shell(store, process=first.process)
+    await second.loader.load_all()
+    await getattr(first.loader, change)('probe')
+    assert _loaded(first) == _loaded(second) == []
+    assert all(not plugin.enabled for plugin in store.plugins())
+    for shell in (second, first):
+        await shell.close('exit')

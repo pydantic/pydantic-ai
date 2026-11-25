@@ -161,10 +161,11 @@ class PluginEntry(Generic[DepsT]):
         """Human-readable enabled/loaded/failed state."""
         if self.included_in is not None:
             return f'included in {self.included_in}'
+        if self.loaded is not None:
+            # Disabled but loaded only for this launch, as `pax -x NAME` loads it: off again next time.
+            return 'enabled, loaded' if self.declaration.enabled else 'disabled, loaded for this launch'
         if not self.declaration.enabled:
             return 'disabled'
-        if self.loaded is not None:
-            return 'enabled, loaded'
         return f'enabled, failed: {self.error}' if self.error else 'enabled, not loaded'
 
 
@@ -538,10 +539,12 @@ class SessionPlugins(Generic[DepsT]):
     def _host(self, entry: PluginEntry[DepsT], declaration: PluginSettings, *, process: bool) -> PluginHost[DepsT]:
         """The plugin's host. A process-scoped plugin's follows the session being handled, else this one."""
         host: PluginHost[DepsT] | None = None
+        # Taken now: `/plugins disable` or `remove` drops the name from the launch before other sessions unload it.
+        launched = entry.name in self._process.launch
 
         def save(settings: dict[str, JsonValue]) -> None:
             assert host is not None, 'settings are saved once the plugin is built'
-            self._save(entry, host, settings)
+            self._save(entry, host, settings, launched=launched)
 
         def here() -> PluginHost[None]:
             return self._process.here(self)._base
@@ -635,10 +638,13 @@ class SessionPlugins(Generic[DepsT]):
         declaration = PluginSettings.model_validate({**saved.model_dump(), 'settings': applied.settings})
         return declaration, ignored_notice(entry.name, applied.ignored)
 
-    def _save(self, entry: PluginEntry[DepsT], host: PluginHost[DepsT], settings: dict[str, JsonValue]) -> None:
+    def _save(
+        self, entry: PluginEntry[DepsT], host: PluginHost[DepsT], settings: dict[str, JsonValue], *, launched: bool
+    ) -> None:
         """Persist a host's saved settings, or, while `/plugins add` is trying them, update what it will save.
 
         Saved values this build ignored are written back unchanged, with their tags: it cannot judge them.
+        A plugin `launched` for this launch only leaves the saved declaration as enabled or disabled as it is.
         """
         update: dict[str, object] = {'settings': settings, 'enabled': True}
         store = self._process.store
@@ -648,8 +654,7 @@ class SessionPlugins(Generic[DepsT]):
             return
         # The declaration saved now, not at load: another Pax process may have replaced it since.
         stored = self._process.stored(entry.name)
-        if entry.name in self._process.launch:
-            # Loaded for this launch only: saving its settings leaves it as enabled or disabled as it was.
+        if launched:
             update['enabled'] = (stored or entry.declaration).enabled
         if stored is None:
             store.save_plugin(entry.declaration.model_copy(update=update), requires=host.requirements)

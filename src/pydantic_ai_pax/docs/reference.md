@@ -3362,8 +3362,9 @@ before Pax starts, listing the ones there are. A plugin the project's
 `.clai/settings.json` declares isn't loaded this way: approve it with
 `/plugins enable NAME`, as usual.
 
-Nothing saved changes: the next `pax` without `-x` leaves a disabled plugin off,
-even if the plugin saved its settings meanwhile. `/plugins disable NAME` or
+Nothing saved changes: `/plugins list` shows a disabled plugin as `disabled,
+loaded for this launch`, and the next `pax` without `-x` leaves it off, even if
+the plugin saved its settings meanwhile. `/plugins disable NAME` or
 `/plugins remove NAME` turns it off for the rest of the launch, also through
 `/reload` and `/update`, and is saved as usual. `-x` can't be combined with
 `--agent`, which loads no plugins.
