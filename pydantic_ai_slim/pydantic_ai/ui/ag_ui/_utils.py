@@ -6,7 +6,7 @@ import importlib.metadata
 import json
 import re
 import warnings
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Final, Literal, Required
 
 import pydantic_core
@@ -18,13 +18,14 @@ from ...messages import (
     RetryInfo,
     ThinkingPart,
     ToolPartKind,
+    ToolResultAttachment,
     ToolRetryCause,
     _tool_return_text,  # pyright: ignore[reportPrivateUsage]
     parse_tool_kind,
     tool_return_content_ta,
 )
 from .._adapter import parse_tool_retry, retry_feedback_from_payload, retry_feedback_payload, tool_retry_payload
-from .._utils import without_internal_text_metadata
+from .._utils import dump_tool_result_attachments, load_tool_result_attachments, without_internal_text_metadata
 
 ENCRYPTED_VALUE_VERSION = (0, 1, 11)
 """AG-UI version that added the `encrypted_value` field to `ToolCall` and to `BaseMessage` (so to
@@ -198,6 +199,7 @@ def tool_kind_encrypted_value(
     tool_kind: ToolPartKind | None,
     outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
     retry: RetryInfo[ToolRetryCause] | None = None,
+    attachments: Sequence[ToolResultAttachment] = (),
 ) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
@@ -215,7 +217,8 @@ def tool_kind_encrypted_value(
     `'success'` — and since `outcome` can affect how a return is serialized to a provider (e.g. a
     native error channel), that would silently change the request bytes and break the prompt-cache
     prefix stability the repaired history is designed to keep. A retried return's `retry` rides along
-    too, so an application auditing rejected calls still sees it after a round-trip.
+    too, so an application auditing rejected calls still sees it after a round-trip. A tool return's
+    `attachments` ride along as well, so a client-held history keeps them as the result's data.
     """
     payload: dict[str, object] = {}
     if tool_kind is not None:
@@ -224,6 +227,8 @@ def tool_kind_encrypted_value(
         payload['outcome'] = outcome
     if retry is not None:
         payload['retry'] = tool_retry_payload(retry)
+    if (dumped_attachments := dump_tool_result_attachments(attachments)) is not None:
+        payload['attachments'] = dumped_attachments
     if not payload:
         return None
     return _namespaced_encrypted_value(payload)
@@ -241,6 +246,7 @@ def tool_kind_encrypted_value_kwargs(
     supported: bool,
     outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
     retry: RetryInfo[ToolRetryCause] | None = None,
+    attachments: Sequence[ToolResultAttachment] = (),
 ) -> _EncryptedValueKwargs:
     """`ToolCall`/`ToolMessage` kwargs carrying claims as an `encrypted_value`, or empty to omit it.
 
@@ -249,7 +255,7 @@ def tool_kind_encrypted_value_kwargs(
     has nothing to carry, so — like the streaming carrier — the field is only ever set when there's a
     claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
     """
-    value = tool_kind_encrypted_value(tool_kind, outcome, retry) if supported else None
+    value = tool_kind_encrypted_value(tool_kind, outcome, retry, attachments) if supported else None
     return {'encrypted_value': value} if value is not None else {}
 
 
@@ -370,6 +376,12 @@ def parse_encrypted_tool_retry(
     """Read a retried tool return's `retry` claim from the `pydantic_ai` namespace of an `encrypted_value` blob."""
     namespaced = _parse_encrypted_namespace(encrypted_value)
     return None if namespaced is None else parse_tool_retry(namespaced.get('retry'))
+
+
+def parse_encrypted_tool_result_attachments(encrypted_value: str | None) -> Sequence[ToolResultAttachment]:
+    """Read a tool return's `attachments` from the `pydantic_ai` namespace of an `encrypted_value` blob."""
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    return () if namespaced is None else load_tool_result_attachments(namespaced.get('attachments'))
 
 
 def parse_encrypted_retry_feedback(encrypted_value: str | None) -> RetryFeedbackPart | None:

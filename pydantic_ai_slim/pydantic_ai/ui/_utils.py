@@ -6,10 +6,18 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Final
 
+from pydantic import TypeAdapter, ValidationError
+
 from pydantic_ai import messages as _messages
 from pydantic_ai._mcp_apps import MCPAppToolResult
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.messages import BaseToolReturnPart, ModelMessage, TextContent, ToolReturnContent
+from pydantic_ai.messages import (
+    BaseToolReturnPart,
+    ModelMessage,
+    TextContent,
+    ToolResultAttachment,
+    ToolReturnContent,
+)
 
 INTERNAL_METADATA_KEY = _messages._PYDANTIC_AI_METADATA_KEY  # pyright: ignore[reportPrivateUsage]
 """Reserved key in UI message metadata for state the adapters own; never read from client-controlled metadata."""
@@ -77,6 +85,37 @@ def without_internal_text_metadata(content: ToolReturnContent) -> ToolReturnCont
         sequence: Sequence[ToolReturnContent] = content  # pyright: ignore[reportUnknownVariableType]
         return [without_internal_text_metadata(item) for item in sequence]
     return content
+
+
+_tool_result_attachments_ta: TypeAdapter[list[ToolResultAttachment]] = TypeAdapter(list[ToolResultAttachment])
+
+
+def dump_tool_result_attachments(attachments: Sequence[ToolResultAttachment]) -> list[Any] | None:
+    """Dump a tool return's [`attachments`][pydantic_ai.messages.ToolReturnPart.attachments] for a client, or `None` without any.
+
+    They ride the tool result's metadata channel, never a user message, so a client-held history keeps them as the tool
+    result's data. The reserved `__pydantic_ai__` namespace of `TextContent` metadata stays server-side.
+    """
+    if not attachments:
+        return None
+    return _tool_result_attachments_ta.dump_python(
+        [replace(attachment, content=without_internal_text_metadata(attachment.content)) for attachment in attachments],
+        mode='json',
+    )
+
+
+def load_tool_result_attachments(data: object) -> Sequence[ToolResultAttachment]:
+    """Load the attachments a client sent back on a tool result, or none if absent or malformed.
+
+    Client-supplied and untrusted, like any claim in the metadata channel: they render as the tool result's data
+    whatever they say, and `sanitize_messages` checks their files like any other the client sends.
+    """
+    if data is None:
+        return ()
+    try:
+        return _tool_result_attachments_ta.validate_python(data)
+    except ValidationError:
+        return ()
 
 
 def client_error_text(part: BaseToolReturnPart[Any]) -> str:

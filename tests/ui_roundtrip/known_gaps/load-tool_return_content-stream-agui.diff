@@ -1,0 +1,48 @@
+--- expected
++++ actual
+@@ -35,21 +35 @@
+-     "outcome": "success",
+-     "attachments": [
+-      {
+-       "content": "The page as rendered:",
+-       "tool_call_id": "picture-1",
+-       "tool_name": "take_picture",
+-       "capability_id": null
+-      },
+-      {
+-       "content": {
+-        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg-M8AAAMBAQAY3Y2wAAAAAElFTkSuQmCC",
+-        "media_type": "image/png",
+-        "vendor_metadata": null,
+-        "kind": "binary",
+-        "identifier": "cd560a"
+-       },
+-       "tool_call_id": "picture-1",
+-       "tool_name": "take_picture",
+-       "capability_id": null
+-      }
+-     ]
++     "outcome": "success"
+@@ -147,21 +127 @@
+-     "outcome": "success",
+-     "attachments": [
+-      {
+-       "content": "The page as rendered:",
+-       "tool_call_id": "picture-5",
+-       "tool_name": "take_picture",
+-       "capability_id": null
+-      },
+-      {
+-       "content": {
+-        "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg-M8AAAMBAQAY3Y2wAAAAAElFTkSuQmCC",
+-        "media_type": "image/png",
+-        "vendor_metadata": null,
+-        "kind": "binary",
+-        "identifier": "cd560a"
+-       },
+-       "tool_call_id": "picture-5",
+-       "tool_name": "take_picture",
+-       "capability_id": null
+-      }
+-     ]
++     "outcome": "success"

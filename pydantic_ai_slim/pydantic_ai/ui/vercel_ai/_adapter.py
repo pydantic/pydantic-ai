@@ -87,7 +87,14 @@ from .._adapter import (
     tool_availability_delta_payload,
     tool_retry_payload,
 )
-from .._utils import client_error_text, get_ui_message_id, set_ui_message_id, without_internal_text_metadata
+from .._utils import (
+    client_error_text,
+    dump_tool_result_attachments,
+    get_ui_message_id,
+    load_tool_result_attachments,
+    set_ui_message_id,
+    without_internal_text_metadata,
+)
 from ._event_stream import VercelAIEventStream
 from ._utils import (
     CAPABILITY_LOAD_DELTA_DATA_TYPE,
@@ -603,6 +610,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             )
         )
         restore_canonical_system(context.builder, provider_name, provider_meta.get('canonical_system'))
+        attachments = load_tool_result_attachments(provider_meta.get('attachments'))
 
         if part.state == 'output-available':
             # A synthesized interrupted return dumps as neutral `output-available`
@@ -618,6 +626,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     content=_validate_tool_output(part.output),
                     outcome='interrupted' if interrupted else 'success',
                     tool_kind=tool_kind,
+                    attachments=attachments,
                 )
             )
         elif part.state == 'output-error':
@@ -637,6 +646,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     outcome='retried' if retried else 'failed',
                     retry=parse_tool_retry(provider_meta.get('retry')) if retried else None,
                     tool_kind=tool_kind,
+                    attachments=attachments,
                 )
             )
         elif part.state == 'output-denied':
@@ -647,6 +657,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     content=_denial_reason(part),
                     outcome='denied',
                     tool_kind=tool_kind,
+                    attachments=attachments,
                 )
             )
 
@@ -1020,6 +1031,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             if isinstance(tool_result, ToolReturnPart) and tool_result.retry is not None
             else None,
             content=_retried_structured_content(tool_result),
+            attachments=_dumped_attachments(tool_result),
         )
         tool_type = f'tool-{part.tool_name}'
         ui_parts: list[UIMessagePart] = []
@@ -1636,6 +1648,11 @@ def _parse_json(value: object) -> object:
         return json.loads(value)
     except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
         return None
+
+
+def _dumped_attachments(tool_result: ToolReturnPart | None) -> list[Any] | None:
+    """A tool return's attachments for the call's metadata channel, so a client-held history keeps them as its data."""
+    return dump_tool_result_attachments(tool_result.attachments) if tool_result is not None else None
 
 
 def _retried_structured_content(tool_result: ToolReturnPart | None) -> list[Any] | None:
