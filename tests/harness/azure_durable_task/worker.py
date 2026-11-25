@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections import deque
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -185,6 +186,15 @@ class InMemoryWorker(worker.TaskHubGrpcWorker):
         self.instances[instance_id].new_events.append(
             ph.new_event_raised_event(event_name, self._data_converter.serialize(data))
         )
+
+
+def portal_threads() -> list[str]:
+    """Names of the live `anyio` blocking-portal threads, which each Monty dispatch must close.
+
+    Counting all threads instead is flaky: other libraries start and stop threads of their own.
+    """
+    # `anyio` names them `asyncio-portal-<id>`, or `Thread-<n> (run_blocking_portal)` in older versions.
+    return [thread.name for thread in threading.enumerate() if 'portal' in thread.name]
 
 
 @contextmanager
