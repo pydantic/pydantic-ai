@@ -11,7 +11,6 @@ from unittest.mock import ANY
 
 import anyio
 import pytest
-from dirty_equals import IsDatetime, IsStr
 
 from pydantic_ai import (
     Agent,
@@ -37,6 +36,8 @@ from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+
+from ...conftest import IsDatetime, IsStr
 
 try:
     from temporalio import activity, workflow
@@ -1306,7 +1307,11 @@ _unbounded_durability = TemporalDurability(
     activity_config=BASE_ACTIVITY_CONFIG, event_stream_topic=TOPIC, event_stream_handler=_record_in_activity
 )
 _unbounded_agent = Agent(
-    _model, name='unbounded_stream_agent', tools=[get_answer], capabilities=[_unbounded_durability]
+    _model,
+    name='unbounded_stream_agent',
+    deps_type=type(None),
+    tools=[get_answer],
+    capabilities=[_unbounded_durability],
 )
 
 

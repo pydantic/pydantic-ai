@@ -9,11 +9,10 @@ adapters' handling in `tests/test_vercel_ai.py` and `tests/test_ag_ui.py`.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from unittest.mock import ANY
 
 import pytest
-from dirty_equals import IsDatetime, IsStr
 from inline_snapshot import snapshot
 
 from pydantic_ai import (
@@ -37,8 +36,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResultEvent
 from pydantic_ai.usage import UsageLimits
 
+from .conftest import IsDatetime, IsStr
 
-def _boundaries(events: list[AgentStreamEvent]) -> list[ModelResponseStartEvent | ModelResponseEndEvent]:
+
+def _boundaries(events: Sequence[object]) -> list[ModelResponseStartEvent | ModelResponseEndEvent]:
     return [event for event in events if isinstance(event, ModelResponseStartEvent | ModelResponseEndEvent)]
 
 
@@ -50,13 +51,13 @@ async def test_each_response_is_opened_and_closed_once():
     def get_answer() -> str:
         return '42'
 
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
     async with agent.run_stream_events('hello') as stream:
         async for event in stream:
-            if isinstance(event, AgentRunResultEvent):
-                result = event.result
-            else:
-                events.append(event)
+            events.append(event)
+    result_event = events.pop()
+    assert isinstance(result_event, AgentRunResultEvent)
+    result = result_event.result
 
     assert [type(event).__name__ for event in events] == snapshot(
         [
@@ -107,7 +108,7 @@ async def test_a_fallback_response_replaces_the_attempt_it_moved_on_from():
         FunctionModel(stream_function=failure_stream),
         capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
     )
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
     async with agent.run_stream_events('x') as stream:
         async for event in stream:
             events.append(event)
@@ -117,6 +118,7 @@ async def test_a_fallback_response_replaces_the_attempt_it_moved_on_from():
 
     # The attempt that failed before its first event streamed nothing, so only the one that replaced it is opened.
     start, end = _boundaries(events)
+    assert isinstance(start, ModelResponseStartEvent) and isinstance(end, ModelResponseEndEvent)
     assert start == ModelResponseStartEvent(
         origin=ModelResponseOrigin(run_id=run_id, run_step=1, attempt=2),
         model_name='function::success_stream',
@@ -134,13 +136,14 @@ async def test_a_cancelled_response_ends_interrupted_with_what_it_streamed():
     agent = Agent(TestModel(custom_output_text='Hello there, world'))
     events: list[AgentStreamEvent] = []
     async with agent.iter('x') as run:
-        node = await run.next(run.next_node)
-        assert Agent.is_model_request_node(node)
-        async with node.stream(run.ctx) as stream:
-            async for event in stream:
-                events.append(event)
-                if isinstance(event, PartStartEvent):
-                    await stream.cancel()
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+                        if isinstance(event, PartStartEvent):
+                            await stream.cancel()
+                break
 
     start, end = _boundaries(events)
     assert end.origin == start.origin
@@ -171,7 +174,7 @@ async def test_a_stream_that_fails_after_output_ends_failed():
         raise RuntimeError('connection lost')
 
     agent = Agent(FunctionModel(stream_function=stream_function))
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
     with pytest.raises(RuntimeError, match='connection lost'):
         async with agent.run_stream_events('x') as stream:
             async for event in stream:
@@ -206,7 +209,7 @@ async def test_a_usage_limit_cutting_the_stream_short_ends_failed():
             yield word
 
     agent = Agent(FunctionModel(stream_function=stream_function))
-    events: list[AgentStreamEvent] = []
+    events: list[AgentStreamEvent | AgentRunResultEvent[str]] = []
     with pytest.raises(UsageLimitExceeded):
         async with agent.run_stream_events('x', usage_limits=UsageLimits(output_tokens_limit=2)) as stream:
             async for event in stream:

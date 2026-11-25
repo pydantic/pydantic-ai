@@ -19,7 +19,6 @@ from unittest.mock import ANY
 
 import anyio
 import pytest
-from dirty_equals import IsDatetime
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import (
@@ -96,7 +95,7 @@ from .capability_models import (
     tool_calling_model,
     tool_calling_stream_function,
 )
-from .conftest import IsStr
+from .conftest import IsDatetime, IsStr
 from .continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name

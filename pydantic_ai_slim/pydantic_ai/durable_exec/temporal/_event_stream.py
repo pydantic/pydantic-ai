@@ -100,11 +100,12 @@ class WorkflowStreamTopic:
         if self.batch_interval <= timedelta(0):
             raise UserError('The Workflow Stream batch interval must be greater than zero.')
 
-    def _publishes(self, event: AgentStreamEvent) -> bool:
-        """Whether the topic publishes `event`, by `response_boundaries` and the `events` predicate."""
-        if not self.response_boundaries and isinstance(event, ModelResponseStartEvent | ModelResponseEndEvent):
-            return False
-        return self.events is None or self.events(event)
+
+def topic_publishes(topic: WorkflowStreamTopic, event: AgentStreamEvent) -> bool:
+    """Whether `topic` publishes `event`, by its `response_boundaries` and `events` predicate."""
+    if not topic.response_boundaries and isinstance(event, ModelResponseStartEvent | ModelResponseEndEvent):
+        return False
+    return topic.events is None or topic.events(event)
 
 
 def _coerce_workflow_stream_topic(topic: str | WorkflowStreamTopic) -> WorkflowStreamTopic:
@@ -309,7 +310,7 @@ def workflow_stream_event_handler(
 
         async def publishing(events: AsyncIterable[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
             async for event in events:
-                if topic._publishes(event):
+                if topic_publishes(topic, event):
                     topic_handle.publish(event)
                 yield event
 

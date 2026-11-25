@@ -22,7 +22,6 @@ from unittest.mock import ANY, MagicMock
 import anyio
 import httpx2
 import pytest
-from dirty_equals import IsDatetime
 from pydantic import BaseModel
 from pydantic_core import ErrorDetails
 
@@ -107,6 +106,7 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 from ._inline_snapshot import snapshot
 from .canonical_system_utils import PROVIDER_NAME, StampedModel
 from .conftest import (
+    IsDatetime,
     IsInt,
     IsNow,
     IsStr,

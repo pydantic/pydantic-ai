@@ -611,7 +611,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 async for event in replacement_events:
                     yield event
 
-    async def _live_model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _live_model_events(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:
         """The model stream's events, until it ends or is abandoned for a replacement, stamped with their origin."""
         events = aiter(self._raw_stream_response)
         while self._replacement_response is None:
@@ -629,14 +629,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 return
             yield self._with_origin(event)
 
-    async def _replacement_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _replacement_events(self) -> AsyncGenerator[ModelResponseStreamEvent, None]:
         """The events of the response that replaced an abandoned model stream, stamped with their origin."""
         async for event in self._raw_stream_response:
             yield self._with_origin(event)
 
     async def _with_boundaries(
         self, events: AsyncIterator[ModelResponseStreamEvent], *, live: bool
-    ) -> AsyncIterator[ModelResponseStreamEvent]:
+    ) -> AsyncGenerator[ModelResponseStreamEvent, None]:
         """`events`, opened by a `ModelResponseStartEvent` and closed by a `ModelResponseEndEvent`.
 
         `live` is whether `events` is the model stream itself, which is `'interrupted'` when it was abandoned.

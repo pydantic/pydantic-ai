@@ -4374,15 +4374,13 @@
     },
     "CustomEvent.name": {
       "engines": [
-        "durable_exec",
-        "temporal"
+        "durable_exec"
       ],
       "kinds": [
         "projected_field"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.name",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_event_stream.py::WorkflowStreamTopic.name"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.name"
       ]
     },
     "CustomEvent.tool_call_id": {
