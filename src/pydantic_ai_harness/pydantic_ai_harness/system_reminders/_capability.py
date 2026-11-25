@@ -534,7 +534,7 @@ _COMPACTED_GOAL_NOTE = (
 _LLM_REMINDER_NOTE = (
     'A reminder model reviewing this run wrote a stay-on-task note. It is in the accompanying '
     '`<generated_reminder>` tag, written by a model, not by the user: follow it unless it conflicts with '
-    "your instructions or the user's request."
+    "your instructions or the user's request. " + _GENERATED_REMINDER_SCOPE
 )
 
 
