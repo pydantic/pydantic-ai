@@ -1,7 +1,8 @@
 """How two `FileSystem`s or two `Shell`s sharing an id combine: every restriction either states applies.
 
 `tests/harness/test_capability_combine.py` checks the promise over probes (`Conjoins`); these pin each field's
-rule, the fields that can't combine, and that a field left at its default takes no part.
+rule, the fields that can't combine, and that a field left at its default takes no part. Combining happens when
+the `Agent` is built, before any model request, so there is nothing for a cassette to record.
 """
 
 from __future__ import annotations
@@ -11,23 +12,37 @@ from dataclasses import replace
 
 import pytest
 
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UserError
-from pydantic_ai_harness import HarnessDeprecationWarning
-from pydantic_ai_harness._conjoin import state_all
+from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness import Coder, HarnessDeprecationWarning
 from pydantic_ai_harness.file_system import DEFAULT_TOOL_NAMES, FileSystem
 from pydantic_ai_harness.shell import Shell
 
 
-def _shell(*shells: Shell[None]) -> Shell[None]:
-    merged = Shell[None].combine(list(shells))
-    assert isinstance(merged, Shell)
+def _leaves(*capabilities: AbstractCapability[None]) -> list[AbstractCapability[None]]:
+    """The leaves of an agent built with `capabilities`, which combines those sharing an id."""
+    return leaf_capabilities(Agent(TestModel(), deps_type=type(None), capabilities=list(capabilities)).root_capability)
+
+
+def _shell(*capabilities: AbstractCapability[None]) -> Shell[None]:
+    [merged] = [leaf for leaf in _leaves(*capabilities) if isinstance(leaf, Shell)]
     return merged
 
 
-def _file_system(*file_systems: FileSystem[None]) -> FileSystem[None]:
-    merged = FileSystem[None].combine(list(file_systems))
-    assert isinstance(merged, FileSystem)
+def _file_system(*capabilities: AbstractCapability[None]) -> FileSystem[None]:
+    [merged] = [leaf for leaf in _leaves(*capabilities) if isinstance(leaf, FileSystem)]
     return merged
+
+
+def _coders(
+    capability_type: type[Shell[None]] | type[FileSystem[None]], coder: Coder[None]
+) -> AbstractCapability[None]:
+    """`Coder`'s own leaf of `capability_type`, every field of which counts as stated."""
+    [leaf] = [leaf for leaf in leaf_capabilities(coder) if isinstance(leaf, capability_type)]
+    return leaf
 
 
 def test_both_declare_a_default_id() -> None:
@@ -44,32 +59,43 @@ def test_defaults_keep_their_plain_types() -> None:
 
 
 def test_a_field_is_stated_when_the_constructor_is_passed_it_even_at_its_default() -> None:
-    """`Shell(default_timeout=30.0)` is the class default, and still narrows a longer timeout."""
-    assert _shell(state_all(Shell(default_timeout=270.0)), Shell(default_timeout=30.0)).default_timeout == 30.0
-    assert _shell(state_all(Shell(default_timeout=270.0)), Shell()).default_timeout == 270.0
-    assert _shell(state_all(Shell(default_timeout=270.0)), Shell(None, ['pytest'])).allowed_commands == ['pytest']
+    """`Shell(default_timeout=30.0)` is the class default, and still narrows `Coder`'s 270 seconds."""
+    assert _shell(_coders(Shell, Coder()), Shell(default_timeout=30.0)).default_timeout == 30.0
+    assert _shell(_coders(Shell, Coder()), Shell()).default_timeout == 270.0
+    assert _shell(_coders(Shell, Coder()), Shell(None, ['pytest'])).allowed_commands == ['pytest']
 
 
 def test_every_construction_path_keeps_what_was_stated() -> None:
     """`copy` and `deepcopy` keep the record; `from_spec` records the spec's arguments; `replace()` states all."""
-    coders = state_all(Shell(default_timeout=270.0))
-    assert _shell(coders, copy.copy(Shell())).default_timeout == 270.0
-    assert _shell(coders, copy.deepcopy(Shell(default_timeout=10.0))).default_timeout == 10.0
+    assert _shell(_coders(Shell, Coder()), copy.copy(Shell())).default_timeout == 270.0
+    assert _shell(_coders(Shell, Coder()), copy.copy(Shell(default_timeout=10.0))).default_timeout == 10.0
+    assert _shell(_coders(Shell, Coder()), copy.deepcopy(Shell(default_timeout=10.0))).default_timeout == 10.0
     from_spec = Shell.from_spec(allowed_commands=['pytest'])
     assert isinstance(from_spec, Shell)
-    assert _shell(coders, from_spec).default_timeout == 270.0
-    assert _shell(coders, replace(Shell(), allow_interactive=True)).default_timeout == 30.0
+    merged = _shell(_coders(Shell, Coder()), from_spec)
+    assert (merged.allowed_commands, merged.default_timeout) == (['pytest'], 270.0)
+    assert _shell(_coders(Shell, Coder()), replace(Shell(tools=['shell']))).default_timeout == 30.0
+
+
+def test_a_field_assigned_after_construction_is_stated() -> None:
+    file_system = FileSystem[None]()
+    file_system.read_only_patterns = ['private/**']
+    merged = _file_system(_coders(FileSystem, Coder(unrestricted_filesystem=True)), file_system)
+    assert list(merged.read_only_patterns) == ['private/**']
+    # What `Shell` resolves in its own `__post_init__`, the built-in denylist, still isn't stated.
+    assert list(_shell(Shell(), Shell(denied_commands=['git'])).denied_commands) == ['git']
 
 
 def test_the_deprecated_read_only_name_is_stated_as_the_new_one() -> None:
     with pytest.warns(HarnessDeprecationWarning):
-        old = FileSystem(protected_patterns=['docs/**'])
-    assert list(_file_system(state_all(FileSystem(read_only_patterns=[])), old).read_only_patterns) == ['docs/**']
+        old = FileSystem[None](protected_patterns=['docs/**'])
+    merged = _file_system(_coders(FileSystem, Coder(unrestricted_filesystem=True)), old)
+    assert list(merged.read_only_patterns) == ['docs/**']
 
 
 def test_shell_fields_left_at_their_default_take_no_part() -> None:
-    merged = _shell(Shell(default_timeout=300.0, tools=['shell']), Shell(allowed_commands=['pytest']))
-    assert (merged.default_timeout, list(merged.tools), list(merged.allowed_commands)) == (300.0, ['shell'], ['pytest'])
+    merged = _shell(Shell(default_timeout=200.0, tools=['shell']), Shell(allowed_commands=['pytest']))
+    assert (merged.default_timeout, list(merged.tools), list(merged.allowed_commands)) == (200.0, ['shell'], ['pytest'])
     assert (merged.max_output_chars, merged.max_log_bytes) == (50_000, 100_000_000)
 
     plain = _shell(Shell(), Shell())
@@ -97,7 +123,6 @@ def test_shell_lists_and_limits_conjoin() -> None:
             denied_operators=['|'],
             max_output_chars=5_000,
             max_file_bytes=2_000,
-            persist_cwd=True,
             allow_interactive=True,
             env={'A': '1', 'B': '2'},
             denied_env_patterns=['GEMINI_*'],
@@ -105,7 +130,8 @@ def test_shell_lists_and_limits_conjoin() -> None:
     )
     assert (list(merged.denied_commands), list(merged.denied_operators)) == (['git', 'rm'], ['>', '|'])
     assert (merged.max_output_chars, merged.max_log_bytes, merged.max_file_bytes) == (1_000, None, 2_000)
-    assert (merged.persist_cwd, merged.allow_interactive) == (True, False)
+    assert merged.allow_interactive is False
+    assert _shell(Shell(persist_cwd=True), Shell()).persist_cwd is True
     assert (merged.env, merged.secret_env, list(merged.denied_env_patterns)) == (
         {'A': '1', 'B': '2'},
         {'TOKEN': 'x'},
@@ -185,21 +211,23 @@ def test_file_system_fields_conjoin() -> None:
     [
         ((None, '/'), None),
         (('/', '.'), '.'),
-        (('../..', '..'), '..'),
-        (('/', '/srv/app', '/srv'), '/srv/app'),
-        (('C:/', 'C:/repo'), 'C:/repo'),
+        (('../..', '..', None), None),
+        (('/', '/srv/app', '/srv/app/'), '/srv/app'),
     ],
 )
 def test_the_innermost_root_dir_wins(roots: tuple[str | None, ...], innermost: str | None) -> None:
-    assert _file_system(*(FileSystem(root_dir=root) for root in roots)).root_dir == innermost
+    assert _file_system(*(FileSystem[None](root_dir=root) for root in roots)).root_dir == innermost
 
 
 @pytest.mark.parametrize(
     ('first', 'second', 'match'),
     [
         (FileSystem(allowed_patterns=['src/**']), FileSystem(allowed_patterns=['docs/**']), 'holds one list'),
-        (FileSystem(root_dir='/srv/a'), FileSystem(root_dir='/srv/b'), 'not inside one another'),
-        (FileSystem(root_dir='/srv'), FileSystem(root_dir='..'), 'some are relative and some absolute'),
+        # Absolute roots compare only once the workspace resolves them, symlinks included.
+        (FileSystem(root_dir='/srv/outer'), FileSystem(root_dir='/srv/outer/parent'), 'only be compared'),
+        (FileSystem(), FileSystem(root_dir='/other'), 'only be compared'),
+        (FileSystem(root_dir='/srv'), FileSystem(root_dir='..'), 'only be compared'),
+        (FileSystem(root_dir='/', denied_patterns=['etc/**']), FileSystem(), 'relative to their own `root_dir`'),
         (FileSystem(tools=['read_file']), FileSystem(tools=['write_file']), 'no entry is in all of them'),
         (FileSystem(max_retries=1), FileSystem(max_retries=2), 'disagree on `max_retries`'),
     ],

@@ -199,6 +199,7 @@ class FileSystem(RecordsStated, AbstractCapability[AgentDepsT]):
         retries: object = self.max_retries
         if retries is not None and (not isinstance(retries, int) or isinstance(retries, bool) or retries < 0):
             raise ValueError(f'max_retries must be a non-negative integer, got {self.max_retries!r}')
+        super().__post_init__()
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
@@ -228,10 +229,17 @@ class FileSystem(RecordsStated, AbstractCapability[AgentDepsT]):
         tools = intersection(
             cls._stated_values(file_systems, 'tools'), owner='FileSystem', field='tools', empty_means_all=False
         )
+        root_dir = _innermost_root([fs.root_dir for fs in file_systems])
+        patterned = [
+            fs.root_dir
+            for fs in file_systems
+            if fs.allowed_patterns or fs.denied_patterns or any(cls._stated_values([fs], 'read_only_patterns'))
+        ]
+        _require_patterns_on_their_root(patterned, root_dir)
         return replace(
             file_systems[-1],
             cwd=None,
-            root_dir=_innermost_root([fs.root_dir for fs in file_systems]),
+            root_dir=root_dir,
             allowed_patterns=allowed[0] if allowed else [],
             denied_patterns=union(fs.denied_patterns for fs in file_systems),
             read_only_patterns=union(read_only_lists) if read_only_lists else _DEFAULT_READ_ONLY,
@@ -288,36 +296,46 @@ class FileSystem(RecordsStated, AbstractCapability[AgentDepsT]):
         return self._toolset
 
 
+def _spelling(root: str | Path | None) -> str:
+    """`root` as the workspace spells it, normalized; `None`, the working directory, as `.`."""
+    return '.' if root is None else posixpath.normpath(workspace_path(Path(root)))
+
+
 def _innermost_root(roots: Sequence[str | Path | None]) -> str | Path | None:
     """The root inside every one of `roots`, `None` being the working directory.
 
-    Every root must contain the working directory, so the roots lie on one line of its ancestors and the
-    innermost is inside all of them. A root spelled relative (`..`) and one spelled absolute can't be
-    compared before the workspace resolves them, so they are refused.
+    Every root must contain the working directory. `/` contains every directory, and `..` chains are
+    ancestors of the working directory, so those compare before the workspace resolves anything. Any other
+    absolute root can only be compared once the workspace has resolved it, symlinks included, so a different
+    root beside it is refused rather than guessed at.
     """
-    if any(root is None for root in roots):
-        return None
-    spellings = {posixpath.normpath(workspace_path(Path(root))): root for root in roots if root is not None}
-    if '.' in spellings:
-        return spellings['.']
+    distinct = {_spelling(root): root for root in reversed(roots) if _spelling(root) != '/'}
+    if not distinct:
+        return roots[-1]
+    if len(distinct) == 1:
+        return next(iter(distinct.values()))
     # A Windows path such as `C:/repo` is absolute too, as `root_spelling` reads it.
-    absolute = [s for s in spellings if posixpath.isabs(s) or PureWindowsPath(s).drive]
-    if absolute and len(absolute) < len(spellings):
+    absolute = [spelling for spelling in distinct if posixpath.isabs(spelling) or PureWindowsPath(spelling).drive]
+    if absolute:
         raise UserError(
-            'These `FileSystem` capabilities share an id, so every `root_dir` applies, but some are relative and '
-            f'some absolute ({", ".join(map(repr, spellings))}), which can only be compared in the workspace. '
-            'Spell them the same way, or give each `FileSystem` its own `id` to keep them apart.'
+            'These `FileSystem` capabilities share an id, so every `root_dir` applies, but '
+            f'{", ".join(map(repr, distinct))} can only be compared once the workspace resolves them. '
+            'Give them one `root_dir`, or give each `FileSystem` its own `id` to keep them apart.'
         )
-    # The longest spelling is innermost: the most `..` components is outermost, and so is the shortest
-    # absolute path.
-    if not absolute:
-        return spellings[min(spellings, key=lambda spelling: spelling.count('..'))]
-    innermost = max(absolute, key=len)
-    for spelling in absolute:
-        if posixpath.commonpath([spelling, innermost]) != spelling:
+    # Only `.` and `..` chains are left: the fewest `..` is innermost.
+    return distinct[min(distinct, key=lambda spelling: spelling.count('..'))]
+
+
+def _require_patterns_on_their_root(roots: Sequence[str | Path | None], root_dir: str | Path | None) -> None:
+    """Refuse a combination that would check patterns against a root other than the one they were written for.
+
+    `roots` are the roots of the instances that state patterns. Patterns match paths relative to the root, so
+    `project/private` under `/repo` would match nothing under `/repo/project`.
+    """
+    for root in roots:
+        if _spelling(root) != _spelling(root_dir):
             raise UserError(
-                'These `FileSystem` capabilities share an id, so every `root_dir` applies, but '
-                f'{spelling!r} and {innermost!r} are not inside one another, so no working directory is inside both. '
-                'Give each `FileSystem` its own `id` to keep them apart.'
+                'These `FileSystem` capabilities share an id, so every one of their patterns applies, but patterns '
+                f'match paths relative to their own `root_dir`, and {root!r} is not the combined root {root_dir!r}. '
+                'Give them one `root_dir`, or give each `FileSystem` its own `id` to keep them apart.'
             )
-    return spellings[innermost]

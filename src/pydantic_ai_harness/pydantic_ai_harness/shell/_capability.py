@@ -170,6 +170,7 @@ class Shell(RecordsStated, AbstractCapability[AgentDepsT]):
             warn_argument_ignored('Shell', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE)
         if self.denied_commands is _DEFAULT_DENIED_COMMANDS:
             self.denied_commands = [] if self.allowed_commands else list(_DEFAULT_DENIED_COMMANDS)
+        super().__post_init__()
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:

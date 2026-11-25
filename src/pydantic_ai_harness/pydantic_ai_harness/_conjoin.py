@@ -30,9 +30,11 @@ class RecordsStated:
 
     Recorded in `__new__`, which receives the constructor's arguments, so the dataclass `__init__` and its
     signature stay as they are. The record is a plain attribute, not a field, so it is not in `repr`,
-    equality, the agent spec or its schema. `copy` and `deepcopy` keep it. `dataclasses.replace()` and
-    `from_spec` call the constructor, so they record what they pass: `from_spec` the spec's own arguments,
-    and `replace()` every field, so a `replace()`d copy counts every field as stated, on every Python version.
+    equality, the agent spec or its schema. A field assigned after construction counts as stated too; the
+    class's own `__post_init__` calls this one last, so what it resolves itself does not. `copy` and `deepcopy`
+    keep it. `dataclasses.replace()` and `from_spec` call the constructor, so they record what they pass:
+    `from_spec` the spec's own arguments, and `replace()` every field, so a `replace()`d copy counts every
+    field as stated, on every Python version.
     """
 
     __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
@@ -43,6 +45,15 @@ class RecordsStated:
         positional = [field.name for field in cls.__dataclass_fields__.values() if field.init and not field.kw_only]
         instance._stated = frozenset(positional[: len(args)]) | frozenset(kwargs)
         return instance
+
+    def __post_init__(self) -> None:
+        """Mark construction done: a field assigned from now on counts as stated."""
+        object.__setattr__(self, '_constructed', True)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        super().__setattr__(name, value)
+        if name in self.__dataclass_fields__ and self.__dict__.get('_constructed'):
+            object.__setattr__(self, '_stated', self._stated | {name})
 
     @classmethod
     def _stated_values(cls, capabilities: Iterable[RecordsStated], name: str) -> list[Any]:

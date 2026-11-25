@@ -225,9 +225,11 @@ def test_what_coder_widens_only_through_its_own_parameters() -> None:
     unrestricted = Agent(TestModel(), capabilities=[Coder(unrestricted_filesystem=True), FileSystem(root_dir='/')])
     [files] = [leaf for leaf in leaf_capabilities(unrestricted.root_capability) if isinstance(leaf, FileSystem)]
     assert files.root_dir == '/'
-    narrowed = Agent(TestModel(), capabilities=[Coder(), FileSystem(root_dir='/', read_only_patterns=['docs/**'])])
+    narrowed = Agent(TestModel(), capabilities=[Coder(), FileSystem(root_dir='/')])
     [files] = [leaf for leaf in leaf_capabilities(narrowed.root_capability) if isinstance(leaf, FileSystem)]
     assert files.root_dir is None
+    protected = Agent(TestModel(), capabilities=[Coder(), FileSystem(read_only_patterns=['docs/**'])])
+    [files] = [leaf for leaf in leaf_capabilities(protected.root_capability) if isinstance(leaf, FileSystem)]
     assert '**/.git' in files.read_only_patterns and 'docs/**' in files.read_only_patterns
 
 
