@@ -8052,8 +8052,8 @@ async def test_google_tool_output_cut_off_by_max_tokens(allow_model_requests: No
         ):
             if stream:
                 # With no output in the response, `run_stream()` raises as it's entered.
-                async with agent.run_stream(prompt) as result:
-                    await result.get_output()  # pragma: no cover
+                async with agent.run_stream(prompt):
+                    pass
             else:
                 await agent.run(prompt)
 
