@@ -243,8 +243,8 @@ says so and reports the nested calls already made.
 
 Sleep isn't execution time and has its own per-snippet allowance of `max_duration_seconds`; a sleep
 past it raises `TimeoutError` without waiting and keeps the session. The allowance applies even in a
-Temporal workflow, where the execution-time limit is off; only `resource_limits='unlimited'` removes
-it.
+Temporal workflow or an Azure Durable Task orchestration, where the execution-time limit is off;
+only `resource_limits='unlimited'` removes it.
 
 Monty also caps cumulative suspensions with `max_suspensions` (default 1,000 per session, shared by
 consecutive snippets). External calls, OS callbacks, name lookups, and future resolutions each
@@ -284,11 +284,12 @@ Nested calls also count toward the run's
 would exceed the limit ends the run with `UsageLimitExceeded`, as a top-level call does, even if the
 snippet catches it.
 
-When snippets run in Temporal workflow code, `CodeMode` disables `max_duration_seconds`, even an
-explicit override: `run_code` is replayed there, and measuring elapsed time could make replay
-diverge from the recorded workflow. Turns that run as activities keep it (see [Remote turns as
-activities](#remote-turns-as-activities)). The memory and suspension caps still apply. Put
-time-bounded work behind a Temporal activity.
+When snippets run in Temporal workflow code or Azure Durable Task orchestrator code, `CodeMode`
+disables `max_duration_seconds`, even an explicit override: `run_code` is replayed there, and
+measuring elapsed time could make replay diverge from the recorded history. Turns that run as
+Temporal activities keep it (see [Remote turns as activities](#remote-turns-as-activities)). The
+memory and suspension caps still apply. Put time-bounded work behind an activity: a tool the
+snippet calls (see [Azure Durable Task durability](#azure-durable-task-durability)).
 
 ## Concurrent tool calls
 
@@ -619,9 +620,9 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbo
 ```
 
 The pool's `request_timeout` (default 10 seconds) adds a per-turn transport deadline, on top of
-`max_duration_seconds` outside Temporal. In Temporal workflow code, Code Mode disables the execution
-timer for deterministic replay, and the transport deadline still applies. When turns run as
-activities (see [Remote turns as activities](#remote-turns-as-activities)), the timer applies again
+`max_duration_seconds` outside durable execution. In Temporal workflow code and Azure Durable Task
+orchestrator code, Code Mode disables the execution timer for deterministic replay, and the transport
+deadline still applies. When turns run as activities (see [Remote turns as activities](#remote-turns-as-activities)), the timer applies again
 and the factory is called once per turn, so return a new pool from each call.
 
 Use `https://` unless the network is trusted: the connection carries your agent's tool calls and
@@ -804,10 +805,18 @@ As under Temporal, `run_code` executes in orchestrator code and nested tool call
 `asyncio.gather` schedules concurrently. The SDK replays the orchestrator from the start each time an
 activity finishes, so every replay re-runs the run's snippets against the recorded results: a sandbox
 sleep is a durable timer, `max_duration_seconds` is off in orchestrator code, and `os_access`
-callbacks, `mount` access and host-clock calls must be deterministic. While a snippet computes, the
-orchestrator thread waits for it, so move heavy computation into a tool. Turns don't run as
-activities on Azure Durable Task, so a remote `monty_sandbox` must be reachable whenever the
-orchestrator replays.
+callbacks (called on the orchestrator thread), `mount` access and host-clock calls must be
+deterministic. A host answer that changes on replay, and with it the activities or timers a snippet
+schedules, fails the orchestration with the SDK's `NonDeterminismError`.
+
+Nothing bounds a snippet's computation in orchestrator code. The orchestrator thread waits while a
+snippet computes, and unlike Temporal, whose deadlock detector fails a workflow task that doesn't
+yield within 2 seconds, Durable Task has no such check, so a model-written `while True: pass` blocks
+the orchestrator thread indefinitely, and the run's timeout and cancellation wait with it. Keep
+snippets to orchestration, calling tools and combining their results, and put heavy or unbounded
+computation in a tool: tools run as activities, outside replay, where a tool can apply its own time
+limit. Turns don't run as activities on Azure Durable Task, so a remote `monty_sandbox` must
+be reachable whenever the orchestrator replays.
 
 ## Observability
 
@@ -962,8 +971,9 @@ CodeMode(os_policy={'datetime': 'system', 'timezone': 'Europe/Paris'})
 Sandboxed code then reads the worker's clock in that zone with no handler: `datetime.datetime.now()`,
 `astimezone()`, `%Z`, and `time.tzname` all agree. A `datetime` value in place of `'system'` freezes
 the clock; `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but reads its naive
-local time in that zone rather than as UTC. In a Temporal workflow a `'system'` clock or
-`random_start` is read again on replay, so keep the defaults (or fixed values) there.
+local time in that zone rather than as UTC. In a Temporal workflow or an Azure Durable
+Task orchestration a `'system'` clock or `random_start` is read again on replay, so keep the
+defaults (or fixed values) there.
 
 ## Sandbox restrictions
 
@@ -979,7 +989,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
   `time.time()`, and unseeded `random` fail unless an `os_access` handler implements them (the
   built-in `OSAccess` does), or, for the clock, `os_policy` sets one; `time.sleep` and
   `asyncio.sleep` really wait, up to the sleep allowance in [Resource limits](#resource-limits), and
-  in a Temporal workflow a sleep is a durable timer
+  in a Temporal workflow or an Azure Durable Task orchestration a sleep is a durable timer
 - No `import *`
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv`/`os.environ` need an
   `os_access` handler
