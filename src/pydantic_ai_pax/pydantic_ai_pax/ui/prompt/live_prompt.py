@@ -107,9 +107,9 @@ class LivePrompt:
         self.queue_changed = queue_changed
         self.queue_in_toolbar = queue_in_toolbar
         self.ctrl_enter_steers = ctrl_enter_steers()
-        """Whether Ctrl+Enter (and Ctrl-J, which older terminals send for it) steers, as Alt+Enter does.
+        """Whether Ctrl+Enter (and Ctrl+J, which older terminals send for it) steers, as Alt+Enter does.
 
-        Otherwise Ctrl+Enter is Enter and Ctrl-J inserts a newline.
+        Otherwise Ctrl+Enter is Enter and Ctrl+J inserts a newline.
         """
         self.notice = ''
         self._chord_prefix = ''
@@ -321,7 +321,8 @@ class LivePrompt:
 
         A history walk owns the arrows, so recalling a `/command` shows its suggestions
         without trapping the walk on them. Tab picks a suggestion and hands the arrows to
-        the popup; editing the recalled text ends the walk, as does typing a fresh draft.
+        the popup. Editing recalled text keeps the walk only when it protects a nonempty
+        original draft; editing the restored draft ends the walk.
         """
         return bool(self._completions) and (self.buffer.history_index is None or self._selection >= 0)
 
@@ -620,7 +621,7 @@ class LivePrompt:
         The first of the candidate rows that fits wins; a draft's own keys outrank the Esc hint and the time.
         """
         head, glyph, reset = '─ Working ', self.spinner().frame(self.clock()), '\x1b[0m'
-        # Esc, unlike Ctrl-C, never counts toward the double press that quits.
+        # Esc, unlike Ctrl+C, never counts toward the double press that quits.
         candidates = [[format_duration(self.interrupts.elapsed), 'Esc to interrupt']]
         # Queue and steer hints only matter once there is something to send.
         if self.queued_messages or self.buffer.text.strip():

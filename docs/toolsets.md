@@ -457,6 +457,8 @@ This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
+A prepare function can't change which capability a tool belongs to either: a definition it returns keeps the [`capability_id`][pydantic_ai.tools.ToolDefinition.capability_id] of the one it replaces, even if the function built a new `ToolDefinition`. The tool's content stays [held to that capability's authority](capabilities/custom.md#where-the-content-came-from).
+
 To chain transformations, call [`prepared()`][pydantic_ai.toolsets.AbstractToolset.prepared] on any toolset.
 
 ```python {title="prepared_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py"}
@@ -891,7 +893,7 @@ Toolsets can be built dynamically ahead of each agent run or run step using a fu
 
 To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator.
 
-By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run.
+By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run. Either way, the toolset it returns gets the [per-run and per-step lifecycle](#per-run-and-per-step-lifecycle) hooks: `for_run` before it is entered, and `for_run_step` on every step.
 
 Instructions from the toolset the function returns are attributed to the dynamic toolset, so for them to use `on_change='append'`, give the decorator an `id`: `@agent.toolset(id='orders')`.
 

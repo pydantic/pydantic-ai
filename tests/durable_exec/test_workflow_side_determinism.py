@@ -215,7 +215,7 @@ _ACCEPTED: dict[tuple[str, str, str], tuple[int, str]] = {
     ),
     (f'{CORE}/agent/__init__.py', '_run_lifecycle_hooks', 'asyncio.wait'): (1, _WAIT_STATE),
     (f'{CORE}/durable_exec/temporal/_activity_execution.py', '_await_with_single_cancel', 'asyncio.wait'): (
-        1,
+        2,
         'waits on a single activity or child-workflow handle, so there is no completion order to reproduce',
     ),
 }
