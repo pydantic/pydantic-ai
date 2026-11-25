@@ -29,9 +29,21 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 from ..append_only import skip_unless_installed
-from ..capability_cases import DURABLE_TEMPORAL
+from ..capability_cases import DURABLE_TEMPORAL, SCENARIO_RUNS, Scenario
 from ._contracts import CASES, assert_cell_holds, contract_cases
-from ._durable_cases import PROMPT, build_case, counting_requests, installed, journal_breaks, one_call_per_response
+from ._durable_cases import (
+    OBSERVED,
+    PROMPT,
+    assert_scenario_cell,
+    build_case,
+    counting_requests,
+    installed,
+    journal_breaks,
+    observe_run,
+    one_call_per_response,
+    scenario_agent,
+    scenario_breaks,
+)
 
 pytest.importorskip('temporalio')
 
@@ -60,6 +72,15 @@ class CaseWorkflow:
     @workflow.run
     async def run(self, name: str) -> str:
         return (await _AGENTS[name].run(PROMPT)).output
+
+
+@workflow.defn(failure_exception_types=[Exception])
+class ScenarioWorkflow:
+    """Runs the agent of the scenario it's given, and returns what the run observed."""
+
+    @workflow.run
+    async def run(self, scenario: str) -> list[str]:
+        return await observe_run(_AGENTS[scenario])
 
 
 @dataclass
@@ -101,12 +122,14 @@ async def temporal(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[_T
             )
         except UserError as error:
             refused[name] = str(error)
+    for scenario in SCENARIO_RUNS:
+        _AGENTS[scenario] = scenario_agent(scenario, TemporalDurability[None](activity_config=_activity_config()))
     async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
         client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
         async with Worker(
             client,
             task_queue=TASK_QUEUE,
-            workflows=[CaseWorkflow],
+            workflows=[CaseWorkflow, ScenarioWorkflow],
             plugins=[AgentPlugin(agent) for agent in _AGENTS.values()],
             workflow_runner=_runner(),
         ):
@@ -177,3 +200,33 @@ async def test_a_case_replays_equal_under_temporal(
     skip_unless_installed(name, CASES[name].requires)
     count_requests = counting_requests(monkeypatch, tmp_path)
     assert_cell_holds('temporal', DURABLE_TEMPORAL, name, await _breaks(name, temporal, count_requests))
+
+
+@pytest.mark.parametrize('scenario', sorted(SCENARIO_RUNS))
+async def test_a_scenario_observes_the_same_on_temporal_replay(scenario: Scenario, temporal: _Temporal) -> None:
+    """The events and enqueued messages a run observes come back the same, each once, when a `Replayer` replays it."""
+    workflow_id = f'{scenario}-{uuid.uuid4()}'
+    try:
+        first = await temporal.client.execute_workflow(
+            ScenarioWorkflow.run,
+            scenario,
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=READINESS_WAIT_TIMEOUT),
+        )
+    except WorkflowFailureError as error:
+        breaks = [f'the workflow fails: {_causes(error)}']
+    else:
+        history = await temporal.client.get_workflow_handle(workflow_id).fetch_history()
+        agent = _AGENTS[scenario]
+        assert agent.name is not None
+        OBSERVED.pop(agent.name, None)
+        replayer = Replayer(
+            workflows=[ScenarioWorkflow],
+            plugins=[PydanticAIPlugin(), AgentPlugin(agent)],
+            workflow_runner=_runner(),
+        )
+        replay = await replayer.replay_workflow(history, raise_on_replay_failure=False)
+        breaks = [] if replay.replay_failure is None else [f'the history does not replay: {replay.replay_failure!r}']
+        breaks += scenario_breaks(scenario, first, OBSERVED.get(agent.name, []))
+    assert_scenario_cell('temporal', scenario, breaks)

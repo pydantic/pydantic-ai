@@ -22,6 +22,7 @@ from ..capability_cases import (
     ENGINE_CAPABILITIES,
     ENGINE_SUPPORT,
     ENGINES,
+    SCENARIO_RUNS,
     SCENARIO_SUPPORT,
     SCENARIOS,
     Support,
@@ -115,12 +116,22 @@ def test_every_scenario_has_a_cell_for_every_engine() -> None:
         assert set(cells) == set(ENGINES), scenario
 
 
-def test_every_scenario_names_a_public_capability() -> None:
-    """A scenario is `<capability>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it."""
+SCENARIO_OWNERS_BESIDES_CAPABILITIES = ('RunContext',)
+"""What owns a scenario that no capability does: `RunContext`'s `emit` and `enqueue`."""
+
+
+def test_every_scenario_names_its_owner() -> None:
+    """A scenario is `<owner>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it."""
     for scenario in SCENARIOS:
-        capability, _, name = scenario.partition('.')
-        assert capability in PUBLIC and name, scenario
+        owner, _, name = scenario.partition('.')
+        assert (owner in PUBLIC or owner in SCENARIO_OWNERS_BESIDES_CAPABILITIES) and name, scenario
         assert scenario not in CASES and scenario not in ENGINE_SUPPORT, scenario
+
+
+def test_the_d1_suites_run_every_run_context_scenario() -> None:
+    """No capability's tests run a `RunContext` scenario, so the D1 suites must, through `SCENARIO_RUNS`."""
+    run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
+    assert run_context <= set(SCENARIO_RUNS)
 
 
 def test_every_broken_scenario_cell_has_a_signature() -> None:

@@ -32,6 +32,7 @@ import pytest
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.planning import (
@@ -45,9 +46,19 @@ from pydantic_ai_harness.shell import Shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ..append_only import skip_unless_installed
-from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS
+from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS, SCENARIO_RUNS, Scenario
 from ._contracts import CASES, assert_cell_holds, contract_cases
-from ._durable_cases import build_case, counting_requests, installed, journal_breaks, one_call_per_response
+from ._durable_cases import (
+    assert_scenario_cell,
+    build_case,
+    counting_requests,
+    installed,
+    journal_breaks,
+    observe_run,
+    one_call_per_response,
+    scenario_agent,
+    scenario_breaks,
+)
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
@@ -149,6 +160,36 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
         engine='dbos',
     )
     assert_cell_holds('dbos', DURABLE_DBOS, name, breaks)
+
+
+def _scenario_workflow(scenario: Scenario) -> Callable[[], Awaitable[list[str]]]:
+    agent = scenario_agent(scenario, DBOSDurability[None]())
+
+    @DBOS.workflow(name=f'{agent.name}_workflow')
+    async def run() -> list[str]:
+        return await observe_run(agent)
+
+    return run
+
+
+_SCENARIO_WORKFLOWS = {scenario: _scenario_workflow(scenario) for scenario in SCENARIO_RUNS}
+
+
+@pytest.mark.parametrize('scenario', sorted(SCENARIO_RUNS))
+async def test_a_scenario_observes_the_same_after_dbos_recovery(scenario: Scenario, dbos: DBOS) -> None:
+    """The events and enqueued messages a run observes come back the same, each once, when recovery re-executes it."""
+    workflow_id = str(uuid.uuid4())
+    try:
+        with SetWorkflowID(workflow_id):
+            first = await _SCENARIO_WORKFLOWS[scenario]()
+    except UserError as error:
+        breaks = [f'the engine refuses: {error}']
+    else:
+        steps = await dbos.list_workflow_steps_async(workflow_id)
+        handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
+        recovered = await handle.get_result(polling_interval_sec=0.01)
+        breaks = scenario_breaks(scenario, first, recovered)
+    assert_scenario_cell('dbos', scenario, breaks)
 
 
 _SHELL_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_shell_'))
