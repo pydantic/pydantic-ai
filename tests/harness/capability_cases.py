@@ -493,7 +493,7 @@ CASES: dict[str, CapabilityCase] = {
                     'capability__planning.read_plan',
                     'capability__planning.read_plan',
                 ),
-                # Its run fails under Temporal (a `broken` cell in `ENGINE_SUPPORT`, #7971), so nothing is recorded there.
+                # Its run fails under Temporal (a `refused` cell in `ENGINE_SUPPORT`, #7971), so nothing is recorded there.
             ),
         ),
     ),
