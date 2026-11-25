@@ -52,6 +52,8 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('websockets not installed', allow_module_level=True)
 
+pytestmark = [pytest.mark.xdist_group(name='temporal-responses-websocket')]
+
 _agent: Agent[None, str]
 
 

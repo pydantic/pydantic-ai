@@ -8,7 +8,27 @@ update accounts, and look up contacts as the signed-in user.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
-![Inside your agent, the Pylon capability connects to Pylon's hosted MCP server at mcp.usepylon.com with an OAuth access token, and the model sees the server's tools under the pylon_ prefix. Pylon REST API tokens are rejected. The agent sees the same issues, accounts and contacts the signed-in user sees, and read_only=True drops tools the server does not mark read-only.](https://pydantic.dev/docs/ai/img/harness/pylon.svg)
+```mermaid
+flowchart TB
+    accTitle: Pylon: support issues, accounts and contacts through Pylon's MCP server
+    accDescr: Inside your agent, the model calls tools of the Pylon capability, prefixed pylon_, and gets their results. Your auth function gives the capability a token for each run. The capability sends tools/call with an OAuth Bearer token to the Pylon MCP server at mcp.usepylon.com, which rejects a Pylon REST API token, and with read_only=True it drops the tools not marked read-only.
+    subgraph agent["Your agent"]
+        model(["model"])
+        auth["auth function"]
+        pylon["Pylon()<br/>pylon_&lt;tool&gt;"]:::capability
+    end
+    dropped["tools not marked<br/>read-only, with<br/>read_only=True"]:::blocked
+    server["Pylon MCP server<br/>mcp.usepylon.com"]:::external
+    rest["Pylon REST API token"]:::blocked
+    model <-->|"tool call, result"| pylon
+    auth -->|"token for each run"| pylon
+    pylon <-->|"tools/call,<br/>OAuth Bearer token"| server
+    pylon -.-x|"drops"| dropped
+    server -.-x|"rejects"| rest
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Before you start
 

@@ -90,8 +90,8 @@ def test_sandboxes_check_owns_every_sandbox_backend(backend: str) -> None:
 
 
 def test_ui_check_owns_the_clai2_live_session_socket() -> None:
-    """The same-UID control socket is a local input path, reviewed with CLAI 2's other local control surface."""
-    path = 'src/pydantic_clai2/pydantic_clai2/runtime/live_registry.py'
+    """The same-UID control socket is a local input path, reviewed with Pax's other local control surface."""
+    path = 'src/pydantic_ai_pax/pydantic_ai_pax/runtime/live_registry.py'
     assert select([_file(path)]) == {'ui': [path]}
 
 
@@ -100,6 +100,7 @@ def test_ui_check_owns_the_clai2_live_session_socket() -> None:
     [
         ('pydantic_ai_slim/pydantic_ai/messages.py', 'ui'),
         ('pydantic_ai_slim/pydantic_ai/realtime/_utils.py', 'url-fetch'),
+        ('.github/scripts/agent_provider_health.py', 'telemetry'),
     ],
 )
 def test_joint_path_runs_its_check_and_the_general_check(path: str, check: str) -> None:

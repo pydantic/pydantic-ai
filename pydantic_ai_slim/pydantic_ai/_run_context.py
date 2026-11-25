@@ -8,10 +8,11 @@ from collections import Counter
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import field
+from copy import copy
+from dataclasses import field, replace
 from datetime import datetime
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, overload
 
 import anyio
 from opentelemetry.trace import NoOpTracer, Tracer
@@ -29,8 +30,10 @@ from ._enqueue import (
     PendingMessagePriority,
     PendingMessageQueue,
     QueueChangeMethod,
+    hand_built_capability_speech,
     remove_pending,
     set_pending_priority,
+    stamp_capability_parts,
 )
 from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import UserError
@@ -65,6 +68,23 @@ CustomEventT = TypeVar('CustomEventT', bound=_messages.CustomEvent)
 CapabilityEventT = TypeVar('CapabilityEventT', bound=_messages.CapabilityEvent)
 
 
+class OutputSubmitter(Protocol):
+    """Backs [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output] for one agent run."""
+
+    @property
+    def tools(self) -> dict[str, ToolDefinition]: ...
+
+    async def submit(self, ctx: RunContext[Any], tool_name: str, args: dict[str, Any]) -> None: ...
+
+    def record_prepared_tool_defs(self, tool_defs: list[ToolDefinition]) -> None:
+        """Record the output tools as this step's `prepare_output_tools` hooks left them."""
+        ...
+
+    def discard_submission(self, tool_call_id: str) -> None:
+        """Drop the output the tool call submitted, since a hook skipped its execution."""
+        ...
+
+
 class EventStreamBuffer(list[_messages.AgentStreamEvent]):
     """The run's event buffer, notifying waiting stream mergers as soon as an event lands.
 
@@ -76,7 +96,7 @@ class EventStreamBuffer(list[_messages.AgentStreamEvent]):
 
     def __init__(self, iterable: Sequence[_messages.AgentStreamEvent] = ()):
         super().__init__(iterable)
-        self.waiters: list[asyncio.Event] = []
+        self.waiters: list[asyncio.Event] = []  # noqa: TID251  (not converted to anyio yet)
 
     def append(self, event: _messages.AgentStreamEvent) -> None:
         super().append(event)
@@ -391,6 +411,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
     """Per-run capability instances used for durable recovery, for internal use only."""
 
+    _output_submitter: OutputSubmitter | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    Backs [`output_tools`][pydantic_ai.tools.RunContext.output_tools] and
+    [`submit_output`][pydantic_ai.tools.RunContext.submit_output]. `None` in synthetic contexts that
+    aren't backed by a running agent.
+    """
+
     _run_held_toolsets: dict[str, RunHeldToolset[Any]] | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 
@@ -595,13 +623,26 @@ class RunContext(Generic[RunContextAgentDepsT]):
         durability capability or is run outside a durable container. A Prefect task inherits its flow's
         context, so it is `True` there.
         """
+        durability = self._durability
+        return durability is not None and durability.in_durable_context
+
+    @property
+    def _in_durable_unit(self) -> bool:
+        """Whether this code runs inside a durable unit, like a step or task, whose result the engine records.
+
+        This includes units the user created, like a tool wrapped in its own DBOS step or Prefect task.
+        """
+        durability = self._durability
+        return durability.in_durable_unit if durability is not None else in_durable_unit()
+
+    @property
+    def _durability(self) -> BaseDurabilityCapability[object] | None:
         # Looked up through `sys.modules` like `realtime`: without the module, no durability capability exists.
         durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
         if durable_exec is None or self.agent is None:
-            return False
+            return None
         base: type[BaseDurabilityCapability[object]] = durable_exec.BaseDurabilityCapability
-        durability = base.from_agent(self.agent)
-        return durability is not None and durability.in_durable_context
+        return base.from_agent(self.agent)
 
     @property
     def last_attempt(self) -> bool:
@@ -728,6 +769,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
             self._anchored_evidence.loaded_capability_ids & self._deferred_capability_ids
         )
 
+    def _is_deferred_capability_dispatch_active(self, capability_id: str) -> bool:
+        """`capability_id in self._dispatch_active_capability_ids` for a configured deferred capability.
+
+        Answers without building the set, which hook dispatch would otherwise do once per capability. A
+        deferred id is never in the always-on part of that set, since ids are unique once duplicates are
+        combined, so it is in the set exactly when a load record or the anchored evidence names it.
+        """
+        return (
+            capability_id in self.loaded_capability_ids
+            or capability_id in self._anchored_evidence.loaded_capability_ids
+        )
+
     @property
     @deprecated(
         '`available_capability_ids` is deprecated, use `active_capability_ids` instead: for a '
@@ -812,19 +865,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         # Demanding a separate reveal marker on top would strand a tool permanently: history
         # processing can drop the reveal while keeping the load, and from there the model has no way
         # back, because a capability-owned tool is not in the search corpus and reloading an
-        # already-active capability is refused.
+        # already-active capability is a no-op that reveals nothing.
         #
         # Both halves are load-bearing. The capability must still be *configured* deferred, not just
         # named by a load record in history: a capability that has since been reconfigured as
         # always-on never announced its tools as a bundle, so a stale record must not reveal them.
-        evidence = self._anchored_evidence
         if (
             capability_id is not None
             and capability_id in self._deferred_capability_ids
-            and capability_id in self.loaded_capability_ids | evidence.loaded_capability_ids
+            and self._is_deferred_capability_dispatch_active(capability_id)
         ):
-            return capability_id in self._dispatch_active_capability_ids
-        if tool_def.name not in self.discovered_tool_names | evidence.discovered_tool_names:
+            return True
+        if tool_def.name not in self.discovered_tool_names | self._anchored_evidence.discovered_tool_names:
             return False
         # A run holds to load, then reveal, then call. `discovered_tool_names` is raw history
         # evidence and only answers the middle step, so it can name a tool whose capability was
@@ -839,6 +891,82 @@ class RunContext(Generic[RunContextAgentDepsT]):
         if self.tool_manager is None or self.tool_manager.tools is None:
             return {}
         return {name: tool.tool_def for name, tool in self.tool_manager.tools.items()}
+
+    @property
+    def output_tools(self) -> dict[str, ToolDefinition]:
+        """The outputs a tool can submit with [`submit_output`][pydantic_ai.tools.RunContext.submit_output], one per output type, keyed by name.
+
+        With tool output they're the agent's output tools, as this step's
+        [`prepare_output_tools`][pydantic_ai.capabilities.AbstractCapability.prepare_output_tools] hooks left
+        them, or before the run's first step, as they're declared. With native or prompted output they're
+        the output tools tool output would have used, so they have the same names and parameter schemas
+        whatever the output mode. Plain text output has one that takes the text as `response`. Image output
+        and [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] can't be submitted.
+
+        Empty when this `RunContext` isn't backed by a running agent in this process, such as inside a
+        Temporal activity.
+        """
+        submitter = self._live_output_submitter
+        return {} if submitter is None else submitter.tools
+
+    async def submit_output(self, tool_name: str, args: dict[str, Any]) -> None:
+        """Submit the agent run's output, as if the model had called that output tool.
+
+        `args` goes through the same validation, output hooks, output functions and output validators as
+        output the model produces in the run's output mode.
+
+        From a tool, or a capability's `before_tool_execute`, `after_tool_execute` or `wrap_tool_execute`
+        hook for its call, the submission belongs to that tool call. When it's accepted, the tool still
+        returns as usual and its result is recorded in message history, and its call then counts as the
+        final output tool call of the model response it belongs to: the run ends after this step's tool
+        calls, the same way [`end_strategy`][pydantic_ai.agent.Agent.end_strategy] decides for an output
+        tool call at that position. If the tool fails or asks for a retry after submitting, the submission
+        is dropped. A rejected submission uses up one output retry, like a rejected output from the model,
+        and raises [`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError] carrying the feedback. Let it
+        propagate, re-raising it if the tool catches exceptions broadly: the calling tool call is then
+        answered with that feedback, without counting against the tool's own retries. A tool that swallows
+        it returns as if it succeeded, so the model never sees the feedback.
+
+        From anywhere else in the run, such as another capability hook, the run ends with an accepted
+        submission at the next point it would otherwise continue: before the next model request is sent,
+        in which case that request isn't sent, or, from `after_model_request`, as an output tool call at
+        the start of the model response, so `end_strategy` decides what happens to its tool calls. A
+        rejected submission raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] carrying the feedback,
+        and doesn't use up an output retry, as there's no tool call to answer: catch it to try again, or
+        let it propagate to have the hook's own `ModelRetry` behavior apply, such as a model retry from a
+        model request hook. A run can then submit again, but only one submission outside a tool call can
+        be accepted.
+
+        Args:
+            tool_name: The name of one of [`output_tools`][pydantic_ai.tools.RunContext.output_tools].
+            args: The arguments, matching that definition's `parameters_json_schema`.
+
+        Raises:
+            UserError: If this isn't called during an agent run in the same process as the run itself (so not
+                inside a Temporal activity), if it's called from a durable step or task (such as a DBOS step or
+                Prefect task, including one the tool's own code runs), if it's called while output is being
+                validated or processed (from an output function, output validator or output hook), if the tool
+                call or, outside a tool call, the run already submitted an output, or if the run already has its
+                final result.
+            ToolRetryError: If a submission from a tool call was rejected, carrying the feedback for the model.
+                If the output retries have run out, the run then fails with
+                [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], unless another output
+                in the same response becomes the final result.
+            ModelRetry: If a submission from outside a tool call was rejected, carrying the feedback.
+        """
+        submitter = self._live_output_submitter
+        if submitter is None:
+            raise UserError(
+                '`submit_output` can only be called during an agent run, in the same process as the run itself.'
+            )
+        await submitter.submit(self, tool_name, args)
+
+    @property
+    def _live_output_submitter(self) -> OutputSubmitter | None:
+        # Read via `__dict__`, like `cancel`: `TemporalRunContext.__getattribute__` raises a
+        # serialize-it-yourself error for absent fields, but the submitter is a live view of the
+        # run's graph state that can never cross an activity boundary.
+        return self.__dict__.get('_output_submitter')
 
     def tool_name_for_kind(self, kind: _messages.ToolKindLike) -> str | None:
         """The name of the tool with this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] in the current run step, or `None` if there is none.
@@ -931,22 +1059,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 '`emit` is only available during an agent run (from tools, capability hooks, or '
                 '`AgentRun.emit`). This `RunContext` has no event stream to emit into.'
             )
-        capability_id: str | None = None
         capability = self._capability
-        if capability is not None:
-            capability_id = next(
-                (run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id
-            )
-        elif (
-            (tool_name := self._dispatched_tool_name or self.tool_name) is not None
-            and self.tool_manager is not None
-            and self.tool_manager.tools is not None
-        ):
-            if (tool := self.tool_manager.tools.get(tool_name)) is not None:
-                # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
-                # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
-                tool_capability_id = tool.tool_def.capability_id
-                capability_id = tool_capability_id if tool_capability_id in self.capabilities else None
+        capability_id = self._calling_capability_id()
 
         if isinstance(event, _messages.CapabilityEvent):
             if capability_id is None:
@@ -982,6 +1096,35 @@ class RunContext(Generic[RunContextAgentDepsT]):
         await dispatch_event_immediate(self, event)
         return event
 
+    def _attributed_to(self, capability: AbstractCapability[RunContextAgentDepsT]) -> RunContext[RunContextAgentDepsT]:
+        """This context as `capability`'s own, so what it enqueues is held to the capability's authority.
+
+        For code a capability runs outside its hooks, such as its `for_run` or a `DynamicCapability` factory.
+        """
+        if type(self) is RunContext:
+            ctx = copy(self)
+            ctx._capability = capability
+            return ctx
+        # Subclasses can rely on reconstruction, e.g. TemporalRunContext's field availability guards.
+        return replace(self, _capability=capability)
+
+    def _calling_capability_id(self) -> str | None:
+        """The run id of the capability whose hook or tool is using this context, or `None` outside one."""
+        capability = self._capability
+        if capability is not None:
+            return next((run_id for run_id, cap in self.capabilities.items() if cap is capability), capability.id)
+        if (
+            (tool_name := self._dispatched_tool_name or self.tool_name) is not None
+            and self.tool_manager is not None
+            and self.tool_manager.tools is not None
+        ):
+            if (tool := self.tool_manager.tools.get(tool_name)) is not None:
+                # `CapabilityOwnedToolset` stamps the owning capability's run id on the tool definition,
+                # covering capabilities that rely on an implicit (derived) id as well as explicit ones.
+                tool_capability_id = tool.tool_def.capability_id
+                return tool_capability_id if tool_capability_id in self.capabilities else None
+        return None
+
     def enqueue(
         self,
         *content: EnqueueContent,
@@ -999,6 +1142,18 @@ class RunContext(Generic[RunContextAgentDepsT]):
         next one sent. Anything else is added to the history as its own messages, and so is content
         enqueued after it.
 
+        Called from a capability's hook or tool, except an app-facing callback capability such as
+        [`Hooks`][pydantic_ai.capabilities.Hooks], whose functions are the application's, it stamps each
+        [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] that has no `capability_id` yet with the capability's
+        run id, and warns on a bare [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] or user text that looks
+        like a framework frame, which a capability part should say instead. Nothing it enqueues gets more authority than
+        the capability's [`authority`][pydantic_ai.capabilities.AbstractCapability] ceiling: a part whose source has
+        more is stored with the capability as its source, a `SystemPromptPart` below `'operator'` becomes an instruction
+        part lowered to the ceiling, user content, a `UserPromptPart` or retry feedback at `'none'` becomes data framed
+        as the capability's, and retry feedback at `'user'` becomes plain user text. Below `'operator'`, a request part
+        with no such treatment, such as a framework state record, a `CompactionPart` or a typed tool return, raises
+        `UserError`, as does a `SpeechPart` at `'none'`.
+
         Args:
             *content: One or more [`EnqueueContent`][pydantic_ai.run.EnqueueContent] items.
                 Adjacent [`UserContent`][pydantic_ai.messages.UserContent] (a `str` or multi-modal
@@ -1012,9 +1167,10 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end; at a deferred-tool pause the
-                    content is added to the history instead, unless every call in the paused step
-                    was deferred). From a `before_model_request`
+                    or a redirect if the agent would otherwise end; a run that pauses adds the
+                    content to the history instead, or leaves it queued; see
+                    [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run)).
+                    From a `before_model_request`
                     hook, that's the request being prepared. In a realtime session, an active
                     assistant response is allowed to finish before the content is sent; otherwise it
                     is sent immediately.
@@ -1045,7 +1201,36 @@ class RunContext(Generic[RunContextAgentDepsT]):
         )
         if pending is None:
             return None
+        if isinstance(self.pending_messages, EnqueueGuard):
+            # Nowhere to deliver to, such as inside a durable unit, where the run's state isn't all available: its
+            # queue says why before anything else is looked up.
+            self.pending_messages.append(pending)
+        capability_id = self._calling_capability_id()
+        owner = self._capability if self._capability is not None else self.capabilities.get(capability_id or '')
+        # An app-facing callback capability, such as `Hooks`, runs the application's own functions: what they enqueue
+        # is the application's, as `emit` treats their events.
+        if owner is not None and owner._emits_app_events:  # pyright: ignore[reportPrivateUsage]
+            capability_id = None
+        elif owner is not None and capability_id is None:
+            # A capability with no `id` of its own before the run has registered it, such as in its `for_run`: still
+            # held to its authority, and named by its class.
+            capability_id = type(owner).__name__
+        # Read before stamping, which converts what a capability below operator authority built by hand.
+        hand_built = None if capability_id is None else hand_built_capability_speech(pending.messages)
+        if capability_id is not None:
+            ceiling: _messages.Authority = 'operator' if owner is None else owner._effective_authority  # pyright: ignore[reportPrivateUsage]
+            # Stamped before it's queued: once queued, a run on another thread may deliver it at once, and it must
+            # never reach the model with more authority than the capability has.
+            pending.messages = stamp_capability_parts(pending.messages, capability_id, ceiling)
         self.pending_messages.append(pending)
+        if hand_built is not None:
+            warnings.warn(
+                f'Capability {capability_id!r} enqueued {hand_built}. Define a `CapabilityPart` subclass for what it '
+                'says, so the framework renders it in the right voice and your code can find it again by type: '
+                'see https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts',
+                UserWarning,
+                stacklevel=2,
+            )
         return pending.enqueue_id
 
     def dequeue(self, enqueue_id: str) -> bool:
@@ -1244,6 +1429,37 @@ def with_tool_name_layer(ctx: RunContext[AgentDepsT], layer: str | Mapping[str, 
 def without_tool_name_path(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """The context to hand user code that runs while tools are listed, without the listing's tool name path."""
     return with_tool_name_path(ctx, ()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
+
+
+_IN_DURABLE_UNIT: ContextVar[bool] = ContextVar('pydantic_ai.durable_exec.in_durable_unit', default=False)
+
+
+def in_durable_unit() -> bool:
+    """Whether the current task is running a durable unit's body, set by `CallableOperationBackend`.
+
+    In-process engines need it where their own container check stays true inside a unit (Prefect's
+    `FlowRunContext` is set inside a task), so a `DurableWorkspace` call or a capability's durable
+    operation called from a tool goes direct. Every engine also sets it around a model unit, so an
+    `OpenAIResponsesModel` uses HTTP unless it can borrow an explicit outer model or agent scope's
+    WebSocket on the same event loop.
+    """
+    return _IN_DURABLE_UNIT.get()
+
+
+@contextmanager
+def durable_unit_scope() -> Generator[None]:
+    """Mark the current task as running a durable unit's body.
+
+    `CallableOperationBackend` enters it around every unit. A `RegisteredOperationBackend` enters it
+    around its worker-side handler, so a nested durable operation called from inside the unit (a
+    `DurableWorkspace` call, a capability's durable operation called from a tool) runs directly
+    instead of scheduling a second unit.
+    """
+    token = _IN_DURABLE_UNIT.set(True)
+    try:
+        yield
+    finally:
+        _IN_DURABLE_UNIT.reset(token)
 
 
 _CURRENT_RUN_CONTEXT: ContextVar[RunContext[Any] | None] = ContextVar(

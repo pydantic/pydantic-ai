@@ -15,6 +15,7 @@ from pydantic_ai.durable_exec import (
     OperationConfigRole,
 )
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import Model
 from pydantic_ai.tools import RunContext
 
 
@@ -53,11 +54,13 @@ class _RecordingBackend(CallableOperationBackend[None]):
         results: list[tuple[str, object]],
         isolated: bool,
         journal: Mapping[str, object],
+        failure: type[Exception] = RuntimeError,
     ) -> None:
         super().__init__(namer=JournalOperationNamer(agent_name), config=_RecordingConfig())
         self.isolated = isolated
         self.calls = calls
         self.fail_operations = fail_operations
+        self.failure = failure
         self.results = results
         self.journal = journal
 
@@ -75,7 +78,7 @@ class _RecordingBackend(CallableOperationBackend[None]):
             # As on replay, the journaled result comes back at once, without running the operation.
             return self.journal[name]
         if name in self.fail_operations:
-            raise RuntimeError(f'{name} failed')
+            raise self.failure(f'{name} failed')
         if self.isolated:
             # As on a worker, the operation doesn't see the caller's context variables.
             async def run() -> object:
@@ -103,8 +106,10 @@ class RecordingDurability(BaseDurabilityCapability[object]):
         fail_operations: frozenset[str] = frozenset(),
         isolated: bool = False,
         journal: Mapping[str, object] | None = None,
+        failure: type[Exception] = RuntimeError,
+        models: Mapping[str, Model] | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(models=models)
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.results: list[tuple[str, object]] = []
         """Each completed operation's result, as an engine would journal it."""
@@ -112,10 +117,20 @@ class RecordingDurability(BaseDurabilityCapability[object]):
         self.isolated = isolated
         self.journal: Mapping[str, object] = journal or {}
         """Results by operation name, replayed instead of running the operation."""
+        self.failure = failure
+        """What the engine raises for an operation in `fail_operations`."""
 
     @property
     def in_durable_context(self) -> bool:
         return True
 
     def get_durable_operation_backend(self) -> _RecordingBackend:
-        return _RecordingBackend(self.name, self.calls, self.fail_operations, self.results, self.isolated, self.journal)
+        return _RecordingBackend(
+            self.name,
+            self.calls,
+            self.fail_operations,
+            self.results,
+            self.isolated,
+            self.journal,
+            self.failure,
+        )

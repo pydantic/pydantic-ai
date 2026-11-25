@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pydantic_ai._utils import gather
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.workspaces import Workspace, WorkspaceError
-from pydantic_ai_harness.filesystem._ripgrep import RipgrepMissing, run_ripgrep
+from pydantic_ai_harness.file_system._ripgrep import RipgrepNotFoundError, run_ripgrep
 from pydantic_ai_harness.smart_search._structure import Range, python_ranges
 
 # A search is bounded by files, lines and bytes, sized to fit the Linux kernel (~96k files, ~39M lines,
@@ -47,7 +47,7 @@ def split_lines(text: str) -> list[str]:
     return lines
 
 
-class LineTooLong(ValueError):
+class LineTooLongError(ValueError):
     """A single line is too long to judge (minified or generated source)."""
 
 
@@ -81,7 +81,7 @@ def windows(
             continue
         if len(text) > MAX_CHUNK_CHARS:
             if size == 1:
-                raise LineTooLong(f'line exceeds {MAX_CHUNK_CHARS} characters: {path}:{first_line + i}')
+                raise LineTooLongError(f'line exceeds {MAX_CHUNK_CHARS} characters: {path}:{first_line + i}')
             out.extend(windows(part, path, first_line=first_line + i, size=max(1, size // 2), overlap=0, symbol=symbol))
         else:
             out.append(
@@ -152,7 +152,7 @@ async def _ripgrep_files(
             listing=True,
             accept=lambda record: accept(record.path),
         )
-    except RipgrepMissing:
+    except RipgrepNotFoundError:
         raise ToolFailed(
             '`smart_search` needs ripgrep (`rg`) in the workspace. Install it there '
             '(the `coder` extra does for a local workspace), or use regular file search instead.'

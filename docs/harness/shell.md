@@ -14,7 +14,23 @@ processes that keep running across the runs of a conversation.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls Shell tools: run_command, start_command, check_command and stop_command, or the opt-in shell tool. Before a command runs, its executable is checked against allowed_commands or denied_commands, its shell operators against denied_operators, and interactive commands are blocked; then it runs as a process in the workspace's working directory with only the workspace's environment plus Shell(env=). Four example calls show pytest running and returning labelled output, rm rejected by the default denylist, a dev server started in the background with an ID, and that ID used to check on or stop it.](../img/harness/shell.svg)
+```mermaid
+flowchart TB
+    accTitle: Shell: run commands in the workspace, with guardrails
+    accDescr: The model calls Shell tools, such as run_command and start_command, and gets results. Before a command runs, the capability checks the executable, shell operators and interactive commands. A passing command runs as a process in the workspace, with its working directory and environment, and one in denied_commands, such as rm by default, is rejected and the model gets a retry.
+    model(["model"])
+    shell["Shell()<br/>run_command,<br/>start_command"]:::capability
+    checks["checks the executable,<br/>shell operators and<br/>interactive commands"]:::capability
+    process["workspace process<br/>its working directory<br/>and environment"]:::external
+    rejected["denied_commands,<br/>such as rm by default:<br/>the model gets a retry"]:::blocked
+    model <-->|"tool call, result"| shell
+    shell -->|"before it runs"| checks
+    checks -->|"runs"| process
+    checks -.-x|"rejects"| rejected
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
@@ -186,16 +202,25 @@ of output past the limit before it is emptied. No telemetry spans are emitted
 for a clear: it shows as the notice in the log and, when it happens while a
 `shell` call waits, as `truncated=True` on its finished event.
 
+On a Windows workspace (`WindowsWorkspace`), `shell` and the background-command
+tools run PowerShell, and the `shell` tool's description tells the model so. A
+stop runs the job's `stop.ps1`, the stop command a `shell` result names: it ends
+the process tree with `taskkill` while the PID is still the job's, and records
+the exit code. `max_log_bytes` applies there too. `run_command` is not offered
+there, since it wraps commands in `sh`, so `persist_cwd` has no effect;
+`max_file_bytes` needs a POSIX workspace.
+
 ## Environment control
 
 A command gets the workspace's environment plus `Shell(env=...)`.
 `LocalWorkspace` passes on your `PATH`, `HOME`, `LANG`, `LC_ALL` and `LC_CTYPE`
-and nothing else; a sandbox has whatever its provider configures. Two fields shape what `Shell` adds:
+and nothing else; a sandbox has whatever its provider configures. Three fields shape what `Shell` adds:
 
 | Field | Effect |
 |---|---|
 | `env` | Variables added to every command's environment, on top of the workspace's own. |
 | `denied_env_patterns` | Glob patterns (`fnmatch`) for variable names dropped from `env`. Mirrors `denied_commands`. |
+| `secret_env` | Secrets added like `env`, with their values masked in what the tools return. |
 
 `denied_env_patterns` filters `Shell(env=)` only, not `LocalWorkspace(env=)`, so
 you can build `env` from a larger mapping and drop sensitive names on the way in.
@@ -220,7 +245,26 @@ credentials), and its prefixes are coarse, so `GOOGLE_*` also strips
 non-credential vars like `GOOGLE_APPLICATION_CREDENTIALS`. Treat it as a
 starting point and add your own patterns.
 
-Neither is a security boundary: with `LocalWorkspace`, a command can still read
+`secret_env` is for credentials the application injects for commands to use, such as a per-job
+token. Each value reaches commands like `env`, unfiltered by `denied_env_patterns`, and is
+replaced with `[REDACTED:<name>]` in tool results and retry or failure messages before the model
+sees them:
+
+```python
+from pydantic_ai_harness import Shell
+
+Shell(secret_env={'DEPLOY_TOKEN': 'tok-...'})
+```
+
+Masking replaces exact occurrences of each value in what the tools return. It guards against a
+secret printed by accident, not against a command that transforms it (`base64`, `rev`, `cut`, JSON
+escaping) or splits it between stdout and stderr. That includes a command the model writes on
+purpose to reveal it. A short or common value, such as `1` or `true`, is masked everywhere it
+appears. A command can also put a secret where the model reads it unmasked, such as a file or a
+`shell` log it opens with a file tool, and the `shell` tool's events carry raw output. Empty values
+are not masked.
+
+None of these is a security boundary: with `LocalWorkspace`, a command can still read
 your process's environment and your files. Use a sandbox for untrusted commands.
 
 ## Background processes
@@ -264,6 +308,21 @@ does), the job's directory stays behind and the result ends with
 `setsid` where the job cannot get a process group of its own, only the wrapper
 process is signalled, which does not stop the command or its children.
 
+To have a command's output sent to the model when it ends, instead of the model polling, run
+`run_command` in the background with [`BackgroundTools`](background-tools.md):
+
+```python
+from pydantic_ai_harness import BackgroundTools, Shell
+
+capabilities = [Shell(), BackgroundTools(tools=['run_command'])]
+```
+
+The model gets a started message at once and the command's output as a follow-up
+message when it exits, within its `timeout_seconds`; the run waits for it. To hear
+when a process prints something, have the command wait for it, such as
+`until grep -m1 ERROR server.log; do sleep 1; done`. Commands read stdin at end of
+file: there is no tool to write to a running command's input.
+
 Background commands and the `shell` tool keep their status and output in files, which needs `mv` and `base64` on the workspace's `PATH`. Without them the call fails at once and names the missing tool.
 
 ## Persistent commands
@@ -293,14 +352,15 @@ the model gets the handles back, does other work, and polls the status file.
 
 The command outlives the agent run and the event loop, so a server the model
 starts keeps serving for as long as the workspace does. Nothing wakes the agent
-when the command finishes; the model polls. Cancelling a foreground call kills the command. Logs that were handed back are
-never deleted: clean them up yourself, and keep verbose commands' output
-bounded.
+when the command finishes; the model polls, or uses `run_command` with
+`BackgroundTools` (above). Cancelling a foreground call kills the command. Logs
+that were handed back are never deleted: clean them up yourself, and keep
+verbose commands' output bounded.
 
 `allowed_commands`, `denied_commands`, `denied_operators`, `allow_interactive`,
-`env`, and `denied_env_patterns` apply to `shell` exactly as to `run_command`.
-`persist_cwd` does not: every `shell` command starts in the workspace's working
-directory, whatever `run_command` has tracked. Commands and logs live in the workspace; the
+`env`, `denied_env_patterns`, and `secret_env` apply to `shell` exactly as to
+`run_command`. `persist_cwd` does not: every `shell` command starts in the
+workspace's working directory, whatever `run_command` has tracked. Commands and logs live in the workspace; the
 workspace calls that start and poll them are not replay-safe.
 
 Each `shell` call emits progress events in the `shell` namespace, so a UI can
@@ -371,6 +431,7 @@ Shell(
     allow_interactive=False,       # allow TTY-style commands
     env=None,                      # variables added to the workspace's environment
     denied_env_patterns=[],        # glob patterns dropped from env
+    secret_env=None,               # secrets added to env and masked in tool results
     tools=RUN_SCOPED_TOOL_NAMES,   # which tools to register ('shell' for persistent commands)
 )
 ```
@@ -405,7 +466,7 @@ workspace capability in Python).
 
 ## Durable execution
 
-`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`; the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](../durable_execution/temporal.md#harness-command-timeouts) to raise it.
+`Shell` works under Temporal, DBOS, and Prefect, including background jobs and `persist_cwd`, and runs its `shell` tool under [Azure Durable Task](azure-durable-task.md) and [Render Workflows](render-workflows.md); the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. A sticky `cd` is kept in the workspace under `.pydantic-ai-harness/shell/run-state/`, so a new worker continues in the same directory. A retried `start_command` reattaches to its job instead of starting a second process; if a launch failed partway, the retry reports a pending launch, and once the process has stopped you remove its files under `.pydantic-ai-harness/shell/`. On Temporal a command runs within its activity's timeout, 300 seconds for `run_command` and `shell`; see [command timeouts](../durable_execution/temporal.md#harness-command-timeouts) to raise it.
 
 ## Further reading
 

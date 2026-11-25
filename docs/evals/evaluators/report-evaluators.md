@@ -554,7 +554,7 @@ class ClassificationSummary(ReportEvaluator):
 
 ### Async Report Evaluators
 
-Report evaluators support async `evaluate` methods, handled automatically via `evaluate_async`:
+Report evaluators support async `evaluate` methods, handled automatically via `evaluate_async`, which also awaits any other awaitable a sync `evaluate` returns, such as an `asyncio.Future` or `asyncio.Task`:
 
 ```python
 from dataclasses import dataclass

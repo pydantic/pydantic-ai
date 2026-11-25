@@ -5,6 +5,7 @@ from abc import ABC
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from types import MemberDescriptorType
 from typing import Annotated, Any, Literal, Union
 
 import pydantic
@@ -39,6 +40,7 @@ __all__ = (
     'ImageSize',
     'ImageQuality',
     'MemoryTool',
+    'ComputerTool',
     'MCPServerTool',
     'XaiFileSearchToolSettings',
     'FileSearchProviderSettings',
@@ -207,7 +209,16 @@ class AbstractNativeTool(ABC):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        NATIVE_TOOL_TYPES[cls.kind] = cls
+        NATIVE_TOOL_TYPES[cls._declared_kind()] = cls
+
+    @classmethod
+    def _declared_kind(cls) -> str:
+        kind = cls.kind
+        if isinstance(kind, MemberDescriptorType):
+            # `@dataclass(slots=True)` recreates the class, re-running `__init_subclass__` with `kind` turned into a
+            # slot, so the kind is the field's default.
+            return cls.__dataclass_fields__['kind'].default
+        return kind
 
     @classmethod
     def __get_pydantic_core_schema__(
@@ -216,11 +227,27 @@ class AbstractNativeTool(ABC):
         if cls is not AbstractNativeTool:
             return core_schema.no_info_wrap_validator_function(_validate_without_provider_field_warnings, handler(cls))
 
-        tools = NATIVE_TOOL_TYPES.values()
+        # A snapshot: a type registering on another thread would change the registry mid-iteration.
+        tools = tuple(NATIVE_TOOL_TYPES.values())
         if len(tools) == 1:  # pragma: no cover
             tools_type = next(iter(tools))
         else:
-            tools_annotated = [Annotated[tool, pydantic.Tag(tool.kind)] for tool in tools]
+            # The discriminator is a function, so the union's JSON schema is a `oneOf` with no mapping, and each
+            # tool's `kind` is a plain string with a default. Pinning `kind` keeps `{'kind': 'code_execution'}` from
+            # matching several members; it's required because a document without one loads as no built-in tool.
+            # `kind=tool._declared_kind()` binds each member's own kind: a closure would see only the last one.
+            tools_annotated = [
+                Annotated[
+                    tool,
+                    pydantic.Tag(tool._declared_kind()),
+                    pydantic.GetPydanticSchema(
+                        get_pydantic_json_schema=lambda schema, handler, kind=tool._declared_kind(): {
+                            'allOf': [handler(schema), {'properties': {'kind': {'const': kind}}, 'required': ['kind']}]
+                        }
+                    ),
+                ]
+                for tool in tools
+            ]
             tools_type = Annotated[Union[tuple(tools_annotated)], pydantic.Discriminator(_tool_discriminator)]  # noqa: UP007
 
         return handler(tools_type)
@@ -874,6 +901,38 @@ class MemoryTool(AbstractNativeTool):
 
 
 @dataclass(kw_only=True)
+class ComputerTool(AbstractNativeTool):
+    """A provider's own computer use tool, sent to the model in place of the request's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool, which still runs the calls.
+
+    It is sent only when the request has exactly one `computer` tool the model can call. With none, an
+    [`optional`][pydantic_ai.native_tools.AbstractNativeTool.optional] one is left out and a required one raises
+    [`UserError`][pydantic_ai.exceptions.UserError]. With more than one, the request raises `UserError`. See
+    [Computer Tool](../native-tools.md#computer-tool).
+
+    Supported by:
+
+    * Anthropic, on the models listed under [Anthropic](../models/anthropic.md#computer-use)
+    * OpenAI Responses, on the models listed under [OpenAI](../models/openai.md#computer-use)
+    * Google, on the models listed under [Google](../models/google.md#computer-use)
+    """
+
+    display_size: tuple[int, int]
+    """The `(width, height)` of the screenshots the model sees.
+
+    `ComputerUse` fills it in from the latest screenshot, or from the display before the first one. Anthropic's
+    `computer_20250124` and `computer_20251124` tools send it to the model as the display size;
+    `computer_toolset_20260801` has no size field. Gemini uses it to turn its 0-999 positions into pixels.
+    """
+
+    kind: str = 'computer'
+    """The kind of tool."""
+
+    def __post_init__(self) -> None:
+        if min(self.display_size) < 1:
+            raise ValueError(f'`ComputerTool.display_size` must be positive, got {self.display_size}.')
+
+
+@dataclass(kw_only=True)
 class MCPServerTool(AbstractNativeTool):
     """A native tool that allows your agent to use MCP servers.
 
@@ -1168,5 +1227,5 @@ SUPPORTED_NATIVE_TOOLS = frozenset(NATIVE_TOOL_TYPES.values())
 """Set of all native tool types."""
 
 NATIVE_TOOLS_REQUIRING_CONFIG: frozenset[type[AbstractNativeTool]] = frozenset(
-    {FileSearchTool, MCPServerTool, MemoryTool, AdvisorTool, _tool_search.ToolSearchTool}
+    {FileSearchTool, MCPServerTool, MemoryTool, ComputerTool, AdvisorTool, _tool_search.ToolSearchTool}
 )

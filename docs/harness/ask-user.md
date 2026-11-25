@@ -11,7 +11,24 @@ Let the model ask the user multiple-choice questions mid-run and wait for the an
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls ask_user_question with one to ten multiple-choice questions. AskUser validates them, rejecting calls outside the limits or with control characters as a retry, then hands an AskUserRequest to the answerer you supply, such as a terminal menu or a web form. The answerer returns an AskUserResponse. The model gets the picked labels keyed by header, a sentence saying the user declined or did not answer in time, or, with answerer=None, the run pauses with DeferredToolRequests until you answer in a later run.](../img/harness/ask-user.svg)
+```mermaid
+flowchart TB
+    accTitle: Ask User: the model asks multiple-choice questions mid-run
+    accDescr: The model sends questions to ask_user_question on AskUser and gets the picked labels. AskUser rejects calls outside the limits or with control characters as a retry and passes an AskUserRequest to the answerer, a terminal menu or web form, which asks the user the questions and returns the picks as an AskUserResponse. With answerer=None, the run pauses with DeferredToolRequests.
+    model(["model"])
+    ask["AskUser()<br/>ask_user_question"]:::capability
+    rejected["outside the limits or<br/>control characters"]:::blocked
+    answerer["answerer<br/>terminal menu<br/>or web form"]
+    paused["run pauses with<br/>DeferredToolRequests"]
+    user(["user"])
+    model <-->|"questions, picked labels"| ask
+    ask -.-x|"rejects as a retry"| rejected
+    ask <-->|"AskUserRequest,<br/>AskUserResponse"| answerer
+    ask -.->|"answerer=None"| paused
+    answerer <-->|"questions, picks"| user
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## Usage
 
@@ -39,7 +56,7 @@ async def pick_first(request: AskUserRequest) -> AskUserResponse:
 agent = Agent('{{ anthropic:xlarge }}', capabilities=[AskUser(answerer=pick_first)])
 ```
 
-`pick_first` stands in for a real UI. [CLAI](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2/)
+`pick_first` stands in for a real UI. [Pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax/)
 ships a terminal menu built on the same protocol; a web form would be another.
 
 ## Writing an answerer
@@ -179,14 +196,22 @@ AskUser(answerer=pick_first, timeout=300)
 Each question is a [deferred tool call](../deferred-tools.md) marked as a question: the tool raises
 `CallDeferred(kind='question')`, so `DeferredToolRequests.kind()` reports `'question'` for it. `AskUser`
 then answers its own questions in its `handle_deferred_tool_calls` hook, one at a time, by calling the
-answerer through `wait_for_external_event`, the same wait [`RequestInput`](../capabilities/request-input.md) uses. That
+answerer through `wait_for_external_event`, the same wait a [`HandleDeferredToolCalls` handler that takes a resume token](../capabilities/handle-deferred-tool-calls.md#a-handler-that-takes-a-token) uses. That
 makes the wait durable on an engine that supports it:
 
 - In a plain run, the answerer is called in process.
 - On [AWS Lambda durable functions](aws-lambda.md#approvals), the answerer runs in a step that records its response, so
   a replay doesn't ask again. Since it runs in a step, it must return quickly: a person who may take a
   while should answer through a resume token, below.
-- On Temporal, DBOS, Prefect and other durable engines without support for waiting, the engine refuses
+- On [Temporal](../durable_execution/temporal.md#waiting-for-approvals-and-answers), the answerer runs in a
+  local activity that records its response, so a replay doesn't ask again, and the workflow waits for
+  an answer sent through a resume token without holding a worker. The same rule applies: return quickly.
+  The tool runs in an activity, which can't emit events yet
+  ([#7971](https://github.com/pydantic/pydantic-ai/issues/7971)), so `AskUserRequestedEvent` isn't emitted;
+  `AskUserAnsweredEvent` is. Import the module that defines the agent under
+  `workflow.unsafe.imports_passed_through()`, or the answerer is the workflow sandbox's copy, with its
+  own copies of the clients it uses ([details](../durable_execution/temporal.md#waiting-for-approvals-and-answers)).
+- On DBOS, Prefect and other durable engines without support for waiting, the engine refuses
   the wait with a `UserError`. A wait in process would not be recorded: a replay would ask the user
   again, could get a different answer than the one the run already acted on and diverge from the
   engine's history, and a restart would lose the wait.
@@ -195,7 +220,8 @@ An answerer with three required positional parameters, satisfying `TokenAnswerer
 resume token. It can answer right away as the other forms do, or hand the token on, for example in a
 Slack message, and return `None`. The answer then arrives when your code resolves the token with the
 JSON form of an `AskUserResponse`: with `resolve_external_event` from `pydantic_ai.external_events` in
-process, or through the engine's API, such as AWS Lambda's `SendDurableExecutionCallbackSuccess`.
+process, or through the engine's API, such as `resolve_external_event(client, token, payload)` from
+`pydantic_ai.durable_exec.temporal` or AWS Lambda's `SendDurableExecutionCallbackSuccess`.
 
 ```python
 from pydantic import TypeAdapter
@@ -225,9 +251,9 @@ agent = Agent('{{ anthropic:xlarge }}', capabilities=[AskUser(answerer=hand_on)]
 Because the question is a deferred call, it waits until the other tool calls from the same model
 response have finished.
 
-`AskUser` answers its questions before a `HandleDeferredToolCalls` handler or `RequestInput` is asked about what's left, wherever you list them, and its answer passes the tool's `after_tool_execute` hooks, such as result guards, as it did when the tool waited for it.
+`AskUser` answers its questions before a `HandleDeferredToolCalls` handler is asked about what's left, wherever you list them, and its answer passes the tool's `after_tool_execute` hooks, such as result guards, as it did when the tool waited for it.
 To handle every pending call in one place instead, pass `answerer=None` and answer the question in
-`RequestInput`'s `ask` with `ask_user_result`, as the next section shows for a later run.
+a `HandleDeferredToolCalls` handler with `ask_user_result`, as the next section shows for a later run.
 
 ## Pausing the run until the user answers
 

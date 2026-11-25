@@ -1,0 +1,106 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "661"
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: What is the largest city in Mexico? Name two of its neighbouring countries.
+        model: qwen/qwen3.8-27b
+        "n": 1
+        response_format:
+          type: json_schema
+          json_schema:
+            name: CityInCountry
+            schema:
+              properties:
+                city:
+                  type: string
+                country:
+                  properties:
+                    name:
+                      type: string
+                  required:
+                  - name
+                  type: object
+                  additionalProperties: false
+                neighbours:
+                  items:
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
+                    additionalProperties: false
+                  type: array
+              required:
+              - city
+              - country
+              - neighbours
+              type: object
+              additionalProperties: false
+            strict: true
+        stream: false
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-bacacf40-ae13-4177-84e5-cacdad878285
+        object: chat.completion
+        created: 1794928557
+        model: qwen/qwen3.8-27b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "{\"city\": \"Mexico City\", \"country\": {\"name\": \"Mexico\"}, \"neighbours\": [{\"name\": \"United States\"}, {\"name\": \"Guatemala\"}]}"
+          logprobs: null
+          finish_reason: stop
+        usage:
+          queue_time: 0.194914391
+          prompt_tokens: 27
+          prompt_time: 0.001692422
+          completion_tokens: 128
+          completion_time: 0.260429076
+          total_tokens: 155
+          total_time: 0.262121498
+        usage_breakdown: null
+        system_fingerprint: fp_fea14bdc83
+        x_groq:
+          id: req_01m7n18erten1vec8mz56k66nv
+          seed: 573896923
+        service_tier: on_demand
+  recorded_at: 2026-11-17T15:15:57.290401+00:00

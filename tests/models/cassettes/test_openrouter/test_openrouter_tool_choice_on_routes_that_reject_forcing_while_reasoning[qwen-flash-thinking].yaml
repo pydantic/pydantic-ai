@@ -1,0 +1,127 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "456"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: qwen/qwen3.8-flash
+        stream: false
+        messages:
+        - role: user
+          content: What's the weather in Zurich?
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: get_weather
+            description: ""
+            parameters:
+              type: object
+              properties: {}
+            strict: true
+        - type: function
+          function:
+            name: final_result
+            description: ""
+            parameters:
+              type: object
+              properties: {}
+            strict: true
+        reasoning:
+          effort: low
+          enabled: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        WWW-Authenticate,PAYMENT-REQUIRED,Payment-Receipt,PAYMENT-RESPONSE,Location,X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1794890401-eVN5o1206IzdBd7GIRlo
+        object: chat.completion
+        created: 1794890401
+        model: qwen/qwen3.8-flash
+        provider: Alibaba
+        system_fingerprint: null
+        service_tier: null
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: tool_calls
+          native_finish_reason: tool_calls
+          message:
+            role: assistant
+            content: null
+            refusal: null
+            reasoning: >-
+              The user wants the weather in Zurich. I should use the get_weather tool. It
+              takes no parameters apparently (empty object). Let me call it. Possibly it needs a
+              location param but schema says no properties. I'll just call it.
+            tool_calls:
+            - type: function
+              index: 0
+              id: call_3187cd66f4664c6895f06737
+              function:
+                name: get_weather
+                arguments: "{}"
+            reasoning_details:
+            - type: reasoning.text
+              text: >-
+                The user wants the weather in Zurich. I should use the get_weather tool. It
+                takes no parameters apparently (empty object). Let me call it. Possibly it needs a
+                location param but schema says no properties. I'll just call it.
+              format: unknown
+              index: 0
+        usage:
+          prompt_tokens: 337
+          completion_tokens: 64
+          total_tokens: 401
+          cost: 0.000046326
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 256
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.000046326
+            upstream_inference_prompt_cost: 0.000016246
+            upstream_inference_completions_cost: 0.00003008
+          completion_tokens_details:
+            reasoning_tokens: 48
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-17T04:40:04.146293+00:00

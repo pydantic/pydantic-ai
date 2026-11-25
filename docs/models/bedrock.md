@@ -20,9 +20,9 @@ AWS [recommends the `bedrock-runtime` endpoint for new applications](https://doc
 
 ## OpenAI model routes {#bedrock-openai-model-routes}
 
-GPT-OSS, GPT-5.6 Sol/Luna/Terra, GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol are available through both routes. GPT-5.4, GPT-5.5, and GPT-5.6 Cyber are available only through Mantle.
+GPT-OSS, GPT-5.6 Sol/Luna/Terra, GPT-6 Sol/Luna/Astra, and GPT-6.1 Sol/Terra are available through both routes. GPT-5.4, GPT-5.5, and GPT-5.6 Cyber are available only through Mantle.
 
-On Converse, GPT-5.6 requires a cross-region inference-profile model ID. Sol supports `us.openai.gpt-5.6-sol` and `global.openai.gpt-5.6-sol`. Luna and Terra support `us.`, `in.`, and `global.` IDs. GPT-6 Sol, Luna, Astra, and GPT-6.1 Sol support `us.` and `global.` IDs, such as `global.openai.gpt-6-sol`. See the AWS model cards for [GPT-5.6 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html), [GPT-5.6 Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html), [GPT-5.6 Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html), [GPT-6 Astra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html), and [GPT-6.1 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html) for current endpoint and regional availability.
+On Converse, GPT-5.6 requires a cross-region inference-profile model ID. Sol supports `us.openai.gpt-5.6-sol` and `global.openai.gpt-5.6-sol`. Luna and Terra support `us.`, `in.`, and `global.` IDs. GPT-6 Sol, Luna, Astra, and GPT-6.1 Sol/Terra support `us.` and `global.` IDs, such as `global.openai.gpt-6-sol`. See the AWS model cards for [GPT-5.6 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html), [GPT-5.6 Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html), [GPT-5.6 Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html), [GPT-6 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-sol.html), [GPT-6 Luna](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-luna.html), [GPT-6 Astra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html), [GPT-6.1 Sol](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html), and [GPT-6.1 Terra](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html) for current endpoint and regional availability.
 
 ## Bedrock Converse
 
@@ -120,6 +120,14 @@ Such a request is streamed behind the scenes, since a response that long can tak
 
 Bedrock reserves `maxTokens` against your tokens-per-minute quota when a request starts, so an account with a small Claude quota can see more `ThrottlingException`s. Set `max_tokens` close to the output you expect to reserve less and send a non-streaming `Converse` request.
 
+### Sampling settings on Claude
+
+As on [Anthropic](anthropic.md#sampling-settings), a Claude request that thinks drops `temperature` other than `1`, `top_p` below `0.95` and `top_k`, and Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 drop `top_p` when it's set together with `temperature`, silently, since Bedrock rejects them.
+
+### Stop sequences
+
+Converse rejects [`stop_sequences`][pydantic_ai.settings.ModelSettings.stop_sequences] with a 400 for the OpenAI (GPT and gpt-oss), xAI Grok, Qwen, Google Gemma, Z.AI GLM, Moonshot AI Kimi, MiniMax and NVIDIA Nemotron models, DeepSeek V3.2, Writer Palmyra Vision, and Mistral's Devstral, Magistral, Ministral 3, Mistral Large 3 and Voxtral. On those models, Pydantic AI drops the setting with an [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] instead of sending it, so the response isn't cut off at a stop sequence. Claude, Amazon Nova, Meta Llama, DeepSeek R1 and the older Mistral models take it.
+
 ### Thinking and structured output
 
 Claude answers a forced tool choice without thinking, and manual extended thinking
@@ -164,7 +172,7 @@ while it reasons. A `thinking` setting does not change this: `tool_choice='requi
 
 ### Claude thinking from other platforms
 
-Claude's thinking signatures and redacted thinking are verified on every platform, so history from [`AnthropicModel`](anthropic.md#history-across-platforms), on the Anthropic API or any other client, continues on a Claude model here with its thinking, and the other way round: for Claude models, `BedrockConverseModel` has the `anthropic` [canonical system](../message-history.md#sending-history-to-another-provider). It recognizes them by the profile's `bedrock_thinking_variant`, which you can set to `'anthropic'` in `profile=` for a model the name doesn't identify, such as an [application inference profile](#using-aws-application-inference-profiles). Other models keep their reasoning to Bedrock.
+Claude's thinking signatures and redacted thinking are verified on every platform, so history from [`AnthropicModel`](anthropic.md#history-across-platforms), on the Anthropic API or any other client, continues on a Claude model here with its thinking, and the other way round: for Claude models, `BedrockConverseModel` has the `anthropic` [canonical system](../message-history.md#sending-history-to-another-provider). It recognizes them by the profile's `bedrock_thinking_variant`, which you can set to `'anthropic'` in `profile=` for a model the name doesn't identify, such as an [application inference profile](#using-aws-application-inference-profiles). Other models keep their reasoning to Bedrock. For an application inference profile that routes to GPT-5.6, GPT-6 or GPT-6.1 Sol, set it to `'openai_responses'`, so their encrypted reasoning isn't sent to Claude models on Bedrock.
 
 ### Array constraints in structured output
 

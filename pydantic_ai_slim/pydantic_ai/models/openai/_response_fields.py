@@ -1,4 +1,4 @@
-"""Usage, Responses finish reasons and status, logprobs, compaction items and response-scoped tool call IDs."""
+"""Usage, Responses finish reasons, status and refusals, input transformations, logprobs and compaction items."""
 
 from __future__ import annotations as _annotations
 
@@ -6,10 +6,13 @@ from typing import Any, Literal
 
 from openai.types import chat, responses
 from openai.types.chat import ChatCompletionChunk, chat_completion_token_logprob
+from openai.types.completion_usage import CompletionUsage
 from openai.types.responses import ResponseCompactionItem
+from openai.types.responses.response import InputTransformation
 from openai.types.responses.response_status import ResponseStatus
 
 from ... import usage
+from ..._instrumentation import add_input_transformations_event
 from ..._utils import is_str_dict as _is_str_dict
 from ...messages import STANDING_PROMPT_PLANTED_KEY, CompactionPart, FinishReason, ModelResponseState
 
@@ -24,6 +27,19 @@ RESPONSES_FINISH_REASON_MAP: dict[
 }
 
 
+def report_input_transformations(transformations: list[InputTransformation]) -> list[dict[str, object]]:
+    """Report the reasoning items OpenAI withheld on the current span, and return them for `provider_details`.
+
+    On newer models, the Responses API drops a replayed reasoning item whose earlier conversation changed
+    (in testing, also one from another model) and lists it in `input_transformations`. Nothing else in
+    the response says the model answered without that reasoning. `provider_details` keeps it inspectable
+    after the run; the span event surfaces it in the trace, on the model request that lost it.
+    """
+    reported: list[dict[str, object]] = [transformation.model_dump(mode='json') for transformation in transformations]
+    add_input_transformations_event('openai', reported)
+    return reported
+
+
 def response_status_to_state(status: ResponseStatus | None, *, background: bool) -> ModelResponseState:
     """Map a Responses API status to a `ModelResponseState`.
 
@@ -36,6 +52,18 @@ def response_status_to_state(status: ResponseStatus | None, *, background: bool)
     if status in ('queued', 'in_progress'):
         return 'suspended' if background else 'incomplete'
     return 'complete'
+
+
+def response_refusal(response: responses.Response) -> str | None:
+    """The text of the last refusal in a Responses API response's output messages, if any."""
+    refusals = [
+        content.refusal
+        for item in response.output
+        if isinstance(item, responses.ResponseOutputMessage)
+        for content in item.content
+        if isinstance(content, responses.ResponseOutputRefusal)
+    ]
+    return refusals[-1] if refusals else None
 
 
 # Convert logprobs to a serializable format
@@ -93,21 +121,24 @@ def billed_web_searches(
 
     OpenAI bills native web search per search action (see
     <https://developers.openai.com/api/docs/guides/tools-web-search>) but doesn't report the count in `usage`.
-    Newer responses carry it as `tool_usage.web_search.num_requests`, which the SDK doesn't type yet; older ones
-    don't, so fall back to counting `search` actions. Reasoning models also emit `open_page` and `find_in_page`
-    actions, which aren't billed as searches. A streamed `in_progress` or `queued` snapshot returns 0: its
-    searches are counted again from the terminal event's response.
+    Newer responses carry it as `tool_usage.web_search.num_requests`, an extra field on older SDKs and a typed one on
+    newer SDKs, so it's read through `model_dump`. Older responses don't carry it, so fall back to counting `search`
+    actions. Reasoning models also emit `open_page` and `find_in_page` actions, which aren't billed as searches, and
+    OpenAI can return a `web_search_call` item without any action, which isn't counted either. A streamed
+    `in_progress` or `queued` snapshot returns 0: its searches are counted again from the terminal event's response.
     """
     if not isinstance(response, responses.Response) or response.status in ('in_progress', 'queued'):
         return 0
-    match (response.model_extra or {}).get('tool_usage'):
+    match response.model_dump(include={'tool_usage'}).get('tool_usage'):
         case {'web_search': {'num_requests': int() as num_requests}}:
             return num_requests
         case _:
             return sum(
                 1
                 for item in response.output
-                if isinstance(item, responses.ResponseFunctionWebSearch) and item.action.type == 'search'
+                if isinstance(item, responses.ResponseFunctionWebSearch)
+                and (action := item.action)
+                and action.type == 'search'
             )
 
 
@@ -133,7 +164,7 @@ def map_usage(
         k: v
         for k, v in usage_data.items()
         if k not in {'prompt_tokens', 'completion_tokens', 'input_tokens', 'output_tokens', 'total_tokens'}
-        if isinstance(v, int)
+        if isinstance(v, int) and not isinstance(v, bool)
     }
     response_data = dict(model=model, usage=usage_data)
     if isinstance(response_usage, responses.ResponseUsage):
@@ -171,6 +202,30 @@ def map_usage(
     return request_usage
 
 
+def add_reasoning_tokens_omitted_from_completion_tokens(
+    request_usage: usage.RequestUsage, response_usage: CompletionUsage | None
+) -> None:
+    """Count the reasoning tokens a Chat Completions `usage` reports only in `total_tokens` as output.
+
+    For a model whose profile sets `openai_chat_completion_tokens_omit_reasoning`. The gap between `total_tokens` and
+    `prompt_tokens + completion_tokens` becomes output and reasoning tokens, as `completion_tokens_details` would
+    report them. Usage that carries `completion_tokens_details`, or has no positive gap, is left as reported.
+    """
+    match response_usage:
+        case CompletionUsage(
+            prompt_tokens=int() as prompt_tokens,
+            completion_tokens=int() as completion_tokens,
+            total_tokens=int() as total_tokens,
+            completion_tokens_details=None,
+        ) if total_tokens > prompt_tokens + completion_tokens:
+            reasoning_tokens = total_tokens - prompt_tokens - completion_tokens
+        case _:
+            return
+    request_usage.output_tokens += reasoning_tokens
+    request_usage.output_reasoning_tokens += reasoning_tokens
+    request_usage.details['reasoning_tokens'] = reasoning_tokens
+
+
 def responses_usage_details(response_usage: responses.ResponseUsage, web_search_requests: int) -> dict[str, int]:
     """The usage details only the Responses API reports: reasoning tokens, and the web searches billed."""
     details: dict[str, int] = {}
@@ -182,12 +237,3 @@ def responses_usage_details(response_usage: responses.ResponseUsage, web_search_
     if web_search_requests:
         details['web_search_requests'] = web_search_requests
     return details
-
-
-def response_tool_call_id(tool_call_id: str, response_id: str | None) -> str:
-    """Qualify a Responses tool-call ID with its response ID, or return it unchanged.
-
-    `response_id` is the provider response ID when the model's tool-call IDs are response-scoped (so the
-    ID must be made history-wide unique), or `None` to leave the call ID as-is.
-    """
-    return f'{response_id}:{tool_call_id}' if response_id is not None else tool_call_id

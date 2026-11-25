@@ -10,11 +10,28 @@ search, find, create, and inspect -- all scoped to a single `root_dir` in the
 run's workspace. Every path is resolved, symlinks included, and
 containment-checked before any I/O, and access is filtered through allow, deny, and read-only glob patterns.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/filesystem/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/file_system/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![The model calls FileSystem tools such as read_file, write_file and edit_file. Before any I/O, each path is resolved with symlinks, checked to stay inside root_dir, and matched against the allowed, denied and read-only patterns; only then does the tool touch the workspace. Four example calls show a read that succeeds, a write to .env rejected as read-only, a read of /etc/passwd rejected as outside root_dir, and an edit announced as a FileChangeRequestedEvent that a listener can cancel.](../img/harness/filesystem.svg)
+```mermaid
+flowchart TB
+    accTitle: FileSystem: file tools bounded by one directory
+    accDescr: The model calls FileSystem tools such as read_file, write_file and edit_file, which before any I/O resolve the path, check it is inside root_dir and match the patterns. They reject calls outside root_dir, denied or writing to a read-only path and pass allowed ones to the workspace root_dir/. Before a change your listener gets FileChangeRequestedEvent and can call cancel(reason).
+    model(["model"])
+    tools["FileSystem()<br/>read_file, write_file,<br/>edit_file and more"]:::capability
+    checks["resolve the path, check<br/>it is inside root_dir,<br/>match the patterns"]:::capability
+    rejected["outside root_dir,<br/>denied, or a write<br/>to a read-only path"]:::blocked
+    workspace["workspace<br/>root_dir/"]
+    listener["your listener<br/>can call cancel(reason)"]
+    model <-->|"tool call, result"| tools
+    tools -->|"before any I/O"| checks
+    checks -.-x|"rejects"| rejected
+    checks -->|"allowed"| workspace
+    checks -.->|"FileChangeRequestedEvent<br/>before a change"| listener
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
+```
 
 ## The problem
 
@@ -66,7 +83,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it. With `max_image_side` set (`Coder` sets 1024), a larger image is downscaled to fit first. Other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -169,7 +186,7 @@ with the validated arguments as `typed_args`:
 
 ```python
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai_harness.filesystem import ReadFileCallPart
+from pydantic_ai_harness.file_system import ReadFileCallPart
 
 
 def paths_read(messages: list[ModelMessage]) -> list[str]:
@@ -200,9 +217,9 @@ so it is left out of every run step that has `read_file`. The instructions name 
 they stay the same either way; the spill marker and `Memory`'s per-call notices name `read_file` as it
 is called in the run:
 
-- `ToolOutputLimits`' `read_tool_result`, with the default `WorkspaceStore()`. Reads of its spill
-  files through `read_file` are not reduced again.
-- `Memory`'s `read_memory`, with a `FileStore` that has no `workspace=` of its own and a relative
+- `ToolOutputLimits`' `read_tool_result` and `grep_tool_result`, with the default
+  `WorkspaceOverflowStore()`. Reads of its spill files through `read_file` are not reduced again.
+- `Memory`'s `read_memory`, with a `FileMemoryStore` that has no `workspace=` of its own and a relative
   `directory` inside the working directory.
 - `RepoContext`'s inventory tool, when its asset roots are inside the working directory.
 
@@ -292,7 +309,7 @@ its entries are. A denied or failed operation emits no event, including a
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai_harness import FileSystem
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent
 
 agent = Agent('{{ anthropic:large }}', capabilities=[LocalWorkspace('.'), FileSystem()])
 
@@ -305,7 +322,7 @@ async def hold_migrations(ctx, event):
 Other capabilities subscribe with `@on_event` on a method, the way
 `RepoContext` follows `FileReadEvent`, `DirectoryListedEvent` and
 `FileWrittenEvent`. A host with its own file tools can emit the same event types
-by importing them from `pydantic_ai_harness.filesystem`, which lets subscribers
+by importing them from `pydantic_ai_harness.file_system`, which lets subscribers
 react without depending on tool names or raw model arguments.
 
 `FileSystem` emits no OpenTelemetry spans of its own: the core tool-call span
@@ -363,11 +380,24 @@ applies the same rule to absolute symlink targets.
   depending on the model. If the model can't take that kind of file (an image on
   a model without vision, or a PDF on Groq), Pydantic AI raises when it builds
   the next request, which ends the run
-  ([input support by model](../input.md)). A file over 5 MB, the strictest
-  mainstream per-image limit, is described instead, as is any other binary file.
+  ([input support by model](../input.md)). With `max_image_side` set (`Coder`
+  sets 1024), an image larger than that on its longest side is downscaled to it
+  first, in its own format and aspect ratio, and the header names both sizes;
+  the hash is still that of the file. An image over 25 megapixels (for a
+  baseline JPEG, at the 1/2 to 1/8 scale it decodes at) is described instead of decoded.
+  Downscaling needs Pillow, which the
+  `coder` extra installs; setting `max_image_side` without it raises an
+  `ImportError`. A file still
+  over 5 MB after that, the strictest mainstream per-image limit, is described
+  instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than overwriting newer content.
+- **Ordered changes.** `write_file`, `edit_file` and `create_directory` are
+  [sequential tools](../tools-advanced.md#parallel-tool-calls-concurrency): when a
+  model sends several tool calls in one response, each change runs after the calls
+  before it, so a write into a directory created earlier in the response finds it.
+  The read tools still run in parallel.
 - **Text encodings.** Text is read as UTF-8, and a byte that isn't valid UTF-8
   is shown as U+FFFD. `edit_file` writes such bytes back unchanged when an edit
   matches only the text around them; `write_file` replaces the whole file with
@@ -389,7 +419,7 @@ To call a tool method yourself, outside a run, pass the workspace:
 
 ```python
 from pydantic_ai.workspaces import LocalWorkspaceBackend
-from pydantic_ai_harness.filesystem import FileSystem, FileSystemToolset
+from pydantic_ai_harness.file_system import FileSystem, FileSystemToolset
 
 
 async def main() -> None:
@@ -468,7 +498,7 @@ reject them.
 ## Configuration
 
 ```python {names="defined"}
-from pydantic_ai_harness.filesystem import DEFAULT_TOOL_NAMES, FileSystem
+from pydantic_ai_harness.file_system import DEFAULT_TOOL_NAMES, FileSystem
 
 FileSystem(
     root_dir=None,                 # str | Path -- containment boundary (None = the working directory; '/' = no checks)
@@ -477,6 +507,7 @@ FileSystem(
     read_only_patterns=[...],      # read-only globs (defaults to secrets/.git)
     max_read_lines=2000,           # most lines one read_file returns, and its default limit
     max_read_chars=50_000,         # cap on a whole read_file result, ending on a complete line
+    max_image_side=None,           # downscale images read_file returns to this longest side (needs Pillow; Coder sets 1024)
     max_list_results=1000,         # cap for list_directory
     max_search_results=1000,       # cap for search_files and grep
     max_find_results=1000,         # cap for find_files and list_files
@@ -517,7 +548,9 @@ or a workspace capability in Python).
 
 ## Durable execution
 
-`FileSystem` works under Temporal, DBOS, and Prefect; the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+`FileSystem` works under Temporal, DBOS, Prefect, [Azure Durable Task](azure-durable-task.md), and [Render Workflows](render-workflows.md); the [workspace guide](../workspace.md#durable-execution) shows what works on each engine. On Temporal only file-change requests and write events reach listeners live; see [live events on Temporal](../durable_execution/temporal.md#harness-workspace-capabilities).
+
+On Azure Durable Task and Render, `write_file`, `edit_file` and `create_directory` run in the orchestrator or parent task, so file-change requests and write events reach listeners live. On Azure, events from the other tools are dropped, and listeners run in orchestrator code: they re-run on every replay, so keep them deterministic and idempotent, and they can't do I/O, so interactive approval of file changes through a UI or external service isn't supported on Azure yet. On Render, listeners run in the parent task, and events from the other tools are carried back to the run.
 
 ## Further reading
 

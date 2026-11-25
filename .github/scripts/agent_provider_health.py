@@ -6,17 +6,19 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import functools
+import http.client
 import json
 import math
 import os
 import re
+import secrets
 import ssl
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -25,7 +27,9 @@ API_ROOT = 'https://api.github.com'
 ZAI_QUOTA_URL = 'https://api.z.ai/api/monitor/usage/quota/limit'
 MARKER_PREFIX = '<!-- pydantic-ai-provider-health:v1 '
 MARKER_RE = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
-REQUIRED_LABELS = ('agentic-workflows', 'pydanty:meta')
+_TRACE_ID_RE = re.compile('[0-9a-f]{32}')
+_SPAN_ID_RE = re.compile('[0-9a-f]{16}')
+REQUIRED_LABELS = ('area:agentic-workflows', 'pydanty:meta')
 ASSIGNEE = 'dsfaccini'
 # The recheck, artifact-replacement and two stop steps `shared/provider-health.md` adds to each agent job.
 # `agentic_workflow_guard.py` requires these names in every compiled lock.
@@ -74,7 +78,9 @@ QuotaDiagnostic = Literal[
     'invalid_reset_time',
     'missing_windows',
 ]
-FailureKind = Literal['authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other']
+FailureKind = Literal[
+    'authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'cache_miss_limit', 'other'
+]
 # Two Z.ai Coding Plan accounts. Runs use the backup only when the primary is unusable and its key is configured.
 Account = Literal['primary', 'backup']
 # Each account's provider incident key and API key variable. The primary keeps the `zai` key of earlier incidents.
@@ -127,6 +133,11 @@ class Health:
     recovery_issue: int | None = None
     account: Account | None = None
     accounts: tuple[AccountHealth, ...] = ()
+
+    @property
+    def account_decisions(self) -> tuple[AccountHealth, ...]:
+        """Each checked account's own decision. A gate that checked only the primary decided for the primary alone."""
+        return self.accounts or (AccountHealth('primary', self.ready, self.reason, self.quota),)
 
     def __post_init__(self) -> None:
         if _positive_attempt(self.run_attempt) is None:
@@ -565,19 +576,24 @@ def _parse_zai_quota(value: object) -> Quota:
     )
 
 
+def _no_redirect_opener() -> urllib.request.OpenerDirector:
+    """An opener without a redirect handler: `urllib` would resend the request's `Authorization` to any host."""
+    opener = urllib.request.OpenerDirector()
+    opener.add_handler(urllib.request.ProxyHandler())
+    opener.add_handler(urllib.request.HTTPHandler())
+    opener.add_handler(urllib.request.HTTPSHandler())
+    opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
+    opener.add_handler(urllib.request.HTTPErrorProcessor())
+    return opener
+
+
 def _fetch_zai_quota(api_key: str) -> Quota:
     if not api_key:
         return _unknown_quota('missing_api_key')
     try:
         headers: dict[str, str] = {'Authorization': api_key, 'Accept': 'application/json'}
         request = urllib.request.Request(ZAI_QUOTA_URL, headers=headers, method='GET')
-        opener = urllib.request.OpenerDirector()
-        opener.add_handler(urllib.request.ProxyHandler())
-        opener.add_handler(urllib.request.HTTPHandler())
-        opener.add_handler(urllib.request.HTTPSHandler())
-        opener.add_handler(urllib.request.HTTPDefaultErrorHandler())
-        opener.add_handler(urllib.request.HTTPErrorProcessor())
-        with opener.open(request, timeout=20) as response:
+        with _no_redirect_opener().open(request, timeout=20) as response:
             status = response.status
             if status != 200:
                 return _unknown_quota('invalid_response_code', _safe_http_status(status))
@@ -588,6 +604,7 @@ def _fetch_zai_quota(api_key: str) -> Quota:
             except ValueError:
                 return _unknown_quota('invalid_json', 200)
     except urllib.error.HTTPError as exc:
+        exc.close()
         return _unknown_quota('http_error', _safe_http_status(exc.code))
     except ssl.SSLError:
         return _unknown_quota('tls_error')
@@ -895,7 +912,16 @@ def _failure_from(value: object) -> Failure | None:
     if data is None:
         return None
     kind = data.get('kind')
-    if kind not in ('authentication', 'rate_limit', 'plan_limit', 'request_limit', 'time_limit', 'timeout', 'other'):
+    if kind not in (
+        'authentication',
+        'rate_limit',
+        'plan_limit',
+        'request_limit',
+        'time_limit',
+        'timeout',
+        'cache_miss_limit',
+        'other',
+    ):
         return None
     status = data.get('http_status')
     if status is not None and (isinstance(status, bool) or not isinstance(status, int) or not 100 <= status <= 599):
@@ -1025,7 +1051,10 @@ def parse_run_result(path: Path, expected_attempt: int | None = None) -> RunResu
 
 
 def _claims_provider_scope(failure: Failure) -> bool:
-    return failure.kind in ('authentication', 'plan_limit') or failure.http_status in (401, 403)
+    # AWF's API proxy sends the `cache_miss_limit` 403 itself, so Z.ai never saw the refused request.
+    return failure.kind != 'cache_miss_limit' and (
+        failure.kind in ('authentication', 'plan_limit') or failure.http_status in (401, 403)
+    )
 
 
 def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
@@ -1133,9 +1162,10 @@ def _monitor_workflow_outcome(
         result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
     # The runner reports a Z.ai account or plan limit as `plan_limit`, and a request-rate 429 that outlasts its
     # retry window as `rate_limit`. Runners on older branches report every 429 as `rate_limit`; the next run's
-    # quota check still blocks on an exhausted plan.
+    # quota check still blocks on an exhausted plan. `cache_miss_limit` is AWF's API proxy refusing this run
+    # after its consecutive cache misses reached the cap; the next run starts a fresh count.
     if result.failure is not None and (
-        result.failure.kind in ('timeout', 'rate_limit') or result.failure.http_status == 529
+        result.failure.kind in ('timeout', 'rate_limit', 'cache_miss_limit') or result.failure.http_status == 529
     ):
         print('Transient request failure remains local to this attempt')
         return 0
@@ -1181,7 +1211,7 @@ def _reconcile_blocked_gate(
     triage: bool,
 ) -> int:
     """Open a quota incident for each account whose quota, not an incident, blocked a run that no account could serve."""
-    decisions = health.accounts or (AccountHealth('primary', health.ready, health.reason, health.quota),)
+    decisions = health.account_decisions
     if any(decision.ready for decision in decisions):
         print(f'Activation was blocked by existing state: {health.reason}')
         return 0
@@ -1242,6 +1272,7 @@ def _failure_reason(result: RunResult) -> str:
         'request_limit': 'The agent reached its per-run request limit',
         'time_limit': 'The agent reached its per-run time limit',
         'timeout': 'A provider request timed out',
+        'cache_miss_limit': "AWF's API proxy stopped the run at its consecutive cache-miss limit",
         'other': 'The provider request failed with a typed error',
     }
     reason = reasons[failure.kind]
@@ -1343,7 +1374,113 @@ def _account_quota(account: Account) -> Quota:
     return _fetch_zai_quota(api_key) if api_key else _unknown_quota('missing_api_key')
 
 
+def _otel_pairs(value: str) -> dict[str, str]:
+    """Parse an OTel `key=value,...` environment variable, whose keys and values are percent-encoded."""
+    pairs: dict[str, str] = {}
+    for item in value.split(','):
+        key, separator, raw = item.partition('=')
+        if separator and key.strip():
+            pairs[urllib.parse.unquote(key).strip()] = urllib.parse.unquote(raw).strip()
+    return pairs
+
+
+def _otlp_attributes(values: Mapping[str, object]) -> list[dict[str, object]]:
+    attributes: list[dict[str, object]] = []
+    for key, value in values.items():
+        if isinstance(value, bool):
+            encoded: dict[str, object] = {'boolValue': value}
+        elif isinstance(value, int):
+            encoded = {'intValue': str(value)}
+        elif isinstance(value, float):
+            encoded = {'doubleValue': value}
+        else:
+            encoded = {'stringValue': str(value)}
+        attributes.append({'key': key, 'value': encoded})
+    return attributes
+
+
+def _export_decision_span(health: Health, started_ns: int) -> None:
+    """Send the decision as one span to the OTLP endpoint gh-aw sets in every lock's workflow-level `env:`.
+
+    Without a token, as on fork pull request events, nothing is sent. A failed export only warns: the decision
+    is already in the step outputs and the artifact.
+    """
+    endpoint = os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT', '').rstrip('/')
+    headers = _otel_pairs(os.environ.get('OTEL_EXPORTER_OTLP_HEADERS', ''))
+    if not endpoint or not headers.get('Authorization'):
+        return
+    values: dict[str, object] = {
+        'github.job': os.environ.get('GITHUB_JOB', ''),
+        'provider_health.ready': health.ready,
+        'provider_health.reason': health.reason,
+        'provider_health.workflow': health.workflow,
+        'provider_health.task_key': health.task_key,
+        'provider_health.trigger_event': health.trigger_event,
+        'provider_health.run_attempt': health.run_attempt,
+    }
+    if health.account is not None:
+        values['provider_health.account'] = health.account
+    if health.recovery_issue is not None:
+        values['provider_health.recovery_issue'] = health.recovery_issue
+    for item in health.account_decisions:
+        values[f'provider_health.{item.account}.ready'] = item.ready
+        values[f'provider_health.{item.account}.reason'] = item.reason
+        for name, value in _quota_json(item.quota).items():
+            if value is not None:
+                values[f'provider_health.{item.account}.quota.{name}'] = value
+    # gh-aw's `Setup Scripts` step, the agent job's first, writes this pair to `GITHUB_ENV`, so the recheck joins
+    # the agent job's trace. The gate job runs before gh-aw starts the run's trace, and starts its own.
+    trace_id = os.environ.get('GITHUB_AW_OTEL_TRACE_ID', '')
+    parent_span_id = os.environ.get('GITHUB_AW_OTEL_PARENT_SPAN_ID', '')
+    joins_trace = bool(_TRACE_ID_RE.fullmatch(trace_id) and _SPAN_ID_RE.fullmatch(parent_span_id))
+    span: dict[str, object] = {
+        'traceId': trace_id if joins_trace else secrets.token_hex(16),
+        'spanId': secrets.token_hex(8),
+        'name': 'Z.AI provider health decision',
+        'kind': 1,
+        'startTimeUnixNano': str(started_ns),
+        'endTimeUnixNano': str(time.time_ns()),
+        'attributes': _otlp_attributes(values),
+    }
+    if joins_trace:
+        span['parentSpanId'] = parent_span_id
+    resource = _otel_pairs(os.environ.get('OTEL_RESOURCE_ATTRIBUTES', ''))
+    # As in the OTel SDKs, `OTEL_SERVICE_NAME` takes precedence over a `service.name` resource attribute.
+    resource['service.name'] = (
+        os.environ.get('OTEL_SERVICE_NAME') or resource.get('service.name') or 'agent-provider-health'
+    )
+    body = {
+        'resourceSpans': [
+            {
+                'resource': {'attributes': _otlp_attributes(resource)},
+                'scopeSpans': [{'scope': {'name': 'agent_provider_health'}, 'spans': [span]}],
+            }
+        ]
+    }
+    try:
+        # The no-redirect opener has no handler for another scheme: `open` would return `None` and fail the decision.
+        # `urlsplit` itself raises `ValueError` on a malformed bracketed host.
+        if urllib.parse.urlsplit(endpoint).scheme not in ('http', 'https'):
+            print('::warning::Could not export the provider health span: the OTLP endpoint has no http(s) scheme')
+            return
+        request = urllib.request.Request(
+            f'{endpoint}/v1/traces',
+            data=json.dumps(body).encode(),
+            headers={**headers, 'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with _no_redirect_opener().open(request, timeout=10):
+            pass
+    except urllib.error.HTTPError as error:
+        error.close()
+        print(f'::warning::Could not export the provider health span: HTTP {error.code}')
+    except (OSError, ValueError, http.client.HTTPException) as error:
+        # An invalid header value's error message would repeat the token.
+        print(f'::warning::Could not export the provider health span: {type(error).__name__}')
+
+
 def _check_command(args: argparse.Namespace) -> int:
+    started_ns = time.time_ns()
     workflow = os.environ.get('GITHUB_WORKFLOW', '')
     task_key = os.environ.get('PYDANTIC_AI_TASK_KEY', '')
     trigger_event = os.environ.get('PYDANTIC_AI_TRIGGER_EVENT', '')
@@ -1406,7 +1543,7 @@ def _check_command(args: argparse.Namespace) -> int:
     displayed_reason = health.reason if health.accounts else health.reason + _quota_diagnostic_suffix(health.quota)
     if summary:
         quota_detail = ''
-        account_quotas = [(item.account, item.quota) for item in health.accounts] or [('primary', health.quota)]
+        account_quotas = [(item.account, item.quota) for item in health.account_decisions]
         for account, checked in account_quotas:
             if checked.interval_reset_at is None or checked.weekly_reset_at is None:
                 continue
@@ -1425,6 +1562,7 @@ def _check_command(args: argparse.Namespace) -> int:
                 f'### Provider health: {"ready" if health.ready else "blocked"}\n\n{displayed_reason}.{quota_detail}\n'
             )
     print(f'{"ready" if health.ready else "blocked"}: {displayed_reason}')
+    _export_decision_span(health, started_ns)
     return 0
 
 
@@ -1559,6 +1697,7 @@ def _task_retirement(client: GitHubClient, marker: IncidentMarker) -> str | None
             response = client.request('GET', f'actions/runs/{task_id}')
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
+                exc.close()
                 return f'Dispatch run {task_id} no longer exists.'
             raise
         run = _mapping(response)
@@ -1622,6 +1761,8 @@ def _retire_task_incidents(client: GitHubClient, issues: list[Issue], *, dry_run
                 client.request('POST', f'issues/{issue.number}/comments', {'body': comment})
             client.close_issue(issue.number)
         except (OSError, ValueError) as exc:
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
             print(f'Could not retire task incident #{issue.number}: {exc}')
             continue
         print(f'Retired task incident #{issue.number}: {reason}')
@@ -1757,6 +1898,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.handler(args)
     except (OSError, ValueError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        if isinstance(exc, urllib.error.HTTPError):
+            exc.close()
         print(f'provider-health failed: {exc}', file=sys.stderr)
         return 1
 

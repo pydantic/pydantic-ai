@@ -19,7 +19,24 @@ pip install 'pydantic-ai-harness[logfire]'
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/logfire/)
 
-![The prompt lives in Logfire as the managed variable prompt__support_agent, with labels such as production and staging. At the start of each run, ManagedPrompt resolves it in the wrap_run hook and uses the value as the run's instructions, which the model receives. The resolved label and version are set as baggage, so the agent run span and its children record which prompt produced them, and those traces go back to Logfire.](https://pydantic.dev/docs/ai/img/harness/managed-prompt.svg)
+```mermaid
+flowchart TB
+    accTitle: Managed Prompt: instructions you change in Logfire, not in code
+    accDescr: As an agent run starts, the ManagedPrompt capability resolves the Logfire managed variable prompt__support_agent once in its wrap_run hook. It gives the resolved value to the model as instructions and sets the label and version as baggage on the agent run span and its children. Those spans go to Logfire traces, where each span records the prompt label.
+    variable[("Logfire<br/>managed variable<br/>prompt__support_agent")]:::external
+    subgraph run["Agent run"]
+        prompt["ManagedPrompt()<br/>wrap_run hook"]:::capability
+        spans["agent run span<br/>and its children"]
+    end
+    model(["model"])
+    traces["Logfire traces<br/>each span records<br/>the prompt label"]:::external
+    variable -->|"resolved once,<br/>as the run starts"| prompt
+    prompt -->|"resolved value<br/>as instructions"| model
+    prompt -->|"label and version<br/>as baggage"| spans
+    spans --> traces
+    classDef capability stroke:#E520E9,stroke-width:2px
+    classDef external stroke:#0E9C86,stroke-width:2px
+```
 
 ## `ManagedPrompt`
 

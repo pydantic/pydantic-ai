@@ -13,7 +13,7 @@ import json
 import math
 import os
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,12 +40,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import UsageLimits
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import try_import
 from tests.harness.conftest import IsDatetime, IsStr
 
 from .._recording_durability import RecordingDurability
-
-READINESS_WAIT_TIMEOUT = 5
 
 with try_import() as imports_successful:
     from jupyter_client.client import KernelClient
@@ -72,6 +71,19 @@ class _NewEachStep(WrapperToolset[None]):
 class Trip(BaseModel):
     city: str
     nights: int
+
+
+@pytest.fixture(scope='module', autouse=True)
+def ipython_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """Gives this module's kernels their own IPython profile, so they share no history file with other processes.
+
+    Otherwise every kernel on the machine writes its history to `~/.ipython/profile_default/history.sqlite`. A kernel
+    that hits a SQLite error there moves the file away, and a kernel whose history thread connects after the move
+    writes to a new file with no tables: the thread's error lands in the output of the cell that is running.
+    """
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv('IPYTHONDIR', str(tmp_path_factory.mktemp('ipython')))
+        yield
 
 
 @pytest.fixture(scope='module')
@@ -118,6 +130,26 @@ def kernel_clock(monkeypatch: pytest.MonkeyPatch) -> _KernelClock:
     clock = _KernelClock()
     monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel.time', clock)
     return clock
+
+
+@pytest.fixture
+def entered(monkeypatch: pytest.MonkeyPatch) -> Tool[None]:
+    """A tool the code calls once it is running. Until then, the clock `IPythonKernel` times cells by stands still.
+
+    The timeout counts from when the cell is sent, so on a slow kernel it could pass, and the interrupt land, before
+    the code under test starts.
+    """
+    frozen = time.monotonic()
+    entered_at: list[float] = []
+
+    def monotonic() -> float:
+        return frozen + time.monotonic() - entered_at[0] if entered_at else frozen
+
+    def entered() -> None:
+        entered_at.append(time.monotonic())
+
+    monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel.time', SimpleNamespace(monotonic=monotonic))
+    return Tool(entered)
 
 
 def _assert_process_gone(pid: int) -> None:
@@ -245,7 +277,9 @@ class TestIPythonCodeMode:
                 returns = await _run(
                     IPythonCodeMode(kernel=kernel, timeout=0.5),
                     "survives_timeout = 'yes'",
-                    f"print('working')\nopen({str(running)!r}, 'w').close()\nimport time\ntime.sleep(30)",
+                    # An interrupt that lands just before a `time.sleep` starts is raised only once it returns, and the
+                    # standing clock never lets the kernel restart, so one long sleep would run in full.
+                    f"print('working')\nopen({str(running)!r}, 'w').close()\nimport time\nfor _ in range(300):\n    time.sleep(0.1)",
                     'survives_timeout',
                 )
             finally:
@@ -261,33 +295,26 @@ class TestIPythonCodeMode:
         )
         assert after == 'yes'
 
-    async def test_timeout_interrupts_code_that_keeps_printing(self, kernel: IPythonKernel) -> None:
+    async def test_timeout_interrupts_code_that_keeps_printing(
+        self, kernel: IPythonKernel, entered: Tool[None]
+    ) -> None:
+        # An interrupt that reaches the kernel before it starts the cell doesn't stop the cell.
         (retry,) = await _run(
             IPythonCodeMode(kernel=kernel, timeout=0.5),
-            "import time\nfor _ in range(50):\n    print('tick')\n    time.sleep(0.1)",
+            "import time\nentered()\nfor _ in range(50):\n    print('tick')\n    time.sleep(0.1)",
+            tools=[entered],
         )
         assert 'KeyboardInterrupt' in retry
         assert 'The code ran longer than the 0.5-second timeout and was interrupted.' in retry
 
     async def test_timeout_is_reported_when_the_code_catches_the_interrupt(
-        self, kernel: IPythonKernel, monkeypatch: pytest.MonkeyPatch
+        self, kernel: IPythonKernel, entered: Tool[None]
     ) -> None:
-        # The timeout counts from when the cell is sent, so a slow kernel could take the interrupt before
-        # it reaches the `try:`. The timeout's clock stands still until the code reports it is inside.
-        frozen = time.monotonic()
-        entered_at: list[float] = []
-
-        def monotonic() -> float:
-            return frozen + time.monotonic() - entered_at[0] if entered_at else frozen
-
-        def entered() -> None:
-            entered_at.append(time.monotonic())
-
-        monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel.time', SimpleNamespace(monotonic=monotonic))
+        # An interrupt that reaches the code before the `try:` isn't caught.
         (retry,) = await _run(
             IPythonCodeMode(kernel=kernel, timeout=0.5),
             "import time\ntry:\n    entered()\n    time.sleep(30)\nexcept KeyboardInterrupt:\n    print('caught')",
-            tools=[Tool(entered)],
+            tools=[entered],
         )
         assert retry.startswith('caught\n\nThe code ran longer than the 0.5-second timeout and was interrupted.')
 
@@ -502,6 +529,14 @@ def book(*, trip: Trip, travellers: int) -> str:
         with pytest.raises(UserError, match="Tool name 'run_code' is reserved"):
             await agent.run('Hi')
 
+    async def test_a_tool_named_after_a_builtin_is_rejected(self, kernel: IPythonKernel) -> None:
+        def open(path: str) -> str:
+            return path  # pragma: no cover
+
+        agent = Agent(_scripted(), capabilities=[IPythonCodeMode(kernel=kernel)], tools=[Tool(open)])
+        with pytest.raises(UserError, match="Tool name 'open' is a Python builtin"):
+            await agent.run('Hi')
+
     async def test_the_tools_get_the_run_context(self, kernel: IPythonKernel) -> None:
         def whoami(ctx: RunContext[str]) -> str:
             return ctx.deps
@@ -580,7 +615,9 @@ def book(*, trip: Trip, travellers: int) -> str:
     ) -> None:
         # A cell that has not stopped within the real-clock interrupt grace gets its kernel replaced, and a loaded
         # runner can take longer than that to stop one. With the grace unbounded, only the cell stopping ends the wait, and
-        # `slept` shows whether the interrupt stopped it before its sleep ran out.
+        # `slept` shows whether the interrupt stopped it before its sleep ran out. The interrupt is sent as soon as
+        # `begin` returns, and one that lands just before a `time.sleep` starts is raised only once it returns, so the
+        # cell sleeps in short steps.
         monkeypatch.setattr('pydantic_ai_harness.ipython_code_mode._kernel._INTERRUPT_GRACE_SECONDS', math.inf)
         started = asyncio.Event()
 
@@ -588,7 +625,7 @@ def book(*, trip: Trip, travellers: int) -> str:
             started.set()
 
         agent = Agent(
-            _scripted('slept = False\nbegin()\nimport time\ntime.sleep(30)\nslept = True'),
+            _scripted('slept = False\nbegin()\nimport time\nfor _ in range(300):\n    time.sleep(0.1)\nslept = True'),
             capabilities=[IPythonCodeMode(kernel=kernel, timeout=None)],
             tools=[Tool(begin)],
         )
