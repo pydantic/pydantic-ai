@@ -134,7 +134,7 @@ async def open_stock_agent(
     reason: SessionEndReason = 'error'
     # A private settings store keeps the user's saved and drop-in plugins out; plugin output goes nowhere.
     root = Path(workspace).resolve()
-    async with temporary_directory(prefix='clai2-') as config:
+    async with temporary_directory(prefix='pax-') as config:
         with open(os.devnull, 'w', encoding='utf-8') as sink:
             console = Console(file=sink, force_terminal=False)
             store = SettingsStore(config / 'config.db')

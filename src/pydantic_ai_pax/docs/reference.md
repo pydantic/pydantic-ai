@@ -247,7 +247,7 @@ the folder that holds `clai2-bleeding.json`. A fork that runs the `Pax bleeding`
 workflow publishes its own:
 
 ```bash
-CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding clai2
+CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding pax
 ```
 
 To try a local checkout, build the same files and serve them over HTTP:
@@ -255,7 +255,7 @@ To try a local checkout, build the same files and serve them over HTTP:
 ```bash
 src/pydantic_ai_pax/scripts/build_bleeding.sh /tmp/clai2-bleeding
 python -m http.server --directory /tmp/clai2-bleeding 8000 &
-CLAI_BLEEDING_URL=http://localhost:8000 clai2
+CLAI_BLEEDING_URL=http://localhost:8000 pax
 ```
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
@@ -3023,7 +3023,7 @@ To call a user-defined shell function, explicitly invoke its shell. For example,
 a zsh function named `cleanup_worktree` could use this argv:
 
 ```json
-["zsh", "-ic", "cleanup_worktree \"$1\"", "clai2-remove", "{branch}"]
+["zsh", "-ic", "cleanup_worktree \"$1\"", "pax-remove", "{branch}"]
 ```
 
 Interactive zsh loads your rc files, adding startup overhead and possibly output.
