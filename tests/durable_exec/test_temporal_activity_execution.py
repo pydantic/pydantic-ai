@@ -13,7 +13,11 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
 
+import anyio
 import pytest
+
+from pydantic_ai.exceptions import ModelRequestTimeout
+from pydantic_ai.models._request_timeout import RequestDeadline
 
 from ..conftest import try_import
 
@@ -110,6 +114,37 @@ async def test_result_of_activity_completed_after_cancel_is_handed_over(anyio_ba
     with pytest.raises(asyncio.CancelledError):
         await task
     assert [(type(error), result) for error, result in received] == [(asyncio.CancelledError, 'partial')]
+
+
+async def _time_out_while_awaiting(handle: asyncio.Future[Any]) -> None:
+    """Await `handle` under a request deadline that has already passed, as a stream's model activity is."""
+    deadline = RequestDeadline(model_name='model', timeout=0.0, deadline=anyio.current_time())
+    with pytest.raises(ModelRequestTimeout):
+        with deadline.enforce():
+            await _await_with_single_cancel(handle, on_cancelled_result=lambda error, result: None)
+    # The handle resolves after the timeout was raised, and then has its error retrieved.
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    assert handle.done()
+
+
+@pytest.mark.parametrize('ends_cancelled', [False, True])
+async def test_request_deadline_does_not_wait_for_the_cancelled_activity(
+    anyio_backend: str, ends_cancelled: bool
+) -> None:
+    """A request deadline raises its timeout without waiting for the activity it cancelled to resolve.
+
+    The timeout doesn't keep the activity's result, so it's not held up waiting for it, and the error the activity
+    resolves with later isn't reported as never retrieved.
+    """
+    with _loop_errors() as errors:
+        handle: asyncio.Future[Any] = (
+            asyncio.get_running_loop().create_future() if ends_cancelled else _ActivityHandle()
+        )
+        await asyncio.create_task(_time_out_while_awaiting(handle))
+        assert handle.cancelled() is ends_cancelled
+        del handle
+    assert errors == []
 
 
 async def test_result_and_error_pass_through(anyio_backend: str) -> None:

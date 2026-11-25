@@ -36,6 +36,8 @@ from temporalio import workflow
 from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 from typing_extensions import Unpack
 
+from pydantic_ai.models._request_timeout import request_deadline_passed
+
 CancelledResultHandler = Callable[[asyncio.CancelledError, Any], None]
 """Receives the cancellation and the result of an activity that completed after it was cancelled."""
 
@@ -50,7 +52,8 @@ async def execute_activity(
     """Drop-in replacement for `workflow.execute_activity()` — see the module docstring for why.
 
     An activity that completes after the cancellation was sent, which `WAIT_CANCELLATION_COMPLETED` waits for, has
-    its result passed to `on_cancelled_result` with the cancellation, which is then still raised.
+    its result passed to `on_cancelled_result` with the cancellation, which is then still raised. A request deadline
+    that cancels it doesn't keep that result, so it doesn't wait for it either.
     """
     return await _await_with_single_cancel(
         workflow.start_activity(activity, args=args, **config), on_cancelled_result=on_cancelled_result
@@ -77,6 +80,12 @@ async def _await_with_single_cancel(
         # The handle is already done when the cancel lands in the same tick it resolves.
         if not handle.done():
             handle.cancel()
+            if on_cancelled_result is not None and request_deadline_passed():
+                # The request's deadline cancelled it, which raises `ModelRequestTimeout` instead, so there's nothing
+                # to hand over: leave the activity to acknowledge the cancellation in its own time, as a
+                # `TRY_CANCEL` activity does, rather than hold up the timeout and any fallback by a heartbeat.
+                handle.add_done_callback(_retrieve_error)
+                raise
             with anyio.CancelScope(shield=True):
                 await asyncio.wait([handle])
         # Mark the handle's error (the cancelled activity's `ActivityError`) as retrieved,
@@ -86,3 +95,9 @@ async def _await_with_single_cancel(
             on_cancelled_result(cancellation, handle.result())
         raise
     return handle.result()
+
+
+def _retrieve_error(handle: asyncio.Future[Any]) -> None:
+    """Mark the error a handle nothing awaits resolved with as retrieved, so asyncio doesn't log it."""
+    if not handle.cancelled():
+        handle.exception()

@@ -1745,10 +1745,14 @@ class RequestTimeoutWorkflow:
     @workflow.run
     async def run(self, agent_name: str) -> str:
         agent = {agent.name: agent for agent in (request_timeout_agent, streamed_request_timeout_agent)}[agent_name]
+        start = workflow.now()
         try:
             await agent.run('hello')
         except ModelRequestTimeout as error:
-            return f'{type(error).__name__} {error.model_name} {error.timeout}'
+            # The timeout doesn't wait for the cancelled activity to acknowledge its cancellation, which it only
+            # learns of from the response to a heartbeat, up to 24 seconds later with the default `heartbeat_timeout`.
+            fast = workflow.now() - start < timedelta(seconds=5)
+            return f'{type(error).__name__} {error.model_name} {error.timeout} fast={fast}'
         raise AssertionError('unreachable')  # pragma: no cover
 
 
@@ -1758,7 +1762,8 @@ class RequestTimeoutWorkflow:
 )
 async def test_durability_request_timeout_cancels_the_model_activity(client: Client, agent: Agent[None, str]):
     """The deadline is a workflow timer: when it fires, the hanging model activity is cancelled and the workflow sees
-    `ModelRequestTimeout`, well within the activity's own timeouts."""
+    `ModelRequestTimeout` at once, well within the activity's own timeouts, also when streaming, where a run's own
+    cancellation waits for the activity to hand over what it streamed."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -1774,7 +1779,7 @@ async def test_durability_request_timeout_cancels_the_model_activity(client: Cli
         output = await handle.result()
         history = await handle.fetch_history()
 
-    assert output == 'ModelRequestTimeout hanging 0.2'
+    assert output == 'ModelRequestTimeout hanging 0.2 fast=True'
     event_types = {event.WhichOneof('attributes') for event in history.events}
     assert {'timer_started_event_attributes', 'activity_task_cancel_requested_event_attributes'} <= event_types
 
