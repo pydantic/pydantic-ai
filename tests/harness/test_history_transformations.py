@@ -158,8 +158,10 @@ def _authority(part: ModelRequestPart) -> Authority:
     """`effective_authority` for every request part, until #12434 lands it: then this stub goes."""
     if isinstance(part, CapabilityPart):
         return effective_authority(part)
-    default: Authority = 'none'
-    return next((authority for kind, authority in _PART_AUTHORITY.items() if isinstance(part, kind)), default)
+    for kind, authority in _PART_AUTHORITY.items():
+        if isinstance(part, kind):
+            return authority
+    return 'none'
 
 
 _RANK: list[Authority] = ['none', 'user', 'operator']
