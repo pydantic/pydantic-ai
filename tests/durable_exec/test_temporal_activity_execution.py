@@ -116,12 +116,15 @@ async def test_result_of_activity_completed_after_cancel_is_handed_over(anyio_ba
     assert [(type(error), result) for error, result in received] == [(asyncio.CancelledError, 'partial')]
 
 
+def _passed_deadline() -> RequestDeadline:
+    return RequestDeadline(model_name='model', timeout=0.0, deadline=anyio.current_time())
+
+
 async def _time_out_while_awaiting(handle: asyncio.Future[Any]) -> None:
     """Await `handle` under a request deadline that has already passed, as a stream's model activity is."""
-    deadline = RequestDeadline(model_name='model', timeout=0.0, deadline=anyio.current_time())
     with pytest.raises(ModelRequestTimeout):
-        with deadline.enforce():
-            await _await_with_single_cancel(handle, on_cancelled_result=lambda error, result: None)
+        with _passed_deadline().enforce():
+            await _await_with_single_cancel(handle, waits_on_request_deadline=False)
     # The handle resolves after the timeout was raised, and then has its error retrieved.
     await asyncio.sleep(0)
     await asyncio.sleep(0)
@@ -145,6 +148,18 @@ async def test_request_deadline_does_not_wait_for_the_cancelled_activity(
         assert handle.cancelled() is ends_cancelled
         del handle
     assert errors == []
+
+
+async def test_request_deadline_waits_for_the_cancelled_activity_by_default(anyio_backend: str) -> None:
+    """Unless told otherwise, a request deadline waits for the activity it cancelled, as the configured cancellation
+    type says, such as an explicit `WAIT_CANCELLATION_COMPLETED`."""
+    handle = _ActivityHandle()
+    with pytest.raises(ModelRequestTimeout):
+        with _passed_deadline().enforce():
+            await _await_with_single_cancel(handle)
+    assert handle.done()
+    with pytest.raises(RuntimeError, match='Activity cancelled'):
+        handle.result()
 
 
 async def test_result_and_error_pass_through(anyio_backend: str) -> None:

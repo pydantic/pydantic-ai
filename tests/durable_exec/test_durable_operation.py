@@ -281,8 +281,13 @@ async def test_cancelled_model_stream_unit_fails_unless_the_engine_returns_its_o
     await streamed.wait()
     token.cancel()
 
-    with pytest.raises(RunCancelled):
+    with pytest.raises(RunCancelled) as exc_info:
         await run
+    # The unit failed, so the run didn't get what it streamed: only a Temporal model activity hands that over.
+    response = exc_info.value.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'interrupted'
+    assert response.parts == []
 
 
 def test_prepare_run_context_without_agent() -> None:

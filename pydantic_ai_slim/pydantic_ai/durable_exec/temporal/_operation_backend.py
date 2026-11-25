@@ -171,20 +171,24 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
 
         if isinstance(operation_id, ModelRequestId | ModelCompactMessagesId):
             on_cancelled_result: CancelledResultHandler | None = None
+            waits_on_request_deadline = True
             if (
                 isinstance(operation_id, ModelRequestId)
                 and operation_id.streaming
                 and workflow.patched(_STREAM_CANCEL_PARTIAL_PATCH)
             ):
-                # A stream's activity returns what it streamed when the run cancels it, so wait for that result
-                # to record it, unless the config chooses how the cancellation resolves.
-                activity_config.setdefault('cancellation_type', ActivityCancellationType.WAIT_CANCELLATION_COMPLETED)
                 on_cancelled_result = mark_streamed_before_failing
+                if 'cancellation_type' not in activity_config:
+                    # A stream's activity returns what it streamed when the run cancels it, so wait for that result
+                    # to record it. A request deadline keeps nothing, so it doesn't wait, as it didn't before.
+                    activity_config['cancellation_type'] = ActivityCancellationType.WAIT_CANCELLATION_COMPLETED
+                    waits_on_request_deadline = False
             with rebuilt_model_errors(), model_response_payload_errors(model_name):
                 return await execute_activity(
                     activity=self.registration,
                     args=cast(Sequence[Any], payload),
                     on_cancelled_result=on_cancelled_result,
+                    waits_on_request_deadline=waits_on_request_deadline,
                     **activity_config,
                 )
         if isinstance(operation_id, ModelCancelSuspendedResponseId | ModelCountTokensId):
