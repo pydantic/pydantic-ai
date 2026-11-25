@@ -37,7 +37,7 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
-pytestmark = [pytest.mark.xdist_group(name='temporal-durability')]
+pytestmark = [pytest.mark.xdist_group(name='temporal-count-tokens')]
 
 _counted_in_activity: list[bool] = []
 """Whether each count ran in an activity. Activities run outside the workflow sandbox, so they append to this module."""

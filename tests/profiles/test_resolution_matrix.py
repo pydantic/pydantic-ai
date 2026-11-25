@@ -188,6 +188,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_system_prompt_role': None,
     'openai_chat_supports_multiple_system_messages': True,
     'openai_chat_streaming_repeats_usage_totals': False,
+    'openai_chat_completion_tokens_omit_reasoning': False,
     'openai_chat_supports_web_search': False,
     'openai_chat_audio_input_encoding': 'base64',
     'openai_chat_supports_file_urls': False,
@@ -474,7 +475,9 @@ def test_openai_gpt_5_4():
             'openai_supports_reasoning': True,
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
+            'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_supports_max_reasoning_effort': False,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_supports_phase': True,
             'tool_addition_mode': 'with_definitions',
@@ -550,6 +553,7 @@ def test_openai_gpt_5_6():
             'tool_addition_mode': 'with_definitions',
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_responses_supports_max_reasoning_effort': True,
             'openai_supports_prompt_cache_breakpoints': True,
@@ -608,6 +612,7 @@ def test_openai_gpt_6_astra():
             'openai_supports_phase': True,
             'openai_responses_tool_choice_accepts_additional_tools': True,
             'openai_responses_supports_max_reasoning_effort': True,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_supports_prompt_cache_breakpoints': True,
             'openai_reasoning_efforts': frozenset({'high', 'low', 'max', 'medium', 'xhigh'}),
@@ -802,6 +807,7 @@ def test_openai_gpt_4o():
             'json_schema_transformer': _OpenAIJsonSchemaTransformer,
             'supports_inline_system_prompts': True,
             'openai_responses_supports_max_reasoning_effort': False,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
@@ -881,6 +887,7 @@ def test_openai_codex_gpt_5_6():
             'openai_supports_phase': True,
             'openai_supports_minimal_reasoning_effort': False,
             'openai_responses_tool_choice_accepts_additional_tools': True,
+            'delegates_unprompted': True,
             'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'openai_responses_supports_max_reasoning_effort': False,
             'supported_native_tools': frozenset(
@@ -2005,6 +2012,7 @@ def test_openrouter_openai_gpt_5_4():
             'openai_responses_supports_reasoning_context': True,
             'openai_chat_supports_file_urls': True,
             'openai_supports_encrypted_reasoning_content': True,
+            'delegates_unprompted': True,
             'openai_supports_reasoning': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
@@ -2334,6 +2342,7 @@ def test_github_copilot_openai_gpt_5_4():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
             ),
+            'delegates_unprompted': True,
             'openai_chat_supports_max_completion_tokens': True,
         }
     )
@@ -2612,6 +2621,7 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'delegates_unprompted': True,
             'openai_chat_supports_document_input': False,
             'openai_responses_supports_websocket': False,
             'may_tokenize_special_tokens_in_content': False,
@@ -3164,6 +3174,7 @@ def test_litellm_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'delegates_unprompted': True,
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -3504,6 +3515,7 @@ def test_together_qwen():
                             WebSearchTool,
                         }
                     ),
+                    'delegates_unprompted': True,
                     'may_tokenize_special_tokens_in_content': False,
                 }
             ),
@@ -3852,6 +3864,185 @@ def test_ovhcloud_llama():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_compatible_qwen3_next():
+    """Every OpenAI-compatible route that shares `qwen_model_profile` sends Qwen3 Next tool returns as JSON strings."""
+    profiles = {
+        'openrouter': OpenRouterProvider.model_profile('qwen/qwen3-next-80b-a3b-instruct'),
+        'openrouter-thinking': OpenRouterProvider.model_profile('qwen/qwen3-next-80b-a3b-thinking'),
+        'together': TogetherProvider.model_profile('Qwen/Qwen3-Next-80B-A3B-Instruct'),
+        'fireworks': FireworksProvider.model_profile('accounts/fireworks/models/qwen3-next-80b-a3b-instruct'),
+        'nebius': NebiusProvider.model_profile('Qwen/Qwen3-Next-80B-A3B-Instruct'),
+        'alibaba': AlibabaProvider.model_profile('qwen3-next-80b-a3b-instruct'),
+        'cerebras': CerebrasProvider.model_profile('qwen-3-next-80b'),
+        'ollama': OllamaProvider.model_profile('qwen3-next:80b'),
+        'vllm': VLLMProvider.model_profile('Qwen/Qwen3-Next-80B-A3B-Instruct'),
+        'sambanova': SambaNovaProvider.model_profile('Qwen3-Next-80B-A3B-Instruct'),
+    }
+    assert {route: _normalize(profile) for route, profile in profiles.items()} == snapshot(
+        {
+            'openrouter': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'supports_video_input': False,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'openai_chat_send_back_thinking_parts': 'field',
+                'openai_chat_thinking_field': 'reasoning',
+                'openai_chat_supports_file_urls': True,
+                'openai_chat_supports_web_search': True,
+                'openai_chat_supports_max_completion_tokens': False,
+                'openrouter_system_messages_precede_generation': False,
+                'supports_thinking': True,
+                'supports_cache': False,
+                'supported_cache_retentions': (),
+                'openrouter_supports_cache_control': False,
+                'openrouter_supports_trailing_cache_control': True,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'openrouter-thinking': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'supports_video_input': False,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'thinking_always_enabled': True,
+                'openrouter_lowest_reasoning_effort': 'minimal',
+                'openai_chat_send_back_thinking_parts': 'field',
+                'openai_chat_thinking_field': 'reasoning',
+                'openai_chat_supports_file_urls': True,
+                'openai_chat_supports_web_search': True,
+                'openai_chat_supports_max_completion_tokens': False,
+                'openrouter_system_messages_precede_generation': False,
+                'supports_thinking': True,
+                'supports_cache': False,
+                'supported_cache_retentions': (),
+                'openrouter_supports_cache_control': False,
+                'openrouter_supports_trailing_cache_control': True,
+                'openrouter_supports_cache_ttl': False,
+                'openrouter_supports_tool_cache': False,
+                'openrouter_supports_dynamic_instruction_cache': False,
+                'openrouter_max_cache_points': None,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'together': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'fireworks': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'supports_json_schema_output': True,
+            },
+            'nebius': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'alibaba': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'openai_chat_supports_document_input': False,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+            },
+            'cerebras': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'openai_unsupported_model_settings': ('logit_bias',),
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'ollama': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'openai_chat_thinking_field': 'reasoning',
+                'openai_supports_strict_tool_definition': False,
+                'supports_json_schema_output': True,
+                'supports_json_object_output': True,
+                'openai_chat_supports_max_completion_tokens': False,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'vllm': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'openai_chat_supports_document_input': False,
+                'openai_chat_supports_multiple_system_messages': False,
+                'supports_json_schema_output': True,
+                'supports_json_object_output': True,
+                'native_output_requires_schema_in_instructions': True,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+            'sambanova': {
+                'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'ignore_streamed_leading_whitespace': True,
+                'needs_json_string_tool_returns': True,
+                'may_tokenize_special_tokens_in_content': True,
+            },
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_qwen3_next():
+    profile = BedrockProvider.model_profile('qwen.qwen3-next-80b-a3b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _BedrockJsonSchemaTransformerWithoutContains,
+            'ignore_streamed_leading_whitespace': True,
+            'needs_json_string_tool_returns': True,
+            'supported_native_tools': frozenset(),
+            'bedrock_supports_leading_assistant_message': True,
+            'bedrock_thinking_variant': 'qwen',
+            'bedrock_supports_stop_sequences': False,
+            'supports_thinking': True,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not groq_imports(), reason='groq not installed')
+def test_groq_qwen3_next():
+    profile = GroqProvider.model_profile('qwen/qwen3-next-80b')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'needs_json_string_tool_returns': True,
+            'supports_thinking': True,
+            'groq_supports_reasoning_disable': True,
+            'groq_supports_graded_reasoning_effort': False,
+            'supports_inline_system_prompts': True,
+            'supports_json_object_output': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not huggingface_imports(), reason='huggingface not installed')
+def test_huggingface_qwen3_next():
+    profile = HuggingFaceProvider.model_profile('Qwen/Qwen3-Next-80B-A3B-Instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'ignore_streamed_leading_whitespace': True,
+            'needs_json_string_tool_returns': True,
+            'supports_inline_system_prompts': True,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_alibaba_qwen():
     profile = AlibabaProvider.model_profile('qwen3-235b-a22b-thinking-2507')
     assert _normalize(profile) == snapshot(
@@ -3988,6 +4179,7 @@ def test_github_openai_bare_name():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'delegates_unprompted': True,
         }
     )
 
@@ -4112,6 +4304,7 @@ def test_vercel_openai_gpt():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'delegates_unprompted': True,
             'may_tokenize_special_tokens_in_content': False,
         }
     )
@@ -4517,6 +4710,7 @@ def test_stav_openai():
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'openai_reasoning_efforts': frozenset({'high', 'low', 'medium', 'minimal'}),
+            'delegates_unprompted': True,
             'may_tokenize_special_tokens_in_content': False,
         }
     )
