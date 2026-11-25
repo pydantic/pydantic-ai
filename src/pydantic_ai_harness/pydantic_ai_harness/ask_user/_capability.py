@@ -211,8 +211,10 @@ class AskUser(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Send the user's notes on an answer in the user's voice, right after the answer, rather than as tool data.
 
-        `ask_user_result` puts them in `ToolReturn.content`, which the model is sent as data the tool returned; they are
-        the user's own words, so this capability enqueues them as the user's instead, and the result keeps the answers.
+        `ask_user_result` puts them in `ToolReturn.content`, which the model is sent as data when a tool in the run
+        produced it; they are the user's own words, so this capability enqueues them as the user's instead, and the
+        result keeps the answers. An answer passed to a later run passes none of these hooks, and keeps the user's voice
+        as content supplied with a deferred result.
         """
         if tool_def.name != TOOL_NAME or tool_def.capability_id != self.id or not isinstance(result, ToolReturn):
             return result

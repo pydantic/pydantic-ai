@@ -11,6 +11,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Coroutine,
+    Iterable,
     Iterator,
     Mapping,
     Sequence,
@@ -30,6 +31,7 @@ from pydantic_graph.basenode import NodeRunEndT
 from . import _output, exceptions, messages as _messages, result
 from ._deferred import jsonable_validated_args
 from ._deferred_capabilities import LoadCapabilityCallPart
+from ._enqueue import within_ceiling
 from ._tool_status import (
     FINAL_RESULT_PROCESSED,
     OUTPUT_EXECUTION_FAILED,
@@ -480,6 +482,11 @@ async def process_tool_calls(
         output_final_result.append(processor.final_result)
 
 
+def _is_supplied(tool_call_result: DeferredToolResult | None) -> bool:
+    """Whether a call's result was supplied from outside the run, rather than produced by running its tool now."""
+    return tool_call_result is not None and not isinstance(tool_call_result, ToolApproved)
+
+
 def _event_content(tool_result: Any) -> str | Sequence[_messages.UserContent] | None:
     """The tool's own `ToolReturn.content` for its result event; the history keeps it on the return part."""
     if isinstance(tool_result, _messages.ToolReturn):
@@ -514,6 +521,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         init=False
     )
     calls_to_run_results: dict[str, DeferredToolResult] = dataclasses.field(init=False)
+    supplied_user_parts: dict[str, _messages.ModelRequestPart] = dataclasses.field(
+        default_factory=dict[str, _messages.ModelRequestPart], init=False
+    )
+    """The user-channel part for the `ToolReturn.content` supplied with each call's deferred result, by call ID.
+
+    Appended after the request's tool results, once, by `_append_supplied_user_parts`.
+    """
     executable_function_kinds: tuple[ToolDefinitionKind | Literal['unknown'], ...] = dataclasses.field(init=False)
     function_indices: list[int] = dataclasses.field(init=False)
     output_indices: list[int] = dataclasses.field(init=False)
@@ -922,10 +936,22 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         except exceptions.RunCancelled as e:
             return [cancelled_sub_agent_return(call, e)], None
 
-        return self._result_parts(call, tool_result), _event_content(tool_result)
+        return self._result_parts(call, tool_result, supplied=_is_supplied(tool_call_result)), _event_content(
+            tool_result
+        )
 
-    def _result_parts(self, call: _messages.ToolCallPart, tool_result: Any) -> _FunctionCallParts:
-        """Build the history parts for a tool's result: its return part, then any tools it revealed."""
+    def _result_parts(self, call: _messages.ToolCallPart, tool_result: Any, *, supplied: bool) -> _FunctionCallParts:
+        """Build the history parts for a tool's result: its return part, then any tools it revealed.
+
+        Content in a `ToolReturn` a tool in this run produced is part of its result, sent as data. Content `supplied`
+        with a deferred result came from outside the run (the application, or the user answering), so it keeps the
+        user's voice, as it always has: it goes in a `UserPromptPart` after the request's tool results.
+        """
+        if supplied and isinstance(tool_result, _messages.ToolReturn):
+            answer = cast(_messages.ToolReturn[Any], tool_result)
+            if answer.content:
+                self.supplied_user_parts[call.tool_call_id] = self._supplied_user_part(call, answer.content)
+                tool_result = dataclasses.replace(answer, content=None)
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
         # typed identity intact across multi-turn history: the next turn's discovery parser /
@@ -960,6 +986,29 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 )
             )
         return parts
+
+    def _supplied_user_part(
+        self, call: _messages.ToolCallPart, content: str | Sequence[_messages.UserContent]
+    ) -> _messages.ModelRequestPart:
+        """The user-channel part for content supplied with a call's deferred result, held to its owner's authority.
+
+        A tool a capability contributes speaks with no more authority than the capability, as what it enqueues does: at
+        `'none'`, its content is data naming the capability.
+        """
+        part = _messages.UserPromptPart(content=content)
+        tool_def = self.tool_manager.get_tool_def(call.tool_name)
+        capability_id = None if tool_def is None else tool_def.capability_id
+        run_ctx = self.tool_manager.ctx
+        owner = None if capability_id is None or run_ctx is None else run_ctx.capabilities.get(capability_id)
+        if owner is None or capability_id is None:
+            return part
+        return within_ceiling(part, capability_id, owner._effective_authority)  # pyright: ignore[reportPrivateUsage]
+
+    def _append_supplied_user_parts(self, calls: Sequence[_messages.ToolCallPart], indices: Iterable[int]) -> None:
+        """Append the user parts of content supplied with the deferred results of `calls` at `indices`, each once."""
+        for index in indices:
+            if (part := self.supplied_user_parts.pop(calls[index].tool_call_id, None)) is not None:
+                self.output_parts.append(part)
 
     async def _call_tools(  # noqa: C901
         self,
@@ -1099,6 +1148,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             _prune_duplicate_tool_reveals(tool_parts_by_index, self.ctx.deps.discovered_tool_names)
             for index in sorted(tool_parts_by_index):
                 self.output_parts.extend(tool_parts_by_index[index])
+            self._append_supplied_user_parts(tool_calls, sorted(tool_parts_by_index))
 
         for index in sorted(tool_parts_by_index):
             for part in tool_parts_by_index[index]:
@@ -1584,6 +1634,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             for i in executable_indices:
                 if i in function_parts and i not in appended_function_indices:  # pragma: no branch
                     self.output_parts.extend(function_parts[i])
+            self._append_supplied_user_parts(self.tool_calls, executable_indices)
 
         self._populate_deferred_calls(
             self.tool_calls,

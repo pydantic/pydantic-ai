@@ -1394,22 +1394,13 @@ class TestAnswerNotes:
         tool_part = last_request.parts[0]
         assert isinstance(tool_part, ToolReturnPart)
         assert tool_part.content == snapshot({'Approach': ['Patch'], 'Targets': ['all files']})
-        notes: list[UserContent]
-        if deferred:
-            # Answered in a later run, the answer passes none of the tool's result hooks, so the notes stay with the
-            # result as its data.
-            assert len(last_request.parts) == 1
-            assert {(attachment.tool_name, attachment.tool_call_id) for attachment in tool_part.attachments} == {
-                (TOOL_NAME, tool_part.tool_call_id)
-            }
-            notes = [attachment.content for attachment in tool_part.attachments]
-        else:
-            # The user's own words, so `AskUser` sends them in the user's voice right after the answer, as before.
-            user_part = last_request.parts[1]
-            assert tool_part.attachments == ()
-            assert isinstance(user_part, UserPromptPart)
-            assert not isinstance(user_part.content, str)
-            notes = list(user_part.content)
+        # The user's own words, so they reach the model in the user's voice right after the answer, as before: during
+        # the run `AskUser` enqueues them, and an answer given to a later run was supplied from outside it.
+        _, user_part = last_request.parts
+        assert tool_part.attachments == ()
+        assert isinstance(user_part, UserPromptPart)
+        assert not isinstance(user_part.content, str)
+        notes = list(user_part.content)
         assert notes == [
             TextContent(
                 '<answer_note header="Approach">',

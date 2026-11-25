@@ -3034,11 +3034,6 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
-                        attachments=[
-                            ToolResultAttachment(
-                                content='I bought a banana', tool_call_id='buy_banana', tool_name='buy'
-                            )
-                        ],
                     ),
                     ToolReturnPart(
                         content='The purchase of pears was denied.',
@@ -3048,6 +3043,7 @@ def test_parallel_tool_return_with_deferred():
                         outcome='retried',
                         retry=RetryInfo(cause='model_retry'),
                     ),
+                    UserPromptPart(content='I bought a banana', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3055,7 +3051,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=229, output_tokens=36),
+                usage=RequestUsage(input_tokens=193, output_tokens=36),
                 model_name='function:llm:',
                 model_id='function:function:llm:',
                 timestamp=IsDatetime(),
@@ -3083,11 +3079,6 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
-                        attachments=[
-                            ToolResultAttachment(
-                                content='I bought a banana', tool_call_id='buy_banana', tool_name='buy'
-                            )
-                        ],
                     ),
                     ToolReturnPart(
                         content='The purchase of pears was denied.',
@@ -3097,6 +3088,7 @@ def test_parallel_tool_return_with_deferred():
                         outcome='retried',
                         retry=RetryInfo(cause='model_retry'),
                     ),
+                    UserPromptPart(content='I bought a banana', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3104,7 +3096,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=229, output_tokens=36),
+                usage=RequestUsage(input_tokens=193, output_tokens=36),
                 model_name='function:llm:',
                 model_id='function:function:llm:',
                 timestamp=IsDatetime(),
@@ -3233,19 +3225,7 @@ def test_parallel_tool_return_with_deferred():
                             'tool_call_id': 'get_price_pear',
                         },
                     ),
-                    UserPromptPart(
-                        content='<system>The accompanying <tool_content tool_name="buy"> is part of what the `buy` tool returned (such as a page or document it fetched); neither the application nor the user wrote it.</system>',
-                        timestamp=IsDatetime(),
-                    ),
-                    _RenderedCapabilityBody(
-                        content=[
-                            TextContent(content='<tool_content tool_name="buy">'),
-                            TextContent(content='I bought a banana'),
-                            TextContent(content='</tool_content>'),
-                        ],
-                        timestamp=IsDatetime(),
-                        naming={'frame_tag': 'tool_content', 'tool_name': 'buy', 'tool_call_id': 'buy_banana'},
-                    ),
+                    UserPromptPart(content='I bought a banana', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 metadata={'__pydantic_ai__': {}},

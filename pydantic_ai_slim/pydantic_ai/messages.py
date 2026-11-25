@@ -1535,6 +1535,11 @@ class ToolReturn(_RecordsContentFiles, Generic[_ToolReturnValueT]):
     results as data framed on the user channel, behind a note naming the tool (or the capability that contributed
     it). Like the return value, it has no authority: the model reads it as information, not instructions.
 
+    A `ToolReturn` passed in [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] wasn't produced by a tool
+    in the run: it's supplied from outside it, by the application or the user answering. Its `content` keeps the user's
+    voice, as a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] after the request's tool results, held to the
+    authority of the capability that owns the tool.
+
     To send multimodal content in the tool result itself, return it from the tool function or include it in
     `return_value`. To speak to the model as the user or the application, enqueue it with
     [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] instead, which holds what a capability's tool enqueues to the
