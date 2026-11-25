@@ -155,11 +155,7 @@ class Selection:
         for row in range(span.start // width, last + 1):
             cells = ''.join(frame.chars[max(span.start, row * width) : min(span.stop, (row + 1) * width)])
             if row < last and _joined(joins, row + 1):
-                # The panel leaves a row's last cell blank when a double-width character opens the next row.
-                # That blank is no text, though a space that happened to land there reads the same.
-                tail = (row + 1) * width + 1
-                padded = cells.endswith(' ') and frame.chars[tail : tail + 1] == [WIDE_TAIL]
-                line += cells[:-1] if padded else cells
+                line += cells[:-1] if _padding(frame, (row + 1) * width - 1, joins) else cells
             else:
                 text += (line + cells).rstrip() + '\n'
                 line = ''
@@ -231,9 +227,28 @@ def _reach(
 
     A row joins the row above only where it wraps on from it, so a line ends at a row that does not.
     """
-    width = frame.width
-    while within(frame.chars[index]) and 0 <= (after := index + step) < rows * width and within(frame.chars[after]):
+    width, end = frame.width, rows * frame.width
+    while within(frame.chars[index]):
+        after = index + step
+        if 0 <= after < end and _padding(frame, after, joins):
+            after += step
+        if not (0 <= after < end and within(frame.chars[after])):
+            break
         if after // width != index // width and not _joined(joins, max(index, after) // width):
             break
         index = after
     return index
+
+
+def _padding(frame: ScreenBuffer, index: int, joins: Sequence[bool]) -> bool:
+    """Whether cell `index` is the blank the panel leaves at a row's end when a double-width character opens the next row.
+
+    That blank is no text, though a space that happened to land there reads the same.
+    """
+    width = frame.width
+    return (
+        index % width == width - 1
+        and frame.chars[index] == ' '
+        and _joined(joins, index // width + 1)
+        and frame.chars[index + 2 : index + 3] == [WIDE_TAIL]
+    )

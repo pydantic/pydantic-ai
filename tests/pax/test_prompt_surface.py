@@ -792,6 +792,8 @@ def test_a_soft_wrap_before_a_double_width_character_copies_no_padding() -> None
     for report in (press(1, 1), drag(4, 2)):
         screen.surface.transcript_key('mouse', report)
     assert screen.surface.transcript_key('mouse', release(4, 2)) == 'ab日本語'
+    assert clicks(screen, 3, 1, 2) == 'ab日本語', 'a double-click steps over the padding'
+    assert clicks(screen, 1, 2, 2) == 'ab日本語'
 
 
 def test_a_drag_from_the_right_half_of_a_double_width_character_keeps_it() -> None:
