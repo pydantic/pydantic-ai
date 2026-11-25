@@ -16,6 +16,7 @@ Pydantic AI supports the following native tools:
 - **[`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool]**: Enables agents to generate images
 - **[`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]**: Enables agents to fetch web pages
 - **[`MemoryTool`][pydantic_ai.native_tools.MemoryTool]**: Enables agents to use memory
+- **[`ComputerTool`][pydantic_ai.native_tools.ComputerTool]**: Sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool
 - **[`MCPServerTool`][pydantic_ai.native_tools.MCPServerTool]**: Enables agents to use remote MCP servers with communication handled by the model provider
 - **[`FileSearchTool`][pydantic_ai.native_tools.FileSearchTool]**: Enables agents to search through uploaded files using vector search (RAG)
 - **[`AdvisorTool`][pydantic_ai.native_tools.AdvisorTool]**: Lets a faster executor model consult a stronger advisor model mid-generation (Anthropic, OpenRouter)
@@ -856,6 +857,28 @@ print(result.output)
 ```
 
 _(This example is complete, it can be run "as is")_
+
+## Computer Tool
+
+The [`ComputerTool`][pydantic_ai.native_tools.ComputerTool] sends the agent's [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool to the model as the provider's own computer use tool. Pydantic AI Harness's [`ComputerUse`](harness/computer-use.md) capability adds the `computer` tool and the `ComputerTool` for you.
+
+A request needs exactly one `computer` tool the model can call. With none, an `optional` `ComputerTool` is left out and a required one raises [`UserError`][pydantic_ai.exceptions.UserError]; with more than one, the request raises `UserError`.
+
+### Provider Support
+
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| OpenAI Responses | ✅ | On the models listed under [OpenAI](models/openai.md#computer-use). |
+| Anthropic | ✅ | On the models and clients listed under [Anthropic](models/anthropic.md#computer-use). |
+| OpenAI Chat Completions | ❌ | `OpenAIChatModel` never sends it. |
+| OpenRouter | ❌ | The model gets the function tool. |
+| Google | ✅ | On the models listed under [Google](models/google.md#computer-use). Actions Gemini flags pause a non-streamed run for approval. |
+| xAI | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | Claude on Amazon Bedrock gets it through `AnthropicModel`. |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
 
 ## Advisor Tool
 

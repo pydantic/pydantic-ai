@@ -18,9 +18,13 @@ from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     ModelAPIError,
+    ModelAuthenticationError,
     ModelConnectionError,
+    ModelContextWindowExceededError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelMessage,
+    ModelNotFoundError,
     ModelRequest,
     ModelRequestRejectedError,
     ModelResponse,
@@ -66,7 +70,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModelSettings
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.function import FunctionModel
-    from pydantic_ai.models.openai import OpenAIChatModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIChatModelSettings, OpenAIResponsesModel
     from pydantic_ai.models.openrouter import (
         OpenRouterModel,
         OpenRouterModelSettings,
@@ -553,6 +557,82 @@ async def test_openrouter_errors_raised(allow_model_requests: None, openrouter_a
     )
 
 
+_CONTEXT_WINDOW_MESSAGE = "Input length (100000) exceeds the model's maximum context length (8192)."
+_CONTEXT_WINDOW_RAW = json.dumps(
+    {'error': {'message': _CONTEXT_WINDOW_MESSAGE, 'type': 'BadRequestError', 'param': None, 'code': 400}}
+)
+_DEEPLY_NESTED_RAW = '[' * 1_000 + ']' * 1_000
+"""Past `pydantic_core.from_json`'s depth limit, and deep enough that `json.loads` raises `RecursionError` on Python 3.11."""
+_OpenRouterModelClass = Literal['OpenAIChatModel', 'OpenAIResponsesModel']
+"""A model class that talks to OpenRouter, by name: the classes aren't defined when `openai` isn't installed."""
+
+
+async def _openrouter_status_error(
+    status_code: int,
+    error_body: dict[str, object],
+    *,
+    stream: bool,
+    model_class: _OpenRouterModelClass,
+) -> ModelAPIError:
+    model_classes: dict[_OpenRouterModelClass, type[OpenAIChatModel] | type[OpenAIResponsesModel]] = {
+        'OpenAIChatModel': OpenAIChatModel,
+        'OpenAIResponsesModel': OpenAIResponsesModel,
+    }
+
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(status_code, json={'error': error_body})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://openrouter.example/api/v1',
+        # The SDK would retry a 429 or 5xx with a real backoff.
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        provider = OpenRouterProvider(openai_client=client)
+        agent = Agent(model_classes[model_class]('openai/gpt-oss-120b', provider=provider))
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                # The error arrives while the stream is being opened.
+                await agent.run_stream('test').__aenter__()
+            else:
+                await agent.run('test')
+    return exc_info.value
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+@pytest.mark.parametrize('stream', [False, True], ids=['run', 'run_stream'])
+@pytest.mark.parametrize('raw', [_CONTEXT_WINDOW_RAW, _CONTEXT_WINDOW_MESSAGE], ids=['json', 'plain'])
+@pytest.mark.parametrize(
+    'model_class', ['OpenAIChatModel', 'OpenAIResponsesModel'], ids=['openai-chat', 'openai-responses']
+)
+async def test_openrouter_context_window_exceeded_via_metadata_raw(
+    allow_model_requests: None,
+    raw: str,
+    stream: bool,
+    model_class: _OpenRouterModelClass,
+) -> None:
+    """A generic 400 whose `metadata.raw` reports an overflow is a context window error with `OpenRouterProvider` too.
+
+    `OpenRouterModel`'s cases are in `tests/models/test_error_categories.py`. A mock transport stands in for a
+    cassette: recording the overflow takes a prompt of about 60,000 characters per case.
+    """
+    error = await _openrouter_status_error(
+        400,
+        {'message': 'Provider returned error', 'code': 400, 'metadata': {'raw': raw}},
+        stream=stream,
+        model_class=model_class,
+    )
+
+    assert isinstance(error, ModelContextWindowExceededError)
+    assert isinstance(error, ModelHTTPError)
+    assert error.status_code == 400
+    assert error.provider_error_code == '400'
+    cause = error.__cause__
+    assert isinstance(cause, APIError)
+    assert error.body == cause.body
+
+
 async def test_openrouter_usage(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('openai/gpt-5-mini', provider=provider)
@@ -605,12 +685,13 @@ async def test_openrouter_validate_non_json_response(openrouter_api_key: str) ->
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
 
-    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+    with pytest.raises(ModelInvalidResponseError) as exc_info:
         model._process_response('This is not JSON!')  # type: ignore[reportPrivateUsage]
 
     assert str(exc_info.value) == snapshot(
         'Invalid response from openrouter chat completions endpoint, expected JSON data'
     )
+    assert exc_info.value.body == 'This is not JSON!'
 
 
 async def test_openrouter_validate_error_response(openrouter_api_key: str) -> None:
@@ -3258,6 +3339,81 @@ async def test_openrouter_stream_error_without_integer_code_raises_model_api_err
     assert error.provider_error_code == 'server_error'
     assert isinstance(error.__cause__, APIError)
     assert error.__cause__.body == snapshot({'code': 'server_error', 'message': 'upstream failed'})
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+async def test_openrouter_stream_context_window_exceeded_via_metadata_raw(allow_model_requests: None) -> None:
+    """An in-stream generic error whose `metadata.raw` reports an overflow is a context window error.
+
+    A mock transport stands in for a cassette because OpenRouter can't be made to send this error on demand.
+    """
+    outer_error = {
+        'code': 400,
+        'message': 'Provider returned error',
+        'metadata': {'raw': _CONTEXT_WINDOW_MESSAGE},
+    }
+    error_chunk = f'data: {json.dumps({"error": outer_error})}\n\n'.encode()
+    error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
+
+    assert isinstance(error, ModelContextWindowExceededError)
+    assert isinstance(error, ModelHTTPError)
+    assert error.status_code == 400
+    assert error.body == 'Provider returned error'
+    assert error.provider_error_code == '400'
+    assert error.in_stream is True
+    cause = error.__cause__
+    assert isinstance(cause, APIError)
+    assert cause.body == outer_error
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+@pytest.mark.parametrize(
+    'raw',
+    [
+        '[]',
+        '{"error": null}',
+        '{"error": {"message": "ordinary provider error"}}',
+        '{"error": {"type": "BadRequestError", "code": 400}}',
+        None,
+        pytest.param(_DEEPLY_NESTED_RAW, id='deeply-nested'),
+    ],
+)
+async def test_openrouter_stream_context_window_metadata_raw_non_context_error(
+    allow_model_requests: None, raw: str | None
+) -> None:
+    """An in-stream generic error whose `metadata.raw` names no overflow stays a generic rejection.
+
+    A mock transport stands in for a cassette because OpenRouter can't be made to send these errors on demand.
+    """
+    outer_error = {
+        'code': 400,
+        'message': 'Provider returned error',
+        'metadata': {'raw': raw},
+    }
+    error_chunk = f'data: {json.dumps({"error": outer_error})}\n\n'.encode()
+    error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
+    assert isinstance(error, ModelRequestRejectedError)
+    assert not isinstance(error, ModelContextWindowExceededError)
+
+
+@pytest.mark.vcr(ignore_hosts=['openrouter.example'])
+@pytest.mark.parametrize(
+    ('code', 'expected_error'),
+    [(401, ModelAuthenticationError), (404, ModelNotFoundError)],
+    ids=['401', '404'],
+)
+async def test_openrouter_stream_metadata_raw_keeps_outer_error_category(
+    allow_model_requests: None, code: int, expected_error: type[ModelAPIError]
+) -> None:
+    """An in-stream 401 or 404 keeps its category even when its `metadata.raw` reports an overflow.
+
+    A mock transport stands in for a cassette because OpenRouter can't be made to send these errors on demand.
+    """
+    outer_error = {'code': code, 'message': 'Provider returned error', 'metadata': {'raw': _CONTEXT_WINDOW_RAW}}
+    error_chunk = f'data: {json.dumps({"error": outer_error})}\n\n'.encode()
+    error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
+    assert isinstance(error, expected_error)
+    assert not isinstance(error, ModelContextWindowExceededError)
 
 
 async def test_openrouter_streaming_malformed_chunk_stays_fatal(allow_model_requests: None) -> None:

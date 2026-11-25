@@ -637,7 +637,7 @@ A [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] from history that can't ri
 
 ## Token counting
 
-[`count_tokens()`][pydantic_ai.models.Model.count_tokens] and [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] use Anthropic's [token counting endpoint](https://platform.claude.com/docs/en/build-with-claude/token-counting). On the `AsyncAnthropic` client, the count includes the definitions of the web search, web fetch, code execution, tool search and advisor tools, so it matches the request's input tokens. The Bedrock, Vertex AI and Foundry clients leave those tools out of the count, as their count endpoints haven't been verified to accept them, and no client counts MCP servers, which the endpoint rejects.
+[`count_tokens()`][pydantic_ai.models.Model.count_tokens] and [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] use Anthropic's [token counting endpoint](https://platform.claude.com/docs/en/build-with-claude/token-counting). On the `AsyncAnthropic` client, the count includes the definitions of the web search, web fetch, code execution, tool search and advisor tools, so it matches the request's input tokens, except for the code execution files described below. The Bedrock, Vertex AI and Foundry clients leave those tools out of the count, as their count endpoints haven't been verified to accept them, and no client counts MCP servers, which the endpoint rejects. No client counts the [files a code execution tool uploads](../native-tools.md#file-uploads) to its container either, as the endpoint rejects file sources, so the count leaves out their tokens. For the same reason, a request with an [uploaded file](../input.md#uploaded-files) in a prompt can't be counted: the endpoint rejects it with a 400.
 
 [`anthropic_count_tokens_accepts_server_tools`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_count_tokens_accepts_server_tools] in the model's `profile` controls this. Set it to `False` if your `AsyncAnthropic` client's `base_url` points at a proxy whose count endpoint rejects server tools, or to `True` on a platform client whose count endpoint accepts them. With it off, a request whose function tools are all deferred can't be counted.
 
@@ -807,7 +807,7 @@ Claude Fable 5.2 and Claude Mythos 5.2 enforce the check on every account. On th
 
 **Pydantic AI sets nothing by default**, so an older account keeps replaying its reasoning untouched on those models. Where the check is enforced, the rejected request is retried once with `prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the run continues, and a [`AnthropicStaleThinkingBlockWarning`][pydantic_ai.models.anthropic.AnthropicStaleThinkingBlockWarning] explains what happened. **The model no longer sees that turn's reasoning** — the trade is one turn's thinking against a failed run. Models marked [`anthropic_binds_thinking_blocks=True`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_binds_thinking_blocks] are the only ones that retry. A request whose thinking type isn't `adaptive`, such as `anthropic_thinking={'type': 'between_tools'}`, is not retried, because Anthropic accepts `block_binding` only alongside adaptive thinking: keep that conversation's prefix stable instead.
 
-Anthropic applies the drop to one request only. Its response records the transformation, so Pydantic AI uses that response history to keep sending `drop_block` for the rest of the affected conversation. This avoids another rejected request on every later turn without storing mutable state on the model or changing an unrelated conversation. The same behavior applies to [`count_tokens()`][pydantic_ai.models.Model.count_tokens]: token counting retries the first matching rejection once, and later counts carrying the recovery history send the drop immediately. A recovery seen only while counting applies only to later counts, because counting omits MCP servers, and on Bedrock, Vertex AI and Foundry server-side tools too (see [Token counting](#token-counting)), and can therefore have a different prefix from inference. An explicit `block_binding` still wins for both counting and inference.
+Anthropic applies the drop to one request only. Its response records the transformation, so Pydantic AI uses that response history to keep sending `drop_block` for the rest of the affected conversation. This avoids another rejected request on every later turn without storing mutable state on the model or changing an unrelated conversation. The same behavior applies to [`count_tokens()`][pydantic_ai.models.Model.count_tokens]: token counting retries the first matching rejection once, and later counts carrying the recovery history send the drop immediately. A recovery seen only while counting applies only to later counts, because counting omits MCP servers and code execution files, and on Bedrock, Vertex AI and Foundry server-side tools too (see [Token counting](#token-counting)), and can therefore have a different prefix from inference. An explicit `block_binding` still wins for both counting and inference.
 
 The automatic behavior is available through the direct Anthropic API, Pydantic AI Gateway and other `AsyncAnthropic`-compatible proxies, Claude Platform on AWS, both Amazon Bedrock clients (the Bedrock Messages API's `AsyncAnthropicBedrockMantle` and the legacy `AsyncAnthropicBedrock`), and Google Vertex AI. It is not enabled for Microsoft Foundry, where this beta is not currently documented. Explicit settings remain pass-through on every transport.
 
@@ -973,6 +973,33 @@ agent = Agent(
 ```
 
 The response's usage, and so its cost, stays the sum of the passes either way.
+
+## Computer use
+
+To let Claude use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+the Claude API and on Amazon Bedrock (the `AsyncAnthropicBedrock` and `AsyncAnthropicBedrockMantle` clients), it sends
+each Claude model the computer use tool it was trained on, as a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]:
+
+| Models | Tool |
+|---|---|
+| Claude Opus 4.8 and Claude 5 | `computer_toolset_20260801` |
+| Claude Opus 4.7, 4.6 and 4.5, Sonnet 4.6 | `computer_20251124` |
+| Claude Haiku 4.5 | `computer_20250124` |
+
+Claude models not in the table, every model on Google Vertex AI, Microsoft Foundry and Claude Platform on AWS, and any
+model with `ComputerUse(native=False)` get a regular function tool named `computer` instead.
+
+Keep the screen within the model's [image size limit](https://platform.claude.com/docs/en/build-with-claude/vision#evaluate-image-size).
+`computer_toolset_20260801` refuses a screenshot over 2576 pixels on its longer side or over 4784 image tokens (one
+token per 28x28 pixels), and the request fails with a
+[`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. The older tools, and the function tool, shrink a larger
+screenshot without saying so, so Claude's clicks miss.
+
+To send Anthropic's tool to a model or client that isn't listed, add `ComputerTool` to the profile's
+[`supported_native_tools`][pydantic_ai.profiles.ModelProfile.supported_native_tools], which replaces the model's own
+list, and choose the tool with
+[`anthropic_computer_tool_version`][pydantic_ai.profiles.anthropic.AnthropicModelProfile.anthropic_computer_tool_version]
+(default `computer_20250124`).
 
 ## Web Tool Callers
 
