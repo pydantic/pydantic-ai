@@ -10,7 +10,13 @@ from typing import NoReturn
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, PrefixTools, local_workspace
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CombinedCapability,
+    LocalWorkspace,
+    PrefixTools,
+    local_workspace,
+)
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -32,6 +38,7 @@ from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sub_agents import SubAgents, TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 from tests.harness._strict_requests import PROVIDERS, capturing_model, strict_tools
+from tests.harness._tool_calls import call_tools
 
 
 def test_coder_agent_is_model_less_and_composed() -> None:
@@ -201,6 +208,17 @@ async def test_a_shell_beside_coder_raises_pointing_at_coder(tmp_path: Path, pla
         )
     assert 'its own parameters' in str(raised.value)
     assert 'https://github.com/pydantic/pydantic-ai/issues/14515' in str(raised.value)
+
+
+async def test_a_shell_beside_a_deferred_coder_raises_once_coder_loads(tmp_path: Path) -> None:
+    coding = CombinedCapability[None]([Coder[None]()], id='coding', defer_loading=True)
+    capabilities: list[AbstractCapability[None]] = [
+        LocalWorkspace(tmp_path),
+        coding,
+        Shell(allowed_commands=['pytest']),
+    ]
+    with pytest.raises(UserError, match="adds more command tools rather than narrowing `Coder`'s"):
+        await call_tools(capabilities, [('load_capability', {'id': 'coding'})])
 
 
 async def test_coder_read_file_returns_a_large_image_as_a_file(tmp_path: Path) -> None:

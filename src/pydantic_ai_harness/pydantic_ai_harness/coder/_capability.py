@@ -117,34 +117,40 @@ class _CoderShell(Shell[AgentDepsT]):
 
     A `Shell` added beside `Coder` registers `run_command` and its siblings next to `Coder`'s
     unrestricted `shell` tool rather than narrowing it, so its `allowed_commands` restricts nothing.
-    The tool names differ, so nothing else catches it: this checks the run's capabilities by type.
-    A stopgap until a second `Shell` narrows `Coder`'s instead, tracked in
+    The tool names differ, so nothing else catches it: this checks the run's capabilities by type before
+    every request, which also covers a `Coder` loaded from a deferred group. A stopgap until a second `Shell` narrows `Coder`'s instead, tracked in
     https://github.com/pydantic/pydantic-ai/issues/14515.
     """
 
-    async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        await super().before_run(ctx)
-        extra: list[AbstractCapability[AgentDepsT]] = []
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        """Check before every request, so a `Coder` loaded later from a deferred group is checked too."""
+        _reject_another_shell(ctx)
+        return await super().prepare_tools(ctx, tool_defs)
 
-        def collect(candidate: AbstractCapability[AgentDepsT]) -> None:
-            while isinstance(candidate, WrapperCapability):
-                candidate = candidate.wrapped
-            if isinstance(candidate, Shell) and not isinstance(candidate, _CoderShell):
-                extra.append(candidate)
 
-        if ctx.root_capability is not None:  # pragma: no branch
-            ctx.root_capability.apply(collect)
-        if extra:
-            raise UserError(
-                '`Coder` already gives the agent an unrestricted `shell` tool, and a `Shell` beside it adds '
-                "more command tools rather than narrowing `Coder`'s: its `allowed_commands` and "
-                '`denied_commands` do not apply to `shell`. Remove the extra `Shell`, and adjust `Coder` through '
-                'its own parameters (`instructions`, `autonomy`, `sub_agents`); add `Permissions` to require '
-                'approval before commands, or a sandbox workspace such as `BubblewrappedWorkspace` to contain '
-                'them. For a restricted shell, build the agent from `FileSystem` and `Shell` without `Coder`. '
-                'Narrowing `Coder` by adding capabilities is planned in '
-                'https://github.com/pydantic/pydantic-ai/issues/14515.'
-            )
+def _reject_another_shell(ctx: RunContext[Any]) -> None:
+    """Raise when the run has a `Shell` besides `Coder`'s own."""
+    extra: list[AbstractCapability[Any]] = []
+
+    def collect(candidate: AbstractCapability[Any]) -> None:
+        while isinstance(candidate, WrapperCapability):
+            candidate = candidate.wrapped
+        if isinstance(candidate, Shell) and not isinstance(candidate, _CoderShell):
+            extra.append(candidate)
+
+    if ctx.root_capability is not None:  # pragma: no branch
+        ctx.root_capability.apply(collect)
+    if extra:
+        raise UserError(
+            '`Coder` already gives the agent an unrestricted `shell` tool, and a `Shell` beside it adds '
+            "more command tools rather than narrowing `Coder`'s: its `allowed_commands` and "
+            '`denied_commands` do not apply to `shell`. Remove the extra `Shell`, and adjust `Coder` through '
+            'its own parameters (`instructions`, `autonomy`, `sub_agents`); add `Permissions` to require '
+            'approval before commands, or a sandbox workspace such as `BubblewrappedWorkspace` to contain '
+            'them. For a restricted shell, build the agent from `FileSystem` and `Shell` without `Coder`. '
+            'Narrowing `Coder` by adding capabilities is planned in '
+            'https://github.com/pydantic/pydantic-ai/issues/14515.'
+        )
 
 
 MAX_READ_CHARS = 50_000
