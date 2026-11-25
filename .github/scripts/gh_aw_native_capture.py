@@ -173,6 +173,8 @@ def run_case(
         'GH_AW_PROMPT': str(workspace / 'prompt.md'),
         'GH_AW_PROTECTED_SESSION_CAPTURE': '1',
         'PAI_AGENT': 'acceptance_agent:agent',
+        'PAI_RESULT_METADATA': 'acceptance_agent:result_metadata',
+        'PAI_OTEL_EXPORT_PATH': '/tmp/gh-aw/pydantic-ai-private-otel.jsonl',
         'PAI_MODEL': 'openai/gpt-5',
         'PAI_BASE_URL': 'http://127.0.0.1:9',
         'FIXTURE_FAILURE': fail,
@@ -236,6 +238,9 @@ def run_case(
             'GH_AW_SECRET_NAMES': 'CAPTURE_FIXTURE_SECRET',
             'SECRET_CAPTURE_FIXTURE_SECRET': FIXTURE_SECRET,
             'RUNNER_TEMP': str(work / 'runner'),
+            'PYDANTIC_AI_WORKFLOW_ENGINE_SOURCE': str(
+                Path(__file__).resolve().parents[1] / 'workflows/shared/engine-zai.md'
+            ),
         }
         execute(
             [
@@ -469,6 +474,8 @@ Run the deterministic recorder fixture.
             f'pydantic-clai2=={engine_version}',
             f'pydantic-ai-slim[anthropic,openai,mcp,spec]>={slim_version}',
             f'cryptography>={cryptography_version}',
+            'logfire>=4.39.0',
+            'opentelemetry-exporter-otlp-json-file>=0.64b0',
         ],
         env=env,
         log=evidence / 'install.log',

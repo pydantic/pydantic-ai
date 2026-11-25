@@ -13,7 +13,7 @@ import pydantic_core
 from pydantic import ValidationError
 
 from . import _usage_attribution, messages as _messages
-from ._deferred import filter_deferred_results
+from ._deferred import filter_deferred_results, jsonable_validated_args
 from ._output import (
     OutputSchema,
     OutputToolset,
@@ -73,30 +73,34 @@ def _check_tool_kinds(tools: Mapping[str, ToolsetTool[Any]]) -> None:
     stored by durable execution still loads after the module defining its kind is gone.
     """
     for tool in tools.values():
-        tool_def = tool.tool_def
-        kind_id = tool_def.tool_kind
-        if kind_id is None:
-            continue
-        kind = _TOOL_KINDS.get(kind_id)
-        if kind is None:
+        _check_tool_definition_kind(tool.tool_def)
+
+
+def _check_tool_definition_kind(tool_def: ToolDefinition) -> None:
+    """Refuse one tool's `tool_kind` the way `_check_tool_kinds` describes."""
+    kind_id = tool_def.tool_kind
+    if kind_id is None:
+        return
+    kind = _TOOL_KINDS.get(kind_id)
+    if kind is None:
+        raise UserError(
+            f'Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, which is not a defined `ToolKind`. '
+            'Import the module that defines the kind before running the agent.'
+        )
+    if kind.args is not None:
+        problems = _shape_mismatch(kind.args, pydantic_core.to_json(tool_def.parameters_json_schema), 'args')
+        if problems:
             raise UserError(
-                f'Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, which is not a defined `ToolKind`. '
-                'Import the module that defines the kind before running the agent.'
+                f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its parameters don't fit the "
+                f'arguments the kind declares ({_shape_name(kind.args)}): {"; ".join(problems)}.'
             )
-        if kind.args is not None:
-            problems = _shape_mismatch(kind.args, pydantic_core.to_json(tool_def.parameters_json_schema), 'args')
-            if problems:
-                raise UserError(
-                    f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its parameters don't fit the "
-                    f'arguments the kind declares ({_shape_name(kind.args)}): {"; ".join(problems)}.'
-                )
-        if kind.content is not None and tool_def.return_schema:
-            problems = _shape_mismatch(kind.content, pydantic_core.to_json(tool_def.return_schema), 'content')
-            if problems:
-                raise UserError(
-                    f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its return type doesn't fit the "
-                    f'content the kind declares ({_shape_name(kind.content)}): {"; ".join(problems)}.'
-                )
+    if kind.content is not None and tool_def.return_schema:
+        problems = _shape_mismatch(kind.content, pydantic_core.to_json(tool_def.return_schema), 'content')
+        if problems:
+            raise UserError(
+                f"Tool {tool_def.name!r} declares `tool_kind={kind_id!r}`, but its return type doesn't fit the "
+                f'content the kind declares ({_shape_name(kind.content)}): {"; ".join(problems)}.'
+            )
 
 
 def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[str, ToolsetTool[AgentDepsT]]:
@@ -111,6 +115,16 @@ def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[st
     it names staying, so the rule given up is the other one: a tool can stay beside a tool it names. The
     result is deterministic from toolset order.
     """
+    suppliers = _suppliers_of_named_kinds(tools)
+    if not suppliers:
+        return tools
+    stays = _decide_which_tools_stay(list(tools), suppliers)
+    _restore_tools_without_a_replacement(stays, suppliers)
+    return {name: tool for name, tool in tools.items() if stays[name]}
+
+
+def _suppliers_of_named_kinds(tools: Mapping[str, ToolsetTool[AgentDepsT]]) -> dict[str, list[str]]:
+    """Map each tool whose `unless_tool_kind` names another tool's kind to those other tools, in toolset order."""
     names_by_kind: dict[str, list[str]] = {}
     for name, tool in tools.items():
         if (kind := tool.tool_def.tool_kind) is not None:
@@ -121,21 +135,15 @@ def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[st
         if (unless_kind := tool.tool_def.unless_tool_kind) is not None:
             if others := [other for other in names_by_kind.get(unless_kind, ()) if other != name]:
                 suppliers[name] = others
-    if not suppliers:
-        return tools
+    return suppliers
 
-    stays: dict[str, bool] = {name: True for name in tools if name not in suppliers}
-    undecided = [name for name in tools if name in suppliers]
+
+def _decide_which_tools_stay(names: list[str], suppliers: Mapping[str, list[str]]) -> dict[str, bool]:
+    """Decide whether each tool stays, pinning the first tool on a cycle whenever no undecided tool can be decided."""
+    stays: dict[str, bool] = {name: True for name in names if name not in suppliers}
+    undecided = [name for name in names if name in suppliers]
     while undecided:
-        progressed = False
-        for name in undecided:
-            if any(stays.get(other) is True for other in suppliers[name]):
-                stays[name] = False
-                progressed = True
-            elif all(stays.get(other) is False for other in suppliers[name]):
-                stays[name] = True
-                progressed = True
-        if not progressed:
+        if not _decide_settled_tools(undecided, suppliers, stays):
             pinned = _first_on_a_cycle(undecided, suppliers)
             stays[pinned] = True
             # The pinned tool wins against every tool whose kind it names, so none can be kept beside it later,
@@ -143,8 +151,20 @@ def _drop_superseded_tools(tools: dict[str, ToolsetTool[AgentDepsT]]) -> dict[st
             for other in suppliers[pinned]:
                 stays.setdefault(other, False)
         undecided = [name for name in undecided if name not in stays]
-    _restore_tools_without_a_replacement(stays, suppliers)
-    return {name: tool for name, tool in tools.items() if stays[name]}
+    return stays
+
+
+def _decide_settled_tools(undecided: list[str], suppliers: Mapping[str, list[str]], stays: dict[str, bool]) -> bool:
+    """Decide, in order, each undecided tool its suppliers already settle; whether any was decided."""
+    progressed = False
+    for name in undecided:
+        if any(stays.get(other) is True for other in suppliers[name]):
+            stays[name] = False
+            progressed = True
+        elif all(stays.get(other) is False for other in suppliers[name]):
+            stays[name] = True
+            progressed = True
+    return progressed
 
 
 def _restore_tools_without_a_replacement(stays: dict[str, bool], suppliers: Mapping[str, list[str]]) -> None:
@@ -173,16 +193,23 @@ def _first_on_a_cycle(undecided: list[str], suppliers: Mapping[str, list[str]]) 
     """
     pending = set(undecided)
     for name in undecided:
-        seen: set[str] = set()
-        stack = [other for other in suppliers[name] if other in pending]
-        while stack:
-            other = stack.pop()
-            if other == name:
-                return name
-            if other not in seen:
-                seen.add(other)
-                stack.extend(supplier for supplier in suppliers[other] if supplier in pending)
+        if _leads_back_to_itself(name, suppliers, pending):
+            return name
     raise AssertionError('a stalled resolution always contains a cycle')  # pragma: no cover
+
+
+def _leads_back_to_itself(name: str, suppliers: Mapping[str, list[str]], pending: set[str]) -> bool:
+    """Whether following the suppliers in `pending` from `name` reaches `name` again."""
+    seen: set[str] = set()
+    stack = [other for other in suppliers[name] if other in pending]
+    while stack:
+        other = stack.pop()
+        if other == name:
+            return True
+        if other not in seen:
+            seen.add(other)
+            stack.extend(supplier for supplier in suppliers[other] if supplier in pending)
+    return False
 
 
 @lru_cache(maxsize=256)
@@ -198,9 +225,7 @@ def _shape_mismatch(shape: Any, json_schema: bytes, payload: Literal['args', 'co
     declared = pydantic.TypeAdapter(shape).json_schema()
     schema: dict[str, Any] = pydantic_core.from_json(json_schema)
     if payload == 'content':
-        ref = schema.get('$ref')
-        if isinstance(ref, str) and ref.startswith('#/$defs/'):
-            schema = schema.get('$defs', {}).get(ref.removeprefix('#/$defs/'), schema)
+        schema = _resolve_top_level_ref(schema)
         expected, actual = _json_types(declared), _json_types(schema)
         if expected and actual and expected.isdisjoint(actual):
             return (f'it returns {"/".join(sorted(actual))}, not {"/".join(sorted(expected))}',)
@@ -210,6 +235,30 @@ def _shape_mismatch(shape: Any, json_schema: bytes, payload: Literal['args', 'co
     required: list[str] = schema.get('required') or []
     field = 'parameter' if payload == 'args' else 'field'
     owner = 'its' if payload == 'args' else "its return value's"
+    return (
+        *_required_field_problems(declared, properties, required, payload, field=field, owner=owner),
+        *_field_type_problems(declared, properties, field=field, owner=owner),
+    )
+
+
+def _resolve_top_level_ref(schema: dict[str, Any]) -> dict[str, Any]:
+    """The `$defs` entry a schema's top-level `$ref` points at, or the schema itself."""
+    ref = schema.get('$ref')
+    if isinstance(ref, str) and ref.startswith('#/$defs/'):
+        return schema.get('$defs', {}).get(ref.removeprefix('#/$defs/'), schema)
+    return schema
+
+
+def _required_field_problems(
+    declared: dict[str, Any],
+    properties: dict[str, Any],
+    required: list[str],
+    payload: Literal['args', 'content'],
+    *,
+    field: str,
+    owner: str,
+) -> list[str]:
+    """Each field the declared shape requires that the tool's schema lacks or doesn't require."""
     problems: list[str] = []
     for name in declared.get('required', []):
         if name not in properties:
@@ -218,6 +267,12 @@ def _shape_mismatch(shape: Any, json_schema: bytes, payload: Literal['args', 'co
             )
         elif name not in required:
             problems.append(f'{owner} {name!r} {field} is not required')
+    return problems
+
+
+def _field_type_problems(declared: dict[str, Any], properties: dict[str, Any], *, field: str, owner: str) -> list[str]:
+    """Each field both schemas type whose JSON types don't overlap."""
+    problems: list[str] = []
     for name, declared_property in declared.get('properties', {}).items():
         if name in properties:
             expected, actual = _json_types(declared_property), _json_types(properties[name])
@@ -225,7 +280,7 @@ def _shape_mismatch(shape: Any, json_schema: bytes, payload: Literal['args', 'co
                 problems.append(
                     f'{owner} {name!r} {field} is of type {"/".join(sorted(actual))}, not {"/".join(sorted(expected))}'
                 )
-    return tuple(problems)
+    return problems
 
 
 def _json_types(property_schema: dict[str, Any]) -> set[str]:
@@ -663,39 +718,9 @@ class ToolManager(Generic[AgentDepsT]):
             async def lifecycle(args: str | dict[str, Any]) -> dict[str, Any]:
                 nonlocal handler_validated_args
                 handler_validated_args = None
-
-                try:
-                    raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=args)
-                except (CallDeferred, ApprovalRequired) as e:
-                    raise _validate_hook_deferral_error('before_tool_validate', e) from e
-
-                deferral: _ValidationDeferral | None = None
-                try:
-                    validated_args = await self._validate_tool_args(
-                        call, tool, ctx, allow_partial=allow_partial, args_override=raw_args
-                    )
-                except _ValidationDeferral as e:
-                    # Hold validator deferrals until the policy gate has accepted the validated args.
-                    deferral = e
-                    validated_args = e.validated_args
-                except (ValidationError, ModelRetry) as e:
-                    try:
-                        validated_args = await cap.on_tool_validate_error(
-                            ctx, call=call, tool_def=tool_def, args=raw_args, error=e
-                        )
-                    except (CallDeferred, ApprovalRequired) as hook_deferral:
-                        raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
-
-                try:
-                    validated_args = await cap.after_tool_validate(
-                        ctx, call=call, tool_def=tool_def, args=validated_args
-                    )
-                except (CallDeferred, ApprovalRequired) as e:
-                    raise _ValidationDeferral(e, validated_args) from e
-
-                if deferral is not None:
-                    raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
-
+                validated_args = await self._run_validation_lifecycle(
+                    cap, ctx, call, tool, args, allow_partial=allow_partial
+                )
                 # A wrap deferral is valid only after its most recent handler call completed.
                 handler_validated_args = validated_args
                 return validated_args
@@ -721,6 +746,49 @@ class ToolManager(Generic[AgentDepsT]):
                 args_override=call.args if call.args is not None else {},
             )
 
+        return validated_args
+
+    async def _run_validation_lifecycle(
+        self,
+        cap: AbstractCapability[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        tool: ToolsetTool[AgentDepsT],
+        args: str | dict[str, Any],
+        *,
+        allow_partial: bool,
+    ) -> dict[str, Any]:
+        """Run `before_tool_validate`, validation with `on_tool_validate_error`, then `after_tool_validate`."""
+        tool_def = tool.tool_def
+        try:
+            raw_args = await cap.before_tool_validate(ctx, call=call, tool_def=tool_def, args=args)
+        except (CallDeferred, ApprovalRequired) as e:
+            raise _validate_hook_deferral_error('before_tool_validate', e) from e
+
+        deferral: _ValidationDeferral | None = None
+        try:
+            validated_args = await self._validate_tool_args(
+                call, tool, ctx, allow_partial=allow_partial, args_override=raw_args
+            )
+        except _ValidationDeferral as e:
+            # Hold validator deferrals until the policy gate has accepted the validated args.
+            deferral = e
+            validated_args = e.validated_args
+        except (ValidationError, ModelRetry) as e:
+            try:
+                validated_args = await cap.on_tool_validate_error(
+                    ctx, call=call, tool_def=tool_def, args=raw_args, error=e
+                )
+            except (CallDeferred, ApprovalRequired) as hook_deferral:
+                raise _validate_hook_deferral_error('on_tool_validate_error', hook_deferral) from hook_deferral
+
+        try:
+            validated_args = await cap.after_tool_validate(ctx, call=call, tool_def=tool_def, args=validated_args)
+        except (CallDeferred, ApprovalRequired) as e:
+            raise _ValidationDeferral(e, validated_args) from e
+
+        if deferral is not None:
+            raise _ValidationDeferral(deferral.deferral, validated_args) from deferral
         return validated_args
 
     async def _run_execute_hooks(
@@ -751,18 +819,7 @@ class ToolManager(Generic[AgentDepsT]):
             tool_def = validated.tool.tool_def
 
             async def lifecycle(args: dict[str, Any]) -> Any:
-                args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
-
-                try:
-                    tool_result = await do_execute(args)
-                except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, ToolFailedError):
-                    raise  # Control flow, not errors
-                except (ToolFailed, ModelRetry):
-                    raise  # Propagate to outer handler
-                except Exception as e:
-                    tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
-
-                return await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
+                return await self._run_execution_lifecycle(cap, ctx, call, tool_def, args, do_execute)
 
             try:
                 tool_result = await cap.wrap_tool_execute(
@@ -787,6 +844,29 @@ class ToolManager(Generic[AgentDepsT]):
             tool_result = await do_execute(validated.validated_args)
 
         return tool_result
+
+    async def _run_execution_lifecycle(
+        self,
+        cap: AbstractCapability[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        execute: Callable[[dict[str, Any]], Awaitable[Any]],
+    ) -> Any:
+        """Run `before_tool_execute`, execution with `on_tool_execute_error`, then `after_tool_execute`."""
+        args = await cap.before_tool_execute(ctx, call=call, tool_def=tool_def, args=args)
+
+        try:
+            tool_result = await execute(args)
+        except (SkipToolExecution, CallDeferred, ApprovalRequired, ToolRetryError, ToolFailedError):
+            raise  # Control flow, not errors
+        except (ToolFailed, ModelRetry):
+            raise  # Propagate to outer handler
+        except Exception as e:
+            tool_result = await cap.on_tool_execute_error(ctx, call=call, tool_def=tool_def, args=args, error=e)
+
+        return await cap.after_tool_execute(ctx, call=call, tool_def=tool_def, args=args, result=tool_result)
 
     def _with_tool_kind(self, call: ToolCallPart) -> ToolCallPart:
         """Give a call its tool's `tool_kind` when it lacks one, promoted to the typed part registered for it.
@@ -944,6 +1024,8 @@ class ToolManager(Generic[AgentDepsT]):
         to be valid, which the caller is shown. That means the tool's `args_validator`,
         `after_tool_validate`, or `wrap_tool_validate` after its handler has returned; the same
         exception raised before validation has run raises a `UserError` naming the alternatives.
+        An external tool's call is executed outside the run, so `ApprovalRequired` for one raises a
+        `UserError` too.
 
         A permitted deferral is control flow rather than a validation failure: the returned
         `ValidatedToolCall` has `args_valid=True` and carries the exception on
@@ -982,6 +1064,15 @@ class ToolManager(Generic[AgentDepsT]):
             return self._make_validation_success(call, tool, ctx, e.validated_args)
         except _ValidationDeferral as e:
             assert tool is not None
+            if isinstance(e.deferral, ApprovalRequired) and tool.tool_def.kind == 'external':
+                # Filing this call with the other external calls would hand it to their executor
+                # unapproved, and an approved external call can't be resumed (`execute_tool_call`).
+                raise UserError(
+                    f'`ApprovalRequired` was raised while validating a call to external tool {call.tool_name!r}, '
+                    'but an external tool call is executed outside the agent run, so the run cannot approve it. '
+                    'Raise `CallDeferred` instead to pass `metadata` to the code that executes the call, '
+                    'and approve it there.'
+                ) from e.deferral
             # The `args_validator` requested approval or deferred the call. The arguments passed
             # validation, so this is not a failure: the call is reported valid (no retry budget
             # consumed, no `on_tool_validate_error`) and the deferral is carried on the result for
@@ -1050,6 +1141,43 @@ class ToolManager(Generic[AgentDepsT]):
         return await self._execute_tool_call_impl(
             validated, usage=self.ctx.usage, wrap_validation_errors=wrap_validation_errors
         )
+
+    async def after_tool_execute(
+        self, validated: ValidatedToolCall[AgentDepsT], result: Any, *, wrap_validation_errors: bool = True
+    ) -> Any:
+        """Pass a result the tool didn't return itself through the `after_tool_execute` hooks, as if it had.
+
+        Used for the answer to a question the tool deferred with `CallDeferred(kind='question')`, when a
+        `handle_deferred_tool_calls` hook answers it during the run, so result guards (redaction,
+        blocking, scanning) see the answer as they would see one the tool waited for itself.
+
+        Raises:
+            ToolRetryError: A hook raised `ModelRetry` or a `ValidationError`. Only when `wrap_validation_errors=True`.
+            ToolFailedError: A hook raised `ToolFailed`. Only when `wrap_validation_errors=True`.
+            ModelRetry / ValidationError / ToolFailed: When `wrap_validation_errors=False`, as raised by the hook.
+        """
+        cap = self.root_capability
+        # Deferred calls are only answered during a run by `handle_deferred_tool_calls` hooks on this capability.
+        assert cap is not None, 'after_tool_execute requires root_capability'
+        assert validated.tool is not None
+        assert validated.validated_args is not None
+        call = validated.call
+        try:
+            return await cap.after_tool_execute(
+                validated.ctx, call=call, tool_def=validated.tool.tool_def, args=validated.validated_args, result=result
+            )
+        except (ValidationError, ModelRetry) as e:
+            if not wrap_validation_errors:
+                raise
+            name = call.tool_name
+            max_retries = validated.tool.max_retries
+            attempt = self._check_max_retries(name, max_retries, e)
+            self.failed_tools.add(name)
+            raise self._wrap_error_as_retry(name, call, e, attempt=attempt, max_retries=max_retries) from e
+        except ToolFailed as e:
+            if not wrap_validation_errors:
+                raise
+            raise self._wrap_error_as_failed(call.tool_name, call, e) from e
 
     # --- Output tool methods (output hooks, no tool hooks) ---
 
@@ -1301,6 +1429,10 @@ class ToolManager(Generic[AgentDepsT]):
         except SkipToolExecution as e:
             _usage_attribution.record_tool_call(usage)
             tool_result = e.result
+            # Only a call that ran can make the output it submitted the final result.
+            # Only a `RunContext` built outside an agent run has no submitter.
+            if (submitter := validated.ctx._live_output_submitter) is not None:  # pyright: ignore[reportPrivateUsage]  # pragma: no branch
+                submitter.discard_submission(validated.call.tool_call_id)
 
         # Only record success when wrapping is requested, mirroring the `failed_tools` gating:
         # raw-mode callers (e.g. sandboxed dispatch) leave retry-budget state untouched, so a
@@ -1447,6 +1579,7 @@ class ToolManager(Generic[AgentDepsT]):
             return await self._resolve_single_deferred(
                 call,
                 exc,
+                executed=validated,
                 wrap_validation_errors=wrap_validation_errors,
                 on_deferred_requests=on_deferred_requests,
                 on_inline_deferred=on_inline_deferred,
@@ -1475,11 +1608,16 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         exc: CallDeferred | ApprovalRequired,
         *,
+        executed: ValidatedToolCall[AgentDepsT],
         wrap_validation_errors: bool = True,
         on_deferred_requests: InlineDeferredRequestsHandler | None = None,
         on_inline_deferred: InlineDeferredResultHandler | None = None,
     ) -> ToolDenied | ToolReturn[Any] | Any:
         """Resolve a single deferred tool call inline using the capability handler.
+
+        `executed` is the validated call whose execution raised `exc`: the request carries its validated
+        arguments, and the answer to a question the tool raised itself passes the tool's `after_tool_execute`
+        hooks, as the graph path's does.
 
         Dispatches the handler's result for `call` on the same set of
         [`DeferredToolResult`][pydantic_ai.tools.DeferredToolResult] variants as the
@@ -1520,6 +1658,8 @@ class ToolManager(Generic[AgentDepsT]):
             approvals=[call] if isinstance(exc, ApprovalRequired) else [],
             calls=[call] if isinstance(exc, CallDeferred) else [],
             metadata={call.tool_call_id: exc.metadata} if exc.metadata else {},
+            validated_args={call.tool_call_id: jsonable_validated_args(executed.validated_args)},
+            _kinds={call.tool_call_id: 'question'} if isinstance(exc, CallDeferred) and exc.kind == 'question' else {},
         )
         if on_deferred_requests is not None:
             # Before the handler, as the graph emits `DeferredToolRequestsEvent`: a handler may take a
@@ -1575,4 +1715,22 @@ class ToolManager(Generic[AgentDepsT]):
         # Must be a ToolReturn (the only remaining DeferredToolResult variant). Return
         # the handler's original value verbatim so handle_call's contract — "what the
         # tool would have returned" — is preserved for plain-vs-wrapped inputs.
-        return deferred_results.calls[call.tool_call_id]
+        return await self._answer_question(
+            executed, exc, deferred_results.calls[call.tool_call_id], wrap_validation_errors=wrap_validation_errors
+        )
+
+    async def _answer_question(
+        self,
+        executed: ValidatedToolCall[AgentDepsT],
+        exc: CallDeferred | ApprovalRequired,
+        answer: Any,
+        *,
+        wrap_validation_errors: bool,
+    ) -> Any:
+        """Pass the answer to a question the tool raised while executing through its `after_tool_execute` hooks.
+
+        Other results, and a question an `args_validator` raised before the tool ran, are returned as given.
+        """
+        if executed.deferral is not None or not isinstance(exc, CallDeferred) or exc.kind != 'question':
+            return answer
+        return await self.after_tool_execute(executed, answer, wrap_validation_errors=wrap_validation_errors)

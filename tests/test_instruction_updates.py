@@ -14,15 +14,15 @@ from _pytest.mark.structures import ParameterSet
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentRunResultEvent, RunContext, capture_run_messages
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
 from pydantic_ai._instructions import recorded_prefix
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, ModelFallback, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
     CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
+    InstructionCapabilityPart,
     InstructionDeltaPart,
     InstructionDigest,
     InstructionId,
@@ -34,6 +34,8 @@ from pydantic_ai.messages import (
     ModelResponse,
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
+    OperatorSource,
+    OperatorText,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
@@ -45,6 +47,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -82,6 +85,12 @@ with try_import() as vercel_available:
 with try_import() as xai_available:
     from pydantic_ai.models.xai import XaiModel
     from pydantic_ai.providers.xai import XaiProvider
+
+
+@dataclass(kw_only=True)
+class ReminderPart(InstructionCapabilityPart, namespace='test_instruction_updates'):
+    """A capability's request-scoped reminder, which renders as a `SystemPromptPart(..., scope='request')`."""
+
 
 pytestmark = pytest.mark.anyio
 
@@ -224,7 +233,7 @@ async def test_instruction_updates_hook_unset_ends_a_window_without_blocks():
     ).all_messages()
     # `B` is first seen in that empty window, so it's delivered as a change.
     history = (await agent.run('Continue.', deps=State('B'), message_history=history)).all_messages()
-    assert received[-1] == ['<context id="agent:state">\nB\n</context>']
+    assert received[-1] == ['<pyai:context id="agent:state">\nB\n</pyai:context>']
     # Unsetting the parts again ends this window as well, so `B` isn't sent.
     result = await agent.run('Continue.', deps=State('B'), message_history=history, capabilities=unset)
     assert received[-1] == []
@@ -247,8 +256,8 @@ async def test_instruction_updates_hook_appended_request_preserves_history():
         assert isinstance(request, ModelRequest)
         # History keeps the content; only the request the model receives carries the rendering.
         assert [part.content for part in info.model_request_parameters.instruction_parts or []] == [
-            '<context id="agent:state">\nA\n</context>\n'
-            'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+            '<pyai:context id="agent:state">\nA\n</pyai:context>\n'
+            'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.'
         ]
         assert [part.content for part in request.parts if isinstance(part, UserPromptPart)][:2] == [
             'Continue.',
@@ -285,10 +294,10 @@ async def test_instruction_updates_hook_appended_request_preserves_history():
 
     assert updates == snapshot([[], ['B'], ['B'], ['B', 'C']])
     assert prefixes[0] == snapshot("""\
-<context id="agent:state">
+<pyai:context id="agent:state">
 A
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
 """)
     assert prefixes == [prefixes[0]] * 4
     for previous, current in zip(captured, captured[1:]):
@@ -527,14 +536,12 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
         (['C', f'sha256:{_sha256("Chatty.")}'], []),
         (None, ['D']),
     ]
-    sentence = (
-        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
-    )
+    sentence = 'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.'
     assert prefixes == [
-        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
-        f'<context id="agent:state">\nA\n</context>\n{sentence}\n\nTerse.',
-        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
-        f'<context id="agent:state">\nC\n</context>\n{sentence}\n\nChatty.',
+        f'<pyai:context id="agent:state">\nA\n</pyai:context>\n{sentence}\n\nTerse.',
+        f'<pyai:context id="agent:state">\nA\n</pyai:context>\n{sentence}\n\nTerse.',
+        f'<pyai:context id="agent:state">\nC\n</pyai:context>\n{sentence}\n\nChatty.',
+        f'<pyai:context id="agent:state">\nC\n</pyai:context>\n{sentence}\n\nChatty.',
     ]
     assert isinstance(agent.model, Model)
     current_parts = [
@@ -544,7 +551,7 @@ async def test_instruction_updates_rewritten_block_change_opens_a_new_window():
     projected = agent.model.prepare_messages(history, ModelRequestParameters(instruction_parts=current_parts))
     # The change from the earlier window is superseded. The current window's requests were all sent the
     # request's prefix, so their instructions render from it; the earlier window's keep their recorded content.
-    assert context_statements(projected) == ['<context id="agent:state">\nD\n</context>']
+    assert context_statements(projected) == ['<pyai:context id="agent:state">\nD\n</pyai:context>']
     assert [message.instructions for message in projected if isinstance(message, ModelRequest)] == [
         'A\n\nTerse.',
         'A\n\nTerse.',
@@ -607,7 +614,7 @@ async def test_instruction_updates_coexist_with_request_scoped_prompts(inline_sy
                 for part in message.parts
                 if isinstance(part, (SystemPromptPart, UserPromptPart))
                 and isinstance(part.content, str)
-                and ('<context' in part.content or 'Reminder' in part.content)
+                and ('<pyai:context' in part.content or 'Reminder' in part.content)
             ]
         )
         return ModelResponse(parts=[TextPart('ok')])
@@ -620,7 +627,11 @@ async def test_instruction_updates_coexist_with_request_scoped_prompts(inline_sy
             self, ctx: RunContext[State], request_context: ModelRequestContext
         ) -> ModelRequestContext:
             self.requests += 1
-            ctx.enqueue(SystemPromptPart(f'Reminder {self.requests}.', scope='request'))
+            ctx.enqueue(
+                ReminderPart(
+                    content=OperatorText(f'Reminder {self.requests}.'), source=OperatorSource(), scope='request'
+                )
+            )
             return request_context
 
     agent = Agent(
@@ -646,7 +657,7 @@ async def test_instruction_updates_coexist_with_request_scoped_prompts(inline_sy
     def wrapped(text: str) -> str:
         return text if inline_system else f'<system>{text}</system>'
 
-    change = wrapped('<context id="agent:state">\nB\n</context>')
+    change = wrapped('<pyai:context id="agent:state">\nB\n</pyai:context>')
     assert received == [
         [wrapped('Reminder 1.')],
         [change, wrapped('Reminder 2.')],
@@ -765,7 +776,7 @@ async def test_instruction_updates_unaddressable_change_opens_a_new_window(addre
     )
     change = history[2].parts[1]
     assert isinstance(change, InstructionDeltaPart) and change.id is None
-    assert change.render() == '<context>\nUnknown\n</context>'
+    assert change.render() == '<pyai:context>\nUnknown\n</pyai:context>'
     agent = Agent(
         TestModel(custom_output_text='ok'),
         instructions=InstructionPart(content='B', name='state', on_change='append'),
@@ -809,7 +820,7 @@ async def test_instruction_updates_unknown_serialized_addresses_round_trip_and_r
     assert [part.id for part in baseline_of(history[0]) or []] == [None, None]
     restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history))
     assert restored == history
-    # A model renders a block's `<context id>` from the part's id, which a namespace this version doesn't
+    # A model renders a block's `<pyai:context id>` from the part's id, which a namespace this version doesn't
     # know can't deserialize into, so continuing starts a new window instead of stating updates to
     # blocks the prefix can't name.
     agent = Agent(
@@ -825,7 +836,7 @@ async def test_instruction_updates_unknown_serialized_addresses_round_trip_and_r
     assert isinstance(agent.model, Model)
     projected = agent.model.prepare_messages(result.all_messages())
     assert not any(
-        isinstance(part, (SystemPromptPart, UserPromptPart)) and '<context' in str(part.content)
+        isinstance(part, (SystemPromptPart, UserPromptPart)) and '<pyai:context' in str(part.content)
         for message in projected
         if isinstance(message, ModelRequest)
         for part in message.parts
@@ -933,7 +944,7 @@ async def test_instruction_updates_rebaseline_after_compaction_or_history_loss(w
         assert isinstance(agent.model, Model)
         projected = agent.model.prepare_messages(result.all_messages())
         assert not any(
-            isinstance(part, (SystemPromptPart, UserPromptPart)) and '<context' in str(part.content)
+            isinstance(part, (SystemPromptPart, UserPromptPart)) and '<pyai:context' in str(part.content)
             for message in projected
             if isinstance(message, ModelRequest)
             for part in message.parts
@@ -1079,10 +1090,237 @@ async def test_instruction_updates_suspended_resume_after_a_rewritten_block_chan
     assert isinstance(model, Model)
     rendered = model.prepare_request(None, ModelRequestParameters(instruction_parts=captured_parts[0]))[1]
     assert InstructionPart.join(rendered.instruction_parts or []) == (
-        '<context id="agent:state">\nA\n</context>\n'
-        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+        '<pyai:context id="agent:state">\nA\n</pyai:context>\n'
+        'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.'
         '\n\nTerse.'
     )
+
+
+class OutsidePrefixModel(FunctionModel):
+    """A model that reads dynamic rewrite-mode instructions outside the cached prefix."""
+
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        return True
+
+
+def answer_ok(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('ok')])
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+async def test_instruction_updates_rewrite_outside_prefix_keeps_the_window():
+    """A dynamic rewrite-mode block can change, disappear and return without moving the prefix or the recorded changes.
+
+    A unit test: only the window bookkeeping is under test, and the wire form is pinned in `test_openai_prompt_cache`.
+    """
+    agent = Agent(WrapperModel(OutsidePrefixModel(answer_ok)), instructions='Stable.', deps_type=Settings)
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    history: list[ModelMessage] = []
+    for settings in [
+        Settings('Terse.', 'A'),
+        Settings('Terse.', 'B'),
+        Settings('Chatty.', 'B'),
+        Settings('', 'B'),
+        Settings('Back.', 'C'),
+    ]:
+        history = (await agent.run('Continue.', deps=settings, message_history=history)).all_messages()
+
+    assert [
+        (
+            request.instructions,
+            baseline_of(request) is not None,
+            [part.content for part in request.parts if isinstance(part, InstructionDeltaPart)],
+        )
+        for request in history
+        if isinstance(request, ModelRequest)
+    ] == [
+        ('Stable.\n\nA\n\nTerse.', True, []),
+        ('Stable.\n\nA\n\nTerse.', False, ['B']),
+        ('Stable.\n\nA\n\nChatty.', False, []),
+        ('Stable.\n\nA', False, []),
+        ('Stable.\n\nA\n\nBack.', False, ['C']),
+    ]
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+@pytest.mark.parametrize(
+    ('first', 'second'),
+    [
+        pytest.param(('Stable.', 'append'), ('Changed.', 'append'), id='literal'),
+        pytest.param(('Stable.', 'append'), ('Stable.', 'rewrite'), id='to-rewrite'),
+        pytest.param(('Stable.', 'rewrite'), ('Stable.', 'append'), id='to-append'),
+    ],
+)
+async def test_instruction_updates_rewrite_outside_prefix_other_changes_open_a_window(
+    first: tuple[str, Literal['append', 'rewrite']], second: tuple[str, Literal['append', 'rewrite']]
+):
+    """A changed literal block or a changed policy still moves the prefix, so the request opens a new window."""
+
+    def build(literal: str, policy: Literal['append', 'rewrite']) -> Agent[None, str]:
+        agent = Agent(OutsidePrefixModel(answer_ok), instructions=literal)
+
+        @agent.instructions(name='anchor', on_change='append')
+        def anchor() -> str:
+            return 'Anchor.'
+
+        @agent.instructions(name='flip')
+        def flip() -> InstructionPart:
+            return InstructionPart(content='Flip.', on_change=policy)
+
+        return agent
+
+    first_run = await build(*first).run('Continue.')
+    second_run = await build(*second).run('Continue.', message_history=first_run.all_messages())
+
+    requests = [message for message in second_run.all_messages() if isinstance(message, ModelRequest)]
+    # A new baseline records the current values, so the second request leads with its own literal block.
+    assert (baseline_of(requests[1]) is not None, requests[1].instructions) == (
+        True,
+        f'{second[0]}\n\nAnchor.\n\nFlip.',
+    )
+
+
+def test_instruction_updates_recorded_prefix_with_rewrites_outside_prefix():
+    """A request whose dynamic block changed in the window recorded it after the blocks the prefix keeps."""
+    literal = InstructionPart(content='Stable.')
+    style = InstructionPart(content='Terse.', dynamic=True)
+    state = InstructionPart(content='A', on_change='append', name='state', id=STATE_ID)
+    baseline = InstructionBaselinePart(instructions=[InstructionDigest.of(literal), InstructionDigest.of(style), state])
+
+    outside = {'rewrites_outside_prefix': True}
+    assert recorded_prefix(baseline, 'Stable.\n\nTerse.\n\nA', **outside) == [literal, style, state]
+    assert recorded_prefix(baseline, 'Stable.\n\nA\n\nChatty.', **outside) == [
+        literal,
+        state,
+        InstructionPart(content='Chatty.', dynamic=True),
+    ]
+    assert recorded_prefix(baseline, 'Stable.\n\nA', **outside) == [literal, state]
+    assert recorded_prefix(baseline, 'Other.\n\nA\n\nChatty.', **outside) is None
+    assert recorded_prefix(baseline, 'Stable.\n\nA\n\nChatty.') is None
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+async def test_instruction_updates_suspended_resume_after_a_rewrite_outside_prefix():
+    """A resumed turn keeps the append-mode block and the dynamic text its request was sent."""
+    agent = Agent(OutsidePrefixModel(answer_ok), deps_type=Settings)
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    first = await agent.run('Continue.', deps=Settings('Terse.', 'A'))
+    second = await agent.run('Continue.', deps=Settings('Chatty.', 'A'), message_history=first.all_messages())
+    history = ModelMessagesTypeAdapter.validate_json(second.all_messages_json())
+    assert history == second.all_messages()
+    history[-1] = scripted_response(
+        texts=['partial'], state='suspended', provider_response_id='paused', input_tokens=1, output_tokens=1
+    )
+    captured_parts: list[list[InstructionPart] | None] = []
+
+    class ResumeModel(ScriptedContinuationModel):
+        @property
+        def _rewrite_instructions_outside_prefix(self) -> bool:
+            return True
+
+        async def request(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> ModelResponse:
+            captured_parts.append(model_request_parameters.instruction_parts)
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    model = ResumeModel(
+        responses=[scripted_response(texts=['done'], provider_response_id='complete', input_tokens=1, output_tokens=1)]
+    )
+    await agent.run(model=model, deps=Settings('Later.', 'A'), message_history=history)
+    assert captured_parts == [
+        [
+            InstructionPart(content='A', dynamic=True, on_change='append', name='state', id=STATE_ID),
+            InstructionPart(content='Chatty.', dynamic=True),
+        ]
+    ]
+
+
+@pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+@pytest.mark.parametrize('primary_keeps_window', [True, False])
+async def test_instruction_updates_attempt_at_another_model_records_its_window(primary_keeps_window: bool):
+    """An attempt moved to a model with the other window rule records the window that model reads."""
+    failing = False
+
+    def primary(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if failing:
+            raise ModelHTTPError(503, 'primary')
+        return ModelResponse(parts=[TextPart('ok')])
+
+    first_model = OutsidePrefixModel(primary) if primary_keeps_window else FunctionModel(primary)
+    second_model = FunctionModel(answer_ok) if primary_keeps_window else OutsidePrefixModel(answer_ok)
+    agent = Agent(first_model, deps_type=Settings, capabilities=[ModelFallback(second_model)])
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    first = await agent.run('Continue.', deps=Settings('Terse.', 'A'))
+    second = await agent.run('Continue.', deps=Settings('Terse.', 'B'), message_history=first.all_messages())
+    failing = True
+    third = await agent.run('Continue.', deps=Settings('Chatty.', 'B'), message_history=second.all_messages())
+
+    last = [message for message in third.all_messages() if isinstance(message, ModelRequest)][-1]
+    if primary_keeps_window:
+        assert recorded(baseline_of(last)) is not None
+        assert last.instructions == 'B\n\nChatty.'
+    else:
+        assert baseline_of(last) is None
+        assert last.instructions == 'A\n\nChatty.'
+
+
+@pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
+async def test_instruction_updates_hook_changed_parts_keep_the_shared_window_rule():
+    """Parts a hook changed can't be recorded again for another model, so they open a window on every model."""
+
+    async def add_part(ctx: RunContext[Settings], request: ModelRequestContext) -> ModelRequestContext:
+        parameters = request.model_request_parameters
+        request.model_request_parameters = replace(
+            parameters, instruction_parts=[*(parameters.instruction_parts or []), InstructionPart(content='Hook.')]
+        )
+        return request
+
+    agent = Agent(
+        OutsidePrefixModel(answer_ok), deps_type=Settings, capabilities=[Hooks(before_model_request=add_part)]
+    )
+
+    @agent.instructions
+    def style(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.style
+
+    @agent.instructions(name='state', on_change='append')
+    def state(ctx: RunContext[Settings]) -> str:
+        return ctx.deps.state
+
+    first = await agent.run('Continue.', deps=Settings('Terse.', 'A'))
+    second = await agent.run('Continue.', deps=Settings('Chatty.', 'A'), message_history=first.all_messages())
+
+    requests = [message for message in second.all_messages() if isinstance(message, ModelRequest)]
+    assert baseline_of(requests[1]) is not None
 
 
 @pytest.mark.parametrize('inline', [False, True])
@@ -1151,7 +1389,7 @@ async def test_instruction_updates_suspended_resume_retains_prefix_parts(inline:
         if isinstance(message, ModelRequest)
         for part in message.parts
     )
-    assert '<context id="agent:state">\\nB\\n</context>' in repr(captured_messages)
+    assert '<pyai:context id="agent:state">\\nB\\n</pyai:context>' in repr(captured_messages)
     assert any(
         isinstance(part, InstructionDeltaPart) and part.content == 'B'
         for message in result.all_messages()
@@ -1385,11 +1623,7 @@ async def test_instruction_updates_downgraded_empty_block_is_not_sent(case: str,
         with pytest.warns(UserWarning, match='rewriting its prefix instead'):
             # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
             await agent.run('Continue.', model_settings={'max_tokens': 1024})
-    # Claude Sonnet 4.5 takes no mid-conversation system messages, so the standing prompt also says what `<system>` means.
-    assert bodies[0]['system'] == [
-        {'type': 'text', 'text': SYSTEM_VOICE_ANNOUNCEMENT},
-        {'type': 'text', 'text': 'Stable.'},
-    ]
+    assert bodies[0]['system'] == [{'type': 'text', 'text': 'Stable.'}]
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -1556,14 +1790,22 @@ def test_instruction_updates_render_escapes_the_id():
     part = InstructionDeltaPart(
         id=InstructionId(CapabilityInstructionSource('"quoted" <id>'), name='state'), content='New.'
     )
-    assert part.render() == '<context id="capability:&quot;quoted&quot; &lt;id&gt;:state">\nNew.\n</context>'
+    assert part.render() == '<pyai:context id="capability:&quot;quoted&quot; &lt;id&gt;:state">\nNew.\n</pyai:context>'
 
 
-def test_instruction_updates_render_escapes_closing_tags_in_the_content():
-    """Block text can't end its own element, or the `<system>` element wrapping it on the fallback path."""
-    part = InstructionDeltaPart(id=STATE_ID, content='Before </context></System > </context_diff> after.')
+def test_instruction_updates_render_closing_tags_in_the_content_as_written():
+    """Block text goes in as written, closing tags included: instructions are operator text, never rewritten.
+
+    Keep untrusted text out of instructions; text from users and tools that looks like a frame gets a lookalike
+    note instead.
+    """
+    part = InstructionDeltaPart(id=STATE_ID, content='Before </pyai:context></System > </pyai:context_diff> after.')
     assert part.render() == snapshot(
-        '<context id="agent:state">\nBefore &lt;/context>&lt;/System > &lt;/context_diff> after.\n</context>'
+        """\
+<pyai:context id="agent:state">
+Before </pyai:context></System > </pyai:context_diff> after.
+</pyai:context>\
+"""
     )
 
 
@@ -1583,7 +1825,7 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
     )
     assert part.render(previous=MEMORY) == snapshot(
         """\
-<context_diff id="agent:memory">
+<pyai:context_diff id="agent:memory">
 --- before
 +++ after
 @@ -5,5 +5,5 @@
@@ -1593,16 +1835,16 @@ def test_instruction_updates_render_diff_against_the_replaced_text():
 +- Fact 7: value seven.
  - Fact 8: value 8.
  - Fact 9: value 9.
-</context_diff>\
+</pyai:context_diff>\
 """
     )
-    full = f'<context id="agent:memory">\n{edited}\n</context>'
+    full = f'<pyai:context id="agent:memory">\n{edited}\n</pyai:context>'
     # Without the text the change replaces, or with other text, the model gets the full replacement.
     assert part.render() == full
     assert part.render(previous=f'{MEMORY}\n- Fact 21: value 21.') == full
     # So it does when the diff would be longer.
     short = InstructionDeltaPart(id=STATE_ID, content='B', base_hash=_sha256('A'))
-    assert short.render(previous='A') == '<context id="agent:state">\nB\n</context>'
+    assert short.render(previous='A') == '<pyai:context id="agent:state">\nB\n</pyai:context>'
 
 
 @pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST)
@@ -1636,7 +1878,7 @@ async def test_instruction_updates_send_long_block_edits_as_diffs():
     assert received[1] == [deltas[0].render(previous=MEMORY)]
     # Each request renders the earlier changes exactly as before, so the cached prefix holds.
     assert received[2] == [*received[1], deltas[1].render(previous=first_edit)]
-    assert all(statement.startswith('<context_diff id="agent:memory">') for statement in received[2])
+    assert all(statement.startswith('<pyai:context_diff id="agent:memory">') for statement in received[2])
 
     # A processor that drops the first change leaves the second without the text it was computed
     # against, so the model gets it in full.
@@ -1655,7 +1897,7 @@ async def test_instruction_updates_send_long_block_edits_as_diffs():
         message_history=history,
         capabilities=[ProcessHistory(drop_first_change)],
     )
-    assert received == [[f'<context id="agent:memory">\n{second_edit}\n</context>']]
+    assert received == [[f'<pyai:context id="agent:memory">\n{second_edit}\n</pyai:context>']]
 
 
 @pytest.mark.parametrize('include_content', [False, True])
@@ -1676,27 +1918,30 @@ def context_statements(messages: list[ModelMessage]) -> list[str]:
         for part in message.parts
         if isinstance(part, (SystemPromptPart, UserPromptPart))
         and isinstance(part.content, str)
-        and '<context' in part.content
+        and '<pyai:context' in part.content
     ]
 
 
+CONTINUE_REF = 'pydantic-ai'
+"""The frame marker of a conversation that opens with 'Continue.', as most of these do."""
+
 RENDERINGS: dict[bool, tuple[str, list[str]]] = {
     True: (
-        'Stable.\n\n<context id="agent:state">\nA\n</context>\n'
-        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.',
+        'Stable.\n\n<pyai:context id="agent:state">\nA\n</pyai:context>\n'
+        'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.',
         [
-            '<context id="agent:state">\nB\n</context>',
-            '<context id="agent:state">\nThis context has been withdrawn.\n</context>',
+            '<pyai:context id="agent:state">\nB\n</pyai:context>',
+            '<pyai:context id="agent:state">\nThis context has been withdrawn.\n</pyai:context>',
         ],
     ),
     False: (
-        'Stable.\n\n<context id="agent:state">\nA\n</context>\n'
-        'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.',
+        'Stable.\n\n<pyai:context id="agent:state">\nA\n</pyai:context>\n'
+        'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.',
         [
-            '<system><context id="agent:state">\nB\n</context></system>',
-            '<system><context id="agent:state">\n'
+            '<system><pyai:context id="agent:state">\nB\n</pyai:context></system>',
+            '<system><pyai:context id="agent:state">\n'
             'This context has been withdrawn, and the withdrawal stays in effect until replaced again.\n'
-            '</context></system>',
+            '</pyai:context></system>',
         ],
     ),
 }
@@ -1824,10 +2069,10 @@ WIRE_CASES: list[ParameterSet] = [
 
 
 NEUTRAL_SENTENCE = (
-    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.'
 )
 PERSISTENCE_SENTENCE = (
-    'A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.'
+    'A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.'
 )
 
 
@@ -1839,15 +2084,15 @@ def wire_contains(body: object, text: str) -> bool:
     return json.dumps(text)[1:-1] in json.dumps(body)
 
 
-def expected_update(case: WireCase, instruction_id: str, content: str | None) -> str:
-    """The tail statement as each delivery path renders it."""
+def expected_update(case: WireCase, instruction_id: str, content: str | None, history: list[ModelMessage]) -> str:
+    """The tail statement as each delivery path renders it, with the frame marker of the conversation `history` is."""
     if content is None:
         content = (
             'This context has been withdrawn.'
             if case.inline_system
             else 'This context has been withdrawn, and the withdrawal stays in effect until replaced again.'
         )
-    element = f'<context id="{instruction_id}">\n{content}\n</context>'
+    element = f'<pyai:context id="{instruction_id}">\n{content}\n</pyai:context>'
     return element if case.inline_system else f'<system>{element}</system>'
 
 
@@ -1859,16 +2104,22 @@ def wire_model(
     anthropic_api_key: str,
     openrouter_api_key: str,
 ) -> Model:
+    # These tests pin a prefix that never changes, so the fallback cases get the announcement from the first request.
+    # With the default `'when_needed'`, it would join the system prompt with the first update, the one change to the
+    # prefix it makes, which `tests/test_framework_frames.py` covers.
+    always: ModelSettings = {'framing_announcement': 'always'}
     if case.provider == 'openrouter':
         # OpenRouter opts out of inline system prompts, so this is the `<system>`-wrapped fallback path.
         model = OpenRouterModel(
             case.model_name,
             provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
+            settings=always,
         )
     elif case.provider == 'anthropic':
         model = AnthropicModel(
             case.model_name,
             provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+            settings=always,
         )
     else:
         settings: OpenAIResponsesModelSettings = {'openai_store': True, 'openai_reasoning_effort': 'none'}
@@ -1916,7 +2167,15 @@ async def test_instruction_updates_preserve_wire_prefix(
         def state(ctx: RunContext[State]) -> str | None:
             return f'Send parcels to warehouse {ctx.deps.value}.' if ctx.deps.value is not None else None
 
-        agent = Agent(wire_model, deps_type=State, instructions=instructions, capabilities=[cap])
+        # `'always'` keeps the `<system>` tag announcement in the standing prompt from the first request, so the
+        # whole prefix stays the same on models that get the updates as `<system>` blocks too.
+        agent = Agent(
+            wire_model,
+            deps_type=State,
+            instructions=instructions,
+            capabilities=[cap],
+            model_settings={'framing_announcement': 'always'},
+        )
         if stream:
             async with agent.run_stream(prompt, deps=State(value), message_history=history) as result:
                 output = await result.get_output()
@@ -1932,7 +2191,8 @@ async def test_instruction_updates_preserve_wire_prefix(
         if index == 0:
             sentence = NEUTRAL_SENTENCE if case.inline_system else PERSISTENCE_SENTENCE
             assert wire_contains(
-                body, f'<context id="capability:memory:state">\nSend parcels to warehouse A.\n</context>\n{sentence}'
+                body,
+                f'<pyai:context id="capability:memory:state">\nSend parcels to warehouse A.\n</pyai:context>\n{sentence}',
             )
         else:
             prior = request_capture.body(index=index - 1)
@@ -1940,10 +2200,10 @@ async def test_instruction_updates_preserve_wire_prefix(
             assert body.get('instructions') == prior.get('instructions')
             if expected_updates[index]:
                 content = f'Send parcels to warehouse {value}.' if value is not None else None
-                assert wire_contains(wire_messages, expected_update(case, 'capability:memory:state', content))
+                assert wire_contains(wire_messages, expected_update(case, 'capability:memory:state', content, history))
             if case.continuation:
                 assert body['previous_response_id'] == prior_response_id
-                assert str(wire_messages).count('<context id=') == (1 if expected_updates[index] else 0)
+                assert str(wire_messages).count('<pyai:context id=') == (1 if expected_updates[index] else 0)
             else:
                 previous_messages = prior['input' if case.provider == 'responses' else 'messages']
                 assert isinstance(previous_messages, list)
@@ -1986,6 +2246,8 @@ async def test_instruction_updates_after_tool_mutation(
         deps_type=State,
         instructions='When the todo is pending, call finish_todo once. When it is done, reply DONE.',
         capabilities=[cap],
+        # Keeps the standing prompt the same on every request; see `test_instruction_updates_preserve_wire_prefix`.
+        model_settings={'framing_announcement': 'always'},
     )
     if stream:
         completed: AgentRunResult[str] | None = None
@@ -2013,8 +2275,13 @@ async def test_instruction_updates_after_tool_mutation(
     else:
         assert second_messages[: len(first_messages)] == first_messages
     sentence = NEUTRAL_SENTENCE if case.inline_system else PERSISTENCE_SENTENCE
-    assert wire_contains(first, f'<context id="capability:todos:state">\nTodo status: pending.\n</context>\n{sentence}')
-    assert wire_contains(second_messages, expected_update(case, 'capability:todos:state', 'Todo status: done.'))
+    assert wire_contains(
+        first,
+        f'<pyai:context id="capability:todos:state">\nTodo status: pending.\n</pyai:context>\n{sentence}',
+    )
+    assert wire_contains(
+        second_messages, expected_update(case, 'capability:todos:state', 'Todo status: done.', history)
+    )
     assert any(
         isinstance(part, InstructionDeltaPart) and part.content == 'Todo status: done.'
         for message in history
@@ -2157,3 +2424,33 @@ async def test_instruction_updates_ui_keeps_operator_state_server_side(kind: str
     assert isinstance(request, ModelRequest)
     assert request.instructions == 'Trusted state.'
     assert baseline_of(request) is not None
+
+
+async def test_requests_with_equal_instructions_share_one_string():
+    """A conversation holds its instructions once, however many requests record them, also after loading it."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('look')] if len(messages) == 1 else [TextPart('done')])
+
+    # Two parts, so each request joins them into a new string, and at least 64 characters long, since pydantic-core
+    # caches shorter strings when it parses JSON, which would share them on its own.
+    instructions = [
+        'Answer briefly, in plain sentences, and say when you are unsure of something.',
+        'Cite the files you read.',
+    ]
+    agent = Agent(FunctionModel(model_fn), instructions=instructions)
+
+    @agent.tool_plain
+    def look() -> str:
+        return 'found'
+
+    result = await agent.run('Where is it?')
+    loaded = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+    assert loaded == result.all_messages()
+    resumed = await agent.run('And now?', message_history=loaded)
+
+    requests = [message for message in resumed.all_messages() if isinstance(message, ModelRequest)]
+    assert [request.instructions for request in requests] == ['\n\n'.join(instructions)] * 3
+    assert all(request.instructions is requests[0].instructions for request in requests)
+    first_run = [message for message in result.all_messages() if isinstance(message, ModelRequest)]
+    assert first_run[1].instructions is first_run[0].instructions

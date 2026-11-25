@@ -38,19 +38,32 @@ ERROR_TYPE_STATUS_CODES = {
 }
 
 
-def error_status_code(error: APIStatusError) -> int:
+def error_status_code(status_code: int, body: object | None) -> int:
     """The HTTP status of an Anthropic error, including one reported in a stream after a 200 response.
 
     An error event in a stream arrives after the response status was already 200, so the SDK raises it with that
     status; the error `type` identifies the status the same error has on a non-streaming request.
     """
-    if error.status_code >= 400:
-        return error.status_code
-    body = error.body
+    if status_code >= 400:
+        return status_code
     if _utils.is_str_dict(body) and _utils.is_str_dict(error_body := body.get('error')):
         if isinstance(error_type := error_body.get('type'), str) and error_type in ERROR_TYPE_STATUS_CODES:
             return ERROR_TYPE_STATUS_CODES[error_type]
-    return error.status_code
+    return status_code
+
+
+def status_and_body(error: APIStatusError | APIConnectionError) -> tuple[int, object | None] | None:
+    """The status and body of the error response `error` reports, or `None` for a connection that failed without one.
+
+    A retrying transport raises `httpx2.HTTPStatusError` for a status it gave up on, and `anthropic` wraps it in
+    `APIConnectionError`, so a recovery from an error response reads both shapes.
+    """
+    if isinstance(error, APIStatusError):
+        return error.status_code, error.body
+    if isinstance(cause := error.__cause__, httpx2.HTTPStatusError):
+        body, _, _ = _model_errors.transport_error_body(cause.response)
+        return cause.response.status_code, body
+    return None
 
 
 def reported_error_body(body: object | None) -> object | None:
@@ -61,20 +74,44 @@ def reported_error_body(body: object | None) -> object | None:
     return body.get('error', body) if _utils.is_str_dict(body) else None
 
 
-def is_expired_container_error(error: APIStatusError) -> bool:
+def is_expired_container_error(status_code: int, body: object | None) -> bool:
     """Whether Anthropic rejected a request because the container it reuses has expired.
 
     Anthropic answers an expired container with a 404 `not_found_error`, and earlier with a 500.
     """
-    status_code = error_status_code(error)
+    status_code = error_status_code(status_code, body)
     if status_code == 500:
         return True
-    error_body = reported_error_body(error.body)
+    error_body = reported_error_body(body)
     return (
         status_code == 404
         and _utils.is_str_dict(error_body)
         and str(error_body.get('message', '')).startswith('Container not found')
     )
+
+
+_THREAD_REPLAY_ERROR_CODES = frozenset({'thread_not_found', 'thread_already_continued', 'thread_continue_in_flight'})
+
+
+def is_thread_replay_error(body: object | None) -> bool:
+    """Whether a thread continue request failed in a way that sending the full conversation in a new thread recovers.
+
+    See https://platform.claude.com/docs/en/build-with-claude/message-threads#errors. A 404 for a model that
+    doesn't exist has no thread `error_code`, so it isn't replayed.
+    """
+    return thread_error_code(body) in _THREAD_REPLAY_ERROR_CODES
+
+
+def is_thread_unsupported_error(body: object | None) -> bool:
+    """Whether a thread request uses a feature or organization setting threads don't support, so it's sent without one."""
+    return thread_error_code(body) == 'thread_unsupported_request'
+
+
+def thread_error_code(body: object | None) -> object:
+    """The `error_code` in the `details` of a thread error, like `thread_not_found`."""
+    error_body = reported_error_body(body)
+    details = error_body.get('details') if _utils.is_str_dict(error_body) else None
+    return details.get('error_code') if _utils.is_str_dict(details) else None
 
 
 @contextmanager
@@ -85,7 +122,7 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Ge
         raise api_error(
             model_name,
             model_id_namespace,
-            status_code=error_status_code(e),
+            status_code=error_status_code(e.status_code, e.body),
             body=e.body,
             message=e.message,
             headers=dict(e.response.headers),
@@ -96,7 +133,20 @@ def map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Ge
         if isinstance(cause := e.__cause__, httpx2.HTTPStatusError):
             # A retrying transport raises this for a status it gave up on, and `anthropic` wraps it as if the
             # connection had failed, though the provider responded.
-            raise _model_errors.transport_status_error(model_name, cause.response) from e
+            response = cause.response
+            body, error, text = _model_errors.transport_error_body(response)
+            if not error:
+                # Without an error object in the body, only its status and text say what went wrong.
+                raise _model_errors.transport_status_error(model_name, response) from e
+            raise api_error(
+                model_name,
+                model_id_namespace,
+                status_code=response.status_code,
+                body=body,
+                message=text,
+                headers=dict(response.headers),
+                in_stream=False,
+            ) from e
         raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
     except httpx2.TransportError as e:
         # `anthropic` wraps transport failures in `APIConnectionError` only until the response starts; one that breaks
@@ -118,43 +168,60 @@ def api_error(
     """The error for an error response, stream `error` event, or errored Message Batches result with `body`."""
     error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
     error_type, error_message = error.get('type'), error.get('message')
-    category = _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
-    if error_type == 'invalid_request_error' and isinstance(error_message, str):
-        if 'prompt is too long' in error_message.lower():
-            category = ModelContextWindowExceededError
-        elif 'credit balance is too low' in error_message.lower():
-            # Anthropic reports an exhausted prepaid balance as a 400, identifiable only by its message.
-            category = ModelQuotaExceededError
+    details = error.get('details')
+    error_code = details.get('error_code') if _utils.is_str_dict(details) else None
+    category = error_category(error_type, error_message, error_code)
     provider_error_type = error_type if isinstance(error_type, str) else None
-    if status_code >= 400:
-        suggested_model_id = None
-        if error_type == 'not_found_error' and error_message == f'model: {model_name}':
-            suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        reported = reported_error_body(body)
-        reported_message = reported.get('message') if _utils.is_str_dict(reported) else None
-        provider_error_code = None
-        if category is None and headers and (amzn_error_type := headers.get('x-amzn-errortype')):
-            # Bedrock (`AsyncAnthropicBedrock`) reports the error's code in this header, as `Code:namespace`, and
-            # only a `message` in the body, so it's classified the way `BedrockConverseModel` classifies the code.
-            provider_error_code = amzn_error_type.split(':', 1)[0]
-            category = _model_errors.bedrock_code_category(provider_error_code, reported_message)
-        hint = SCHEMA_TOO_COMPLEX_HINT if status_code == 400 and is_schema_too_complex_error(reported_message) else None
-        return ModelHTTPError.for_category(
-            category or _model_errors.http_status_category(status_code, reported_message),
-            status_code=status_code,
-            model_name=model_name,
-            body=body,
-            headers=headers,
-            suggested_model_id=suggested_model_id,
-            hint=hint,
-            provider_error_code=provider_error_code,
-            provider_error_type=provider_error_type,
-            in_stream=in_stream,
+    if status_code < 400:
+        # An `error` event inside a stream whose type has no known status.
+        return (category or ModelAPIError)(
+            model_name=model_name, message=message, body=body, provider_error_type=provider_error_type, in_stream=True
         )
-    # An `error` event inside a stream whose type has no known status.
-    return (category or ModelAPIError)(
-        model_name=model_name, message=message, body=body, provider_error_type=provider_error_type, in_stream=True
+    suggested_model_id = None
+    if error_type == 'not_found_error' and error_message == f'model: {model_name}':
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    reported = reported_error_body(body)
+    reported_message = reported.get('message') if _utils.is_str_dict(reported) else None
+    provider_error_code = None
+    if category is None and headers and (amzn_error_type := headers.get('x-amzn-errortype')):
+        # Bedrock (`AsyncAnthropicBedrock`) reports the error's code in this header, as `Code:namespace`, and
+        # only a `message` in the body, so it's classified the way `BedrockConverseModel` classifies the code.
+        provider_error_code = amzn_error_type.split(':', 1)[0]
+        category = _model_errors.bedrock_code_category(provider_error_code, reported_message)
+    hint = SCHEMA_TOO_COMPLEX_HINT if status_code == 400 and is_schema_too_complex_error(reported_message) else None
+    return ModelHTTPError.for_category(
+        category or _model_errors.http_status_category(status_code, reported_message),
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=headers,
+        suggested_model_id=suggested_model_id,
+        hint=hint,
+        provider_error_code=provider_error_code,
+        provider_error_type=provider_error_type,
+        in_stream=in_stream,
     )
+
+
+def error_category(
+    error_type: object, error_message: object, error_code: object
+) -> _model_errors.HTTPErrorCategory | None:
+    """The error category an error body's `type`, `message` and `details.error_code` name, if any."""
+    if error_code == 'enforced_spend_limit_reached':
+        # The tier spend cap is a `rate_limit_error` that lasts until the next month, see
+        # https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap.
+        return ModelQuotaExceededError
+    if error_type == 'invalid_request_error' and isinstance(error_message, str):
+        message = error_message.lower()
+        if 'prompt is too long' in message:
+            return ModelContextWindowExceededError
+        if 'credit balance is too low' in message or (
+            message.startswith('you have reached your specified') and 'api usage limits' in message
+        ):
+            # Anthropic reports an exhausted prepaid balance, and a spend limit the user set, as a 400 identifiable
+            # only by its message, see https://platform.claude.com/docs/en/api/rate-limits#setting-your-own-spend-limit.
+            return ModelQuotaExceededError
+    return _ERROR_TYPE_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
 
 
 _ERROR_TYPE_CATEGORIES: dict[str, _model_errors.HTTPErrorCategory] = {

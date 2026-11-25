@@ -301,10 +301,19 @@ def test_openrouter_model_profile_cache_capabilities(model_name: str, expected_f
         # incompatibility by dropping `reasoning`, so the gateway marks the combination unsupported.
         ('anthropic/claude-sonnet-4.6', False),
         ('~anthropic/claude-sonnet-latest', False),
+        # Qwen3.8 Flash returns a 400 for a forced `tool_choice` while reasoning.
+        ('qwen/qwen3.8-flash', False),
         # Other downstream providers honor `reasoning` alongside a forced `tool_choice`.
         ('google/gemini-2.5-flash', True),
         ('openai/gpt-5-mini', True),
         ('unknown/model', True),
+        # Routes outside the table keep the default. Muse Spark 1.3 and Qwen3.8 2.4T are also served by hosts that
+        # accept forcing while reasoning. GLM-5.3 accepts `'required'` while reasoning but rejects a named function,
+        # which this flag can't express.
+        ('meta/muse-spark-1.3', True),
+        ('qwen/qwen3.8-2.4t-a95b', True),
+        ('qwen/qwen3.8-27b', True),
+        ('z-ai/glm-5.3', True),
     ],
 )
 def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: str, expected: bool) -> None:
@@ -313,6 +322,16 @@ def test_openrouter_model_profile_forced_tool_choice_with_thinking(model_name: s
     profile = provider.model_profile(model_name)
     assert profile is not None
     assert profile.get('supports_forced_tool_choice_with_thinking') is expected
+
+
+@pytest.mark.parametrize(('model_name', 'expected'), [('qwen/qwen3.8-flash', True), ('qwen/qwen3.8-27b', None)])
+def test_openrouter_model_profile_on_routes_that_reject_forcing_while_reasoning(
+    model_name: str, expected: bool | None
+) -> None:
+    """Qwen3.8 Flash reasons unless told not to, so a request without a thinking setting counts as reasoning."""
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('thinking_enabled_by_default') is expected
 
 
 def test_openrouter_model_profile_requires_provider_prefix() -> None:
@@ -467,6 +486,44 @@ def test_openrouter_google_resolves_contains_ref():
         'z-ai/glm-5.3',
         'z-ai/glm-5.3-flash',
         'google/gemini-3.5-flash:batch',
+        'aion-labs/aion-2.0',
+        'aion-labs/aion-3.0-mini',
+        'aion-labs/aion-3.5',
+        'liquid/lfm-2.5-2.6b',
+        'liquid/lfm-2.5-2.6b:free',
+        'liquid/lfm-2.5-24b-a2b',
+        'meta/muse-glimmer-30b',
+        'meta/muse-spark-1.1',
+        'meta/muse-spark-1.2-contributor',
+        'meta/muse-spark-1.3',
+        'meta/muse-spark-open',
+        'meta/muse-wonder',
+        'minimax/minimax-m2.5',
+        'minimax/minimax-m2.7',
+        'minimax/minimax-m3.1-flash',
+        'mistralai/mistral-large-4-0',
+        'openai/gpt-6.1-terra-pro',
+        'perplexity/sonar-deep-research',
+        'perplexity/sonar-pro-search',
+        'perplexity/sonar-reasoning-pro',
+        'recursive/flint-v1.0:free',
+        'reflection/beam-1.0-501b-a23b',
+        'rekaai/reka-flash-3',
+        'sakana/fugu-max',
+        'sakana/fugu-ultra',
+        'sakana/fugu-ultra-v2',
+        'stepfun/step-3.5-flash',
+        'stepfun/step-3.7-flash',
+        'stepfun/step-5-preview',
+        '~anthropic/claude-fable-latest',
+        '~anthropic/claude-opus-latest',
+        '~anthropic/claude-sonnet-latest',
+        '~google/gemini-flash-latest',
+        '~openai/gpt-astra-latest',
+        '~openai/gpt-sol-latest',
+        '~x-ai/grok-latest',
+        '~z-ai/glm-latest',
+        '~z-ai/glm-flash-latest',
     ],
 )
 def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
@@ -474,12 +531,20 @@ def test_openrouter_mandatory_reasoning_routes_are_always_on(model_name: str):
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('thinking_always_enabled', False) is True
+    # Every route accepted `minimal` live, except Sonar Deep Research, which wasn't probed.
+    expected_floor = 'low' if model_name == 'perplexity/sonar-deep-research' else 'minimal'
+    assert profile.get('openrouter_lowest_reasoning_effort') == expected_floor
 
 
 @pytest.mark.parametrize(
     'model_name',
     [
         'anthropic/claude-sonnet-5',
+        '~anthropic/claude-haiku-latest',
+        'minimax/minimax-m1',
+        'minimax/minimax-m2-her',
+        'minimax/minimax-m3',
+        '~openai/gpt-luna-latest',
         'google/gemini-3.1-flash-lite',
         'moonshotai/kimi-k3',
         'openai/gpt-5.4',
@@ -492,3 +557,21 @@ def test_openrouter_optional_reasoning_routes_are_not_always_on(model_name: str)
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('thinking_always_enabled', False) is False
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'supports_json_schema_output'),
+    [
+        ('moonshotai/kimi-k3', True),
+        ('moonshotai/kimi-k3.1-pro', True),
+        ('moonshotai/kimi-k2.6', False),
+    ],
+)
+def test_openrouter_kimi_json_schema_output(model_name: str, supports_json_schema_output: bool):
+    """Only the recorded Kimi K3 routes take `NativeOutput`; `test_openrouter_kimi_native_output` records them.
+
+    A unit test because the flag-off side is a pre-request guard, which no recording reaches.
+    """
+    profile = OpenRouterProvider.model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_json_schema_output', False) is supports_json_schema_output

@@ -26,10 +26,12 @@ from dataclasses import dataclass, field, replace
 from itertools import groupby
 from typing import TYPE_CHECKING, Any, Final, TypeAlias, TypeVar, cast
 
+from ._capability_parts import effective_authority
 from .messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
     CachePoint,
+    CapabilityPart,
     CompactionPart,
     ModelMessage,
     ModelRequest,
@@ -341,6 +343,8 @@ class StreamRestorer:
         default_factory=dict[int, _StreamedTextRestorer | _StreamedArgsRestorer]
     )
     args_parts: set[int] = field(default_factory=set[int])
+    tool_call_ids: dict[int, str] = field(default_factory=dict[int, str])
+    """Each tool call's id, for the delta that sends its held arguments: UI adapters need it on every delta."""
 
     def restore(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
         if isinstance(event, PartStartEvent):
@@ -354,6 +358,7 @@ class StreamRestorer:
         if isinstance(part, TextPart):
             return replace(event, part=replace(part, content=self._text_restorer(event.index).feed(part.content)))
         if isinstance(part, ToolCallPart):
+            self.tool_call_ids[event.index] = part.tool_call_id
             if isinstance(part.args, str):
                 return replace(event, part=replace(part, args=self._args_restorer(event.index).feed(part.args)))
             return replace(event, part=_restore_part(part))
@@ -366,6 +371,8 @@ class StreamRestorer:
                 event, delta=replace(delta, content_delta=self._text_restorer(event.index).feed(delta.content_delta))
             )
         if isinstance(delta, ToolCallPartDelta):
+            if delta.tool_call_id is not None:
+                self.tool_call_ids[event.index] = delta.tool_call_id
             if isinstance(delta.args_delta, str):
                 args_delta = self._args_restorer(event.index).feed(delta.args_delta)
                 return replace(event, delta=replace(delta, args_delta=args_delta))
@@ -416,7 +423,7 @@ class StreamRestorer:
         for index, restorer in self.restorers.items():
             if include(index) and (held := restorer.flush()):
                 delta = (
-                    ToolCallPartDelta(args_delta=held)
+                    ToolCallPartDelta(args_delta=held, tool_call_id=self.tool_call_ids.get(index))
                     if index in self.args_parts
                     else TextPartDelta(content_delta=held)
                 )
@@ -486,6 +493,9 @@ def _break_part(part: _PartT) -> _PartT:
         new_part = _break_tool_return(cast('BaseToolReturnPart[Any]', part))
     elif isinstance(part, BaseToolCallPart):
         new_part = _break_tool_call(cast('BaseToolCallPart[Any]', part))
+    elif isinstance(part, CapabilityPart) and effective_authority(part) != 'operator':
+        # Framed on the user channel, like the user prompt or tool output it often carries; the stored part is kept.
+        new_part = _break_framed_capability_part(part)
     elif (
         isinstance(part, TextPart)
         or isinstance(part, ThinkingPart)
@@ -494,6 +504,26 @@ def _break_part(part: _PartT) -> _PartT:
         content = part.content and break_special_tokens(part.content)
         if content != part.content:
             new_part = replace(part, content=content)
+    return new_part
+
+
+def _break_framed_capability_part(part: CapabilityPart) -> CapabilityPart:
+    """`part` with the tokens in its body and its frame's attribute values broken, or `part` itself when it has none.
+
+    An attribute value can come from content too, such as a path in a repository.
+    """
+    new_part = part
+    stored = part.model_content()
+    content = _break_content(stored)
+    if content is not stored:
+        new_part = replace(part, content=content)
+    attributes = {
+        name: broken
+        for name, value in part._rendered_attributes().items()  # pyright: ignore[reportPrivateUsage]
+        if value is not None and (broken := break_special_tokens(value)) != value
+    }
+    if attributes:
+        new_part = new_part._with_attribute_values(attributes)  # pyright: ignore[reportPrivateUsage]
     return new_part
 
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# In-sandbox launcher for the Pydantic AI gh-aw shim.
+# In-sandbox launcher for the Claude Code-compatible gh-aw shim runner.
 #
-# The checked-out workspace is mounted no-exec in the AWF sandbox, so this
-# script is installed into gh-aw's exec-able /tmp/gh-aw/bin/ by the workflow's
-# pre-step (`install -m 755 ... /tmp/gh-aw/bin/pydantic-ai-runner-launch`).
-# It is gh-aw's `engine.command` for every Pydantic AI agentic workflow and
-# `uv run --script`s the staged runner stub with the agent's argv. The stub
+# No workflow uses it: the workflows run the public `pydantic-ai` engine with
+# `pydantic_ai_gh_aw_shim.agent` (`.github/workflows/shared/engine-zai.md`).
+# As a custom `engine.command`, it must be installed into gh-aw's exec-able
+# /tmp/gh-aw/bin/, because the checked-out workspace is mounted no-exec in the
+# AWF sandbox. It `uv run --script`s the staged runner stub with the agent's argv. The stub
 # (`pydantic-ai-runner`) is a tiny `runpy` shim that hands off to the
 # `pydantic_ai_gh_aw_shim` package in the same directory.
 #

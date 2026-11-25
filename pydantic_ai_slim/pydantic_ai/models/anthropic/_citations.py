@@ -19,8 +19,10 @@ from anthropic.types.beta import (
     BetaToolUnionParam,
     BetaWebFetchBlock,
     BetaWebFetchTool20260209Param,
+    BetaWebFetchTool20260318Param,
     BetaWebFetchToolResultBlock,
     BetaWebSearchTool20260209Param,
+    BetaWebSearchTool20260318Param,
 )
 from pydantic import ValidationError
 
@@ -80,13 +82,18 @@ def route_cited_web_tools_direct(
     already used code execution keeps the default callers when direct calls would leave the request without code
     execution, which its container and pending calls need, so a turn's callers don't change between its requests.
     """
-    cited: list[BetaWebSearchTool20260209Param | BetaWebFetchTool20260209Param] = []
+    cited: list[
+        BetaWebSearchTool20260209Param
+        | BetaWebSearchTool20260318Param
+        | BetaWebFetchTool20260209Param
+        | BetaWebFetchTool20260318Param
+    ] = []
     uncited: list[BetaToolUnionParam] = []
     for tool in tools:
         match tool:
-            case {'type': 'web_search_20260209'} if include_citations:
+            case {'type': 'web_search_20260209' | 'web_search_20260318'} if include_citations:
                 cited.append(tool)
-            case {'type': 'web_fetch_20260209', 'citations': {'enabled': True}}:
+            case {'type': 'web_fetch_20260209' | 'web_fetch_20260318', 'citations': {'enabled': True}}:
                 cited.append(tool)
             case _:
                 uncited.append(tool)
@@ -135,15 +142,17 @@ def fetched_pages_from_history(messages: Sequence[ModelMessage]) -> list[tuple[s
     """Return the URL and text of each page Web Fetch fetched earlier in the conversation, which a new answer can cite."""
     pages: list[tuple[str, str]] = []
     for message in messages:
-        if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, NativeToolReturnPart) and part.tool_name == WebFetchTool.kind:
-                    try:
-                        page = BetaWebFetchBlock.model_validate(part.content)
-                    except ValidationError:
-                        continue
-                    if isinstance(page.content.source, BetaPlainTextSource):
-                        pages.append((page.url, page.content.source.data))
+        if not isinstance(message, ModelResponse):
+            continue
+        for part in message.parts:
+            if not (isinstance(part, NativeToolReturnPart) and part.tool_name == WebFetchTool.kind):
+                continue
+            try:
+                page = BetaWebFetchBlock.model_validate(part.content)
+            except ValidationError:
+                continue
+            if isinstance(page.content.source, BetaPlainTextSource):
+                pages.append((page.url, page.content.source.data))
     return pages
 
 

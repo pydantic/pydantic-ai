@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Generator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -11,13 +11,13 @@ from typing import Any, Literal, assert_never, cast, overload
 from pydantic import BaseModel, ValidationError
 from pydantic_core import from_json
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
+from .. import ModelHTTPError, _model_errors, _utils, usage
 from .._gateway_cost import gateway_reported_cost
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..exceptions import ModelAPIError, UserError
+from ..exceptions import ModelAPIError, ModelEmptyResponseError, ModelUnavailableError, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -53,7 +53,7 @@ from ..output import OutputObjectDefinition
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.groq import GROQ_GPT_OSS_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, ServiceTier
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -107,26 +107,8 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
     try:
         yield
     except APIStatusError as e:
-        if (status_code := e.status_code) >= 400:
-            body: object | None = e.body
-            error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
-            code, error_type, message = error.get('code'), error.get('type'), error.get('message')
-            code = code if isinstance(code, str) else None
-            error_type = error_type if isinstance(error_type, str) else None
-            suggested_model_id = None
-            if code == 'model_not_found':
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            category = _model_errors.openai_compatible_category(status_code, code, error_type, message)
-            raise ModelHTTPError.for_category(
-                category,
-                status_code=status_code,
-                model_name=model_name,
-                body=body,
-                headers=dict(e.response.headers),
-                suggested_model_id=suggested_model_id,
-                provider_error_code=code,
-                provider_error_type=error_type,
-            ) from e
+        if e.status_code >= 400:
+            raise _map_status_error(e, model_name, model_id_namespace) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         if isinstance(cause := e.__cause__, httpx.HTTPStatusError):
@@ -145,28 +127,46 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
         raise _model_errors.connection_error(model_name, transport_error_message(e), e, timeout=timeout) from e
 
 
+def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str) -> ModelHTTPError:
+    status_code = e.status_code
+    body: object | None = e.body
+    error = nested if _utils.is_str_dict(body) and _utils.is_str_dict(nested := body.get('error')) else {}
+    code, error_type, message = error.get('code'), error.get('type'), error.get('message')
+    code = code if isinstance(code, str) else None
+    error_type = error_type if isinstance(error_type, str) else None
+    suggested_model_id = None
+    if code == 'model_not_found':
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    # Groq's 498 means its flex service tier is out of capacity; its docs say to retry later.
+    category = _model_errors.openai_compatible_category(status_code, code, error_type, message) or (
+        ModelUnavailableError if status_code == 498 else None
+    )
+    return ModelHTTPError.for_category(
+        category,
+        status_code=status_code,
+        model_name=model_name,
+        body=body,
+        headers=dict(e.response.headers),
+        suggested_model_id=suggested_model_id,
+        provider_error_code=code,
+        provider_error_type=error_type,
+    )
+
+
 ProductionGroqModelNames = Literal[
-    'llama-3.1-8b-instant',
-    'llama-3.3-70b-versatile',
     'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
-    'whisper-large-v3',
-    'whisper-large-v3-turbo',
 ]
 """Production Groq models from <https://console.groq.com/docs/models#production-models>."""
 
-PreviewGroqModelNames = Literal[
-    'meta-llama/llama-prompt-guard-2-22m',
-    'meta-llama/llama-prompt-guard-2-86m',
-    'openai/gpt-oss-safeguard-20b',
-]
+PreviewGroqModelNames = Literal['qwen/qwen3.8-27b']
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
 GroqModelName = str | ProductionGroqModelNames | PreviewGroqModelNames
 """Possible Groq model names.
 
-Since Groq supports a variety of models and the list changes frequently, we explicitly list the named models as of 2025-03-31
-but allow any name in the type hints.
+The `Literal` lists the latest models to pick from, for autocomplete. Any other model id the API accepts works too,
+as a `str`.
 
 See <https://console.groq.com/docs/models> for an up to date list of models and more details.
 """
@@ -197,6 +197,24 @@ class GroqModelSettings(ModelSettings, total=False):
     See [the Groq docs](https://console.groq.com/docs/reasoning#reasoning-effort) for more details.
     """
 
+    groq_service_tier: Literal['auto', 'on_demand', 'flex', 'performance']
+    """The service tier to request from Groq.
+
+    Takes precedence over the top-level
+    [`service_tier`][pydantic_ai.settings.ModelSettings.service_tier], and is the only way to request
+    Groq's enterprise `'performance'` tier.
+
+    See [the Groq docs](https://console.groq.com/docs/service-tiers) for more details.
+    """
+
+
+# Unified `'priority'` is omitted: Groq's `'performance'` tier is enterprise-only, reachable only via `groq_service_tier`.
+_UNIFIED_TO_GROQ_SERVICE_TIER: dict[ServiceTier, Literal['auto', 'on_demand', 'flex']] = {
+    'auto': 'auto',
+    'default': 'on_demand',
+    'flex': 'flex',
+}
+
 
 @dataclass(init=False)
 class GroqModel(Model[AsyncGroq]):
@@ -209,8 +227,10 @@ class GroqModel(Model[AsyncGroq]):
 
     # Groq's chat API takes images and no other file.
     _unsupported_file_inputs = frozenset({'document', 'audio', 'video'})
+    # Tool results are text-only here, so a tool's files go on the user channel, framed.
+    _relocates_tool_files = True
 
-    unsupported_settings = frozenset({'service_tier', 'top_k'})
+    unsupported_settings = frozenset({'top_k'})
 
     _model_name: GroqModelName = field(repr=False)
     _provider: Provider[AsyncGroq] = field(repr=False)
@@ -436,19 +456,14 @@ class GroqModel(Model[AsyncGroq]):
 
         groq_messages = await self._map_messages(messages, model_request_parameters)
 
-        response_format: chat.completion_create_params.ResponseFormat | None = None
-        if model_request_parameters.output_mode == 'native':
-            output_object = model_request_parameters.output_object
-            assert output_object is not None
-            response_format = self._map_json_schema(output_object)
-        elif (
-            model_request_parameters.output_mode == 'prompted'
-            and not tools
-            and self.profile.get('supports_json_object_output', False)
-        ):  # pragma: no branch
-            response_format = {'type': 'json_object'}
+        response_format = self._response_format(model_request_parameters, tools)
 
-        extra_headers = dict(model_settings.get('extra_headers', {}))
+        # The Groq SDK merges headers into its defaults case-sensitively, so a user-agent replaces its default
+        # `User-Agent` only under that spelling.
+        extra_headers = {
+            'User-Agent' if name.lower() == 'user-agent' else name: value
+            for name, value in dict(model_settings.get('extra_headers', {})).items()
+        }
         extra_headers.setdefault('User-Agent', get_user_agent())
 
         # qwen3 truly disables reasoning by sending `reasoning_effort='none'` (in `extra_body`); `_translate_thinking`
@@ -460,35 +475,24 @@ class GroqModel(Model[AsyncGroq]):
             'groq_supports_reasoning_disable', False
         )
 
-        extra_body = model_settings.get('extra_body')
-        # `reasoning_effort` value sets are family-specific on Groq, so precedence is:
-        # qwen3 disable (`'none'`) > explicit `groq_reasoning_effort` > unified `thinking` mapping > nothing.
-        # The unified mapping only applies to graded families (gpt-oss: low/medium/high); qwen3's enable levels
-        # have no gradation (only none/default) so unified thinking there just controls `reasoning_format` above.
-        groq_reasoning_effort = model_settings.get('groq_reasoning_effort')
-        if disable_via_effort and groq_reasoning_effort is not None:
-            warnings.warn(
-                "`thinking=False` disables reasoning on this Groq model via `reasoning_effort='none'`, "
-                'which overrides the `groq_reasoning_effort` setting; `groq_reasoning_effort` will be ignored.',
-                UserWarning,
-            )
-        effort = 'none' if disable_via_effort else groq_reasoning_effort
-        if effort is None and self.profile.get('groq_supports_graded_reasoning_effort', False):
-            thinking = model_request_parameters.thinking
-            if thinking is True:
-                effort = 'medium'
-            elif thinking is False:
-                # gpt-oss can't turn reasoning off (`'none'` is a 400), so it reasons as little as it can.
-                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP['minimal']
-            elif thinking is not None:
-                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP[thinking]
+        # `reasoning_effort` isn't a named param in the Groq SDK, and the SDK's `service_tier` param lacks
+        # `'performance'` at our minimum SDK version, so both are passed via `extra_body`.
+        body_params: dict[str, object] = {}
+        effort = self._reasoning_effort(model_settings, model_request_parameters, disable_via_effort)
         if effort is not None:
-            # `reasoning_effort` isn't a named param in the Groq SDK, so it's passed via `extra_body`.
+            body_params['reasoning_effort'] = effort
+        service_tier = model_settings.get('groq_service_tier')
+        if service_tier is None and (unified_service_tier := model_settings.get('service_tier')) is not None:
+            service_tier = _UNIFIED_TO_GROQ_SERVICE_TIER.get(unified_service_tier)
+        if service_tier is not None:
+            body_params['service_tier'] = service_tier
+        extra_body = model_settings.get('extra_body')
+        if body_params:
             # `ModelSettings.extra_body` is typed `object`, so narrowing it for the merge reads back as `Unknown`.
             merged_extra_body: dict[str, object] = {}
             if isinstance(extra_body, Mapping):
                 merged_extra_body.update(extra_body)  # pyright: ignore[reportUnknownArgumentType]
-            merged_extra_body['reasoning_effort'] = effort
+            merged_extra_body.update(body_params)
             extra_body = merged_extra_body
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
@@ -516,8 +520,41 @@ class GroqModel(Model[AsyncGroq]):
                 search_settings=search_settings,
             )
 
+    def _reasoning_effort(
+        self,
+        model_settings: GroqModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        disable_via_effort: bool,
+    ) -> Literal['none', 'default', 'low', 'medium', 'high'] | None:
+        # `reasoning_effort` value sets are family-specific on Groq, so precedence is:
+        # qwen3 disable (`'none'`) > explicit `groq_reasoning_effort` > unified `thinking` mapping > nothing.
+        # The unified mapping only applies to graded families (gpt-oss: low/medium/high); qwen3's enable levels
+        # have no gradation (only none/default) so unified thinking there just controls `reasoning_format`.
+        groq_reasoning_effort = model_settings.get('groq_reasoning_effort')
+        if disable_via_effort and groq_reasoning_effort is not None:
+            warnings.warn(
+                "`thinking=False` disables reasoning on this Groq model via `reasoning_effort='none'`, "
+                'which overrides the `groq_reasoning_effort` setting; `groq_reasoning_effort` will be ignored.',
+                UserWarning,
+            )
+        effort = 'none' if disable_via_effort else groq_reasoning_effort
+        if effort is None and self.profile.get('groq_supports_graded_reasoning_effort', False):
+            thinking = model_request_parameters.thinking
+            if thinking is True:
+                effort = 'medium'
+            elif thinking is False:
+                # gpt-oss can't turn reasoning off (`'none'` is a 400), so it reasons as little as it can.
+                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP['minimal']
+            elif thinking is not None:
+                effort = GROQ_GPT_OSS_REASONING_EFFORT_MAP[thinking]
+        return effort
+
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
+        if not response.choices:
+            raise ModelEmptyResponseError(
+                self.model_name, f'Empty response from {self.system}: no choices', body=response.model_dump()
+            )
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         if choice.message.reasoning is not None:
@@ -544,6 +581,9 @@ class GroqModel(Model[AsyncGroq]):
         provider_details: dict[str, Any] = {'finish_reason': raw_finish_reason}
         if response.created:  # pragma: no branch
             provider_details['timestamp'] = number_to_datetime(response.created)
+        # `ChatCompletion` declares no `service_tier` field at our minimum SDK version, so it arrives as an extra.
+        if isinstance(service_tier := getattr(response, 'service_tier', None), str):
+            provider_details['service_tier'] = service_tier
         finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         return ModelResponse(
             parts=items,
@@ -566,9 +606,7 @@ class GroqModel(Model[AsyncGroq]):
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Streamed response ended without content or tool calls'
-            )
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         return GroqStreamedResponse(
             model_request_parameters=model_request_parameters,
@@ -641,50 +679,20 @@ class GroqModel(Model[AsyncGroq]):
                 )
         return tools, search_settings
 
-    async def _map_messages(  # noqa: C901
+    async def _map_messages(
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
-            if isinstance(message, ModelRequest):
-                async for item in self._map_user_message(message):
-                    groq_messages.append(item)
-            elif isinstance(message, ModelResponse):
-                texts: list[str] = []
-                tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
-                for item in message.parts:
-                    if isinstance(item, TextPart):
-                        texts.append(item.content)
-                    elif isinstance(item, ToolCallPart):
-                        tool_calls.append(self._map_tool_call(item))
-                    elif isinstance(item, ThinkingPart):
-                        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
-                        texts.append('\n'.join([start_tag, item.content, end_tag]))
-                    elif isinstance(item, NativeToolCallPart | NativeToolReturnPart):  # pragma: no cover
-                        # These are not currently sent back
-                        pass
-                    elif isinstance(item, FilePart):  # pragma: no cover
-                        # Files generated by models are not sent back to models that don't themselves generate files.
-                        pass
-                    elif isinstance(item, CompactionPart):  # pragma: no cover
-                        # Compaction parts are not sent back to models that don't support compaction.
-                        pass
-                    elif isinstance(item, SpeechPart):  # pragma: no cover
-                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
-                        raise _unconverted_speech_part_error()
-                    else:
-                        assert_never(item)
-                message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
-                if texts:
-                    # Note: model responses from this model should only have one text item, so the following
-                    # shouldn't merge multiple texts into one unless you switch models between runs:
-                    message_param['content'] = '\n\n'.join(texts)
-                if tool_calls:
-                    message_param['tool_calls'] = tool_calls
-                groq_messages.append(message_param)
-            else:
-                assert_never(message)
+            match message:
+                case ModelRequest():
+                    async for item in self._map_user_message(message):
+                        groq_messages.append(item)
+                case ModelResponse():
+                    groq_messages.append(self._map_model_response(message))
+                case _:
+                    assert_never(message)
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
                 (i for i, m in enumerate(groq_messages) if m.get('role') != 'system'), len(groq_messages)
@@ -693,6 +701,44 @@ class GroqModel(Model[AsyncGroq]):
                 chat.ChatCompletionSystemMessageParam(role='system', content=part.content) for part in instruction_parts
             ]
         return groq_messages
+
+    def _map_model_response(self, message: ModelResponse) -> chat.ChatCompletionAssistantMessageParam:
+        texts: list[str] = []
+        tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+        for item in message.parts:
+            match item:
+                case TextPart():
+                    texts.append(item.content)
+                case ToolCallPart():
+                    tool_calls.append(self._map_tool_call(item))
+                case ThinkingPart():
+                    texts.append(self._map_thinking_part(item))
+                case NativeToolCallPart() | NativeToolReturnPart():  # pragma: no cover
+                    # These are not currently sent back
+                    pass
+                case FilePart():  # pragma: no cover
+                    # Files generated by models are not sent back to models that don't themselves generate files.
+                    pass
+                case CompactionPart():  # pragma: no cover
+                    # Compaction parts are not sent back to models that don't support compaction.
+                    pass
+                case SpeechPart():  # pragma: no cover
+                    # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                    raise _unconverted_speech_part_error()
+                case _:
+                    assert_never(item)
+        message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
+        if texts:
+            # Note: model responses from this model should only have one text item, so the following
+            # shouldn't merge multiple texts into one unless you switch models between runs:
+            message_param['content'] = '\n\n'.join(texts)
+        if tool_calls:
+            message_param['tool_calls'] = tool_calls
+        return message_param
+
+    def _map_thinking_part(self, part: ThinkingPart) -> str:
+        start_tag, end_tag = self.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
+        return '\n'.join([start_tag, part.content, end_tag])
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
@@ -712,6 +758,27 @@ class GroqModel(Model[AsyncGroq]):
                 'parameters': f.parameters_json_schema,
             },
         }
+
+    def _response_format(
+        self, model_request_parameters: ModelRequestParameters, tools: list[chat.ChatCompletionToolParam]
+    ) -> chat.completion_create_params.ResponseFormat | None:
+        """Return the response format the output mode asks for."""
+        if model_request_parameters.output_mode == 'native':
+            # Groq returns a 400 for `response_format` combined with function tools.
+            if model_request_parameters.function_tools:
+                raise UserError(
+                    'This model does not support `NativeOutput` and function tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                )
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            return self._map_json_schema(output_object)
+        if (
+            model_request_parameters.output_mode == 'prompted'
+            and not tools
+            and self.profile.get('supports_json_object_output', False)
+        ):  # pragma: no branch
+            return {'type': 'json_object'}
+        return None
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
         response_format_param: chat.completion_create_params.ResponseFormatResponseFormatJsonSchema = {
@@ -760,40 +827,52 @@ class GroqModel(Model[AsyncGroq]):
         else:
             content = []
             for item in part.content:
-                if isinstance(item, str | TextContent):
-                    text = item if isinstance(item, str) else item.content
-                    content.append(chat.ChatCompletionContentPartTextParam(text=text, type='text'))
-                elif isinstance(item, ImageUrl):
-                    image_url_str = item.url
-                    if item.force_download:
-                        downloaded = await download_item(item, data_format='base64_uri')
-                        image_url_str = downloaded['data']
-                    image_url: ImageURL = {'url': image_url_str}
-                    if metadata := item.vendor_metadata:
-                        image_url['detail'] = metadata.get('detail', 'auto')
-                    content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
-                elif isinstance(item, BinaryContent):
-                    if item.is_image:
-                        image_url: ImageURL = {'url': item.data_uri}
-                        if metadata := item.vendor_metadata:
-                            image_url['detail'] = metadata.get('detail', 'auto')
-                        content.append(chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
-                    else:
-                        raise NotImplementedError('Only images are supported for BinaryContent in Groq user prompts')
-                elif isinstance(item, DocumentUrl):
-                    raise NotImplementedError('DocumentUrl is not supported in Groq user prompts')
-                elif isinstance(item, AudioUrl):
-                    raise NotImplementedError('AudioUrl is not supported in Groq user prompts')
-                elif isinstance(item, VideoUrl):
-                    raise NotImplementedError('VideoUrl is not supported in Groq user prompts')
-                elif isinstance(item, UploadedFile):
-                    raise NotImplementedError('UploadedFile is not supported in Groq user prompts')
-                elif isinstance(item, CachePoint):
-                    pass
-                else:
-                    assert_never(item)
+                match item:
+                    case str() | TextContent():
+                        content.append(self._map_text_content(item))
+                    case ImageUrl():
+                        content.append(await self._map_image_url(item))
+                    case BinaryContent():
+                        content.append(self._map_binary_content(item))
+                    case DocumentUrl():
+                        raise NotImplementedError('DocumentUrl is not supported in Groq user prompts')
+                    case AudioUrl():
+                        raise NotImplementedError('AudioUrl is not supported in Groq user prompts')
+                    case VideoUrl():
+                        raise NotImplementedError('VideoUrl is not supported in Groq user prompts')
+                    case UploadedFile():
+                        raise NotImplementedError('UploadedFile is not supported in Groq user prompts')
+                    case CachePoint():
+                        pass
+                    case _:
+                        assert_never(item)
 
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
+
+    @staticmethod
+    def _map_text_content(item: str | TextContent) -> chat.ChatCompletionContentPartTextParam:
+        text = item if isinstance(item, str) else item.content
+        return chat.ChatCompletionContentPartTextParam(text=text, type='text')
+
+    @staticmethod
+    async def _map_image_url(item: ImageUrl) -> chat.ChatCompletionContentPartImageParam:
+        image_url_str = item.url
+        if item.force_download:
+            downloaded = await download_item(item, data_format='base64_uri')
+            image_url_str = downloaded['data']
+        image_url: ImageURL = {'url': image_url_str}
+        if metadata := item.vendor_metadata:
+            image_url['detail'] = metadata.get('detail', 'auto')
+        return chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
+
+    @staticmethod
+    def _map_binary_content(item: BinaryContent) -> chat.ChatCompletionContentPartImageParam:
+        if not item.is_image:
+            raise NotImplementedError('Only images are supported for BinaryContent in Groq user prompts')
+        image_url: ImageURL = {'url': item.data_uri}
+        if metadata := item.vendor_metadata:
+            image_url['detail'] = metadata.get('detail', 'auto')
+        return chat.ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
 
 
 @dataclass
@@ -809,112 +888,121 @@ class GroqStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _usage_received: bool | None = field(default=False, init=False)
+    _executed_tool_call_id: str | None = field(default=None, init=False)
+    _reasoning_index: int = field(default=0, init=False)
+    _reasoning: bool = field(default=False, init=False)
 
     async def close_stream(self) -> None:
         await self._response.source.close()
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name, self._model_id_namespace):
             try:
-                executed_tool_call_id: str | None = None
-                reasoning_index = 0
-                reasoning = False
                 if self._provider_timestamp is not None:  # pragma: no branch
                     self.provider_details = {'timestamp': self._provider_timestamp}
                 async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
-                    self._add_usage(
-                        _map_usage(chunk, self._provider_name, self._provider_url, self._model_name),
-                        reported=chunk.x_groq is not None and chunk.x_groq.usage is not None,
-                    )
-
-                    if chunk.id:  # pragma: no branch
-                        self.provider_response_id = chunk.id
-
-                    try:
-                        choice = chunk.choices[0]
-                    except IndexError:
-                        continue
-
-                    if raw_finish_reason := choice.finish_reason:
-                        self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
-                        self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
-
-                    if choice.delta.reasoning is not None:
-                        if not reasoning:
-                            reasoning_index += 1
-                            reasoning = True
-
-                        # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
-                        for event in self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=f'reasoning-{reasoning_index}', content=choice.delta.reasoning
-                        ):
-                            yield event
-                    else:
-                        reasoning = False
-
-                    if choice.delta.executed_tools:
-                        for tool in choice.delta.executed_tools:
-                            call_part, return_part = _map_executed_tool(
-                                tool, self.provider_name, streaming=True, tool_call_id=executed_tool_call_id
-                            )
-                            if call_part:
-                                executed_tool_call_id = call_part.tool_call_id
-                                yield self._parts_manager.handle_part(
-                                    vendor_part_id=f'executed_tools-{tool.index}-call', part=call_part
-                                )
-                            if return_part:
-                                executed_tool_call_id = None
-                                yield self._parts_manager.handle_part(
-                                    vendor_part_id=f'executed_tools-{tool.index}-return', part=return_part
-                                )
-
-                    # Handle the text part of the response
-                    content = choice.delta.content
-                    if content:
-                        for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id='content',
-                            content=content,
-                            thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
-                            ignore_leading_whitespace=self._model_profile.get(
-                                'ignore_streamed_leading_whitespace', False
-                            ),
-                        ):
-                            yield event
-
-                    # Handle the tool calls
-                    for dtc in choice.delta.tool_calls or []:
-                        for event in self._parts_manager.handle_tool_call_delta_events(
-                            vendor_part_id=dtc.index,
-                            tool_name=dtc.function.name if dtc.function is not None else None,
-                            args=dtc.function.arguments if dtc.function is not None else None,
-                            tool_call_id=dtc.id,
-                        ):
-                            yield event
+                    for event in self._map_chunk(chunk):
+                        yield event
             except APIError as e:
                 # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
                 # but we'd rather handle it ourselves so we can tell the model to retry the tool call
                 if (failed_generation := _parse_tool_use_failed_error(e.body)) is not None:
-                    if isinstance(failed_generation, _GroqToolUseFailedGeneration):
-                        yield self._parts_manager.handle_tool_call_part(
-                            vendor_part_id='tool_use_failed',
-                            tool_name=failed_generation.name,
-                            args=failed_generation.arguments,
-                        )
-                    elif failed_generation:  # pragma: no cover
-                        # This branch is not covered because when streaming, the non-tool call text would already
-                        # have streamed before the `tool_use_failed` error which comes with `failed_generation=''`,
-                        # but we keep this here for (hypothetical?) cases where that field would not be empty.
-                        for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id='tool_use_failed',
-                            content=failed_generation,
-                            thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
-                            ignore_leading_whitespace=self._model_profile.get(
-                                'ignore_streamed_leading_whitespace', False
-                            ),
-                        ):
-                            yield event
+                    for event in self._map_tool_use_failed(failed_generation):
+                        yield event
                     return
                 raise
+
+    def _map_chunk(self, chunk: chat.ChatCompletionChunk) -> Iterator[ModelResponseStreamEvent]:
+        self._add_usage(
+            _map_usage(chunk, self._provider_name, self._provider_url, self._model_name),
+            reported=chunk.x_groq is not None and chunk.x_groq.usage is not None,
+        )
+
+        if chunk.id:  # pragma: no branch
+            self.provider_response_id = chunk.id
+
+        try:
+            choice = chunk.choices[0]
+        except IndexError:
+            return
+
+        if raw_finish_reason := choice.finish_reason:
+            self.provider_details = {**(self.provider_details or {}), 'finish_reason': raw_finish_reason}
+            self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+        yield from self._map_reasoning_delta(choice.delta.reasoning)
+
+        if choice.delta.executed_tools:
+            yield from self._map_executed_tools(choice.delta.executed_tools)
+
+        # Handle the text part of the response
+        content = choice.delta.content
+        if content:
+            yield from self._parts_manager.handle_text_delta(
+                vendor_part_id='content',
+                content=content,
+                thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
+                ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
+            )
+
+        # Handle the tool calls
+        for dtc in choice.delta.tool_calls or []:
+            yield from self._parts_manager.handle_tool_call_delta_events(
+                vendor_part_id=dtc.index,
+                tool_name=dtc.function.name if dtc.function is not None else None,
+                args=dtc.function.arguments if dtc.function is not None else None,
+                tool_call_id=dtc.id,
+            )
+
+    def _map_reasoning_delta(self, reasoning: str | None) -> Iterator[ModelResponseStreamEvent]:
+        if reasoning is None:
+            self._reasoning = False
+            return
+
+        if not self._reasoning:
+            self._reasoning_index += 1
+            self._reasoning = True
+
+        # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
+        yield from self._parts_manager.handle_thinking_delta(
+            vendor_part_id=f'reasoning-{self._reasoning_index}', content=reasoning
+        )
+
+    def _map_executed_tools(self, executed_tools: list[ExecutedTool]) -> Iterator[ModelResponseStreamEvent]:
+        for tool in executed_tools:
+            call_part, return_part = _map_executed_tool(
+                tool, self.provider_name, streaming=True, tool_call_id=self._executed_tool_call_id
+            )
+            if call_part:
+                self._executed_tool_call_id = call_part.tool_call_id
+                yield self._parts_manager.handle_part(
+                    vendor_part_id=f'executed_tools-{tool.index}-call', part=call_part
+                )
+            if return_part:
+                self._executed_tool_call_id = None
+                yield self._parts_manager.handle_part(
+                    vendor_part_id=f'executed_tools-{tool.index}-return', part=return_part
+                )
+
+    def _map_tool_use_failed(
+        self, failed_generation: _GroqToolUseFailedGeneration | str
+    ) -> Iterator[ModelResponseStreamEvent]:
+        if isinstance(failed_generation, _GroqToolUseFailedGeneration):
+            yield self._parts_manager.handle_tool_call_part(
+                vendor_part_id='tool_use_failed',
+                tool_name=failed_generation.name,
+                args=failed_generation.arguments,
+            )
+        elif failed_generation:  # pragma: no cover
+            # This branch is not covered because when streaming, the non-tool call text would already
+            # have streamed before the `tool_use_failed` error which comes with `failed_generation=''`,
+            # but we keep this here for (hypothetical?) cases where that field would not be empty.
+            yield from self._parts_manager.handle_text_delta(
+                vendor_part_id='tool_use_failed',
+                content=failed_generation,
+                thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
+                ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
+            )
 
     @property
     def model_name(self) -> GroqModelName:

@@ -21,7 +21,27 @@ If you only need background execution, a native Render task around `agent.run(..
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
-![Your application starts the support task with start_task and gets a run ID back at once. On Render, the root task run calls agent.run. RenderWorkflows sends each model request to a chained support__model.request task run and each tool call to a chained call_tool task run, each in its own instance with its own retries, timeout and compute plan. The application reads the result later with get_task_run. Nothing is checkpointed, so a retried root task run repeats finished calls.](../img/harness/render-workflows.svg)
+```mermaid
+flowchart TB
+    accTitle: Render Workflows: each model request and tool call as its own task run
+    accDescr: Your app gets run.id at once from start_task('support', [prompt]) and status and results later from get_task_run. The Render workflow service's support root task run from @workflows.task calls agent.run. RenderWorkflows chains one task run and instance per call, support__model.request or a call_tool run under support__function_toolset__, each with its own retries, timeout and plan.
+    subgraph app["Your app"]
+        start["start_task('support',<br/>[prompt])"]
+        check["get_task_run(id)"]
+    end
+    subgraph render["Render workflow service"]
+        root["support<br/>root task run, from<br/>@workflows.task"]
+        workflows["RenderWorkflows(app)<br/>one chained task run<br/>and instance per call"]:::capability
+        request["support__model.request<br/>own retries, timeout<br/>and plan"]:::capability
+        tool["support__function_toolset__<br/>&lt;agent&gt;.call_tool<br/>own retries, timeout, plan"]:::capability
+    end
+    start <-->|"run.id back at once"| root
+    check <-->|"status and results, later"| root
+    root -->|"agent.run(prompt)"| workflows
+    workflows <-->|"model request"| request
+    workflows <-->|"tool call"| tool
+    classDef capability stroke:#E520E9,stroke-width:2px
+```
 
 ## Prerequisites
 
@@ -176,6 +196,13 @@ integration assign stable idempotency keys to chained calls.
 Either kind of retry can repeat an external action performed before its result was recorded; use application-level
 idempotency keys or deduplication for writes and API requests that must not happen twice.
 
+Render doesn't wait the delay a model error asks for in its `retry_after` (read from a provider's `Retry-After`
+header, for example). A task's `Retry` sets the wait between its attempts when the task is registered, with no way to
+change it for one failure, and a task run can't sleep durably, so a chained model request task run is retried after
+`wait_duration_ms` and `backoff_scaling` whatever the provider asked for. Size those for your provider's rate limits,
+or give model requests no retries and let a [fallback model](../capabilities/model-fallback.md)
+take over.
+
 Render retries are separate from Pydantic AI's `ModelRetry`, which asks the model to correct or reconsider a call,
 and from retries in the provider SDK. Account for all three when setting retry limits and timeouts; see the
 [Pydantic AI retry guide](../retries.md).
@@ -273,7 +300,7 @@ to trigger the deployed task.
 
 The capability registers definitions for these operations:
 
-- model requests, buffered stream requests, compaction, and suspended-response cleanup;
+- model requests, buffered stream requests, compaction, token counts, and suspended-response cleanup;
 - per named function toolset, shared by its tools, argument validation and tool calls;
 - per MCP and dynamic toolset, discovery, instructions, validation, and calls;
 - `event_stream_handler` delivery;
@@ -310,8 +337,8 @@ that emit them inline.
 ## Large tool outputs
 
 `ToolOutputLimits` measures and reduces a tool return after the tool task run returns to its parent run.
-Configure `resolve_tool_options` to return `False` for its `read_tool_result` helper so the helper reads from the
-same task that stored the result.
+Configure `resolve_tool_options` to return `False` for its `read_tool_result` and `grep_tool_result` helpers so they
+read from the same task that stored the result.
 
 In `Spill` mode, the capability stores the full payload and gives the model a handle for a later `read_tool_result`
 call. A store backed by the parent run's local filesystem works within that run, but a retried entry task run or another
@@ -323,7 +350,7 @@ For large artifacts, return bounded JSON containing a key into object storage, a
 ## Memory
 
 `Memory` can read and write through Render task runs when its store is accessible to every worker. Use a shared
-external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryStore` and files on an individual worker
+external backend, such as `PostgresMemoryStore`, for hosted runs. `InMemoryMemoryStore` and files on an individual worker
 do not persist across task instances.
 
 ## Task options and tool opt-out
@@ -338,7 +365,7 @@ from pydantic_ai_harness import RenderWorkflows
 
 
 def resolve_tool_options(operation_id, _tool, tool_name):
-    if tool_name in {'delegate_task', 'read_tool_result', 'read_local_cache'}:
+    if tool_name in {'delegate_task', 'read_tool_result', 'grep_tool_result', 'read_local_cache'}:
         return False
     if isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId)):
         if operation_id.toolset_id == 'research_tools':
@@ -365,8 +392,50 @@ Each named toolset shares its call and validation task definitions. For the exam
 
 At registration, the resolver receives `tool=None` and `tool_name=''` for the toolset default. It also receives each statically known function tool and its name. Return the same settings for the toolset and its tools; `None` uses `tool_options`. Different per-tool settings are rejected because Render fixes task options when registering each definition.
 
-Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run. The
-shared toolset definitions remain registered. `False` is rejected for MCP and dynamic tools.
+Returning `False` for a function tool runs it inside the calling task run instead of starting a chained task run, as
+`metadata={'render_workflows': False}` on the tool does. The shared toolset definitions remain registered. `False` is
+rejected for MCP and dynamic tools. The harness `FileSystem` write tools opt out this way, so their file-change
+requests reach listeners in the parent task.
+
+An async function tool with the engine-neutral [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) also
+runs inside the calling task run, whatever the resolver returns for it. Registration only sees `durable` set on
+the tool itself, so for a tool opted out by a `prepare` function or `PrepareTools` instead, have the resolver
+return `False` or the toolset's options.
+
+## Tool arguments
+
+Function tool arguments cross into the chained task run as JSON, and the task run validates them again with the tool's schema,
+which reads each field's alias. Pydantic models and Pydantic dataclasses, and the values nested in them, cross
+by alias. A `TypedDict` or standard-library dataclass outside one crosses by Python name, so the second
+validation reads none of its aliased fields: a required one fails, and an optional one is left out or takes its
+default. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
+
+```python
+from typing import Annotated
+
+from pydantic import ConfigDict, Field, with_config
+from typing_extensions import TypedDict
+
+
+@with_config(ConfigDict(validate_by_name=True))
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+```
+
+A field whose serialization alias is not a name it validates by crosses under a name the second validation
+doesn't read, with the same result. That covers a `serialization_alias` alone, a `validation_alias` that differs
+from it, an `alias_generator` that sets only serialization aliases, and any alias under `validate_by_alias=False`.
+Keep `validate_by_alias` on, and add the serialization alias to the names the field validates by, next to the
+ones it already has:
+
+```python
+from pydantic import AliasChoices, BaseModel, Field
+
+
+class Room(BaseModel):
+    room: str = Field(serialization_alias='roomOut', validation_alias=AliasChoices('room', 'roomOut'))
+    floor: int = Field(validation_alias=AliasChoices('floorIn', 'floorOut'), serialization_alias='floorOut')
+```
 
 ## Execution limits
 

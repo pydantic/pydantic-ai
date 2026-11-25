@@ -21,6 +21,7 @@ from httpx2 import (
     AsyncByteStream as HTTPX2AsyncByteStream,
     AsyncClient as HTTPX2AsyncClient,
     ConnectError as HTTPX2ConnectError,
+    HTTPStatusError as HTTPX2HTTPStatusError,
     MockTransport as HTTPX2MockTransport,
     ReadError as HTTPX2ReadError,
     Request as HTTPX2Request,
@@ -68,7 +69,7 @@ from pydantic_ai import (
     WebCitationSource,
     capture_run_messages,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
@@ -76,7 +77,9 @@ from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelRateLimitError,
     ModelRetry,
     UnexpectedModelBehavior,
     UserError,
@@ -1032,6 +1035,74 @@ async def test_google_model_multiple_documents_in_history(
     assert result.output == snapshot('Both documents contain the text "Dummy PDF file" at the top of the page.')
 
 
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_gemini_api_drops_penalties(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """The Gemini API rejects `presence_penalty` and `frequency_penalty` for every model, so they're not sent."""
+    agent = Agent(
+        GoogleModel('gemini-2.5-flash-lite', provider=google_provider),
+        model_settings=ModelSettings(presence_penalty=0.5, frequency_penalty=0.5),
+    )
+
+    result = await agent.run('Reply with just: ok')
+
+    assert result.output.strip() == snapshot('ok')
+    assert single_request_body(vcr)['generationConfig'] == snapshot({'responseModalities': ['TEXT']})
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_cloud_sends_penalties(allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette):
+    """Google Cloud accepts `presence_penalty` and `frequency_penalty` for Gemini 2.5 Flash-Lite, so they're sent."""
+    agent = Agent(
+        GoogleModel('gemini-2.5-flash-lite', provider=vertex_provider),
+        model_settings=ModelSettings(presence_penalty=0.5, frequency_penalty=0.5),
+    )
+
+    result = await agent.run('Reply with just: ok')
+
+    assert result.output.strip() == snapshot('ok')
+    assert single_request_body(vcr)['generationConfig'] == snapshot(
+        {'presencePenalty': 0.5, 'frequencyPenalty': 0.5, 'responseModalities': ['TEXT']}
+    )
+
+
+@pytest.mark.parametrize(
+    'model_name,supports_penalties',
+    [
+        ('gemini-2.5-flash', True),
+        ('gemini-2.5-flash-image', True),
+        ('gemini-3-flash-preview', True),
+        ('gemini-3.1-flash-lite', True),
+        ('gemini-3.1-pro-preview', True),
+        ('gemini-3.5-flash', True),
+        ('gemini-3.1-flash-lite-image', False),
+        ('gemini-3-pro-image', False),
+        ('gemini-3.5-flash-lite', False),
+        ('gemini-3.8-flash', False),
+        ('gemini-4-argon', False),
+        # An unrecognized name, like a tuned model's endpoint, keeps sending them.
+        ('projects/p/locations/l/endpoints/123', True),
+    ],
+)
+def test_google_cloud_penalty_support_by_model(model_name: str, supports_penalties: bool):
+    """Which models Google Cloud accepts penalties for (verified live); the Gemini API accepts them for none.
+
+    A unit test over the model names, since a recording per name would only repeat the request that
+    `test_google_cloud_sends_penalties` and `test_google_gemini_api_drops_penalties` record.
+    """
+    google_cloud = GoogleModel(
+        model_name, provider=GoogleCloudProvider(client=Client(vertexai=True, project='p', location='global'))
+    )
+    gemini_api = GoogleModel(model_name, provider=GoogleProvider(api_key='key'))
+    penalties = {'frequency_penalty', 'presence_penalty'}
+
+    assert google_cloud.profile.get('google_supports_penalties') is supports_penalties
+    assert (penalties <= google_cloud._unsupported_settings()) is not supports_penalties  # pyright: ignore[reportPrivateUsage]
+    assert gemini_api.profile.get('google_supports_penalties') is False
+    assert penalties <= gemini_api._unsupported_settings()  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_google_model_safety_settings(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-1.5-flash', provider=google_provider)
     settings = GoogleModelSettings(
@@ -1616,6 +1687,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     citations=IsCitationList(),
                 ),
                 next_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -1626,6 +1698,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 previous_part_kind='text',
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=1,
@@ -1636,6 +1709,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -1673,6 +1747,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
         ]
     )
@@ -1964,6 +2039,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     tool_call_id=IsStr(),
                     provider_name='google',
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -1974,6 +2050,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_name='google',
                 ),
                 next_part_kind='builtin-tool-return',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=1,
@@ -1990,6 +2067,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_name='google',
                 ),
                 previous_part_kind='builtin-tool-call',
+                canonical_system='google',
             ),
             PartStartEvent(
                 index=2,
@@ -2015,6 +2093,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     provider_details={'citations': IsList(length=(1, ...))},
                     citations=IsCitationList(),
                 ),
+                canonical_system='google',
             ),
         ]
     )
@@ -2497,6 +2576,7 @@ I've identified the core user intent: to learn safe street-crossing. Now, I'm fo
                     provider_details={'thought_signature': IsStr()},
                 ),
                 previous_part_kind='thinking',
+                canonical_system='google',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
@@ -2557,6 +2637,7 @@ The most important rule is to **stay alert and be predictable**. Always assume a
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
         ]
     )
@@ -4534,6 +4615,18 @@ async def test_google_stream_usage_is_live_mid_stream(allow_model_requests: None
     assert usage_seen == snapshot([(18, 66), (18, 114), (18, 115)])
 
 
+async def test_google_empty_stream_raises_model_empty_response_error(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Mocked because the API doesn't send an empty stream on demand."""
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=_aiter_chunks([]))
+
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
+        async with Agent(model).run_stream('Hello'):
+            pass
+
+
 async def test_google_stream_usage_retains_dropped_field_mid_stream(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):
@@ -5038,6 +5131,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         tool_call_id=IsStr(),
                         provider_name='google',
                     ),
+                    canonical_system='google',
                 ),
                 PartEndEvent(
                     index=0,
@@ -5048,6 +5142,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     next_part_kind='text',
+                    canonical_system='google',
                 ),
                 PartStartEvent(
                     index=1,
@@ -5081,6 +5176,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         citations=IsCitationList(),
                     ),
                     next_part_kind='builtin-tool-return',
+                    canonical_system='google',
                 ),
                 PartStartEvent(
                     index=2,
@@ -5097,6 +5193,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         provider_name='google',
                     ),
                     previous_part_kind='text',
+                    canonical_system='google',
                 ),
             ]
         )
@@ -6063,6 +6160,45 @@ async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: No
     assert isinstance(exc_info.value.__cause__, errors.ClientError)
 
 
+@pytest.mark.parametrize(
+    ('transport_error', 'expected'),
+    [
+        pytest.param(HTTPX2HTTPStatusError, ModelRateLimitError, id='gave-up-status'),
+        pytest.param(HTTPX2ConnectError, ModelConnectionError, id='connect'),
+    ],
+)
+async def test_google_count_tokens_transport_error_is_wrapped(
+    allow_model_requests: None,
+    transport_error: type[HTTPX2HTTPStatusError | HTTPX2ConnectError],
+    expected: type[ModelAPIError],
+):
+    """A transport failure from `count_tokens` is mapped like one from the request, not raised as the raw `httpx2` error.
+
+    Not a VCR test: a retrying transport that gave up on a status, or a refused connection, raises before
+    `google.genai` sees a response, so there is nothing to record.
+    """
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        if transport_error is HTTPX2ConnectError:
+            raise HTTPX2ConnectError('connection refused', request=request)
+        response = HTTPX2Response(429, request=request)
+        raise HTTPX2HTTPStatusError('Client error 429', request=request, response=response)
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await Agent(model).run(
+                'test', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+            )
+
+    assert isinstance(exc_info.value, expected)
+    assert isinstance(exc_info.value.__cause__, transport_error)
+
+
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=IsDatetime()),
@@ -6409,6 +6545,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             PartEndEvent(
                 index=0,
@@ -6419,6 +6556,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     provider_name='google',
                     provider_details={'thought_signature': IsStr()},
                 ),
+                canonical_system='google',
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(
@@ -6502,7 +6640,10 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
 
     assert system_instruction == {
         'role': 'user',
-        'parts': [{'text': 'You are helpful.'}, {'text': SYSTEM_VOICE_ANNOUNCEMENT}],
+        'parts': [
+            {'text': lookalike_note_announcement(system_role=False)},
+            {'text': 'You are helpful.'},
+        ],
     }
     contents_any = cast(list[Any], contents)
     wrapped_texts = [
@@ -6887,9 +7028,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
+                    {'text': '<pyai:tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                 ],
             },
         ]

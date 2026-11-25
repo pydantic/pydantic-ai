@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import copy
 import gc
+import inspect
 import re
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Generator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -12,8 +13,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic_core import PydanticSerializationError
 
-from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
+from pydantic_ai import Agent, AgentStreamEvent, FinalResultEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     CAPABILITY_TYPES,
@@ -55,6 +57,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.models import (
@@ -65,16 +68,23 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchedModel
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, Tool
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..batch_utils import FAST_BATCH_SETTINGS
-from ..conftest import try_import, without_admin_server
+from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from .preamble_text import (
+    RunAndStreamResult,
+    StructuredOutput,
+    plain_run_and_stream,
+    preamble_text_agents,
+    run_and_stream,
+)
 
 with try_import() as logfire_installed:
     from logfire.testing import CaptureLogfire
@@ -427,6 +437,64 @@ async def test_capability_operation_is_direct_outside_durable_context() -> None:
     assert not any('__capability__' in name for name, _ in durability.calls)
 
 
+async def test_capability_operation_maps_serialization_failure() -> None:
+    """The engine's backend receives the error that `serialization_failure` maps an unserializable result to."""
+
+    class TerminalFailure(Exception):
+        pass
+
+    backend_errors: list[Exception] = []
+
+    def serialization_failure(exc: Exception) -> TerminalFailure:
+        return TerminalFailure()
+
+    class SerializationBackend(_RecordingBackend):
+        async def execute(
+            self,
+            *,
+            operation_id: DurableOperationId,
+            name: str,
+            body: Callable[[], Awaitable[object]],
+            cache_key: tuple[object, ...],
+            config: object,
+        ) -> object:
+            try:
+                return await super().execute(
+                    operation_id=operation_id, name=name, body=body, cache_key=cache_key, config=config
+                )
+            except Exception as exc:
+                backend_errors.append(exc)
+                raise
+
+    class SerializationDurability(RecordingDurability):
+        engine_spec = replace(RecordingDurability.engine_spec, serialization_failure=serialization_failure)
+
+        def get_durable_operation_backend(self) -> SerializationBackend:
+            return SerializationBackend(self)
+
+    class NonSerializableCapability(AbstractCapability[None]):
+        id = 'non_serializable'
+
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            await self.read(ctx=ctx)
+
+        @durable_operation('read')
+        async def read(self, ctx: RunContext[None]) -> object:
+            return object()
+
+    agent = Agent(
+        TestModel(),
+        deps_type=type(None),
+        name='serialization_failure',
+        capabilities=[NonSerializableCapability(), SerializationDurability()],
+    )
+    with pytest.raises(TerminalFailure) as exc_info:
+        await agent.run('test')
+
+    assert backend_errors == [exc_info.value]
+    assert isinstance(exc_info.value.__cause__, PydanticSerializationError)
+
+
 async def test_capability_operation_model_id_swap_resolves_and_manages_model() -> None:
     events: list[str] = []
     built_models: list[LifecycleTrackingModel] = []
@@ -679,6 +747,97 @@ async def test_durable_model_scope_does_not_manage_registered_models() -> None:
 
     assert default_events == ['request']
     assert registered_events == ['request', 'stream-enter', 'stream-exit']
+
+
+async def test_durable_stream_replay_classifies_parts_as_the_unit_prepared_them() -> None:
+    """Text streamed before a tool call isn't the final result under any engine built on the base capability.
+
+    `DurableModel.request_stream` replays the unit's response against the parameters the unit's model prepared, in
+    which `'auto'` has resolved to tool output, so the replay finds the same final result as a plain run, and both
+    run methods replay the response's parts as the model streamed them.
+    """
+    durable = [await run_and_stream(agent) for agent in preamble_text_agents(RecordingDurability)]
+    assert durable == await plain_run_and_stream()
+    assert durable == snapshot(
+        [
+            RunAndStreamResult(
+                run_output='Paris',
+                stream_output='Paris',
+                final_result_tool_names=['final_result'],
+                run_responses=[
+                    [
+                        TextPart(content='Let me look that up.'),
+                        ToolCallPart(tool_name='look_up_city', args='{}', tool_call_id='call_1'),
+                    ],
+                    [ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2')],
+                ],
+                stream_responses=[
+                    [
+                        TextPart(content='Let me look that up.'),
+                        ToolCallPart(tool_name='look_up_city', args='{}', tool_call_id='call_1'),
+                    ],
+                    [ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2')],
+                ],
+            ),
+            RunAndStreamResult(
+                run_output='Paris',
+                stream_output='Paris',
+                final_result_tool_names=['final_result'],
+                run_responses=[
+                    [
+                        TextPart(content='Preamble text.'),
+                        ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2'),
+                    ]
+                ],
+                stream_responses=[
+                    [
+                        TextPart(content='Preamble text.'),
+                        ToolCallPart(tool_name='final_result', args='{"response":"Paris"}', tool_call_id='call_2'),
+                    ]
+                ],
+            ),
+        ]
+    )
+
+
+async def _preamble_text_before_output_tool_then_failure(
+    _messages: list[ModelMessage], _info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    yield 'Preamble text.'
+    yield {0: DeltaToolCall(name='final_result', json_args='{"response":"Paris"}', tool_call_id='call_1')}
+    raise ModelAPIError('function', 'stream broke')
+
+
+async def test_durable_stream_replay_classifies_a_failed_stream_as_the_unit_prepared_it() -> None:
+    """A stream that fails after text and a tool call replays them as the unit's model classified them, then raises.
+
+    The unit hands back what the stream produced before it failed, and the replay classifies those parts against the
+    parameters the unit's model prepared, so the run sees the same final result before the error as a plain run.
+    """
+
+    async def final_result_tool_names_until_failure(agent: Agent[object, StructuredOutput]) -> list[str | None]:
+        tool_names: list[str | None] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                if isinstance(event, FinalResultEvent):
+                    tool_names.append(event.tool_name)
+
+        with pytest.raises(ModelAPIError, match='stream broke'):
+            await agent.run('hello', event_stream_handler=handler)
+        return tool_names
+
+    def agent(capabilities: list[AbstractCapability[object]]) -> Agent[object, StructuredOutput]:
+        return Agent(
+            FunctionModel(stream_function=_preamble_text_before_output_tool_then_failure),
+            name='durability_preamble_text_then_failure',
+            output_type=StructuredOutput,
+            capabilities=capabilities,
+        )
+
+    durable = await final_result_tool_names_until_failure(agent([RecordingDurability()]))
+    assert durable == await final_result_tool_names_until_failure(agent([]))
+    assert durable == snapshot(['final_result'])
 
 
 async def test_durable_model_scope_manages_inferred_models(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2091,6 +2250,52 @@ async def test_model_request_operation_schema_is_reused_when_the_capability_is_r
     assert rewrites[0].schema.validator is not rewrites[1].schema.validator
 
 
+@dataclass
+class _DocumentedNote:
+    text: str
+    """What the note says."""
+
+
+class _NoteOperation(AbstractCapability[Any]):
+    id = 'note_operation'
+
+    @durable_operation('read_note')
+    async def read_note(self, note: _DocumentedNote) -> str:
+        raise NotImplementedError
+
+
+def test_operation_schema_reads_no_attribute_docstrings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Building an operation's schema reads no class source for attribute docstrings, unlike a tool's.
+
+    Not a VCR test: it builds schemas offline and asserts which class sources Pydantic reads, which no request shows.
+
+    Only an operation schema's validator is used. On Python < 3.13, Pydantic re-parses a dataclass's whole module to
+    read its attribute docstrings (https://github.com/pydantic/pydantic/issues/14309), which takes seconds over every
+    message type the `ModelRequestContext` projection reaches.
+    """
+    read_classes: list[type] = []
+    getsourcelines = inspect.getsourcelines
+
+    def recording_getsourcelines(cls: type) -> tuple[list[str], int]:
+        read_classes.append(cls)
+        return getsourcelines(cls)
+
+    monkeypatch.setattr(inspect, 'getsourcelines', recording_getsourcelines)
+    # An operation that also takes a user-typed argument rebuilds its schema every time, so an earlier test's cached
+    # schema can't hide a read.
+    collect_capability_operations(_define_prepare_capabilities()[1]())
+    # An operation without a run context or a model request context builds its schema on a separate path.
+    collect_capability_operations(_NoteOperation())
+    assert read_classes == []
+
+    def take_note(note: _DocumentedNote) -> str:
+        raise NotImplementedError
+
+    tool = Tool(take_note)
+    assert read_classes == [_DocumentedNote]
+    assert tool.function_schema.json_schema['properties']['text']['description'] == 'What the note says.'
+
+
 def test_recording_config_has_no_per_tool_override() -> None:
     assert (
         _RecordingConfig().for_tool(
@@ -2382,7 +2587,7 @@ def dbos(tmp_path: Any) -> Generator[DBOS, None, None]:
         'name': 'capability_durable_operations',
         'system_database_url': f'sqlite:///{tmp_path / "dbos.sqlite"}',
     }
-    instance = DBOS(config=without_admin_server(config))
+    instance = DBOS(config=config)
     DBOS.launch()
     try:
         yield instance

@@ -22,6 +22,7 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _with_framing_announcement,  # pyright: ignore[reportPrivateUsage]
     infer_model_profile,
     parse_model_id,
 )
@@ -489,6 +490,15 @@ class TemporalModel(WrapperModel):
         return current.profile
 
     @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        """The currently active model's, like `profile`.
+
+        A raw model ID's model is only built in the activity, so it keeps the shared window rule, as `Model` does.
+        """
+        current = self._current_model()
+        return not isinstance(current, str) and current._rewrite_instructions_outside_prefix
+
+    @property
     def context_window(self) -> int | None:
         """Get the context window of the currently active model, rather than the default one's."""
         current = self._current_model()
@@ -579,7 +589,13 @@ class TemporalModel(WrapperModel):
         if params.model_id is None or params.model_id in self._models_by_id:
             return params.messages
 
-        prepared = model_for_request.prepare_messages(params.messages, params.model_request_parameters)
+        # `framing_announcement` isn't serialized with the parameters, so it's restored from the request's settings.
+        prepared = model_for_request.prepare_messages(
+            params.messages,
+            _with_framing_announcement(
+                params.model_request_parameters, cast(ModelSettings | None, params.model_settings)
+            ),
+        )
         if prepared is params.messages:
             return prepared
         return repair_messages(prepared, repair_last_response=True)

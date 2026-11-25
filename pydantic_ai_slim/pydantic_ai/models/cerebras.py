@@ -28,9 +28,8 @@ except ImportError as _import_error:
 __all__ = ('CerebrasModel', 'CerebrasModelName', 'CerebrasModelSettings')
 
 LatestCerebrasModelNames = Literal[
-    'gemma-4-31b',
     'gpt-oss-120b',
-    'zai-glm-4.7',
+    'qwen-3.8-27b',
 ]
 
 CerebrasModelName = str | LatestCerebrasModelNames
@@ -163,7 +162,8 @@ def _cerebras_settings_to_openai_settings(
     # Copy so the `cerebras_` pops never mutate the caller's dict: `merge_model_settings` can return the
     # model's own `settings` by identity, so popping in place would drop the keys on the next request.
     settings = model_settings.copy()
-    extra_body = dict(cast(dict[str, Any], settings.get('extra_body', {})))
+    configured = settings.get('extra_body')
+    extra_body: dict[str, object] = {} if configured is None else dict(cast(dict[str, object], configured))
 
     disable_reasoning = settings.pop('cerebras_disable_reasoning', None)  # TODO(v3): remove cerebras_disable_reasoning
     if disable_reasoning is not None:

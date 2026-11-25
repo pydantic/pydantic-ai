@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     BinaryImage,
     CachePoint,
     CompactionPart,
+    DocumentUrl,
     FilePart,
     FinishReason,
     ImageUrl,
@@ -53,7 +54,9 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import CodeExecutionTool, ImageGenerationTool, WebFetchTool, WebSearchTool
@@ -214,7 +217,9 @@ async def test_google_connection_cannot_reconnect_once_a_reconnect_has_failed() 
     )
     assert conn._can_reconnect  # pyright: ignore[reportPrivateUsage]
     events = [event async for event in conn]
-    assert isinstance(events[-1], RealtimeSessionErrorEvent) and 'reconnect failed' in events[-1].message
+    assert isinstance(events[-1], RealtimeSessionErrorEvent)
+    # The drop's own description is `websockets`' wording.
+    assert events[-1].message == f'Gemini Live connection closed; reconnect failed: {ConnectionClosed(None, None)}'
     assert conn._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
 
 
@@ -709,19 +714,6 @@ def test_map_usage_matches_standard_google_typed_fields() -> None:
     assert empty == RequestUsage()
 
 
-def test_single_ws_user_agent_noop_without_duplicate() -> None:
-    # A client whose headers hold fewer than two `user-agent` entries needs no reconciliation: the
-    # context manager yields without touching them. A real `GoogleProvider` always adds a capitalized
-    # duplicate, so this defensive branch can't be reached through `connect` — hence a direct unit test.
-    from types import SimpleNamespace
-
-    headers = {'user-agent': 'solo'}
-    client = SimpleNamespace(_api_client=SimpleNamespace(_http_options=SimpleNamespace(headers=headers)))
-    with rt_google._single_ws_user_agent(cast('Any', client)):  # pyright: ignore[reportPrivateUsage]
-        assert headers == {'user-agent': 'solo'}
-    assert headers == {'user-agent': 'solo'}
-
-
 def test_ws_trace_context_injects_and_restores_headers() -> None:
     # `google-genai` forwards the client's HTTP headers as the Live handshake headers, so trace context
     # is injected into them for the connect only, then removed so the shared client's later HTTP
@@ -838,6 +830,37 @@ async def test_connect_serializes_shared_client_header_mutations(monkeypatch: py
     assert headers == original_headers
 
 
+async def test_connect_sends_one_user_agent_for_a_user_built_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # google-genai adds its own label under a lowercase `user-agent`, so a client the user builds with
+    # `User-Agent` holds both keys, and `websockets` rejects the pair at the Live handshake.
+    client = Client(api_key='test-key', http_options=genai_types.HttpOptions(headers={'User-Agent': 'my-app'}))
+    headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
+    assert headers is not None
+    assert [key for key in headers if key.lower() == 'user-agent'] == ['User-Agent', 'user-agent']
+    original_headers = headers.copy()
+    handshake_headers: list[dict[str, str]] = []
+
+    class _CapturingConnect:
+        async def __aenter__(self) -> _RecordingSession:
+            handshake_headers.append(headers.copy())
+            return _RecordingSession()
+
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
+
+    def connect(*, model: str, config: genai_types.LiveConnectConfig) -> _CapturingConnect:
+        return _CapturingConnect()
+
+    monkeypatch.setattr(client.aio.live, 'connect', connect)
+    model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
+    async with _connect(model, ''):
+        pass
+
+    [captured] = handshake_headers
+    assert [key for key in captured if key.lower() == 'user-agent'] == ['user-agent']
+    assert headers == original_headers
+
+
 class _StopDial(Exception):
     """Raised from the fake handshake to short-circuit `connect` once headers are captured."""
 
@@ -885,7 +908,7 @@ async def test_gateway_handshake_carries_bearer_auth(monkeypatch: pytest.MonkeyP
         'wss://gateway.pydantic.dev/proxy/google-vertex/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent'
     )
     assert captured['headers'].get('Authorization') == 'Bearer gw-key'
-    # `_single_ws_user_agent` still runs, so the handshake carries exactly one user-agent header.
+    # The handshake carries exactly one user-agent header.
     assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
     # The bearer lives permanently on the client's static http options (that's what carries it onto the
     # WebSocket), so REST requests carry it too. That's redundant with the gateway's httpx request hook
@@ -1607,21 +1630,46 @@ async def test_send_tool_result_media_goes_in_function_response_parts(monkeypatc
     [
         (
             BinaryContent(data=b'%PDF', media_type='application/pdf'),
-            'carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so '
-            "`BinaryContent` content of type 'application/pdf' attached to a tool return cannot be delivered",
+            snapshot(
+                "Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `BinaryContent` content of type 'application/pdf' attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media."
+            ),
         ),
-        (AudioUrl(url='https://example.com/a.mp3'), 'so `AudioUrl` content attached to a tool return cannot'),
+        (
+            AudioUrl(url='https://example.com/a.mp3'),
+            snapshot(
+                'Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `AudioUrl` content attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media.'
+            ),
+        ),
+        (
+            DocumentUrl(url='https://example.com/a.pdf'),
+            snapshot(
+                'Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `DocumentUrl` content attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media.'
+            ),
+        ),
+        (
+            VideoUrl(url='https://example.com/a.mp4'),
+            snapshot(
+                'Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `VideoUrl` content attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media.'
+            ),
+        ),
+        (
+            UploadedFile(file_id='file-1', provider_name='google-gla', media_type='application/pdf'),
+            snapshot(
+                'Gemini Live tool results on this model carry image/png, image/jpeg, image/webp, text/plain content, inline or from an `ImageUrl`, so `UploadedFile` content attached to a tool return cannot be delivered. Return text instead, or use a model or realtime provider that supports this tool-result media.'
+            ),
+        ),
     ],
 )
 async def test_send_tool_result_unsupported_media_raises_where_media_is_supported(
-    item: AudioUrl | BinaryContent, message: str
+    item: AudioUrl | BinaryContent | DocumentUrl | VideoUrl | UploadedFile, message: str
 ) -> None:
     # The 3.x models close the session on a PDF, so media outside the profile's types is refused, unsent.
     session = _RecordingSession()
     conn = _conn_with_tool_result_media(session)
     _register_call(conn)
-    with pytest.raises(UserError, match=re.escape(message)):
+    with pytest.raises(UserError) as exc_info:
         await conn.send(ToolResult(tool_call_id='c1', output='done', content=[item]))
+    assert str(exc_info.value) == message
     assert session._ws.sent == [] and session.tool_responses == []  # pyright: ignore[reportPrivateUsage]
 
 
@@ -2398,6 +2446,7 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
                     tool_name='weather',
                     content=[
                         'sunny',
+                        {'temp': 20},
                         BinaryContent(data=b'tool-image', media_type='image/png', identifier='weather.png'),
                     ],
                     tool_call_id='call-1',
@@ -2448,35 +2497,35 @@ async def test_connect_seeds_message_history(monkeypatch: pytest.MonkeyPatch) ->
             },
             {
                 'parts': [
-                    {'text': '[Tool call-1: weather returned: ["sunny","See file weather.png."]]'},
-                    {'text': '<tool_result tool_name="weather" tool_call_id="call-1" file_id="weather.png">'},
+                    {'text': '[Tool call-1: weather returned: ["sunny",{"temp":20},"See file weather.png."]]'},
+                    {'text': '<pyai:tool_result tool_name="weather" tool_call_id="call-1" file_id="weather.png">'},
                     {'inline_data': {'data': b'tool-image', 'mime_type': 'image/png'}},
-                    {'text': '</tool_result>'},
+                    {'text': '</pyai:tool_result>'},
                     {'text': '[Tool plain-call: plain returned: ok]'},
                     {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
                     {'text': '[Tool call-1: weather returned: {"error":"invalid city"}]'},
                     {
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in prose
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                     },
                     {
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<retry_feedback>
+<pyai:retry_feedback>
 answer in prose
-</retry_feedback>\
+</pyai:retry_feedback>\
 """
                     },
                     {
                         'text': """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
-<validation_errors>
+<pyai:validation_errors>
 [{"type":"int_parsing","loc":["count"],"msg":"not an integer","input":"lots"}]
-</validation_errors>\
+</pyai:validation_errors>\
 """
                     },
                     {'inline_data': {'data': b'url-image', 'mime_type': 'image/png'}},
@@ -2687,7 +2736,9 @@ async def test_connect_rejects_retained_user_audio_at_another_rate() -> None:
         )
     ]
     model = GoogleRealtimeModel('gemini-3.8-live', provider=GoogleProvider(client=_fake_client(session)))
-    with pytest.raises(UserError, match='recorded at 24000 Hz into a google realtime session expecting 16000 Hz'):
+    with pytest.raises(
+        UserError, match='into google realtime history: it was recorded at 24000 Hz, but the session expects 16000 Hz'
+    ):
         async with _connect(model, 'x', messages=history):
             pass  # pragma: no cover
 
@@ -4044,11 +4095,13 @@ def _declared_behavior(model: GoogleRealtimeModel, settings: GoogleRealtimeModel
 def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
     provider = GoogleProvider(client=_fake_client(_RecordingSession()))
     # A model-level setting is translated when the model is built, so the warning points at that line.
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated') as record:
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         model = GoogleRealtimeModel(
             _OPTIONAL_MODEL, provider=provider, settings=GoogleRealtimeModelSettings(google_async_tool_calls=True)
         )
-    assert record[0].filename == __file__
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        ('`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.', __file__)
+    ]
     assert model.settings == {'async_tool_calls': True}
     assert _declared_behavior(model, None) == 'NON_BLOCKING'
     # Each settings layer is translated on its own, so a session-level setting still overrides a model-level
@@ -4057,29 +4110,60 @@ def test_deprecated_google_async_tool_calls_setting_is_an_alias() -> None:
     model = GoogleRealtimeModel(
         _OPTIONAL_MODEL, provider=provider, settings=GoogleRealtimeModelSettings(async_tool_calls=True)
     )
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    # A setting translated as the model builds its config warns from that module, once per config.
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         assert _declared_behavior(model, {'google_async_tool_calls': False}) == 'BLOCKING'
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
     # Within one layer, the shared setting wins.
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         assert _declared_behavior(model, {'google_async_tool_calls': True, 'async_tool_calls': False}) == 'BLOCKING'
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
     # A model-level setting assigned after construction is still translated when it's used.
     model.settings = GoogleRealtimeModelSettings(google_async_tool_calls=True)
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         assert _declared_behavior(model, None) == 'NON_BLOCKING'
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
 
 
 @pytest.mark.parametrize(
-    ('model_settings', 'session_settings', 'expected_behavior'),
+    ('model_settings', 'session_settings', 'expected_behavior', 'expected_warnings'),
     [
         (
             {'async_tool_calls': True},
             {'google_async_tool_calls': False},
             'BLOCKING',
+            [
+                (
+                    '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+                    'google.py',
+                )
+            ],
         ),
         (
             {'google_async_tool_calls': False},
             {'async_tool_calls': True},
             'NON_BLOCKING',
+            [
+                (
+                    '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+                    'test_google.py',
+                )
+            ],
         ),
     ],
 )
@@ -4087,10 +4171,11 @@ async def test_agent_realtime_session_setting_overrides_the_model_setting_in_eit
     model_settings: GoogleRealtimeModelSettings,
     session_settings: GoogleRealtimeModelSettings,
     expected_behavior: str,
+    expected_warnings: list[tuple[str, str]],
 ) -> None:
     """`Agent.realtime` merges the two layers through the model, which translates each one on its own."""
     captured: dict[str, Any] = {}
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         model = GoogleRealtimeModel(
             _OPTIONAL_MODEL,
             provider=GoogleProvider(client=_fake_client(_RecordingSession(), captured)),
@@ -4104,6 +4189,10 @@ async def test_agent_realtime_session_setting_overrides_the_model_setting_in_eit
 
         async with agent.realtime(model, model_settings=session_settings).session():
             pass
+    files = {'google.py': rt_google.__file__, 'test_google.py': __file__}
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (message, files[name]) for message, name in expected_warnings
+    ]
     config = captured['config']
     assert isinstance(config, genai_types.LiveConnectConfig) and config.tools
     genai_tool = config.tools[0]
@@ -4117,13 +4206,19 @@ async def test_deprecated_google_async_tool_calls_setting_reaches_the_connection
     model = GoogleRealtimeModel(
         'gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=_fake_client(_RecordingSession()))
     )
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         async with model.connect(
             messages=[],
             model_settings=GoogleRealtimeModelSettings(google_async_tool_calls=True),
             model_request_parameters=ModelRequestParameters(),
         ) as conn:
             assert conn._async_tool_calls_enabled is True  # pyright: ignore[reportPrivateUsage]
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+            rt_google.__file__,
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -4256,8 +4351,14 @@ def test_deprecated_google_requires_async_tool_calls_profile_key(requires: bool,
         provider=GoogleProvider(client=_fake_client(_RecordingSession())),
         profile=GoogleRealtimeModelProfile(google_requires_async_tool_calls=requires),
     )
-    with pytest.warns(PydanticAIDeprecationWarning, match='`google_requires_async_tool_calls` is deprecated'):
+    with pytest.warns(PydanticAIDeprecationWarning) as record:
         profile = model.profile
+    assert [(str(warning.message), warning.filename) for warning in record] == [
+        (
+            "`GoogleRealtimeModelProfile` key `google_requires_async_tool_calls` is deprecated, use `async_tool_call_mode='always'` instead.",
+            __file__,
+        )
+    ]
     # `False` carried no signal of its own, so it leaves the model's mode alone.
     assert profile.get('async_tool_call_mode') == mode
     assert profile.get('supports_async_tool_calls') is requires
@@ -4931,6 +5032,54 @@ async def test_parallel_tool_calls_are_one_response_answered_once() -> None:
         ['SpeechPart'],
     ]
     assert session.usage.requests == 2
+
+
+@pytest.mark.parametrize('separate_boundary', [False, True], ids=['one-boundary', 'separate-boundary'])
+async def test_a_turn_that_ends_silently_after_a_tool_result_completes(separate_boundary: bool) -> None:
+    """A model with nothing to say about a tool result ends its turn silently, which answers the result (#12765).
+
+    As reported live from `gemini-3.8-live` on Vertex AI: the result goes out, then `generation_complete`, then a
+    `turn_complete` with usage only. The session took that boundary for the tool-call response's own, which Gemini
+    never sends, so `wait_for_reply()` hung. Vertex's `gemini-live-2.5-flash` does send one, which, with the result
+    already out, the connection reports as usage only: the empty answer's boundary that follows is the same.
+    """
+    result_sent = asyncio.Event()
+    listening_again = asyncio.Event()
+
+    class _EndsTheTurnSilently(_RecordingSession):
+        async def send_tool_response(self, *, function_responses: Any) -> None:
+            await super().send_tool_response(function_responses=function_responses)
+            result_sent.set()
+
+        async def receive(self) -> AsyncIterator[Any]:
+            yield _tool_call_message()
+            await result_sent.wait()
+            if separate_boundary:
+                yield _turn_complete_message()
+            yield genai_types.LiveServerMessage(server_content=genai_types.LiveServerContent(generation_complete=True))
+            yield _turn_complete_message()
+            # Nothing follows: the session goes on listening.
+            listening_again.set()
+            await asyncio.Event().wait()
+
+    async def runner(name: str, args: dict[str, Any], call_id: str) -> str:
+        return 'saved'
+
+    connection = GoogleRealtimeConnection(
+        cast('AsyncSession', _EndsTheTurnSilently()),
+        profile=GoogleRealtimeModelProfile(google_closes_tool_call_turn_separately=separate_boundary),
+    )
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, model_name='gemini-live', system='google'),
+        tool_manager=make_tool_manager(runner),
+    )
+    async with session:
+        await session.send('Save it.')
+        with anyio.fail_after(5):
+            await session.wait_for_reply()
+            await listening_again.wait()
+        assert session._core.requests_ahead() == 0  # pyright: ignore[reportPrivateUsage]
 
 
 def _tool_call_message() -> genai_types.LiveServerMessage:

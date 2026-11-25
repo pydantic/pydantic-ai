@@ -1715,6 +1715,49 @@ def test_live_abandoned_calls_owe_nothing() -> None:
     run_clean(LiveSimulation(), scenario)
 
 
+def test_eleven_realtime_reply_to_an_interjection_abandons_the_calls_before_it() -> None:
+    """Eleven Realtime gives up on a finished response's calls once it replies to what the user typed after them (#13180).
+
+    Their results never reach the model, so the reply to the interjection ends the exchange, though the calls still run.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.send_text()
+        sim.finish()
+        assert sim.turn_completes == []
+        sim.finish()
+        assert sim.tools.pending()
+        assert len(sim.turn_completes) == 1
+        # Its result still goes out, asking for no reply; the next turn's reply gives up on nothing more.
+        sim.finish_tool()
+        sim.send_text()
+        sim.finish()
+        assert len(sim.turn_completes) == 2
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='elevenlabs')), scenario)
+
+
+def test_eleven_realtime_response_with_nothing_new_from_the_user_abandons_no_call() -> None:
+    """Eleven Realtime gives up on a finished response's calls only once the user says something after them.
+
+    A response it starts with nothing new from the user gives up on none: their results are still owed a reply.
+    """
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        call_id = sim.call_tool()
+        sim.finish()
+        sim.create_response()
+        assert sim.truth.tool_calls[call_id].abandoned_by is None
+        sim.finish()
+        sim.finish_tool()
+        sim.finish()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='elevenlabs')), scenario)
+
+
 def test_live_abandoned_call_still_running_doesnt_hold_the_exchange_open() -> None:
     """A tool call whose backend gave up still runs, but its result gets no reply: the exchange ends with the reply.
 
@@ -3130,6 +3173,19 @@ def test_elevenlabs_agents_barge_in_on_a_finished_reply(voiced: bool) -> None:
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 
 
+def test_elevenlabs_agents_barge_in_before_the_reply() -> None:
+    """A barge-in before the agent says anything cuts nothing: the reply that follows is whole."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.barge_in()
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
 @pytest.mark.parametrize('calls_ended', [False, True], ids=['reply-under-way', 'reply-ended'])
 def test_elevenlabs_agents_raising_tool_completes_the_turn_once(calls_ended: bool) -> None:
     """A client tool that raises completes the turn once, whether or not the reply that called it had ended by then.
@@ -3225,6 +3281,19 @@ def test_elevenlabs_agents_reply_voiced_after_its_text() -> None:
         sim.speak()
         sim.finish()
         sim.advance_time(2.0)
+
+    run_clean(ElevenLabsAgentsSimulation(), scenario)
+
+
+def test_elevenlabs_agents_reply_spoken_over_several_steps() -> None:
+    """A reply's audio can come over several steps before its text: all of it is the one reply."""
+
+    def scenario(sim: ElevenLabsAgentsSimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.speak()
+        sim.finish()
+        sim.report_usage()
 
     run_clean(ElevenLabsAgentsSimulation(), scenario)
 

@@ -11,11 +11,17 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.researcher import Researcher
-from pydantic_ai_harness.tool_output_limits import LocalFileStore
+from pydantic_ai_harness.tool_output_limits import LocalFileOverflowStore
 
 
 async def test_researcher_with_local_store_needs_no_workspace(tmp_path: Path) -> None:
-    agent = Agent(TestModel(custom_output_text='done'), capabilities=[Researcher(store=LocalFileStore(tmp_path))])
+    agent = Agent(
+        TestModel(custom_output_text='done'), capabilities=[Researcher(store=LocalFileOverflowStore(tmp_path))]
+    )
     # TestModel rejects native web tools, but only after the workspace preflight succeeds.
     with pytest.raises(UserError, match='TestModel does not support built-in tools'):
         await agent.run('research')
+
+
+def test_researcher_loads_from_agent_spec() -> None:
+    Agent.from_spec({'model': 'test', 'capabilities': ['Researcher']}, custom_capability_types=[Researcher])

@@ -14,6 +14,7 @@ from pydantic_core import ValidationError, to_json
 
 from pydantic_ai import _usage_attribution
 from pydantic_ai._cache_health import CacheHealthDetector, CollapseReason, ConversationCacheMarkStore
+from pydantic_ai._durable_replay import start_as_current_span
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
@@ -300,7 +301,8 @@ class Instrumentation(AbstractCapability[Any]):
                 span_attributes['gen_ai.agent.description'] = rendered
 
         with (
-            settings.tracer.start_as_current_span(
+            start_as_current_span(
+                settings.tracer,
                 names.get_agent_run_span_name(agent_name),
                 attributes=span_attributes,
                 record_exception=False,
@@ -584,7 +586,8 @@ class Instrumentation(AbstractCapability[Any]):
         # span, but say so in the message and mark the failure stage for querying.
         attributes['logfire.msg'] = f'invalid tool call: {call.tool_name}'
         attributes[names.tool_failure_stage_attr] = 'validation'
-        with self.settings.tracer.start_as_current_span(
+        with start_as_current_span(
+            self.settings.tracer,
             names.get_tool_span_name(call.tool_name),
             attributes=attributes,
             record_exception=False,
@@ -666,7 +669,8 @@ class Instrumentation(AbstractCapability[Any]):
         names = self._instrumentation_names
         include_content = settings.include_content
 
-        with settings.tracer.start_as_current_span(
+        with start_as_current_span(
+            settings.tracer,
             span_name,
             attributes=attributes,
             record_exception=False,

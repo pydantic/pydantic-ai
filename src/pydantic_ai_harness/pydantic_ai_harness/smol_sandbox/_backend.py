@@ -30,13 +30,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, TypeVar, cast
 
 import anyio
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
     SupportsCommands,
@@ -47,7 +47,9 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._smolvm_cli import NAME as _NAME, NAME_PREFIX as _NAME_PREFIX
 from pydantic_ai_harness._workspace_provider import (
+    EXEC_SCRIPT,
     absolute_path,
     check_env,
     check_provider,
@@ -55,6 +57,9 @@ from pydantic_ai_harness._workspace_provider import (
     command_argv,
     require_asyncio,
 )
+from pydantic_ai_harness.computer_use import Display, SupportsDisplay
+from pydantic_ai_harness.computer_use._display import DEFAULT_DESKTOP_BASE_IMAGE, checked_desktop_size
+from pydantic_ai_harness.computer_use._x11 import DISPLAY, x11_display
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
@@ -73,23 +78,13 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar('_T')
 
-_NAME_PREFIX = 'pydantic-ai-'
-_NAME = re.compile(rf'{_NAME_PREFIX}[0-9a-f]{{32}}')
-"""The names the backend gives its VMs, and so the only refs it attaches to or deletes.
-
-A local VM's id is its name and `connect` opens any VM of this OS user, so without this check a ref
-from message history could reach a VM made by another tool, with host mounts or network. The name is
-a namespace, not proof of origin: any process of this OS user could use it, and smolmachines can't report
-an existing VM's mounts or network, so a ref is still trusted input.
-"""
-
 _SETUP_TIMEOUT = 60.0
 """Seconds the backend's own commands in the VM (`mkdir -p` and `pwd -P`) get."""
 
 _ENGINE_TIMEOUT_GRACE = 5.0
 """Seconds past a command's timeout before smolvm kills it itself, in case this event loop can't."""
 
-lifecycle: dict[str, asyncio.Task[object]] = {}
+_lifecycle: dict[str, asyncio.Task[object]] = {}
 """This process's latest unfinished creation, attachment or deletion of each VM, by name.
 
 Each one waits for the one started before it, so the latest finishing means they all have, and none
@@ -100,19 +95,8 @@ _HOST_UNAVAILABLE = frozenset(
 )
 """Codes for a host that can't run a local VM at all, so no retry can succeed."""
 
-# `sh` resolves the program on `PATH` and exits 127 when it is missing, as the protocol asks;
-# `exec` keeps the argv literal and replaces the shell with the program. BusyBox and bash read a
-# program named like `-c` as an option of `exec`, and dash's `exec` takes no `--`, so such a name is
-# resolved to its path first. smolmachines 1.22 leaves a streamed command's stdin open, so it is
-# closed here.
-_EXEC_SCRIPT = """p=$1
-shift
-case $p in
--*/*) p=./$p ;;
--*) q=$(command -v -- "$p") || { printf 'sh: %s: not found\\n' "$p" >&2; exit 127; }; p=$q ;;
-esac
-exec "$p" "$@" </dev/null"""
-_EXEC = ('/bin/sh', '-c', _EXEC_SCRIPT, 'sh')
+# smolmachines 1.22 leaves a streamed command's stdin open, which `EXEC_SCRIPT` closes.
+_EXEC = ('/bin/sh', '-c', EXEC_SCRIPT, 'sh')
 
 # The local backend's cap and E2B's preview: the output is held in memory until the command ends.
 _MAX_OUTPUT_BYTES = 10 * 1024 * 1024
@@ -143,7 +127,7 @@ def check_ref(ref: WorkspaceRef) -> None:
 
 def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> asyncio.Task[_T]:
     """Run `work` on `machine_id` once its earlier operations finish, in a task its callers' cancellation doesn't stop."""
-    previous = lifecycle.get(machine_id)
+    previous = _lifecycle.get(machine_id)
 
     async def run() -> _T:
         if previous is not None:
@@ -155,8 +139,8 @@ def start_lifecycle(machine_id: str, work: Callable[[], Awaitable[_T]]) -> async
     # Waiting callers still get the failure; this only stops asyncio reporting it as never retrieved
     # when every caller was cancelled first.
     task.add_done_callback(lambda done: done.cancelled() or done.exception())
-    lifecycle[machine_id] = task
-    task.add_done_callback(lambda done: lifecycle.pop(machine_id) if lifecycle.get(machine_id) is done else None)
+    _lifecycle[machine_id] = task
+    task.add_done_callback(lambda done: _lifecycle.pop(machine_id) if _lifecycle.get(machine_id) is done else None)
     return task
 
 
@@ -169,7 +153,7 @@ async def settled(task: asyncio.Task[_T]) -> _T:
 
 async def _open(machine: smol.Machine, argv: list[str], options: smol.ExecOptions) -> smol.ExecStream:
     """Start a command, closing its stream when it arrives after the caller was cancelled."""
-    opening = asyncio.ensure_future(asyncio.to_thread(machine.exec_stream, argv, options))
+    opening = asyncio.ensure_future(asyncio.to_thread(machine.exec_stream, argv, options))  # noqa: TID251  (not converted to anyio yet)
     try:
         await asyncio.wait([opening])
     except asyncio.CancelledError:
@@ -233,12 +217,12 @@ class _Output:
         return ''.join(self.stdout)[:chars], ''.join(self.stderr)[:chars]
 
 
-class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
+class SmolSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay):
     """A local [smolvm](https://github.com/smol-machines/smolvm) microVM as a Pydantic AI [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend].
 
     Commands run inside a VM on this machine, with its own kernel and filesystem, so they can't
     touch the host's files or processes. File operations run as shell commands in the VM (see
-    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
+    [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#writing-a-backend)),
     so a custom image needs `/bin/sh` and the usual file utilities.
 
     Building one does no I/O. The first operation boots a new persistent VM, or attaches to the one
@@ -253,7 +237,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
             opens its own handle to it by id. Whoever created it owns deleting it.
         ref: Identity of an existing VM on this machine to attach to on first use: its name.
         image: OCI image a new VM runs, such as `'python:3.12-alpine'`; `None` boots smolvm's own
-            Alpine Linux root filesystem without pulling anything.
+            Alpine Linux root filesystem without pulling anything, unless `desktop` is set.
         cpus: vCPUs for a new VM; smolvm's default when `None`.
         memory_mb: Memory for a new VM in MiB; smolvm's default when `None`.
         allow_internet_access: Whether a new VM gets unrestricted outbound network access, made from
@@ -263,6 +247,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
             default image.
         env: Environment variables every command gets; per-command `env` is layered on top. Nothing is
             read from the host environment.
+        desktop: Whether the VM has a display for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]:
+            `True` for 1280x800, or its `(width, height)`. The first start installs the programs it needs, which
+            needs `allow_internet_access`. Without an `image`, a new VM runs `debian:bookworm-slim`.
     """
 
     def __init__(
@@ -276,6 +263,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         allow_internet_access: bool = False,
         working_dir: str | None = '/workspace',
         env: Mapping[str, str] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> None:
         if ref is not None:
             check_provider(ref, 'smol')
@@ -285,10 +273,22 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         # On the local target a VM's id is its name, so the backend attaches to it like to a ref.
         self._ref = ref if sandbox is None else WorkspaceRef(provider='smol', id=sandbox.id)
         self._passed_in = sandbox is not None
-        self._image = image
+        self._image = DEFAULT_DESKTOP_BASE_IMAGE if image is None and desktop else image
         self._resources = smol.ResourceSpec(cpus=cpus, memory_mb=memory_mb, network=allow_internet_access)
         self._working_dir = absolute_path('working_dir', working_dir)
-        self._env = dict(env or {})
+        self._display = x11_display(
+            self._run_argv,
+            checked_desktop_size(desktop),
+            lambda: f'smolvm VM {self._ref.id if self._ref else "(not created)"}',
+        )
+        # An existing VM already has whatever its display needs.
+        if self._display and sandbox is None and ref is None and image is None and not allow_internet_access:
+            raise UserError(
+                "A new desktop sandbox without an `image` installs the display's programs with `apt-get` on first "
+                'use, which needs `allow_internet_access=True`. Pass that, or an `image` that has Xvfb, xdotool, '
+                'xwininfo, scrot and setsid.'
+            )
+        self._env = {**({'DISPLAY': DISPLAY} if self._display else {}), **(env or {})}
         self._machine: smol.Machine | None = None
         self._sandbox: smol.AsyncMachine | None = None
         self._acquisition: asyncio.Task[smol.Machine] | None = None
@@ -302,6 +302,11 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         `SmolSandbox.destroy`, which waits for the boot.
         """
         return self._ref
+
+    @property
+    def display(self) -> Display | None:
+        """The VM's desktop, when created with `desktop=True`."""
+        return self._display
 
     async def get_sandbox(self) -> smol.AsyncMachine:
         """Return the SDK's `smol.AsyncMachine`, for smol features the workspace API does not cover.
@@ -339,9 +344,9 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
                     config = smol.MachineConfig(
                         name=machine_id, image=self._image, resources=self._resources, persistent=True
                     )
-                    machine = await asyncio.to_thread(smol.Machine.create, config, local_target())
+                    machine = await asyncio.to_thread(smol.Machine.create, config, local_target())  # noqa: TID251  (not converted to anyio yet)
                 else:
-                    machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())
+                    machine = await asyncio.to_thread(smol.Machine.connect, machine_id, local_target())  # noqa: TID251  (not converted to anyio yet)
             except smol.SmolError as error:
                 if create:
                     # The SDK reported the boot failed, so a retry boots a VM under a new name.
@@ -398,10 +403,17 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         argv = command_argv(command, shell)
         check_timeout(timeout)
         check_env(env)
+        if self._display is not None:
+            # Started first, so a program the command opens shows on the screen.
+            await self._display.start()
+        return await self._run_argv(argv, env=env or {}, timeout=timeout)
+
+    async def _run_argv(self, argv: list[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
+        """Run `argv` without starting the display, as the display's own commands do."""
         # Booting or attaching is bounded by the SDK; the timeout is the command's alone.
         machine = await self._vm()
         return await self._exec(
-            machine, [*_EXEC, *argv], env={**self._env, **(env or {})}, working_dir=self._working_dir, timeout=timeout
+            machine, [*_EXEC, *argv], env={**self._env, **env}, working_dir=self._working_dir, timeout=timeout
         )
 
     async def _exec(
@@ -420,7 +432,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
             with anyio.move_on_after(timeout) as scope:
                 stream = await _open(machine, argv, options)
                 try:
-                    while (event := await asyncio.to_thread(_next_event, stream)) is not None:
+                    while (event := await asyncio.to_thread(_next_event, stream)) is not None:  # noqa: TID251  (not converted to anyio yet)
                         output.record(event)
                 finally:
                     # On any way out, this kills the command in the VM and wakes a thread waiting for its next event.
@@ -445,7 +457,7 @@ class SmolSandboxBackend(WorkspaceBackend, SupportsCommands):
         """
         # Even a `NOT_FOUND` is checked: the error's code comes from its text, which may be the guest's.
         try:
-            state = await asyncio.to_thread(machine.state)
+            state = await asyncio.to_thread(machine.state)  # noqa: TID251  (not converted to anyio yet)
         except smol.SmolError as probe_error:
             if probe_error.code == 'NOT_FOUND':
                 return WorkspaceUnavailableError(_gone_message(machine.id))

@@ -5,12 +5,14 @@ Kept free of any sandbox or kernel dependency, so each capability's optional ext
 
 from __future__ import annotations
 
+import builtins
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _to_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
@@ -22,7 +24,7 @@ from pydantic_ai.messages import (
     is_multi_modal_content,
 )
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import AgentDepsT, ToolDenied
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDenied
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
@@ -30,22 +32,34 @@ FOLD_INTO_CODE_MODE = 'fold_into_code_mode'
 """Tool metadata key that, set to `True`, lets `CodeMode` and `IPythonCodeMode` fold a code-execution tool into
 the sandbox anyway, keeping its `code_arg_name` for whatever else reads it."""
 
-_FRAMEWORK_CONTROL_TOOL_KINDS = frozenset({'tool-search', 'capability-load'})
-"""Kinds of the framework's control tools, which stay native to drive tool search and capability loading."""
+_UNSANDBOXED_TOOL_KINDS = frozenset({'tool-search', 'capability-load', COMPUTER_KIND.id})
+"""Kinds of tools that stay native: the framework's control tools, which drive tool search and capability loading, and
+`ComputerUse`'s `computer` tool. The model has to see the `computer` tool's screenshot, and code calling it would hide
+the screenshot."""
+
+BUILTIN_NAMES = frozenset(dir(builtins))
+"""Every CPython builtin, which no sandboxed tool may be named after.
+
+Code is resolved against the sandbox's builtins, so a tool called `open` or `print` never runs as
+the model intends: Monty looks the builtin up first and the tool is unreachable, while the IPython
+kernel puts the tool in the namespace ahead of the builtin, so the model's own `open(...)` calls the
+tool. All of CPython's builtins, not just the current sandbox's set, so a builtin added later
+cannot take over a tool that works today.
+"""
 
 
 def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
     """Whether a tool may go inside `run_code` at all, whatever the selector says.
 
-    Framework control tools (tool search, capability loading) drive protocol-level flows; a local fallback
-    (`unless_native`) has to stay native so `Model.prepare_request` can drop it when the provider supports
-    the native tool; and a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-    `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata sets
+    Framework control tools (tool search, capability loading) and the `computer` tool stay native (see
+    `_UNSANDBOXED_TOOL_KINDS`); a local fallback (`unless_native`) has to stay native so `Model.prepare_request`
+    can drop it when the provider supports the native tool; and a tool that is itself a code-execution sandbox (e.g.
+    DynamicWorkflow's `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata sets
     `FOLD_INTO_CODE_MODE`.
     """
     folds = bool(tool_def.metadata and tool_def.metadata.get(FOLD_INTO_CODE_MODE) is True)
     return (
-        tool_def.tool_kind not in _FRAMEWORK_CONTROL_TOOL_KINDS
+        tool_def.tool_kind not in _UNSANDBOXED_TOOL_KINDS
         and not tool_def.unless_native
         and (folds or not is_code_execution_tool(tool_def))
     )
@@ -99,6 +113,11 @@ def partition_callable_tools(
                 f"Tool name '{name}' (sanitized to '{safe_name}') conflicts with the code mode "
                 f'meta-tool. Rename your tool to avoid conflicts.'
             )
+        if safe_name in BUILTIN_NAMES:
+            raise UserError(
+                f'Tool name {name!r} is a Python builtin, so code in the sandbox cannot call the tool by that '
+                'name. Rename the tool, for example with `toolset.prefixed(...)` or `toolset.renamed(...)`.'
+            )
         if safe_name in callable_defs:
             existing = sanitized_to_original.get(safe_name, safe_name)
             warnings.warn(
@@ -145,6 +164,25 @@ class NestedCallOutcome:
     """The called tool's `tool_kind`, so the history records the same typed parts a direct call would."""
 
 
+def reserve_nested_call(ctx: RunContext[AgentDepsT]) -> int:
+    """Check `tool_calls_limit` for a call a tool makes, and count it as pending; returns the count to release.
+
+    Raises:
+        UsageLimitExceeded: the call and the tool making it would exceed `tool_calls_limit`.
+    """
+    usage_limits = ctx.usage_limits
+    if usage_limits is None or usage_limits.tool_calls_limit is None:
+        return 0
+    # This call counts once it succeeds, and so does the enclosing call.
+    usage_limits.check_before_tool_call(replace(ctx.usage, tool_calls=ctx.usage.tool_calls + 2))
+    # A pending call counts toward the limit until it settles: calls started together with
+    # `asyncio.gather` would otherwise all pass the check before any of them is counted. Core
+    # counts the call itself once it succeeds, so the caller releases the reservation however it ends.
+    # usage-attribution: a temporary pending-call reservation, released by the caller
+    ctx.usage.tool_calls += 1
+    return 1
+
+
 async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: ToolCallPart) -> NestedCallOutcome:
     """Run one tool call dispatched from inside the sandbox through the nested `ToolManager`."""
     tool_def = tool_manager.get_tool_def(call_part.tool_name)
@@ -160,35 +198,25 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
             ),
             tool_kind=tool_kind,
         )
-    usage_limits = ctx.usage_limits
-    reserved = 0
-    if usage_limits is not None and usage_limits.tool_calls_limit is not None:
-        # This call counts once it succeeds, and so does the enclosing `run_code` call.
-        try:
-            usage_limits.check_before_tool_call(replace(ctx.usage, tool_calls=ctx.usage.tool_calls + 2))
-        except UsageLimitExceeded as e:
-            return NestedCallOutcome(error=e, usage_limit_exceeded=e, tool_kind=tool_kind)
-        # A pending call counts toward the limit until it settles: calls started together with
-        # `asyncio.gather` would otherwise all pass the check before any of them is counted. Core
-        # counts the call itself once it succeeds, so the reservation is released however it ends.
-        reserved = 1
-        # usage-attribution: a temporary pending-call reservation, released in `finally` below
-        ctx.usage.tool_calls += 1
+    try:
+        reserved = reserve_nested_call(ctx)
+    except UsageLimitExceeded as exc:
+        return NestedCallOutcome(error=exc, usage_limit_exceeded=exc, tool_kind=tool_kind)
     try:
         result = await tool_manager.handle_call(call_part, wrap_validation_errors=False)
-    except (CallDeferred, ApprovalRequired) as e:
+    except (CallDeferred, ApprovalRequired) as exc:
         # No handler resolved the deferral. The sandbox can't round-trip to the caller, so the
         # error propagates through Monty -> MontyRuntimeError -> ModelRetry.
         error = UserError(
-            f'Tool {call_part.tool_name!r} raised {type(e).__name__} inside code mode, '
+            f'Tool {call_part.tool_name!r} raised {type(exc).__name__} inside code mode, '
             'but no `HandleDeferredToolCalls` capability resolved it. Add a handler '
             'capability on the agent so deferred and approval-required calls can '
             'be resolved inline.'
         )
-        error.__cause__ = e
+        error.__cause__ = exc
         return NestedCallOutcome(error=error, tool_kind=tool_kind)
-    except Exception as e:
-        return NestedCallOutcome(error=e, tool_kind=tool_kind)
+    except Exception as exc:
+        return NestedCallOutcome(error=exc, tool_kind=tool_kind)
     finally:
         ctx.usage.tool_calls -= reserved
 

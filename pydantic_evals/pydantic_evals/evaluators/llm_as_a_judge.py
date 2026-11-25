@@ -28,7 +28,7 @@ __all__ = (
 )
 
 
-_default_model: models.Model | models.KnownModelName = 'openai:gpt-5.2'
+_default_model: models.Model | models.KnownModelName | str = 'openai:gpt-5.2'
 _MAX_G_EVAL_SCORE_LEVELS = 20
 _JUDGE_REASON_DESCRIPTION = 'A concise 1-2 sentence justification for the verdict.'
 
@@ -364,7 +364,7 @@ async def judge_output_expected(
     return _grading_output_with_reason(result)
 
 
-def set_default_judge_model(model: models.Model | models.KnownModelName) -> None:
+def set_default_judge_model(model: models.Model | models.KnownModelName | str) -> None:
     """Set the default model used for judging.
 
     This model is used if `None` is passed to the `model` argument of `judge_output` and `judge_input_output`.

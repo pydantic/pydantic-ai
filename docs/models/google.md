@@ -1,5 +1,5 @@
 ---
-description: "Use Google Gemini models with Pydantic AI through the Gemini API or Vertex AI, with video and file input, image generation, thinking and safety settings."
+description: "Use Google Gemini models with Pydantic AI through the Gemini API or Vertex AI, with video and file input, image generation, thinking, safety settings and the Decisions API."
 ---
 
 # Google
@@ -166,6 +166,14 @@ streams for longer than it isn't cut off by the server. A per-request [`timeout`
 doesn't change the header. To set a different server deadline, send the header yourself in
 [`extra_headers`][pydantic_ai.settings.ModelSettings.extra_headers].
 
+A user-agent you send in `extra_headers`, in any spelling, replaces Pydantic AI's on
+[`GoogleModel`][pydantic_ai.models.google.GoogleModel] and
+[`GoogleImageGenerationModel`][pydantic_ai.images.google.GoogleImageGenerationModel] requests. `google-genai` puts its
+own label in front of it, so it goes out as one `user-agent: google-genai-sdk/… gl-python/… <your value>` header. It
+also replaces a user-agent set on a client you pass. If that client spells the header other than `user-agent`, as in
+`HttpOptions(headers={'User-Agent': ...})`, `google-genai` keeps its own lowercase `user-agent` beside it, so your value
+goes out on both lines.
+
 The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
 ## HTTP Retries
@@ -198,9 +206,13 @@ agent = Agent(model)
 
 This passes the options through to the SDK's [`HttpOptions.retry_options`](https://googleapis.github.io/python-genai/genai.html#genai.types.HttpOptions.retry_options). [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) overrides the number of attempts for a model, agent or run, keeping the delays and status codes set here, or the SDK's defaults (a first delay of one second; status 408, 429, 500, 502, 503 and 504) when `retry_options` isn't set. See the [Vertex AI retry strategy documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/retry-strategy) for guidance on choosing values.
 
+When a Google error carries no `retry-after-ms` or `Retry-After` header, [`ModelAPIError.retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is read from the `google.rpc.RetryInfo` detail in its body, including for an error chunk inside a stream and for a status a [retrying transport](../retries.md#error-handling) gave up on. [Temporal](../durable_execution/temporal.md) waits that long before retrying a model activity, and you can use it in your own backoff ([Retries](../retries.md#transport-retries)). The SDK's `retry_options` above and [`wait_retry_after`](../retries.md#wait_retry_after) read only headers.
+
 ## Document, Image, Audio, and Video Input
 
 `GoogleModel` supports multi-modal input, including documents, images, audio, and video.
+
+Gemini reads JPEG, PNG, GIF, WebP, HEIC, HEIF, AVIF and BMP images. On Google Cloud it also reads TIFF, which the Gemini API rejects. Gemini 2.5 models don't read Word or Excel documents; Gemini 3 models do. A file of another type that a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance).
 
 YouTube video URLs can be passed directly to Google models:
 
@@ -338,6 +350,8 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+`presence_penalty` and `frequency_penalty` aren't sent through the Gemini API, which rejects them for every model, or on Google Cloud for Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models, which reject them too.
+
 ### Configure thinking
 
 Use the provider-agnostic [`Thinking`][pydantic_ai.capabilities.Thinking] capability to enable thinking:
@@ -365,22 +379,45 @@ agent = Agent(model, model_settings=model_settings)
 ```
 
 Pydantic AI resolves each model's supported levels from Google's documented thinking table and snaps a
-requested effort to the nearest supported level. `gemini-3.1-flash-image` is the exception: Google
-[documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for it, but only the Gemini
-API enforces them, so Pydantic AI applies those levels only when the client talks to the Gemini API, and Vertex AI
-keeps the full scale. For a model id the table doesn't cover, declare its
+requested effort to the nearest supported level. `gemini-3.1-flash-image` and `gemini-4-neon` are the exceptions:
+Pydantic AI applies their levels only when the client talks to the Gemini API, and Vertex AI keeps the default
+levels. Google [documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for
+`gemini-3.1-flash-image`, but only the Gemini API enforces them, and
+[Vertex's thinking table](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking) doesn't
+list `gemini-4-neon` yet. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
-(default: the full scale); unsupported efforts resolve to the nearest supported level.
+(default: every level but `xhigh`); unsupported efforts resolve to the nearest supported level.
 
-`gemini-4-argon` supports the `low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to
-`low`. On Google Cloud it rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
+`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen`, and `gemini-4-neon` on the Gemini API, support the
+`low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` and, on
+the Gemini API, `gemini-4-neon` also support `xhigh`, their deepest reasoning, which `thinking='xhigh'` and `'max'`
+select; on models without it, they resolve to `high`. On Google Cloud, `gemini-4-neon` keeps the default levels. The
+`google-genai` SDK's `ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns
+`XHIGH is not a valid ThinkingLevel` and sends the level anyway.
+
+On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
 `thinking_level` instead.
+
+Gemma 4 (`gemma-4-31b-it`, `gemma-4-26b-a4b-it`) supports only the `minimal` and `high` levels on the Gemini API and
+rejects any `thinking_budget`, so `thinking=False` and `'low'` resolve to `minimal`, and `'medium'` and above to
+`high`. Without a `thinking` setting it thinks by default there.
+
+On Gemini 2.5, `thinking='minimal'` sends a `thinking_budget` of 128 tokens. The exception is `gemini-2.5-flash-lite`
+on the Gemini API, which rejects budgets below 512, so it gets 512.
+To send another budget for `minimal`, set
+[`GoogleModelProfile.google_minimal_thinking_budget`][pydantic_ai.profiles.google.GoogleModelProfile.google_minimal_thinking_budget]
+in the model's `profile`.
 
 `thinking=False` turns thinking off where the model allows it. The Pro models can't turn it off, so they think as
 little as they allow instead: Gemini 3 Pro models use their lowest thinking level (`low` on `gemini-3.1-pro-preview`),
 and Gemini 2.5 Pro uses its minimum `thinking_budget` of 128 tokens. Neither asks for the thoughts to be returned.
 On Google Cloud, `gemini-3.1-pro-preview` accepts `thinking_budget=0`, which the Gemini API rejects for it, so
 there `thinking=False` sends `thinking_budget=0` and the model doesn't think.
+
+From December 1, 2026, the Gemini API [routes `gemini-2.5-flash` to `gemini-3.5-flash-lite`](https://aistudio.google.com/docs/deprecations),
+which rejects `thinking_budget=0`. So on the Gemini API, `thinking=False` on `gemini-2.5-flash` sends the minimum
+`thinking_budget` of 128 tokens, like Gemini 2.5 Pro. Before the reroute, `gemini-2.5-flash` thinks a little with that
+budget; `gemini-3.5-flash-lite` doesn't. On Google Cloud, `gemini-2.5-flash` keeps `thinking_budget=0`.
 
 See [Thinking](../capabilities/thinking.md) for the unified API and [Gemini API docs](https://ai.google.dev/gemini-api/docs/thinking) for Google's native thinking configuration.
 
@@ -534,7 +571,7 @@ A job that fails or is cancelled before it writes any results doesn't report whi
 
 ## Long decode
 
-`gemini-4-argon` caps the output of each request; Google's
+`gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-4-neon` cap the output of each request; Google's
 [long decode docs](https://ai.google.dev/gemini-api/docs/generate-content/long-decode) give the caps and defaults. When
 [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens] is above the cap, a request that reaches it returns a
 continuation token, and the `google-genai` SDK continues the response from it in another request, until the response
@@ -563,6 +600,14 @@ decode is one model request:
   already billed. A streamed run keeps what it streamed as a response with
   [`state='interrupted'`][pydantic_ai.messages.ModelResponse.state] that carries the finished requests' usage, which
   [`capture_run_messages()`][pydantic_ai.capture_run_messages] returns.
+- With `google-genai` 2.31.0 and later, a streamed run sends a later request that fails before it streams any output
+  3 more times from the same continuation token, with no wait. If they all fail, the model request fails as above.
+  This applies to errors the HTTP client raises: a connection that can't be opened or that drops, a timeout, or the
+  `HTTPStatusError` of a [retrying transport](../retries.md#transport-retries) that gave up. It doesn't apply to an
+  error status the SDK reads itself. `retry_options` and
+  [`max_retries`](../retries.md#setting-the-sdk-retry-count-per-request) can't turn this off, and they also retry a
+  connection that can't be opened, or a timeout before the response arrives, on each of those 4 requests: with
+  `max_retries=2`, such an error goes on the wire 12 times.
 - The SDK resumes a dropped stream from its last continuation token. If output was streamed after that token, the
   model request fails as above instead, since the resumed request would repeat that output.
 - On [Temporal](../durable_execution/temporal.md#activity-configuration), the whole long decode runs in one model
@@ -577,7 +622,94 @@ On [Google Cloud](google-cloud.md), `gemini-4-argon` is served on the `global` l
 multi-regions, not in single regions such as the default `us-central1`: pass one of those as the provider's
 [`location`](google-cloud.md#customizing-location-or-project).
 
+## Computer use
+
+To let Gemini use a computer, add the Pydantic AI Harness [`ComputerUse`](../harness/computer-use.md) capability. On
+the Gemini API, it sends Google's own
+[computer use tool](https://ai.google.dev/gemini-api/docs/computer-use) as a
+[`ComputerTool`][pydantic_ai.native_tools.ComputerTool] to the Gemini 4 models, Gemini 3.8 Flash, Gemini 3.5 Flash-Lite
+and Gemini 3 Flash Preview. Other models, every model on Vertex AI, and any model with `ComputerUse(native=False)` get a
+regular function tool named `computer` instead.
+
+Google's tool can't zoom or read the pointer position. It can't be sent beside a function tool named like one of its
+functions, such as `click` or `type`, so with such a tool the model gets the `computer` function tool instead.
+
+### Actions that need approval
+
+Gemini's safety checks can flag an action, such as deleting files or accepting terms, as one a person must confirm. The
+flagged call waits for [approval](../deferred-tools.md#human-in-the-loop-tool-approval), with Gemini's explanation in
+its metadata under `reason`. Resolve it with a
+[`HandleDeferredToolCalls`](../deferred-tools.md#resolving-deferred-calls-with-a-handler) handler, or add
+[`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] to the agent's `output_type` to end the run and resume
+it later. Without either, the run fails at the first flagged call.
+
+```python {test="skip" lint="skip" gateway_toggle="skip"}
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai_harness import ComputerUse
+
+
+async def ask_a_person(ctx: RunContext, requests: DeferredToolRequests) -> DeferredToolResults:
+    approvals = {}
+    for call in requests.approvals:
+        reason = requests.metadata[call.tool_call_id]['reason']
+        approvals[call.tool_call_id] = input(f'{reason} Approve? [y/N] ') == 'y'
+    return requests.build_results(approvals=approvals)
+
+
+agent = Agent(
+    '{{ google:medium }}',
+    capabilities=[my_desktop_sandbox, ComputerUse(), HandleDeferredToolCalls(handler=ask_a_person)],
+)
+```
+
+Google sends no safety decisions on streamed requests, so streamed runs never pause for approval.
+
 ## Streaming cancellation
 
 !!! note "Transport cancellation"
     [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] safely interrupts an active local stream pull, including one running in another task. The `google-genai` SDK exposes no documented per-stream transport handle, so closing the returned iterator does not guarantee immediate HTTP teardown or indicate when remote generation stops and billing ends. See [googleapis/python-genai#2425](https://github.com/googleapis/python-genai/issues/2425).
+
+## Decisions API {#decisions-api}
+
+The Gemini API's [Decisions API](https://aistudio.google.com/docs/decisions-api) runs Gemini Decision as a [decision model](decision.md): it answers typed questions about text or images, each with a probability or a distribution over the options, rather than writing text. [`GoogleDecisionsModel`][pydantic_ai.models.google_decisions.GoogleDecisionsModel] is the Pydantic AI model class for it, so an agent's output type and tools become the questions as described on the [Decision models](decision.md) page. The `'google-decisions:'` prefix picks it:
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+
+agent = Agent('google-decisions:gemini-decision-1', output_type=bool, instructions='Is this request harmful?')
+result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
+print(result.output)
+#> True
+```
+
+It runs on the Gemini API, reads the same `GOOGLE_API_KEY`, and takes the same [`GoogleProvider`](#api-key-gemini-api) as `GoogleModel`, including a [custom HTTP client](#custom-http-client) and [retry options](#http-retries):
+
+```python {gateway_toggle="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.models.google_decisions import GoogleDecisionsModel
+from pydantic_ai.providers.google import GoogleProvider
+
+model = GoogleDecisionsModel('gemini-decision-1', provider=GoogleProvider(api_key='your-api-key'))
+agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
+...
+```
+
+All the questions of a request go to the API in one call, and its usage is reported in input tokens: the model writes no output.
+
+The API takes no conversation turns, so the conversation goes as the [state](decision.md#where-the-wording-comes-from) other decision models are sent: one text, with the latest prompt as what to judge and the history beside it.
+
+Image input works through [`BinaryContent`][pydantic_ai.BinaryContent], [`BinaryImage`][pydantic_ai.messages.BinaryImage] or [`ImageUrl`][pydantic_ai.messages.ImageUrl]; `ImageUrl` images are downloaded and sent inline. Each image follows its `<image N>` reference in the state. See [image input](../input.md#image-input). Set `vendor_metadata={'media_resolution': {'level': 'MEDIA_RESOLUTION_LOW'}}` on an image to send it at a lower resolution, which costs fewer input tokens. `GoogleModel` reads the same [per-part media resolution](https://ai.google.dev/gemini-api/docs/media-resolution), so an image keeps its resolution when a step [escalates](decision.md#escalating-to-a-language-model) to a Gemini model; only the `level` is sent.
+
+`timeout`, `max_retries`, `extra_headers` and `extra_body` are forwarded to the request; `extra_body` can't set `questions`, which the model keys itself. The other generic settings, such as `temperature`, are ignored: the API takes none. [`GoogleDecisionsModelSettings`][pydantic_ai.models.google_decisions.GoogleDecisionsModelSettings] takes the two [thresholds](decision.md#confidence-and-thresholds) every decision model has, `decision_boolean_threshold` and `decision_route_threshold`.
+
+`GoogleDecisionsModel` checks the API's request limits before sending a request or downloading image URLs:
+
+- **255 options in one pick-one question.** A pick-one field counts its own options, and the [route question](decision.md#routes-which-thing-to-do) counts every tool plus every output type. A question over the limit raises a [`UserError`][pydantic_ai.exceptions.UserError].
+- **255 levels in one rubric.** A field of more whole numbers from 0 becomes a [pick-one](decision.md#what-each-field-type-does) instead.
+- **1000 questions in one request.** A `list` or `dict` of options counts one question per option, and with tools or a union of output types, every route's fields can go in the same request as the route question when they fit the question cap and the [size cutoff](decision.md#routes-which-thing-to-do). Otherwise the model picks the route first and fills it in a second request. An initial request whose fields alone exceed the cap raises a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] before images are downloaded, so a [`FallbackModel`](overview.md#fallback-model) can take over.
+
+Every question goes with instructions, which the API requires: a pick-one, a rubric or a yes/no with described answers that has nothing else to ask is sent a generic question, and its options carry the meaning. An option's label can be up to 128 characters; a longer one fails the request with a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError].
+
+!!! note "Measure on your own data"
+    A threshold tuned on another decision model does not carry over to this one. Measure accuracy, the hand-off rate and any threshold on labelled examples of your own before relying on them.

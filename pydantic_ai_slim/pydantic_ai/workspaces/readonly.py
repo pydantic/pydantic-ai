@@ -43,5 +43,6 @@ class ReadOnlyWorkspace(WrapperWorkspace):
         shell: bool = False,
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        cwd: str | None = None,
     ) -> Never:
         raise WorkspaceReadOnlyError(_READ_ONLY_REASON)

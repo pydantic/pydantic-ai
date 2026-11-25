@@ -14,7 +14,8 @@ from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 
 import pydantic_ai_harness
 import pydantic_ai_harness.compaction as compaction
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Capability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -44,7 +45,7 @@ from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
     ContextUsage,
-    ContextUsageEvent,
+    ContextUsageMeasuredEvent,
     DeduplicateFileReads,
     ReportContextUsage,
     SlidingWindowCompaction,
@@ -646,7 +647,7 @@ class TestRequestModelIsTheOneResolved:
     async def test_a_summarizing_tier_calls_the_request_model(self, monkeypatch: pytest.MonkeyPatch):
         """The same rule for the model a summarizing tier inherits when it has none of its own."""
         self._windows(monkeypatch, run=10_000_000, request=1_000)
-        seen: list[Any] = []
+        seen: list[Model] = []
 
         class _Recording:
             async def compact(self, messages: list[ModelMessage], ctx: Any) -> list[ModelMessage]:
@@ -876,6 +877,43 @@ class TestProgressiveToolSchemas:
 
         assert estimate_context_tokens(messages, model_request_parameters=parameters) > estimate_token_count(messages)
 
+    async def test_load_capability_reveal_is_counted_through_a_real_run(self):
+        """Contract for the hand-built reveals above: a real `load_capability` produces what they encode.
+
+        They assume core records a reveal as a `ToolAvailabilityDeltaPart` and sends the revealed
+        tool's definition in the next request's parameters. If either stops holding, the schema
+        drops out of this estimate.
+        """
+        capability = Capability[object](id='workspace', description='Workspace tools.', defer_loading=True)
+
+        @capability.tool_plain(description='x' * 1_000)
+        def read_workspace(path: str) -> str:
+            return path  # pragma: no cover - only the schema matters
+
+        # Read the request where a compaction capability would: before the model maps deltas away.
+        hooks = Hooks[object]()
+        schema_tokens: list[int] = []
+
+        @hooks.on.before_model_request
+        async def measure(ctx: RunContext[object], request_context: ModelRequestContext) -> ModelRequestContext:
+            messages = request_context.messages
+            parameters = request_context.model_request_parameters
+            with_schemas = estimate_context_tokens(messages, model_request_parameters=parameters)
+            schema_tokens.append(with_schemas - estimate_context_tokens(messages))
+            return request_context
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name='load_capability', args={'id': 'workspace'})])
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent: Agent[object, str] = Agent(FunctionModel(model_fn), capabilities=[capability, hooks])
+        await agent.run('start')
+
+        [before_load, after_load] = schema_tokens
+        assert before_load == 0
+        assert after_load >= 1_000 // 4
+
 
 class TestStrategyWindowOverride:
     """A window the registry resolves *wrongly* is the caller's to correct.
@@ -1027,7 +1065,7 @@ class TestReportContextUsage:
         request_context = _request_context(_history(2))
         assert await monitor.before_model_request(ctx, request_context) is request_context
 
-        assert [type(event) for event in ctx.emitted] == [ContextUsageEvent]
+        assert [type(event) for event in ctx.emitted] == [ContextUsageMeasuredEvent]
         event = ctx.emitted[0]
         assert event.window_tokens == 1_000
         assert event.used_tokens > 0
@@ -1619,8 +1657,8 @@ class TestInstructionDeltaCounting:
     @pytest.mark.parametrize(
         ('content', 'rendered'),
         [
-            ('New state', '<context id="agent:state">\nNew state\n</context>'),
-            (None, '<context id="agent:state">\nThis context has been withdrawn.\n</context>'),
+            ('New state', '<pyai:context id="agent:state">\nNew state\n</pyai:context>'),
+            (None, '<pyai:context id="agent:state">\nThis context has been withdrawn.\n</pyai:context>'),
         ],
     )
     def test_rendered_updates_count(self, content: str | None, rendered: str) -> None:
