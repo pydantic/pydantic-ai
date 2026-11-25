@@ -164,6 +164,7 @@ from ._caching import (
     has_dynamic_system_prompt,
     keep_implicit_cache_without_breakpoints,
     leading_system_message_count,
+    merge_leading_system_messages,
     move_leading_cache_breakpoints,
     openai_effective_cache_settings,
     resolve_legacy_cache_retention,
@@ -1631,6 +1632,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         text, instructions = self._responses_text_config(
             model_settings, model_request_parameters, profile, instructions, openai_messages, system_prompt_role
         )
+        if profile.get('honors_only_first_system_message', False):
+            openai_messages = merge_leading_system_messages(openai_messages, system_prompt_role, text_type='input_text')
 
         # When there are no input messages and we're not reusing server-side state,
         # the OpenAI API will reject a request without any input,
@@ -1700,13 +1703,17 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             openai_messages,
             uses_server_side_state=uses_server_side_state,
         ):
+            single_system_message = profile.get('honors_only_first_system_message', False)
             return self._relocate_instructions(
                 instructions,
                 openai_messages,
                 self._get_instruction_parts(messages, model_request_parameters) or [],
                 system_prompt_role,
-                add_breakpoint=self._adds_instruction_breakpoint(model_settings, profile),
-                stable_only=profile.get('openai_responses_stable_instructions_as_input', False),
+                # Merging the leading system messages collapses the boundary the breakpoint marks.
+                add_breakpoint=self._adds_instruction_breakpoint(model_settings, profile) and not single_system_message,
+                stable_only=profile.get('openai_responses_stable_instructions_as_input', False)
+                and not single_system_message,
+                move_all=single_system_message,
             )
         return instructions
 
@@ -1813,18 +1820,31 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         uses_server_side_state: bool,
     ) -> bool:
-        """Whether the instructions move into the input, to be cached or to carry a cache breakpoint after them."""
+        """Whether the instructions move into the input, to be cached, carry a breakpoint or join the one system message.
+
+        A model whose profile sets `honors_only_first_system_message` follows only one leading system message.
+        """
+        if (
+            # A `'user'` system prompt role can't be told apart from a real user turn.
+            system_prompt_role == 'user'
+            # Instructions relocated into a stored response's input would be replayed to any request
+            # that continues it, next to that request's own instructions.
+            or uses_server_side_state
+            # A compaction item retains the window's leading system items, so they aren't resent.
+            or any(isinstance(item, dict) and item.get('type') == 'compaction' for item in openai_messages)
+        ):
+            return False
+        if profile.get('honors_only_first_system_message', False):
+            # The host follows only the first leading system message and may ignore the top-level field (Bedrock
+            # Mantle's Responses endpoint does for gpt-oss), so they move even next to a dynamic system prompt.
+            return True
         return bool(
             (
                 self._adds_instruction_breakpoint(model_settings, profile)
                 or profile.get('openai_responses_stable_instructions_as_input', False)
             )
-            and not self._instructions_stay_top_level(system_prompt_role, messages)
-            # Instructions relocated into a stored response's input would be replayed to any request
-            # that continues it, next to that request's own instructions.
-            and not uses_server_side_state
-            # A compaction item retains the window's leading system items, so they aren't resent.
-            and not any(isinstance(item, dict) and item.get('type') == 'compaction' for item in openai_messages)
+            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
+            and not has_dynamic_system_prompt(messages)
         )
 
     def _responses_text_config(
@@ -1876,12 +1896,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         add_breakpoint: bool,
         stable_only: bool,
+        move_all: bool = False,
     ) -> str | Omit:
         """Move instructions into leading input messages, with `add_breakpoint` marking the last static one for caching.
 
         The top-level `instructions` field cannot carry a breakpoint. With `stable_only`, the parts that rewrite the
-        prefix when they change stay in the top-level field, which the model reads after the input. Mutates
-        `openai_messages` and returns what's left of the top-level `instructions`.
+        prefix when they change stay in the top-level field, which the model reads after the input. With `move_all`,
+        they all move even when there's nothing to put a breakpoint on. Mutates `openai_messages` and returns what's
+        left of the top-level `instructions`.
         """
         # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt. Kept
         # apart from `leading_system_message_count`: checking `type` there would also move where
@@ -1900,7 +1922,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             moved, kept = instruction_parts, []
         breakpoint_index = system_prompt_count + cacheable_instruction_count(moved) - 1
         # For the breakpoint alone, they move only when there's a static instruction or a system prompt to put it on.
-        if moved and (stable_only or breakpoint_index >= 0):
+        if moved and (stable_only or move_all or breakpoint_index >= 0):
             openai_messages[system_prompt_count:system_prompt_count] = [
                 responses.EasyInputMessageParam(role=system_prompt_role, content=part.content) for part in moved
             ]

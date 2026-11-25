@@ -361,7 +361,7 @@ async def test_openai_chat_leading_cache_point_with_merged_system_messages(allow
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
         profile=OpenAIModelProfile(
-            openai_supports_prompt_cache_breakpoints=True, openai_chat_supports_multiple_system_messages=False
+            openai_supports_prompt_cache_breakpoints=True, honors_only_first_system_message=True
         ),
     )
 
@@ -1279,7 +1279,7 @@ async def test_openai_chat_cache_instructions_skipped_when_system_messages_are_m
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
         profile=OpenAIModelProfile(
-            openai_chat_supports_multiple_system_messages=False, openai_supports_prompt_cache_breakpoints=True
+            honors_only_first_system_message=True, openai_supports_prompt_cache_breakpoints=True
         ),
     )
     settings = OpenAIChatModelSettings(openai_cache_instructions=True)
@@ -3573,7 +3573,7 @@ async def test_openai_chat_unified_cache_stable_prefix_only_with_merged_system_m
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
         profile=OpenAIModelProfile(
-            openai_chat_supports_multiple_system_messages=False, openai_supports_prompt_cache_breakpoints=True
+            honors_only_first_system_message=True, openai_supports_prompt_cache_breakpoints=True
         ),
     )
     agent = Agent(
@@ -3609,7 +3609,7 @@ async def test_openai_chat_unified_cache_stable_prefix_only_keeps_cache_point(al
         'gpt-5.6-sol',
         provider=OpenAIProvider(openai_client=mock_client),
         profile=OpenAIModelProfile(
-            openai_chat_supports_multiple_system_messages=False, openai_supports_prompt_cache_breakpoints=True
+            honors_only_first_system_message=True, openai_supports_prompt_cache_breakpoints=True
         ),
     )
     agent = Agent(model, instructions='Support policies.', model_settings={'cache': {'messages': False}})

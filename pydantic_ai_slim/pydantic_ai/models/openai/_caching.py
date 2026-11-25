@@ -4,7 +4,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import timedelta
-from typing import Any, Literal, Required, TypeAlias, cast
+from typing import Any, Literal, Required, TypeAlias, TypeVar, cast
 
 from openai.types import chat, responses
 from openai.types.chat import ChatCompletionContentPartParam
@@ -84,6 +84,54 @@ def leading_system_message_count(
 ) -> int:
     """Number of leading messages holding system prompts, which is where instructions belong."""
     return next((i for i, message in enumerate(messages) if message.get('role') != system_prompt_role), len(messages))
+
+
+_InputItemT = TypeVar('_InputItemT', chat.ChatCompletionMessageParam, responses.ResponseInputItemParam)
+
+
+def merge_leading_system_messages(
+    items: list[_InputItemT],
+    system_prompt_role: OpenAISystemPromptRole,
+    *,
+    text_type: Literal['text', 'input_text'],
+) -> list[_InputItemT]:
+    """Merge the system messages at the start of `items` into one, their texts joined with two newlines.
+
+    For a model whose profile sets `honors_only_first_system_message`. A breakpoint a leading `CachePoint`
+    left on one of them goes at the end of the merged message. With the `'user'` role, a system prompt can't be told
+    apart from a real user turn, so nothing is merged. An `additional_tools` item also has the `'developer'` role,
+    but it's not a system prompt, so it ends the run.
+    """
+    if system_prompt_role == 'user':
+        return items
+    leading_count = next(
+        (
+            i
+            for i, item in enumerate(items)
+            if item.get('role') != system_prompt_role or item.get('type', 'message') != 'message'
+        ),
+        len(items),
+    )
+    if leading_count < 2:
+        return items
+    texts: list[str] = []
+    breakpoint_value: _OpenAIPromptCacheBreakpoint | None = None
+    for item in items[:leading_count]:
+        # System prompts and instructions are text: a string, or text parts once a breakpoint is attached.
+        content = cast('str | list[dict[str, Any]]', cast('dict[str, Any]', item)['content'])
+        if isinstance(content, str):
+            texts.append(content)
+        else:
+            texts.append(''.join(part['text'] for part in content))
+            breakpoint_value = content[-1].get('prompt_cache_breakpoint', breakpoint_value)
+    text = '\n\n'.join(texts)
+    merged_content: str | list[dict[str, Any]] = (
+        text
+        if breakpoint_value is None
+        else [{'type': text_type, 'text': text, 'prompt_cache_breakpoint': breakpoint_value}]
+    )
+    merged = cast(_InputItemT, {**items[0], 'content': merged_content})
+    return [merged, *items[leading_count:]]
 
 
 def has_dynamic_system_prompt(messages: Sequence[ModelMessage]) -> bool:

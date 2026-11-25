@@ -119,7 +119,7 @@ class VLLMProvider(_OpenAISDKProvider):
             qwen3_coder_profile,
             OpenAIModelProfile(
                 openai_chat_supports_document_input=False,
-                openai_chat_supports_multiple_system_messages=False,
+                honors_only_first_system_message=True,
                 supports_tool_return_schema=False,
                 supports_json_schema_output=True,
                 supports_json_object_output=True,

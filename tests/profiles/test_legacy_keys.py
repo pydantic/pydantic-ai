@@ -123,3 +123,14 @@ def test_current_key_set_in_place_by_callable_profile_wins_over_legacy():
     with pytest.warns(PydanticAIDeprecationWarning, match='`openai_supports_tool_choice_required` is deprecated'):
         model = TestModel(profile=disable_forcing)
         assert model.profile.get('supports_forced_tool_choice') is False
+
+
+@pytest.mark.parametrize('legacy_value', [True, False])
+def test_legacy_multiple_system_messages_key_translates_to_its_inverse(legacy_value: bool):
+    """`openai_chat_supports_multiple_system_messages` became `honors_only_first_system_message`, with the opposite value."""
+    with pytest.warns(
+        PydanticAIDeprecationWarning, match='`openai_chat_supports_multiple_system_messages` is deprecated'
+    ):
+        model = TestModel(profile={'openai_chat_supports_multiple_system_messages': legacy_value})  # pyright: ignore[reportArgumentType]
+        assert model.profile.get('honors_only_first_system_message') is (not legacy_value)
+        assert 'openai_chat_supports_multiple_system_messages' not in model.profile

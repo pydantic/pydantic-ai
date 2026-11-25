@@ -162,7 +162,7 @@ print(result.output)
 !!! note
     If your model rejects requests with more than one leading system message (for example, you
     see `System message must be at the beginning.`), set
-    `openai_chat_supports_multiple_system_messages=False` on its profile. See
+    [`honors_only_first_system_message=True`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message] on its profile. See
     [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message)
     for details.
 
@@ -450,7 +450,7 @@ print(result.output)
     For agents that let the model decide whether to call a tool, start vLLM with `--enable-auto-tool-choice` and select the model-specific parser with `--tool-call-parser`. See the [vLLM tool calling guide](https://docs.vllm.ai/en/stable/features/tool_calling/) for supported models and parser values.
 
 !!! note "Multiple system messages are merged by default"
-    Some vLLM chat templates reject multiple leading system messages, so `VLLMProvider` merges them by default. To opt out, pass an [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] with `openai_chat_supports_multiple_system_messages=True`. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message).
+    Some vLLM chat templates reject multiple leading system messages, so `VLLMProvider` merges them by default. To opt out, pass a profile with [`honors_only_first_system_message=False`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message]. See [Models that accept only one leading system message](#models-that-accept-only-one-leading-system-message).
 
 ## Other endpoints
 
@@ -574,7 +574,7 @@ model = OpenAIChatModel(
     profile=OpenAIModelProfile(
         json_schema_transformer=InlineDefsJsonSchemaTransformer,  # Supported by any model class via the base ModelProfile
         openai_supports_strict_tool_definition=False,  # Supported by OpenAIChatModel and OpenAIResponsesModel
-        openai_chat_supports_multiple_system_messages=False,  # Supported by OpenAIChatModel only — for strict providers (e.g. some vLLM/LiteLLM setups) that require exactly one initial system message
+        honors_only_first_system_message=True,  # Supported by OpenAIChatModel and OpenAIResponsesModel — for strict providers (e.g. some vLLM/LiteLLM setups) that require exactly one initial system message
         openai_chat_supports_max_completion_tokens=False,  # Supported by OpenAIChatModel only — for providers (e.g. OpenRouter) that only accept the older `max_tokens` field instead of `max_completion_tokens`
     )
 )
@@ -650,11 +650,15 @@ Pydantic AI pairs each tool call with its result by the call's ID across the who
 
 Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to, since more than one leading system message can be produced in several ways.
 
-Set `openai_chat_supports_multiple_system_messages=False` on the model's [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (as shown in [Model profile](#model-profile)) to merge the leading run of system messages into one, joined with two newlines, before the request is sent. The merge is lossless, so it's safe to enable whenever a backend rejects multiple system messages.
+Set [`honors_only_first_system_message=True`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message] in the model's profile (as shown in [Model profile](#model-profile)) to send exactly one leading system message: the system prompts, the framing announcement and the instructions, in that order and joined with two newlines. On the Responses API the instructions then go in that message instead of the top-level `instructions` field, since some hosts ignore that field too. The merge is lossless, so it's safe to enable whenever a backend rejects or ignores more than one leading system message.
+
+gpt-oss models get this by default, since their reference chat template keeps only the first system message, and Bedrock Mantle's Responses endpoint ignores the `instructions` field for them.
+
+This flag used to be called `openai_chat_supports_multiple_system_messages`, with the opposite value. The old name still works, with a deprecation warning.
 
 ### Mid-conversation system messages
 
-Many OpenAI-compatible servers accept a `system` message only at the start of the conversation, and reject one that comes later, such as after a tool result, with a `400` that may name no reason: `{'message': 'Invalid request', 'type': 'Bad Request', 'code': 400}`. So a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts), such as a reminder a capability adds partway through a run, goes to these endpoints as a `<system>` block in a user message, and the system prompt says what the tag means. gpt-oss models get that explanation from the first request, as their [measurements](../message-history.md#what-each-rendering-gives-up) favor. The explanation is a system message of its own at the start of the conversation, so a Chat Completions endpoint that also accepts only one leading system message needs the merge described [above](#models-that-accept-only-one-leading-system-message). gpt-oss models get that merge by default, since their reference chat template keeps only the first system message.
+Many OpenAI-compatible servers accept a `system` message only at the start of the conversation, and reject one that comes later, such as after a tool result, with a `400` that may name no reason: `{'message': 'Invalid request', 'type': 'Bad Request', 'code': 400}`. So a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts), such as a reminder a capability adds partway through a run, goes to these endpoints as a `<system>` block in a user message, and the system prompt says what the tag means. gpt-oss models get that explanation from the first request, as their [measurements](../message-history.md#what-each-rendering-gives-up) favor. The explanation is a system message of its own at the start of the conversation, so an endpoint that also follows only one leading system message needs the merge described [above](#models-that-accept-only-one-leading-system-message). gpt-oss models get that merge by default, since their reference chat template keeps only the first system message.
 
 If your endpoint accepts a `system` message at any position, set [`supports_inline_system_prompts`][pydantic_ai.profiles.ModelProfile.supports_inline_system_prompts] to `True` in the model's profile to send the prompt as one:
 

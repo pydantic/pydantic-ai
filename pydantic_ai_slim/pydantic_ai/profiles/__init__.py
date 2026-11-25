@@ -224,6 +224,26 @@ class ModelProfile(TypedDict, total=False):
     only place that knows the `<system>...</system>` fallback.
     """
 
+    honors_only_first_system_message: bool
+    """Whether the model or its host follows only the first system message at the start of the conversation. Default: `False`.
+
+    When `True`, the request starts with exactly one system message holding the standing system prompts, the
+    framing announcement and the instructions, in that order and joined with two newlines. On the Responses API, that
+    means the instructions go in that message instead of the top-level `instructions` field, except on a request that
+    continues a stored response or conversation (`openai_previous_response_id` or `openai_conversation_id`) or a
+    compacted history, whose stored input already starts with its system messages. With the `'user'`
+    [`openai_system_prompt_role`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_system_prompt_role],
+    nothing is merged, as a system prompt sent as a user message can't be told apart from a real one.
+
+    Set for gpt-oss, whose reference chat template keeps only the first system message as the developer message and
+    drops the rest. Some of its hosts drop the `instructions` field too: Bedrock Mantle's Responses endpoint ignored
+    `gpt-oss-120b`'s instructions there, and followed them as one leading system message. Also set by
+    `VLLMProvider`, as some vLLM chat templates reject more than one leading system message.
+
+    Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+    """
+
     needs_sealed_system_blocks: bool
     """Whether the model follows the fallback's `<system>` blocks better sealed and after the user's words. Default: `False`.
 
@@ -587,17 +607,23 @@ _LEGACY_PROVIDER_PROFILE_KEYS: dict[str, str] = {
 """Provider-prefixed profile keys that moved to `ModelProfile`, mapped to their current spelling."""
 
 
+_RENAMED_PROFILE_KEYS = frozenset(
+    {'tool_additions', 'deferred_tools_require_tool_search', 'openai_chat_supports_multiple_system_messages'}
+)
+"""Deprecated profile keys whose value changes shape on translation, so `_translate_legacy_profile_keys` handles each."""
+
+
+def _has_legacy_profile_keys(profile: ModelProfile) -> bool:
+    return not (_RENAMED_PROFILE_KEYS.isdisjoint(profile) and _LEGACY_PROVIDER_PROFILE_KEYS.keys().isdisjoint(profile))
+
+
 def _translate_legacy_profile_keys(profile: ModelProfile, base: ModelProfile | None = None) -> ModelProfile:
     """Translate keys renamed after their release into their current spellings, warning.
 
     A current spelling in the same profile wins, unless `profile` was derived from `base` (as a callable
     `ModelProfileSpec`'s result is) and it only carries `base`'s value over.
     """
-    if (
-        'tool_additions' not in profile
-        and 'deferred_tools_require_tool_search' not in profile
-        and _LEGACY_PROVIDER_PROFILE_KEYS.keys().isdisjoint(profile)
-    ):
+    if not _has_legacy_profile_keys(profile):
         return profile
     translated: dict[str, object] = dict(profile)
 
@@ -633,6 +659,16 @@ def _translate_legacy_profile_keys(profile: ModelProfile, base: ModelProfile | N
         )
         if translated.pop('deferred_tools_require_tool_search'):
             set_translated('tool_deferral_mode', 'with_tool_search')
+    if 'openai_chat_supports_multiple_system_messages' in translated:
+        warnings.warn(
+            '`ModelProfile` key `openai_chat_supports_multiple_system_messages` is deprecated, use '
+            '`honors_only_first_system_message` (with the opposite value) instead.',
+            PydanticAIDeprecationWarning,
+            stacklevel=3,
+        )
+        set_translated(
+            'honors_only_first_system_message', not translated.pop('openai_chat_supports_multiple_system_messages')
+        )
     return cast('ModelProfile', translated)
 
 
@@ -649,6 +685,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
     'supports_audio_file_input': True,
     'supports_video_input': True,
+    'honors_only_first_system_message': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
