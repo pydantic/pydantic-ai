@@ -18,7 +18,6 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -634,8 +633,7 @@ Available sub-agents:
         seen: dict[str, str] = {}
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            first = messages[0].parts[-1]
-            seen.setdefault(str(first.content if isinstance(first, UserPromptPart) else None), info.instructions or '')
+            seen.setdefault(sent_texts(messages[:1])[-1], info.instructions or '')
             return _delegate_a_command(messages, info)
 
         profile: ModelProfile = {flag: True for flag in _MAX_GUIDANCE_FLAGS}  # pyright: ignore[reportAssignmentType]
