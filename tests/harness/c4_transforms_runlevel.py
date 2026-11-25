@@ -107,7 +107,7 @@ async def _compaction_part(native: RouteRun, directory: Path) -> list[ModelMessa
         parts=[CompactionPart(content='Earlier turns, summarized.', provider_name='anthropic')],
         provider_name='anthropic',
     )
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
+    model = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key='test'))
     return model._trim_before_compaction([*before, block, last])  # pyright: ignore[reportPrivateUsage]
 
 
