@@ -242,6 +242,40 @@ Run = Callable[[Agent[None, str], _Gate], Awaitable[str]]
 """Runs the agent in the engine's harness and returns its output. It gets the gate to release before shutting down."""
 
 
+@dataclass
+class _Trial:
+    """One engine run of a scenario: the agent, the gate it holds, and what the run observed."""
+
+    agent: Agent[None, str]
+    gate: _Gate
+    observed: str | None = None
+
+
+@contextmanager
+def _trial(
+    scenario: Scenario,
+    engine: Engine,
+    durability: Callable[[], AbstractCapability[None]],
+    unwrap: Callable[[Exception], str | None] = _user_error,
+) -> Generator[_Trial]:
+    """Build the run, take an engine's refusal as what it observed, and check the cell once the run is over."""
+    cell = _cell(scenario, engine)
+    gate = _gate_for(scenario, engine)
+    trial = _Trial(_agent(durability(), scenario, f'bg_{engine}_{uuid.uuid4().hex[:8]}', gate), gate)
+    try:
+        with _foreground_warning_allowed(engine):
+            yield trial
+    except Exception as error:
+        if (message := unwrap(error)) is None:
+            raise
+        trial.observed = message
+    finally:
+        # A tool still holding the gate would keep its engine's worker from shutting down.
+        gate.release()
+    assert trial.observed is not None
+    _assert_cell(scenario, engine, cell, trial.observed)
+
+
 async def _check(
     scenario: Scenario,
     engine: Engine,
@@ -249,20 +283,8 @@ async def _check(
     durability: Callable[[], AbstractCapability[None]],
     unwrap: Callable[[Exception], str | None] = _user_error,
 ) -> None:
-    cell = _cell(scenario, engine)
-    gate = _gate_for(scenario, engine)
-    agent = _agent(durability(), scenario, f'bg_{engine}_{uuid.uuid4().hex[:8]}', gate)
-    try:
-        with _foreground_warning_allowed(engine):
-            observed = await run(agent, gate)
-    except Exception as error:
-        if (message := unwrap(error)) is None:
-            raise
-        observed = message
-    finally:
-        # A tool still holding the gate would keep its engine's worker from shutting down.
-        gate.release()
-    _assert_cell(scenario, engine, cell, observed)
+    with _trial(scenario, engine, durability, unwrap) as trial:
+        trial.observed = await run(trial.agent, trial.gate)
 
 
 def _check_sync(
@@ -273,19 +295,8 @@ def _check_sync(
     unwrap: Callable[[Exception], str | None] = _user_error,
 ) -> None:
     """`_check` for an engine whose test harness drives the run from a synchronous handler, on a loop of its own."""
-    cell = _cell(scenario, engine)
-    gate = _gate_for(scenario, engine)
-    agent = _agent(durability(), scenario, f'bg_{engine}_{uuid.uuid4().hex[:8]}', gate)
-    try:
-        with _foreground_warning_allowed(engine):
-            observed = run(agent)
-    except Exception as error:
-        if (message := unwrap(error)) is None:
-            raise
-        observed = message
-    finally:
-        gate.release()
-    _assert_cell(scenario, engine, cell, observed)
+    with _trial(scenario, engine, durability, unwrap) as trial:
+        trial.observed = run(trial.agent)
 
 
 parametrize_scenarios = pytest.mark.parametrize('scenario', SCENARIOS, ids=lambda scenario: scenario.split('.')[1])
