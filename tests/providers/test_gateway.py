@@ -12,6 +12,7 @@ import pytest
 
 from pydantic_ai import Agent, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.models import infer_model
 
 from .._inline_snapshot import raises, snapshot
 from ..conftest import TestEnv, try_import
@@ -353,6 +354,7 @@ def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
         ('google-cloud', GoogleCloudProvider, 'google-vertex'),
         ('anthropic', AnthropicProvider, 'anthropic'),
         ('bedrock', BedrockProvider, 'bedrock'),
+        ('doubleword', OpenAIProvider, 'doubleword'),
     ],
 )
 def test_gateway_provider(provider_name: str, provider_cls: type[Provider[Any]], route: str):
@@ -432,7 +434,8 @@ async def test_gateway_provider_with_anthropic(allow_model_requests: None, gatew
 async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway_api_key: str):
     """The recording only has the deprecated `pydantic-ai-gateway-price-estimate` header, which isn't read, so the
     cost is the genai-prices estimate."""
-    provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='http://localhost:8787')
+    # HTTPS because botocore 1.44+ refuses to send a Bearer token to a plain-HTTP endpoint.
+    provider = gateway_provider('bedrock', api_key=gateway_api_key, base_url='https://localhost:8787')
     model = BedrockConverseModel('amazon.nova-micro-v1:0', provider=provider)
     agent = Agent(model)
 
@@ -441,6 +444,20 @@ async def test_gateway_provider_with_bedrock(allow_model_requests: None, gateway
         'The capital of France is Paris. Paris is not only the capital city but also the most populous city in France, and it is a major center for culture, commerce, fashion, and international diplomacy. The city is known for its historical landmarks, such as the Eiffel Tower, the Louvre Museum, Notre-Dame Cathedral, and the Champs-Élysées, among many other attractions.'
     )
     assert result.usage.cost == snapshot(Decimal('0.000011165'))
+
+
+@patch.dict(
+    os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key', 'PYDANTIC_AI_GATEWAY_BASE_URL': GATEWAY_BASE_URL}
+)
+def test_infer_model_gateway_route_without_own_provider():
+    """A Gateway route with no provider class of its own builds the client for the API it speaks, on its own route.
+
+    No request is sent: the claim is which model class and URL the string builds.
+    """
+    model = infer_model('gateway/doubleword:deepseek-ai/DeepSeek-V4.1-Flash-1017')
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model_name == 'deepseek-ai/DeepSeek-V4.1-Flash-1017'
+    assert model.base_url == f'{GATEWAY_BASE_URL}/doubleword/'
 
 
 @patch.dict(

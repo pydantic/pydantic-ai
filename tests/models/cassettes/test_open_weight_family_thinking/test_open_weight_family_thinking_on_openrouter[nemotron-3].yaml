@@ -1,0 +1,111 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "174"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        model: nvidia/nemotron-3-super-120b-a12b
+        stream: false
+        messages:
+        - role: user
+          content: What is 17 * 23? Reply with the number only.
+        reasoning_effort: medium
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        WWW-Authenticate,PAYMENT-REQUIRED,Payment-Receipt,PAYMENT-RESPONSE,Location,X-Generation-Id,x-openrouter-error-origin,x-openrouter-error-tool,X-Provider-Name,request-id,cf-ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: gen-1795403006-52vi4pDSMNBau3ZhfBb1
+        object: chat.completion
+        created: 1795403006
+        model: nvidia/nemotron-3-super-120b-a12b
+        provider: DeepInfra
+        system_fingerprint: null
+        service_tier: default
+        choices:
+        - index: 0
+          logprobs: null
+          finish_reason: stop
+          native_finish_reason: stop
+          message:
+            role: assistant
+            content: |-
+
+
+              391
+            refusal: null
+            reasoning: |-
+              The user asks: "What is 17 * 23? Reply with the number only."
+
+              Compute: 17*23 = (10*23)+(7*23)=230+161=391.
+
+              Thus answer: 391.
+
+              We must reply with the number only. No extra text.
+            reasoning_details:
+            - type: reasoning.text
+              text: |-
+                The user asks: "What is 17 * 23? Reply with the number only."
+
+                Compute: 17*23 = (10*23)+(7*23)=230+161=391.
+
+                Thus answer: 391.
+
+                We must reply with the number only. No extra text.
+              format: unknown
+              index: 0
+        usage:
+          prompt_tokens: 32
+          completion_tokens: 80
+          total_tokens: 112
+          cost: 0.0000344
+          is_byok: false
+          prompt_tokens_details:
+            cached_tokens: 0
+            cache_write_tokens: 0
+            audio_tokens: 0
+            video_tokens: 0
+          cost_details:
+            upstream_inference_cost: 0.0000344
+            upstream_inference_prompt_cost: 2.4e-6
+            upstream_inference_completions_cost: 0.000032
+          completion_tokens_details:
+            reasoning_tokens: 77
+            image_tokens: 0
+            audio_tokens: 0
+  recorded_at: 2026-11-23T03:03:27.076912+00:00

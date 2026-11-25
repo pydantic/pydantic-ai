@@ -27,6 +27,27 @@ together when it changed. Pinned in the `[playwright]` extra as
   Source: <https://playwright.dev/python/docs/api/class-browsercontext>
   (`serviceWorkers` option). Re-check: inspect the `service_workers` parameter of
   `Browser.new_context`.
+- That `service_workers='block'` is an init script stubbing
+  `ServiceWorkerContainer.prototype.register`, which the default-context path
+  installs itself. Verified 2026-11-16 against the 1.64.1 driver source
+  (`addInitScript` in `BrowserContext._initialize`). Re-check: search the bundled
+  `coreBundle.js` for `Service Worker registration blocked by Playwright`.
+- Playwright routes service-worker requests through `BrowserContext.route` in
+  Chromium, including those of a worker registered before a CDP attach;
+  `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK=1` turns that off. Verified
+  2026-11-16 against Chromium 156 with 1.64.1: a refused host received the
+  worker's request only with the variable set. Source:
+  <https://github.com/microsoft/playwright/releases/tag/v1.57.0>. Re-check: have a
+  worker registered before attachment fetch a refused host.
+- `connect_over_cdp(no_defaults=True)` leaves the default context's downloads and
+  focus and media emulation at the browser's own settings; without it, Playwright
+  sends `Browser.setDownloadBehavior` with `allowAndName` into its temporary
+  artifacts directory. The parameter is present since 1.60.0, below the extra's
+  `>=1.61.0` floor. Verified 2026-11-16
+  against the 1.64.1 driver source (`_connectOverCDPImpl`,
+  `CRBrowserContext.initialize`). Source:
+  <https://playwright.dev/python/docs/api/class-browsertype#browser-type-connect-over-cdp>.
+  Re-check: `inspect.signature(BrowserType.connect_over_cdp)` lists `no_defaults`.
 - `new_context` accepts downloads by default; `accept_downloads=False` refuses
   them, so a page cannot write attachments to the host's temporary storage.
   Verified 2026-08-18 (parameter documented as "Defaults to `true` where all the
@@ -101,28 +122,37 @@ together when it changed. Pinned in the `[playwright]` extra as
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import re
-import socket
 import sys
 import warnings
 from collections import deque
+from collections.abc import Awaitable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from functools import partial
 from time import monotonic
-from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar, get_args
-from urllib.parse import urlparse
+from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar
+from urllib.parse import quote, quote_plus, unquote, unquote_plus, urlparse
 
 import anyio
-import idna
 from opentelemetry import trace
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._browser_egress import (
+    BLANK_PAGE as _BLANK_PAGE,
+    DEFAULT_ALLOWLIST_REACH as DEFAULT_ALLOWLIST_REACH,
+    DEFAULT_RESOLVED_KINDS as DEFAULT_RESOLVED_KINDS,
+    EgressPolicy as EgressPolicy,
+    EgressRequest as EgressRequest,
+    RequestKind as RequestKind,
+    is_blocked_address as is_blocked_address,
+    refusal_reason,
+    request_kind,
+)
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 
 try:
@@ -141,7 +171,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Coroutine, Iterable, Sequence
+    from collections.abc import Callable, Coroutine, Iterable, Sequence
 
     from opentelemetry.trace import Span, Tracer
     from playwright.async_api import (
@@ -179,15 +209,81 @@ frames, and an unresponsive one must not consume the action's deadline. Whatever
 was collected before the budget runs out is kept.
 """
 
-_PRIVATE_ADDRESS_REASON = 'blocked private or link-local address'
-_UNRESOLVED_REASON = 'host that did not resolve, so the private-address block could not clear it'
-"""Why the private-address block refused a URL, shared by the pre-check and the route guard."""
+_FRAME_URL_WAIT_MS: int = 1_000
+"""How long the default-context document check waits for a frame that reports no URL yet.
 
-_BLANK_PAGE = 'about:blank'
-"""The blank page a context starts on, and where a disallowed navigation is sent."""
+The check runs on every tool call, so the wait is kept short: a frame still loading
+costs each call at most this long before the call is refused as one to retry.
+"""
+
+_DOCUMENT_CHECK_DEADLINE_MS: int = 5_000
+"""Bound on one call's check of the default context's loaded documents, all frames together.
+
+A page can carry many frames, each waiting on a lookup, so the bound covers the
+whole check rather than each frame. It outlasts one frame's worst case (the URL
+wait plus a host lookup), and documents that passed are remembered, so each
+retry checks at least one more document than the last.
+"""
 
 _ERROR_PAGE_SCHEME = 'chrome-error://'
 """Scheme of Chromium's own error page, where a navigation the browser could not complete lands."""
+
+_INLINE_SUBFRAME_PREFIXES = ('about:srcdoc', 'data:', 'blob:')
+"""URL prefixes of subframes whose document the page supplied itself, so no request loads it."""
+
+_WEB_URL_PREFIXES = ('http://', 'https://')
+"""URL prefixes of documents loaded from a web origin, as opposed to pages the browser or a page supplies."""
+
+_BLOCK_SERVICE_WORKER_REGISTRATION = (
+    'if (self.ServiceWorkerContainer) ServiceWorkerContainer.prototype.register = async () => {'
+    " console.warn('Service Worker registration blocked by PlaywrightBrowser'); };"
+)
+"""What `new_context(service_workers='block')` installs, for a context the session did not create.
+
+Playwright implements that option as this init script. Re-check: search the bundled
+driver's `coreBundle.js` for `Service Worker registration blocked by Playwright`.
+"""
+
+# A parameter that keeps these APIs can be added if a user needs one.
+_ENFORCED_POLICY_PAGE_SCRIPT = """
+delete self.RTCPeerConnection;
+delete self.webkitRTCPeerConnection;
+delete self.WebTransport;
+delete self.WebSocketStream;
+delete self.IdentityCredential;
+delete self.IdentityProvider;
+(() => {
+  const container = self.CredentialsContainer;
+  if (!container) return;
+  const get = container.prototype.get, apply = Reflect.apply, create = Object.create, keys = Object.keys;
+  const toObject = Object;
+  container.prototype.get = function (options) {
+    try {
+      if (toObject(options) !== options) return apply(get, this, [options]);
+      const copy = create(null);
+      const names = keys(options);
+      for (let i = 0; i < names.length; i++) copy[names[i]] = options[names[i]];
+      if (copy.identity !== undefined) return Promise.reject(new DOMException('Not supported.', 'NotSupportedError'));
+      return apply(get, this, [copy]);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  };
+})();
+"""
+"""Init script every context the session uses gets under an enforced policy.
+
+The wrapper reads each of the caller's own options once, into an object with no prototype,
+and hands the original only that copy. Like the original, it reports an error as a rejected
+promise.
+"""
+
+_ENFORCED_POLICY_LAUNCH_ARGS = ('--disable-blink-features=FedCm,WebSocketStream',)
+"""Chromium switches a browser the session launches gets under an enforced policy.
+
+Not `--disable-features`: Playwright passes its own list under that switch, and Chromium
+keeps only the last one, so a second list would replace Playwright's.
+"""
 
 _MAX_TABS = 8
 """Pages one session keeps open at once.
@@ -254,6 +350,9 @@ class _Frame(Protocol):
 
     @property
     def url(self) -> str: ...  # pragma: no cover
+    async def wait_for_load_state(
+        self, state: Literal['domcontentloaded'], *, timeout: float | None = None
+    ) -> None: ...  # pragma: no cover
     async def inner_text(self, selector: str, *, timeout: float | None = None) -> str: ...  # pragma: no cover
     async def wait_for_selector(
         self, selector: str, *, timeout: float | None = None, state: _WaitState | None = None
@@ -271,6 +370,7 @@ class _Page(Protocol):
 
     @property
     def url(self) -> str: ...  # pragma: no cover
+    def remove_listener(self, event: str, f: Callable[..., object]) -> None: ...  # pragma: no cover
     @property
     def mouse(self) -> _Mouse: ...  # pragma: no cover
     @property
@@ -362,137 +462,6 @@ class _Deadlines:
         return max(1, budget_ms - int((monotonic() - self.started) * 1000))
 
 
-def _to_idna(host: str) -> str:
-    """Return `host` in its ASCII/IDNA form so Unicode and `xn--` spellings compare equal.
-
-    Encoding goes through the `idna` package under UTS46 non-transitional rules,
-    which is what Chromium applies. The stdlib `'idna'` codec implements the older
-    IDNA-2003 mapping and disagrees on the deviation characters (`ß`, `ς`, ZWJ,
-    ZWNJ): it renders `faß.de` as `fass.de` where the browser connects to
-    `xn--fa-hia.de`, so an allowlist entry and the request it is meant to permit
-    would never match.
-
-    A host that cannot be encoded (over-long or empty labels, IP literals) falls
-    back to the input unchanged, so IPv4/IPv6 literals are left alone. The trailing
-    dot of a fully-qualified spelling is dropped first: it names the DNS root rather
-    than a label, and encoding rejects the empty label it produces, which would
-    otherwise deny `example.com.` against an `example.com` allowlist entry.
-    """
-    host = host.rstrip('.')
-    try:
-        return idna.encode(host, uts46=True, transitional=False).decode('ascii')
-    except (idna.IDNAError, UnicodeError):
-        return host
-
-
-def _url_host(url: str) -> str | None:
-    """Extract the host that policy checks run against, or `None` when there is none.
-
-    A URL containing a backslash is treated as hostless: WHATWG parsing (what
-    Chromium applies) turns a backslash into `/`, so `urlparse` would report a
-    host the browser never connects to. A malformed URL that `urlparse` rejects
-    is also treated as hostless, so it fails closed instead of crashing the caller.
-    """
-    if '\\' in url:
-        return None
-    try:
-        return urlparse(url).hostname
-    except ValueError:
-        return None
-
-
-def is_blocked_address(host: str) -> bool:
-    """Return whether `host` names an address that is not globally routable.
-
-    Covers private (RFC 1918), loopback, link-local (including the cloud
-    metadata endpoint), carrier-grade NAT, reserved, and multicast ranges. This
-    classifies a host string, so it sees IP literals and the loopback hostnames
-    `localhost` / `*.localhost`; a name pointing at a private address is caught by
-    `PlaywrightBrowserSession.decide` resolving it first and passing the answers
-    to `refuse`.
-    Neither is rebinding-proof, since Chromium resolves the name again before it
-    connects (https://github.com/pydantic/pydantic-ai/issues/9204).
-    A trailing dot is stripped so the fully-qualified spelling gets the same
-    verdict, and an IPv4-mapped IPv6 literal is classified by its embedded IPv4
-    address. The named category flags are checked alongside `is_global` because
-    older stdlib versions classify some of these ranges as global.
-    """
-    host = host.lower().rstrip('.')
-    if host == 'localhost' or host.endswith('.localhost'):
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        ip = ip.ipv4_mapped
-    return not ip.is_global or ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast
-
-
-def _is_ip_literal(host: str) -> bool:
-    """Whether `host` is already an address, so no name resolution is needed."""
-    try:
-        ipaddress.ip_address(host.rstrip('.'))
-    except ValueError:
-        return False
-    return True
-
-
-_RESOLUTION_TTL_SECONDS = 30.0
-_RESOLUTION_CACHE_MAX = 256
-_RESOLUTION_TIMEOUT_SECONDS = 2.0
-_resolution_cache: dict[str, tuple[float, tuple[str, ...]]] = {}
-
-
-async def _resolve_host(host: str) -> tuple[str, ...] | None:
-    """Return the addresses `host` resolves to, or `None` when the lookup did not answer.
-
-    The two are distinguished because they lead to opposite verdicts. A host that
-    resolved is classified on its addresses; one that did not cannot be cleared, and
-    whoever controls the name controls whether the lookup answers -- stalling this
-    one and then handing Chromium a private address would otherwise be a way past
-    the block. So an unanswered lookup is a refusal, which also costs little when
-    the failure is honest: a name this process cannot resolve is one the browser is
-    about to fail on too. A host the resolver cannot even encode counts as
-    unanswered for the same reason: `getaddrinfo` raises a `UnicodeError` for an
-    empty or over-long label (`a..com`), and that is a verdict, not a crash the
-    caller should carry.
-
-    The cache is a duplicate of one Chromium keeps anyway, so it is kept short and
-    small. It cannot make the block airtight: Chromium resolves the name a second
-    time, and a record that changes between the two lookups is the DNS-rebinding
-    case that only a proxy or pinned resolver closes.
-
-    The lookup is bounded because of where it runs: ahead of the operation whose
-    deadline it would otherwise escape, and inside the route guard, which holds the
-    request until it returns. A stalled resolver therefore costs a bounded wait
-    rather than the run.
-    """
-    now = monotonic()
-    cached = _resolution_cache.get(host)
-    if cached is not None and cached[0] > now:
-        return cached[1]
-    try:
-        addresses = await asyncio.wait_for(_getaddrinfo(host), _RESOLUTION_TIMEOUT_SECONDS)
-    except (TimeoutError, OSError, UnicodeError):
-        return None
-    if len(_resolution_cache) >= _RESOLUTION_CACHE_MAX:
-        _resolution_cache.clear()
-    _resolution_cache[host] = (now + _RESOLUTION_TTL_SECONDS, addresses)
-    return addresses
-
-
-async def _getaddrinfo(host: str) -> tuple[str, ...]:  # pragma: no cover
-    """Ask the system resolver what `host` points at, off the event loop thread.
-
-    The one place the capability performs a real lookup, and therefore the seam the
-    test suite replaces so that no test depends on a resolver. What it does is
-    checked against live DNS in `scripts/playwright_smoke.py::_check_private_name_block`.
-    """
-    infos = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    return tuple(sorted({str(info[4][0]) for info in infos}))
-
-
 def _scroll_script(move: str) -> str:
     """Wrap a scroll expression so the page reports where it ended up."""
     return (
@@ -525,220 +494,6 @@ def _scroll_position(reported: object) -> str:
     if after == before:
         return f'Position unchanged, {after} of {furthest} px down.'
     return f'{after} of {furthest} px down.'
-
-
-RequestKind = Literal['navigation', 'subframe', 'data', 'subresource']
-"""What a request is for, which is what an egress rule is usually about.
-
-`navigation` is the top-level document, `subframe` a document loaded into an
-embedded frame, `data` anything a script uses to move data (`fetch`, XHR,
-EventSource, WebSocket, `sendBeacon`), and `subresource` the passive assets that
-render a page (images, stylesheets, scripts, fonts, media).
-"""
-
-DEFAULT_ALLOWLIST_REACH: frozenset[RequestKind] = frozenset({'navigation', 'data'})
-"""Which request kinds `allowed_domains` bounds unless the policy says otherwise.
-
-Navigation, so the agent stays on the sites it was given, and data requests, so a
-script on one of those pages cannot read from or post to somewhere else. Passive
-subresources are left alone because a page whose images, fonts and scripts are
-aborted renders as a broken page, and sub-frame documents because a permitted
-page's identity-provider and payment steps live in them.
-"""
-
-_DATA_RESOURCE_TYPES = frozenset({'fetch', 'xhr', 'eventsource', 'websocket', 'ping', 'preflight'})
-"""Playwright resource types that carry data rather than render the page.
-
-`ping` is `navigator.sendBeacon`, which is a send channel like the rest of them.
-"""
-
-
-def _request_kind(request: PlaywrightRequest, top_level: bool) -> RequestKind:
-    """Classify a Playwright request for the policy.
-
-    A document is a navigation only in the main frame; the same type inside an
-    embedded frame is what loads an identity provider or a payment step, which a
-    policy usually treats differently.
-    """
-    if request.resource_type in _DATA_RESOURCE_TYPES:
-        return 'data'
-    if request.is_navigation_request():
-        return 'navigation' if top_level else 'subframe'
-    return 'subresource'
-
-
-@dataclass(frozen=True)
-class EgressRequest:
-    """One request the browser is about to make, as the policy sees it.
-
-    Everything the guard knows is passed through, including the raw Playwright
-    `resource_type`, so a policy that needs a distinction this module never
-    anticipated can make it without waiting for a new field here.
-    """
-
-    url: str
-    kind: RequestKind
-    resource_type: str = 'document'
-    """Playwright's own classification, e.g. `document`, `xhr`, `image`, `font`."""
-    method: str = 'GET'
-    top_level: bool = True
-    """Whether this is the main frame's own document rather than something inside the page."""
-    resolved_addresses: tuple[str, ...] = ()
-    """What the host resolved to, when the caller resolved it. Empty when it did not."""
-    resolution_failed: bool = False
-    """Whether a lookup the policy asked for did not answer, leaving the host unclassifiable."""
-
-
-DEFAULT_RESOLVED_KINDS: frozenset[RequestKind] = frozenset(get_args(RequestKind))
-"""Which kinds have their host resolved before the private-address block classifies it.
-
-A name is not an IP literal, so `is_blocked_address` cannot see that it points at a
-private address; resolving first is what closes that. Every kind is resolved,
-because the literal check already covers every kind and a spelling should not
-decide the verdict: an `img` pointed at `169.254.169.254` and one pointed at a name
-answering with that address are the same request. Passive subresources do not
-return content to the model, but a page can still time their loads to map what is
-listening inside the network.
-
-The cost is bounded by the resolution cache, which makes this a lookup per distinct
-host rather than per request, and a page draws on few hosts.
-"""
-
-
-@dataclass(frozen=True)
-class EgressPolicy:
-    """Where the browser may go, and what a page loaded there may talk to.
-
-    The axes are independent and deny wins: a blocked address is refused even when
-    the allowlist names it, and `blocked_domains` beats `allowed_domains`. Holding
-    them in one object keeps enforcement and the description given to the model
-    from drifting apart -- the failure mode being instructions that promise a reach
-    the guards do not grant.
-
-    The fields cover the rules we expect; `refuse` covers the rest. Subclass and
-    override it for anything else -- per-path rules, a CDN allowed only for fonts,
-    a method-dependent rule -- calling `super().refuse(request)` for the default
-    verdict.
-    """
-
-    allowed_domains: list[str] | None = None
-    """Hosts the reachable kinds are limited to. `None` allows every public host."""
-    blocked_domains: list[str] | None = None
-    """Hosts refused whatever else permits them, for every kind of request."""
-    block_private_addresses: bool = True
-    """Refuse addresses that are not globally routable, in every frame and for every kind."""
-    include_subdomains: bool = True
-    """Whether an entry also covers its subdomains, so `example.com` reaches `api.example.com`."""
-    allowlist_reach: frozenset[RequestKind] = DEFAULT_ALLOWLIST_REACH
-    """Which kinds `allowed_domains` bounds. `frozenset(get_args(RequestKind))` locks down everything."""
-    resolved_kinds: frozenset[RequestKind] = DEFAULT_RESOLVED_KINDS
-    """Which kinds have their host resolved so `block_private_addresses` can see where a name points."""
-
-    def __post_init__(self) -> None:
-        for field_name in ('allowed_domains', 'blocked_domains'):
-            for entry in getattr(self, field_name) or ():
-                # Validated as `_matches` will read it, so an entry that only
-                # differs by surrounding whitespace cannot dodge a check.
-                entry = entry.strip()
-                if '*' in entry:
-                    raise UserError(
-                        f'{field_name} entry {entry!r} contains a wildcard, which never matches a host. '
-                        'Write the bare domain: subdomains are included unless include_subdomains=False.'
-                    )
-                if entry.startswith('.'):
-                    raise UserError(
-                        f'{field_name} entry {entry!r} starts with a dot, which never matches a host. '
-                        'Write the bare domain: subdomains are included unless include_subdomains=False.'
-                    )
-
-    def refuse(self, request: EgressRequest) -> str | None:
-        """Why the browser must not make this request, or `None` to allow it.
-
-        `about:blank` is permitted: it is the state a context starts in and the
-        target a refused navigation is bounced to, so denying it would refuse every
-        tool call made before the first navigation. Other hostless URLs (`data:`,
-        `blob:`) are refused as navigation and allowed as page content, where they
-        are ordinary inline assets.
-        """
-        if request.url == _BLANK_PAGE:
-            return None
-        host = _url_host(request.url)
-        if host is not None and self.block_private_addresses and is_blocked_address(host):
-            return _PRIVATE_ADDRESS_REASON
-        if self.block_private_addresses and request.resolution_failed:
-            return _UNRESOLVED_REASON
-        if self.block_private_addresses and any(is_blocked_address(a) for a in request.resolved_addresses):
-            return _PRIVATE_ADDRESS_REASON
-        if host is None:
-            return None if request.kind in ('data', 'subresource') else 'URL with no host'
-        return self._domain_reason(host, request.kind)
-
-    def _domain_reason(self, host: str, kind: RequestKind) -> str | None:
-        """Why the domain lists refuse `host` for this kind of request, or `None` if they do not."""
-        if self._matches(host, self.blocked_domains):
-            return 'domain in blocked_domains'
-        if kind in self.allowlist_reach and not self._permitted(host):
-            return 'domain not in allowed_domains'
-        return None
-
-    def _permitted(self, host: str) -> bool:
-        """Whether the allowlist admits `host`, with `None` meaning every public host."""
-        return self.allowed_domains is None or self._matches(host, self.allowed_domains)
-
-    def _matches(self, host: str, domains: list[str] | None) -> bool:
-        """Whether `host` equals an entry, or sits under one when subdomains count."""
-        if not domains:
-            return False
-        host = _to_idna(host)
-        for entry in domains:
-            domain = _to_idna(entry.strip().lower())
-            if domain and (host == domain or (self.include_subdomains and host.endswith('.' + domain))):
-                return True
-        return False
-
-    def needs_resolution(self, request: EgressRequest) -> bool:
-        """Whether the caller must resolve this host before `refuse` can classify it.
-
-        Asked before `refuse` so that `refuse` stays synchronous: an override needs
-        no async machinery, and the lookup a name-based private address requires
-        happens outside it. A host that is already an address needs none, and
-        neither does one the domain lists refuse, since `refuse` refuses it
-        whatever the host resolves to. That holds only for this
-        class's own `refuse`: an override may permit what the lists refuse, so its
-        hosts are still resolved. An override that refuses some hosts by name should
-        override this too, returning `False` for them, so they are not looked up.
-        """
-        if not self.block_private_addresses or request.kind not in self.resolved_kinds:
-            return False
-        host = _url_host(request.url)
-        if host is None or _is_ip_literal(host):
-            return False
-        return type(self).refuse is not EgressPolicy.refuse or self._domain_reason(host, request.kind) is None
-
-    def enforced(self) -> bool:
-        """Whether anything is restricted, i.e. whether a route guard is worth installing."""
-        return self.allowed_domains is not None or bool(self.blocked_domains) or self.block_private_addresses
-
-    def describe(self) -> str:
-        """The reach, phrased for the model's instructions."""
-        if self.allowed_domains is None:
-            domains = 'all'
-        elif self.allowed_domains:
-            domains = ', '.join(self.allowed_domains)
-            if self.include_subdomains:
-                domains += ' (and their subdomains)'
-        else:
-            domains = 'none'
-        if self.allowed_domains is not None and self.allowlist_reach != DEFAULT_ALLOWLIST_REACH:
-            # Named only when it is not the default, so the model is told what the
-            # allowlist actually bounds rather than being left with the reach the
-            # default sentence implies.
-            domains += f' (allowlist bounds {", ".join(sorted(self.allowlist_reach)) or "nothing"})'
-        if self.blocked_domains:
-            domains += f', except {", ".join(self.blocked_domains)}'
-        if self.block_private_addresses:
-            domains += ' (private/internal addresses blocked)'
-        return domains
 
 
 _CREDENTIAL_PARAMETERS = (
@@ -786,6 +541,10 @@ _CREDENTIAL_VALUE = re.compile(
 )
 
 
+_URL_ORIGIN = re.compile(r'^([^:/?#]*:(?://[^/?#]*)?|).*', re.DOTALL)
+"""Keeps a URL's scheme and authority, and drops everything after them."""
+
+
 def _without_credentials(url: str) -> str:
     """Return `url` with userinfo removed and credential parameter values redacted.
 
@@ -804,6 +563,23 @@ def _without_credentials(url: str) -> str:
     return _CREDENTIAL_VALUE.sub(r'\1REDACTED', _USERINFO.sub(r'\1', url))
 
 
+def _url_origin(url: str) -> str:
+    """Name a page the session refuses to expose by its scheme and authority only.
+
+    The rest of its URL is part of what it withholds: a path and query on an internal
+    host, or, for a `data:` URL, the document itself.
+    """
+    return _without_credentials(_URL_ORIGIN.sub(r'\1', url, count=1))
+
+
+_URL_IN_TEXT = re.compile(r'[a-zA-Z][\w+.\-]{0,31}://\S+')
+"""A URL anywhere in a message, up to the next whitespace.
+
+The scheme is capped so a long run of word characters costs a linear scan rather
+than a quadratic one. A longer scheme still matches, from partway into it.
+"""
+
+
 def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     """Replace the CDP endpoint in `message` with a form carrying no credentials.
 
@@ -812,19 +588,52 @@ def _without_endpoint_credentials(message: str, cdp_url: str) -> str:
     put a token in that URL's query string or path, so only the scheme, host and
     port survive -- enough to see which endpoint was unreachable, which the driver
     reports separately anyway.
+
+    Playwright also quotes forms of the endpoint that do not contain `cdp_url`
+    verbatim: the `/json/version/` URL it builds for an `http(s)` endpoint, and the
+    endpoint as its URL parser normalized it (host lower-cased, query
+    percent-encoded). Every URL left after the exact replacement is cut to its
+    origin too, so a credential there does not depend on `_without_credentials`
+    knowing its parameter name.
+
+    A credential can also appear outside any URL. When the endpoint answers the
+    WebSocket handshake with an error status, Playwright quotes the response body,
+    in the message and again in the call log, and a server may repeat the token it
+    rejected there. So the endpoint's userinfo password and every query value are
+    replaced wherever they still appear: as written, decoded, and percent-encoded
+    by `quote` and `quote_plus`. Every value counts, whatever its parameter is
+    called. A value shorter than eight characters, such as `headless=true` or
+    `timeout=60000`, is left alone, since the message can contain that text for
+    other reasons. A longer value is replaced whatever it holds, so a setting such
+    as `browser=chromium` is replaced like a credential. Eight is the shortest
+    password NIST SP 800-63B allows, for one used alongside a second factor.
     """
+    values: list[str] = []
     try:
         parsed = urlparse(cdp_url)
+        values = [parameter.partition('=')[2] for parameter in parsed.query.split('&')]
+        if parsed.password is not None:
+            values.append(parsed.password)
         host = parsed.hostname or ''
         # `.port` parses lazily and raises on a non-numeric port, so it has to be
         # read inside the guard: this runs while an error is already being built.
         if parsed.port is not None:
             host = f'{host}:{parsed.port}'
-        scheme = parsed.scheme
+        safe = f'{parsed.scheme}://{host}' if parsed.scheme else host
     except ValueError:
-        return message.replace(cdp_url, '<cdp_url>')
-    safe = f'{scheme}://{host}' if scheme else host
-    return message.replace(cdp_url, safe)
+        safe = '<cdp_url>'
+    cut = _URL_IN_TEXT.sub(lambda url: _url_origin(url.group()), message.replace(cdp_url, safe))
+    forms = {
+        form
+        for value in values
+        if len(unquote(value)) >= 8
+        for variant in (value, unquote(value), unquote_plus(value))
+        for form in (variant, quote(variant), quote_plus(variant))
+    }
+    if not forms:
+        return cut
+    # Longest first, so a form that contains another is replaced whole.
+    return re.sub('|'.join(re.escape(form) for form in sorted(forms, key=len, reverse=True)), 'REDACTED', cut)
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -871,7 +680,7 @@ async def _auto_install_chromium() -> str | None:
     mocked test surface. On failure the merged stdout/stderr is returned so the
     launch path can surface why the install failed instead of the generic hint.
     """
-    proc = await asyncio.create_subprocess_exec(
+    process = await asyncio.create_subprocess_exec(
         sys.executable,
         '-m',
         'playwright',
@@ -881,12 +690,12 @@ async def _auto_install_chromium() -> str | None:
         stderr=asyncio.subprocess.STDOUT,
     )
     try:
-        stdout, _ = await proc.communicate()
+        stdout, _ = await process.communicate()
     except asyncio.CancelledError:
-        proc.terminate()
-        await proc.wait()
+        process.terminate()
+        await process.wait()
         raise
-    if proc.returncode == 0:
+    if process.returncode == 0:
         return None
     return stdout.decode(errors='replace')
 
@@ -1021,6 +830,10 @@ class _FailedRequest(Protocol):
     def failure(self) -> str | None: ...  # pragma: no cover
 
 
+CdpContextMode = Literal['new', 'default']
+"""Whether a CDP-attached session creates an isolated context or uses the browser's default one."""
+
+
 class PlaywrightBrowserSession:
     """One agent run's Chromium: how a page is obtained, guarded, and released.
 
@@ -1029,13 +842,17 @@ class PlaywrightBrowserSession:
     Exiting closes whatever was started, in the order that a half-built session
     still tears down cleanly.
 
-    `PlaywrightBrowser` creates one per run (via `for_run`), so concurrent runs
-    never share a page. It can also be driven directly:
+    `PlaywrightBrowser` creates one session per run. Sessions using the same
+    default CDP context share its pages. It can also be driven directly:
 
     ```python
     async with PlaywrightBrowserSession(policy=EgressPolicy()) as session:
         page = await session.ensure_page()
     ```
+
+    `cdp_url` can also be a function, sync or async, that takes no arguments and
+    returns the endpoint: the first connect calls it, and its result is reused
+    until the session is entered again.
     """
 
     def __init__(
@@ -1044,16 +861,26 @@ class PlaywrightBrowserSession:
         policy: EgressPolicy | None = None,
         headless: bool = True,
         storage_state: StorageState | None = None,
-        cdp_url: str | None = None,
+        cdp_url: str | Callable[[], str | Awaitable[str]] | None = None,
+        cdp_context: CdpContextMode = 'new',
         auto_install_chromium: bool = False,
         chromium_sandbox: bool = True,
         launch_timeout_ms: int = DEFAULT_NAVIGATION_TIMEOUT_MS,
     ) -> None:
+        if cdp_context not in ('new', 'default'):
+            raise UserError('`cdp_context` must be `new` or `default`.')
+        if cdp_context == 'default':
+            if cdp_url is None:
+                raise UserError('`cdp_context="default"` requires `cdp_url`.')
+            if storage_state is not None:
+                raise UserError('`storage_state` cannot be applied to the default CDP context.')
         self.policy = policy if policy is not None else EgressPolicy()
         """Egress policy the route guard enforces, and the default for a toolset built on this session."""
         self._headless = headless
         self._storage_state = storage_state
-        self._cdp_url = cdp_url
+        self._cdp_url_function = None if cdp_url is None or isinstance(cdp_url, str) else cdp_url
+        self._cdp_url = cdp_url if isinstance(cdp_url, str) else None
+        self._cdp_context = cdp_context
         self._auto_install_chromium = auto_install_chromium
         self._chromium_sandbox = chromium_sandbox
         self._launch_timeout_ms = launch_timeout_ms
@@ -1079,6 +906,10 @@ class PlaywrightBrowserSession:
         self._context: PlaywrightBrowserContext | None = None
         self._event_tasks: set[asyncio.Task[None]] = set()
         self._launch_lock = anyio.Lock(fast_acquire=True)
+        # The policy is fixed for the session, so a document's verdict depends only on its URL
+        # and whether it is the top-level one. Kept across attach attempts: a retried attach
+        # reconnects and gets new frame objects for the same documents.
+        self._admitted_documents: set[tuple[str, bool]] = set()
         self.tracer: Tracer = _FALLBACK_TRACER
         """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
@@ -1206,7 +1037,105 @@ class PlaywrightBrowserSession:
                 raise BrowserUnavailableError(self.launch_error)
             if self.page is None:
                 raise BrowserUnavailableError('Browser failed to launch.')  # pragma: no cover
+        if self._cdp_context == 'default':
+            await self._leave_tabs_off_the_web()
+            await self._validate_default_context_pages(self.pages)
         return self.page
+
+    async def _leave_tabs_off_the_web(self) -> None:
+        """Stop using every tracked tab that moved off the web, and refuse the call that found one.
+
+        The tab is neither navigated nor closed: in the default context it can be the
+        profile owner's, so it stays open in the browser, unwired and unlisted, the way
+        attaching leaves such a tab out. The active tab moves to another tracked one, or
+        to a new blank tab when none is left, so the next call works. The blank tab opens
+        whenever the active pointer names a tab the session no longer tracks, so an open
+        that failed is retried on the next call rather than handing the dropped tab back,
+        whatever URL it shows by then.
+        """
+        left = [(page, url) for page in self.pages if (url := self._off_web_document(page)) is not None]
+        for page, _ in left:
+            # Every listener `_wire_page` added, so the tab reports nothing more.
+            for event, handler in (
+                ('popup', self._on_popup),
+                ('console', self._on_console),
+                ('pageerror', self._on_page_error),
+                ('response', self._on_response),
+                ('requestfailed', self._on_request_failed),
+                ('dialog', self._on_dialog),
+                ('close', self._on_page_closed),
+            ):
+                page.remove_listener(event, handler)
+            # The same bookkeeping as a tab that closed.
+            self._on_page_closed(page)
+        if self.page is not None and self.page not in self.pages:
+            # The tab was dropped by this call or by one whose open failed, or it was the last one and closed.
+            await self._bounded(self.open_tab())
+        if not left:
+            return
+        raise BrowserUnavailableError(self._off_web_tab_message([url for _, url in left]))
+
+    async def _validate_default_context_pages(self, pages: Sequence[_Page]) -> None:
+        """Check loaded documents before listeners or tools can expose their contents.
+
+        Request routes cannot check documents loaded before attachment. Recheck
+        every tab because listing reads inactive titles and closing the active
+        tab can select another inherited page. A document that passed is not checked
+        again, and one deadline covers the whole check: a call that runs out of time
+        is refused as one to retry, and the next starts from what this one admitted.
+        """
+        try:
+            async with asyncio.timeout(_DOCUMENT_CHECK_DEADLINE_MS / 1000):  # noqa: TID251  (not converted to anyio yet)
+                for page in pages:
+                    for index, frame in enumerate(page.frames):
+                        await self._check_inherited_frame(frame, top_level=index == 0)
+        except TimeoutError:
+            raise BrowserUnavailableError(
+                'The default CDP context holds more documents than one call can check against the browser '
+                f'policy in {_DOCUMENT_CHECK_DEADLINE_MS // 1000} seconds. The documents checked so far are '
+                'remembered: retry the call to check the rest.'
+            ) from None
+
+    async def _check_inherited_frame(self, frame: _Frame, *, top_level: bool) -> None:
+        """Refuse the call when `frame` holds a document the policy blocks, or has no URL to check yet.
+
+        A document outside the web, top-level or a subframe other than an inline one, is
+        refused whatever the policy says: in this mode it holds the profile's own state,
+        such as its history or an extension's UI, and no request the policy could judge
+        loaded it.
+        """
+        if not frame.url:
+            # CDP can expose a cross-origin frame before its URL is populated.
+            try:
+                await frame.wait_for_load_state('domcontentloaded', timeout=_FRAME_URL_WAIT_MS)
+            except PlaywrightTimeoutError:
+                pass
+            if not frame.url:
+                raise BrowserUnavailableError(
+                    'A frame in the default CDP context is still loading, so its document cannot be '
+                    'checked against the browser policy yet. Retry the call in a moment.'
+                )
+        if frame.url.startswith(_ERROR_PAGE_SCHEME) or (
+            not top_level and frame.url.startswith(_INLINE_SUBFRAME_PREFIXES)
+        ):
+            # Chromium's error page holds nothing from the origin that failed to load, and an
+            # inline subframe's document came from a page this check covers, not a request.
+            return
+        if self._is_off_web(frame.url):
+            # Reached when the URL arrived during the wait above: the next call leaves the tab out.
+            raise BrowserUnavailableError(self._off_web_tab_message([frame.url]))
+        admitted = (frame.url, top_level)
+        if admitted in self._admitted_documents:
+            return
+        document = EgressRequest(url=frame.url, kind='navigation' if top_level else 'subframe', top_level=top_level)
+        if (reason := await self.decide(document)) is None:
+            self._admitted_documents.add(admitted)
+            return
+        raise BrowserUnavailableError(
+            f'The default CDP context contains a document blocked by the browser policy '
+            f'({reason}): {_url_origin(document.url)}. Close its tab in the provider browser, '
+            'or navigate that tab to an allowed URL, then retry.'
+        )
 
     async def _launch(self) -> None:
         """Start the driver and Chromium, then open the guarded page.
@@ -1240,26 +1169,102 @@ class PlaywrightBrowserSession:
         # Assigned before the context and page are built, so teardown closes Chromium
         # even when a later setup step raises.
         self._browser = browser
-        # Service workers can issue requests that context routes never see, so they
-        # are blocked to keep all traffic on the routable path. Downloads are refused
-        # because no tool exposes them: accepting them only lets a page write to the
-        # host's temporary storage for the length of the run.
-        context = await self._bounded(
-            browser.new_context(
-                storage_state=self._storage_state,
-                service_workers='block',
-                accept_downloads=False,
+        if self._cdp_context == 'default':
+            if not browser.contexts:
+                raise BrowserUnavailableError('The CDP browser has no default context.')
+            context = browser.contexts[0]
+            self._context = context
+            # The inherited pages keep running while the checks below wait on a lookup or a
+            # loading frame, so the guards go on first.
+            await self._install_guards(context)
+            # A tab showing anything outside the web, such as the browser's own start page or an
+            # extension's frame, is left out whatever the policy says, rather than failing every
+            # attach to a browser that opened on one.
+            pages = [page for page in context.pages if self._off_web_document(page) is None]
+            if len(pages) > _MAX_TABS:
+                raise BrowserUnavailableError(
+                    f'The default CDP context has more than {_MAX_TABS} tabs. Close some first.'
+                )
+            await self._validate_default_context_pages(pages)
+            if not pages:
+                pages = [await self._bounded(context.new_page())]
+        else:
+            # Blocked workers stay off the request path even with Playwright's worker routing
+            # off; downloads have no tool-level contract.
+            context = await self._bounded(
+                browser.new_context(
+                    storage_state=self._storage_state,
+                    service_workers='block',
+                    accept_downloads=False,
+                )
             )
+            self._context = context
+            await self._install_guards(context)
+            pages = [await self._bounded(context.new_page())]
+        for page in pages:
+            self._wire_page(page)
+            self.pages.append(page)
+        self.page = pages[0]
+
+    @staticmethod
+    def _off_web_tab_message(urls: Sequence[str]) -> str:
+        """The error for a default-context tab found showing a page outside the web.
+
+        Each page is named by its scheme and authority only: the rest of such a URL can
+        be the document itself, such as a `data:` URL's content or a `file:` path.
+        """
+        pages = ', '.join(_url_origin(url) for url in urls)
+        return (
+            f'A tab in the default CDP context is showing a page the agent cannot read ({pages}). The agent '
+            'stops using that tab, which stays open in the browser. Retry the call.'
         )
-        self._context = context
-        page = await self._bounded(context.new_page())
-        if self.policy.enforced():
-            await self._bounded(context.route('**/*', self._route_guard))
-            # A network route never sees a WebSocket, so sockets get a guard of their own.
-            await self._bounded(context.route_web_socket('**/*', self._websocket_guard))
-        self._wire_page(page)
-        self.pages.append(page)
-        self.page = page
+
+    def _off_web_document(self, page: _Page) -> str | None:
+        """The URL of the first document in `page` the session never exposes, or `None` when there is none.
+
+        That is a top-level page outside the web, or a subframe outside it other than an
+        inline one. Extensions inject such frames into the pages they run on, such as a
+        password manager's menu, and the frame holds the extension's own UI, which
+        `snapshot` would read along with the page.
+        """
+        for index, frame in enumerate(page.frames):
+            if self._is_off_web(frame.url) and (index == 0 or not frame.url.startswith(_INLINE_SUBFRAME_PREFIXES)):
+                return frame.url
+        return None
+
+    @staticmethod
+    def _is_off_web(url: str) -> bool:
+        """Whether a default-context tab's page is one the session never exposes: anything but a web page or a blank one.
+
+        Covers the browser's own pages (`chrome://newtab/`, settings, history),
+        extension pages, and `file:`, `data:` and `blob:` documents. Chromium's
+        error page stays in: it holds nothing from the origin that failed to load.
+        A tab that reports no URL yet is still loading, and stays in for the
+        document check to wait on.
+        """
+        return bool(url) and url != _BLANK_PAGE and not url.startswith((_ERROR_PAGE_SCHEME, *_WEB_URL_PREFIXES))
+
+    async def _install_guards(self, context: PlaywrightBrowserContext) -> None:
+        """Keep requests of `context` on a path routes see, and route them when the policy enforces anything.
+
+        A context the session did not create keeps the service-worker setting it was
+        created with, so registrations are refused the way `service_workers='block'`
+        refuses them, whatever the policy. Playwright routes a worker's requests like a
+        page's unless `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set, and the refusal
+        covers that case too. It reaches each document created or navigated from now on:
+        documents already loaded can register a worker until they navigate.
+
+        Under an enforced policy, every context also gets `_ENFORCED_POLICY_PAGE_SCRIPT`,
+        with the same reach.
+        """
+        if self._cdp_context == 'default':
+            await self._bounded(context.add_init_script(script=_BLOCK_SERVICE_WORKER_REGISTRATION))
+        if not self.policy.enforced():
+            return
+        await self._bounded(context.route('**/*', self._route_guard))
+        # A network route never sees a WebSocket, so sockets get a guard of their own.
+        await self._bounded(context.route_web_socket('**/*', self._websocket_guard))
+        await self._bounded(context.add_init_script(script=_ENFORCED_POLICY_PAGE_SCRIPT))
 
     async def _bounded(self, awaitable: Awaitable[_T]) -> _T:
         """Run a setup step that has no `timeout` parameter under `launch_timeout_ms`.
@@ -1270,7 +1275,7 @@ class PlaywrightBrowserSession:
         if self._launch_timeout_ms == 0:
             return await awaitable
         try:
-            return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)
+            return await asyncio.wait_for(awaitable, self._launch_timeout_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             # Raised as a Playwright timeout so the tools map it like any other
             # deadline they already handle.
@@ -1288,16 +1293,27 @@ class PlaywrightBrowserSession:
         leaves off by default. This capability exists to open pages nobody vetted,
         and the sandbox is what keeps a compromised renderer inside the browser.
         A browser reached over `cdp_url` is already running, so its own
-        configuration decides this.
+        configuration decides this. Under an enforced policy, a launched browser also
+        gets `_ENFORCED_POLICY_LAUNCH_ARGS`.
         """
+        if self._cdp_url is None and self._cdp_url_function is not None:
+            endpoint = self._cdp_url_function()
+            self._cdp_url = await self._bounded(endpoint) if isinstance(endpoint, Awaitable) else endpoint
         if self._cdp_url is not None:
             try:
-                return await pw.chromium.connect_over_cdp(self._cdp_url, timeout=self._launch_timeout_ms)
+                # Without `no_defaults`, Playwright makes the default context save downloads to
+                # its own temporary directory and emulates focus in the user's tabs.
+                return await pw.chromium.connect_over_cdp(
+                    self._cdp_url, timeout=self._launch_timeout_ms, no_defaults=self._cdp_context == 'default'
+                )
             except PlaywrightError as exc:
                 raise PlaywrightError(_without_endpoint_credentials(str(exc), self._cdp_url)) from exc
         if await anyio.Path(pw.chromium.executable_path).exists():
             return await pw.chromium.launch(
-                headless=self._headless, chromium_sandbox=self._chromium_sandbox, timeout=self._launch_timeout_ms
+                headless=self._headless,
+                chromium_sandbox=self._chromium_sandbox,
+                timeout=self._launch_timeout_ms,
+                args=_ENFORCED_POLICY_LAUNCH_ARGS if self.policy.enforced() else (),
             )
         # Binary genuinely absent: raise a clear install hint, or fetch it when
         # opted in. A launch failure with the binary present (sandbox, missing
@@ -1321,8 +1337,11 @@ class PlaywrightBrowserSession:
         """
         install_output = await _auto_install_chromium()
         if install_output is None:
-            return await pw.chromium.launch(  # pragma: no cover
-                headless=self._headless, chromium_sandbox=self._chromium_sandbox, timeout=self._launch_timeout_ms
+            return await pw.chromium.launch(
+                headless=self._headless,
+                chromium_sandbox=self._chromium_sandbox,
+                timeout=self._launch_timeout_ms,
+                args=_ENFORCED_POLICY_LAUNCH_ARGS if self.policy.enforced() else (),
             )
         self.launch_error = f'{_CHROMIUM_MISSING_MESSAGE}\nAuto-install failed:\n{install_output[-300:]}'
         return None
@@ -1335,11 +1354,7 @@ class PlaywrightBrowserSession:
         is asked about: the route guard, the socket guard, the `navigate`
         pre-check, and the post-action re-check.
         """
-        host = _url_host(request.url)
-        if host is not None and self.policy.needs_resolution(request):
-            addresses = await _resolve_host(host)
-            request = replace(request, resolved_addresses=addresses or (), resolution_failed=addresses is None)
-        return self.policy.refuse(request)
+        return await refusal_reason(self.policy, request)
 
     async def _route_guard(self, route: PlaywrightRoute, request: PlaywrightRequest) -> None:
         """Network-layer egress policy: abort what the policy refuses, pass the rest.
@@ -1355,7 +1370,7 @@ class PlaywrightBrowserSession:
             top_level = frame == frame.page.main_frame
         except PlaywrightError:
             top_level = True
-        kind = _request_kind(request, top_level)
+        kind = request_kind(request.resource_type, is_navigation=request.is_navigation_request(), top_level=top_level)
         reason = await self.decide(
             EgressRequest(
                 url=request.url,
@@ -1528,8 +1543,11 @@ class PlaywrightBrowserSession:
         self._driver_cm = async_playwright()
         self._driver = None
         self._driver_entered = False
+        if self._cdp_url_function is not None:
+            self._cdp_url = None
         self.launch_error = None
         self.dialog_decision = None
+        self._admitted_documents.clear()
         return self
 
     async def __aexit__(self, exc_type: type[BaseException] | None, *_: object) -> None:
@@ -1580,9 +1598,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
 
     The tools read the active page from a shared `PlaywrightBrowserSession`, which
     `PlaywrightBrowser.wrap_run` populates lazily on the first tool call. Use the
-    toolset through `PlaywrightBrowser` rather than directly; construct it
-    directly (with a `session` whose `page` you set) only to drive tools against a
-    page double.
+    toolset through `PlaywrightBrowser`, or supply a session held open with
+    `async with` when driving the toolset directly.
 
     Page text is extracted with Playwright itself (`inner_text`), across the main
     frame and any child frames, and every textual result is truncated to
@@ -1665,7 +1682,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     texts.append(f'[frame {_without_credentials(frame.url)}]\n{text}')
 
         try:
-            await asyncio.wait_for(sweep(), budget_ms / 1000)
+            await asyncio.wait_for(sweep(), budget_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError:
             pass
         return texts
@@ -1771,7 +1788,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         if timeout_ms == 0:
             return await awaitable
         try:
-            return await asyncio.wait_for(awaitable, timeout_ms / 1000)
+            return await asyncio.wait_for(awaitable, timeout_ms / 1000)  # noqa: TID251  (not converted to anyio yet)
         except TimeoutError as exc:
             # Map the timeout to Playwright's error type so the tool's error handler catches it.
             raise PlaywrightTimeoutError(f'Timeout {timeout_ms}ms exceeded.') from exc

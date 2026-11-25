@@ -1,0 +1,1233 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1387"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        reasoning:
+          effort: low
+          context: all_turns
+          summary: auto
+        tool_choice: auto
+        tools:
+        - type: tool_search
+          execution: client
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+        - name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          type: function
+          description: Look up the exchange rate for a currency pair.
+          strict: true
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "3075"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795480359
+        created_at: 1795480357
+        error: null
+        frequency_penalty: 0.0
+        id: resp_0c5e0092bf727402006b04db252e6087d2bf4b4d6d58926fac
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-2026-03-05
+        moderation: null
+        object: response
+        output:
+        - content: []
+          encrypted_content: >-
+            gAAAAABrBNsnuK42yjaeS63x-jUBD2Cgt4lpQC4zrLg1J5S7GTSaHMHW04poaEHrfbf_Y8raqrdEc43js7SeyQmAyO3x_0RDLbqNo2dTkZhSAj8RGBBLwjB4Fv4Q2kQIR8sSwqCmJgDu9tIH1aqkFoItHxPcVtuTw5A-H6UF2ZV9BM3vct3FYWjiZkHcZrjfKB1RY9RLCeXPAfZgSFYJsVKGS2qSUMdsmnY3Ip2xoIyFCKSsdAQZd1BC6rpq0WobrO5jkDQrXKBJ8lVh69h3K2havIvHu1EEcSWTuFtHvjy3tAfRHLkhoE_FrN1uL1hrXzgDAZE5ct2fmDvdKSTjkFEk-zmK_8BKvqpjvsBIqUymXkxFq_lI85WsQtjZYAvLIfHwKMhgfW1pNH5H3rwnoX5aQLQoc9dXX9ByB2Em9wWcBfWdb2YuGVk8xBIeL0p7S2xYR2muOsBTpu2UJPPl2pTlUGb6OqBeZ-CRfPTfEuCbcCaHtjedUYU2Ysg70kH758OrV-aXAcPo32RjpRKGnR5gtl3IIRQeCO6mQ28WgrL2EQ5MxQ3YM7EpkqTiRMROxuYRm74RV-2NDEZZQDWZ6sfUCcmaWe6JeyMVkvvAD-eCD9bBJR2ZVgu7AAGhN-1tw51urgCUSk6AR_Rpr1tUDQ5QUdxoo7deSjTBmWLU7YNAWtWJGqOVab-ilVi6P13UrL2_CZhwz044YDwktraJMDJ4QcIqtFGhEzya34ywgcMgaIGZjRaQHw3mtxxvQNKVfVqDodXFgbNvGhAHGu79kxAYflQc-GRY_1j4SwzhVMK4Ij8TvFxLUQNcz7qyfywnLe9rWCZw-0PWON739XMg7CSH6PKHxanWhSWhGailvXW6SjeuHM5mo7uiZ5mbc2xpLsaHrtOUFPgBx774I53l77fzFZg5pZKH_hOTg7AYhmy-2rEEdE47XIpMFYN5X6OLCZ6HmWhKfWINVXTbYkwd4XxutgGN2OdxXNpxW-RTrBsS833F8fQJ95lBzIVP7VTT2nz_wk7TnYi4oeFfE9-YNs3uPODLiibB3J5W7iKUesjwkpFXstqn0ckwD-78WJl6yXpdvFGvNPFuhRyIs5RFiKtthk7ZbLiv9MkaVD89_7dsuPjTkQRYHUrXA3jkJIH6gVN9Y0uK45eJz1ecJ8lEpL_mV2NkEl0GgwdXJvapBx_H5EczmAGyhF_g55ToIFO4oVGcg2DRjVABFcQBVMN-_QH1jGJEvlF8XMRmcShb3925pZVuyxnQ4o56NVriVYLN34ks_j_yOUW8JGFhJASXsEk1r-etDoP98qG4U-zqr2E-aN6XxnGtaYlLQGeVWpH3oC--5F6amgd8NBlLoquNUpIdVu-roIf43eacbiQH8llOV9qSNj_7GuZwFtIVl6HfKTFdNUfRukme3jBHj9wdu8rQfL06Zwk6ujG_3tzt1-JjsYfkfHOGMdihc_xoY1ljmsYv_kk9Yh98DRgHaw7iPTu2qz1ILa5CYMjgNThE7Nspo5L-EH43448lhiIWgJ7nsCsucZVNmKOC2AHN94Up9A7BxVfQGN5zJFFvpjY6A69co0ACYfxv86rG9nRi9K_SSjysk2It-ikLSqxa3MOjftscjPcf3j8WpKT73Yba8VkssxfEdXb9kvFVJ0hREO_4bOSMOTwXZf0_siL_yfJh_MAgJgO6BV2S6JNYyPDyyuZh90mR2pVEWvdnRi6BFS4pez3-7FujlhWN_2_QvP3oFqgnM8MW2F0s_0nf30CqsIt0CxLc4aXz55jIgpRzgthz1eTIBb1nvoLGYTEP-woAw57AmLBUJ1O7px6yN2Yk9bKw_q2_PQhsGcs3gwi3KeonuAdjMlPuASYrb44waN-foo9i1c_8qyolA_wMJlgUOWcL6Ow1OXn57xbNlDZeawmKYQQEwU8QwLZfhzXPlfI1thMM6aKgRvhJynmCroXWaxEv9rmTpmIoZu2nj05rRBTVKd3hEq4jSmCYG2z4U-1DAYdAV4OvmfHlVcTyXpfwXc1JOfFo5pW7k-FwVuEP_xhPFlS57BQOoosI
+          id: rs_0c5e0092bf727402006b04db2597f087d2b4cf3fb8dcfbbaa2
+          summary: []
+          type: reasoning
+        - arguments:
+            queries:
+            - get_exchange_rate exchange rate tool
+            - currency exchange rate get_exchange_rate
+          call_id: call_1736020ee5cf42d7a014332868dda77b
+          execution: client
+          id: tsc_0c5e0092bf727402006b04db27705487d2bf55b14500f90d3e
+          status: completed
+          type: tool_search_call
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: low
+          mode: standard
+          summary: detailed
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - defer_loading: true
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          strict: true
+          type: function
+        - description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          execution: client
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: tool_search
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 166
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 69
+          output_tokens_details:
+            reasoning_tokens: 33
+          total_tokens: 235
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-24T00:32:40.255542+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "4252"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        - id: rs_0c5e0092bf727402006b04db2597f087d2b4cf3fb8dcfbbaa2
+          summary: []
+          encrypted_content: >-
+            gAAAAABrBNsnuK42yjaeS63x-jUBD2Cgt4lpQC4zrLg1J5S7GTSaHMHW04poaEHrfbf_Y8raqrdEc43js7SeyQmAyO3x_0RDLbqNo2dTkZhSAj8RGBBLwjB4Fv4Q2kQIR8sSwqCmJgDu9tIH1aqkFoItHxPcVtuTw5A-H6UF2ZV9BM3vct3FYWjiZkHcZrjfKB1RY9RLCeXPAfZgSFYJsVKGS2qSUMdsmnY3Ip2xoIyFCKSsdAQZd1BC6rpq0WobrO5jkDQrXKBJ8lVh69h3K2havIvHu1EEcSWTuFtHvjy3tAfRHLkhoE_FrN1uL1hrXzgDAZE5ct2fmDvdKSTjkFEk-zmK_8BKvqpjvsBIqUymXkxFq_lI85WsQtjZYAvLIfHwKMhgfW1pNH5H3rwnoX5aQLQoc9dXX9ByB2Em9wWcBfWdb2YuGVk8xBIeL0p7S2xYR2muOsBTpu2UJPPl2pTlUGb6OqBeZ-CRfPTfEuCbcCaHtjedUYU2Ysg70kH758OrV-aXAcPo32RjpRKGnR5gtl3IIRQeCO6mQ28WgrL2EQ5MxQ3YM7EpkqTiRMROxuYRm74RV-2NDEZZQDWZ6sfUCcmaWe6JeyMVkvvAD-eCD9bBJR2ZVgu7AAGhN-1tw51urgCUSk6AR_Rpr1tUDQ5QUdxoo7deSjTBmWLU7YNAWtWJGqOVab-ilVi6P13UrL2_CZhwz044YDwktraJMDJ4QcIqtFGhEzya34ywgcMgaIGZjRaQHw3mtxxvQNKVfVqDodXFgbNvGhAHGu79kxAYflQc-GRY_1j4SwzhVMK4Ij8TvFxLUQNcz7qyfywnLe9rWCZw-0PWON739XMg7CSH6PKHxanWhSWhGailvXW6SjeuHM5mo7uiZ5mbc2xpLsaHrtOUFPgBx774I53l77fzFZg5pZKH_hOTg7AYhmy-2rEEdE47XIpMFYN5X6OLCZ6HmWhKfWINVXTbYkwd4XxutgGN2OdxXNpxW-RTrBsS833F8fQJ95lBzIVP7VTT2nz_wk7TnYi4oeFfE9-YNs3uPODLiibB3J5W7iKUesjwkpFXstqn0ckwD-78WJl6yXpdvFGvNPFuhRyIs5RFiKtthk7ZbLiv9MkaVD89_7dsuPjTkQRYHUrXA3jkJIH6gVN9Y0uK45eJz1ecJ8lEpL_mV2NkEl0GgwdXJvapBx_H5EczmAGyhF_g55ToIFO4oVGcg2DRjVABFcQBVMN-_QH1jGJEvlF8XMRmcShb3925pZVuyxnQ4o56NVriVYLN34ks_j_yOUW8JGFhJASXsEk1r-etDoP98qG4U-zqr2E-aN6XxnGtaYlLQGeVWpH3oC--5F6amgd8NBlLoquNUpIdVu-roIf43eacbiQH8llOV9qSNj_7GuZwFtIVl6HfKTFdNUfRukme3jBHj9wdu8rQfL06Zwk6ujG_3tzt1-JjsYfkfHOGMdihc_xoY1ljmsYv_kk9Yh98DRgHaw7iPTu2qz1ILa5CYMjgNThE7Nspo5L-EH43448lhiIWgJ7nsCsucZVNmKOC2AHN94Up9A7BxVfQGN5zJFFvpjY6A69co0ACYfxv86rG9nRi9K_SSjysk2It-ikLSqxa3MOjftscjPcf3j8WpKT73Yba8VkssxfEdXb9kvFVJ0hREO_4bOSMOTwXZf0_siL_yfJh_MAgJgO6BV2S6JNYyPDyyuZh90mR2pVEWvdnRi6BFS4pez3-7FujlhWN_2_QvP3oFqgnM8MW2F0s_0nf30CqsIt0CxLc4aXz55jIgpRzgthz1eTIBb1nvoLGYTEP-woAw57AmLBUJ1O7px6yN2Yk9bKw_q2_PQhsGcs3gwi3KeonuAdjMlPuASYrb44waN-foo9i1c_8qyolA_wMJlgUOWcL6Ow1OXn57xbNlDZeawmKYQQEwU8QwLZfhzXPlfI1thMM6aKgRvhJynmCroXWaxEv9rmTpmIoZu2nj05rRBTVKd3hEq4jSmCYG2z4U-1DAYdAV4OvmfHlVcTyXpfwXc1JOfFo5pW7k-FwVuEP_xhPFlS57BQOoosI
+          type: reasoning
+        - type: tool_search_call
+          execution: client
+          arguments:
+            queries:
+            - get_exchange_rate exchange rate tool
+            - currency exchange rate get_exchange_rate
+          call_id: call_1736020ee5cf42d7a014332868dda77b
+          status: completed
+          id: tsc_0c5e0092bf727402006b04db27705487d2bf55b14500f90d3e
+        - type: tool_search_output
+          execution: client
+          tools:
+          - name: get_exchange_rate
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            type: function
+            description: Look up the exchange rate for a currency pair.
+            strict: true
+            defer_loading: true
+          call_id: call_1736020ee5cf42d7a014332868dda77b
+          status: completed
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        reasoning:
+          effort: low
+          context: all_turns
+          summary: auto
+        tool_choice: auto
+        tools:
+        - type: tool_search
+          execution: client
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+        - name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          type: function
+          description: Look up the exchange rate for a currency pair.
+          strict: true
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1331"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0c5e0092bf727402006b04db285e5487d2a7eb9f8607e88442
+        object: response
+        created_at: 1795480360
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795480361
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-2026-03-05
+        moderation: null
+        output:
+        - id: fc_0c5e0092bf727402006b04db290bf887d285c142f24d733f90
+          type: function_call
+          status: completed
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_vACBCmyMUkQ7LKNhmTXbO3mK
+          name: get_exchange_rate
+          namespace: get_exchange_rate
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: low
+          mode: standard
+          summary: detailed
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: tool_search
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          execution: client
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+        - type: namespace
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          tools:
+          - type: function
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 378
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 22
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 400
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-24T00:32:41.691093+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "4575"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        - id: rs_0c5e0092bf727402006b04db2597f087d2b4cf3fb8dcfbbaa2
+          summary: []
+          encrypted_content: >-
+            gAAAAABrBNsnuK42yjaeS63x-jUBD2Cgt4lpQC4zrLg1J5S7GTSaHMHW04poaEHrfbf_Y8raqrdEc43js7SeyQmAyO3x_0RDLbqNo2dTkZhSAj8RGBBLwjB4Fv4Q2kQIR8sSwqCmJgDu9tIH1aqkFoItHxPcVtuTw5A-H6UF2ZV9BM3vct3FYWjiZkHcZrjfKB1RY9RLCeXPAfZgSFYJsVKGS2qSUMdsmnY3Ip2xoIyFCKSsdAQZd1BC6rpq0WobrO5jkDQrXKBJ8lVh69h3K2havIvHu1EEcSWTuFtHvjy3tAfRHLkhoE_FrN1uL1hrXzgDAZE5ct2fmDvdKSTjkFEk-zmK_8BKvqpjvsBIqUymXkxFq_lI85WsQtjZYAvLIfHwKMhgfW1pNH5H3rwnoX5aQLQoc9dXX9ByB2Em9wWcBfWdb2YuGVk8xBIeL0p7S2xYR2muOsBTpu2UJPPl2pTlUGb6OqBeZ-CRfPTfEuCbcCaHtjedUYU2Ysg70kH758OrV-aXAcPo32RjpRKGnR5gtl3IIRQeCO6mQ28WgrL2EQ5MxQ3YM7EpkqTiRMROxuYRm74RV-2NDEZZQDWZ6sfUCcmaWe6JeyMVkvvAD-eCD9bBJR2ZVgu7AAGhN-1tw51urgCUSk6AR_Rpr1tUDQ5QUdxoo7deSjTBmWLU7YNAWtWJGqOVab-ilVi6P13UrL2_CZhwz044YDwktraJMDJ4QcIqtFGhEzya34ywgcMgaIGZjRaQHw3mtxxvQNKVfVqDodXFgbNvGhAHGu79kxAYflQc-GRY_1j4SwzhVMK4Ij8TvFxLUQNcz7qyfywnLe9rWCZw-0PWON739XMg7CSH6PKHxanWhSWhGailvXW6SjeuHM5mo7uiZ5mbc2xpLsaHrtOUFPgBx774I53l77fzFZg5pZKH_hOTg7AYhmy-2rEEdE47XIpMFYN5X6OLCZ6HmWhKfWINVXTbYkwd4XxutgGN2OdxXNpxW-RTrBsS833F8fQJ95lBzIVP7VTT2nz_wk7TnYi4oeFfE9-YNs3uPODLiibB3J5W7iKUesjwkpFXstqn0ckwD-78WJl6yXpdvFGvNPFuhRyIs5RFiKtthk7ZbLiv9MkaVD89_7dsuPjTkQRYHUrXA3jkJIH6gVN9Y0uK45eJz1ecJ8lEpL_mV2NkEl0GgwdXJvapBx_H5EczmAGyhF_g55ToIFO4oVGcg2DRjVABFcQBVMN-_QH1jGJEvlF8XMRmcShb3925pZVuyxnQ4o56NVriVYLN34ks_j_yOUW8JGFhJASXsEk1r-etDoP98qG4U-zqr2E-aN6XxnGtaYlLQGeVWpH3oC--5F6amgd8NBlLoquNUpIdVu-roIf43eacbiQH8llOV9qSNj_7GuZwFtIVl6HfKTFdNUfRukme3jBHj9wdu8rQfL06Zwk6ujG_3tzt1-JjsYfkfHOGMdihc_xoY1ljmsYv_kk9Yh98DRgHaw7iPTu2qz1ILa5CYMjgNThE7Nspo5L-EH43448lhiIWgJ7nsCsucZVNmKOC2AHN94Up9A7BxVfQGN5zJFFvpjY6A69co0ACYfxv86rG9nRi9K_SSjysk2It-ikLSqxa3MOjftscjPcf3j8WpKT73Yba8VkssxfEdXb9kvFVJ0hREO_4bOSMOTwXZf0_siL_yfJh_MAgJgO6BV2S6JNYyPDyyuZh90mR2pVEWvdnRi6BFS4pez3-7FujlhWN_2_QvP3oFqgnM8MW2F0s_0nf30CqsIt0CxLc4aXz55jIgpRzgthz1eTIBb1nvoLGYTEP-woAw57AmLBUJ1O7px6yN2Yk9bKw_q2_PQhsGcs3gwi3KeonuAdjMlPuASYrb44waN-foo9i1c_8qyolA_wMJlgUOWcL6Ow1OXn57xbNlDZeawmKYQQEwU8QwLZfhzXPlfI1thMM6aKgRvhJynmCroXWaxEv9rmTpmIoZu2nj05rRBTVKd3hEq4jSmCYG2z4U-1DAYdAV4OvmfHlVcTyXpfwXc1JOfFo5pW7k-FwVuEP_xhPFlS57BQOoosI
+          type: reasoning
+        - type: tool_search_call
+          execution: client
+          arguments:
+            queries:
+            - get_exchange_rate exchange rate tool
+            - currency exchange rate get_exchange_rate
+          call_id: call_1736020ee5cf42d7a014332868dda77b
+          status: completed
+          id: tsc_0c5e0092bf727402006b04db27705487d2bf55b14500f90d3e
+        - type: tool_search_output
+          execution: client
+          tools:
+          - name: get_exchange_rate
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            type: function
+            description: Look up the exchange rate for a currency pair.
+            strict: true
+            defer_loading: true
+          call_id: call_1736020ee5cf42d7a014332868dda77b
+          status: completed
+        - name: get_exchange_rate
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_vACBCmyMUkQ7LKNhmTXbO3mK
+          type: function_call
+          id: fc_0c5e0092bf727402006b04db290bf887d285c142f24d733f90
+          namespace: get_exchange_rate
+        - type: function_call_output
+          call_id: call_vACBCmyMUkQ7LKNhmTXbO3mK
+          output: "USD/EUR: 0.92"
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        reasoning:
+          effort: low
+          context: all_turns
+          summary: auto
+        tool_choice: auto
+        tools:
+        - type: tool_search
+          execution: client
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+        - name: get_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              pair:
+                type: string
+            required:
+            - pair
+            type: object
+          type: function
+          description: Look up the exchange rate for a currency pair.
+          strict: true
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1283"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0c5e0092bf727402006b04db29c7c487d29a8a950248073005
+        object: response
+        created_at: 1795480361
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795480362
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-2026-03-05
+        moderation: null
+        output:
+        - id: msg_0c5e0092bf727402006b04db2a66cc87d298bc05a2adc065eb
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: USD/EUR is 0.92.
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: low
+          mode: standard
+          summary: detailed
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: tool_search
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          execution: client
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+        - type: namespace
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          tools:
+          - type: function
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 422
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 13
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 435
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-24T00:32:43.064298+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "4569"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.2
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        - id: rs_0c5e0092bf727402006b04db2597f087d2b4cf3fb8dcfbbaa2
+          summary: []
+          encrypted_content: >-
+            gAAAAABrBNsnuK42yjaeS63x-jUBD2Cgt4lpQC4zrLg1J5S7GTSaHMHW04poaEHrfbf_Y8raqrdEc43js7SeyQmAyO3x_0RDLbqNo2dTkZhSAj8RGBBLwjB4Fv4Q2kQIR8sSwqCmJgDu9tIH1aqkFoItHxPcVtuTw5A-H6UF2ZV9BM3vct3FYWjiZkHcZrjfKB1RY9RLCeXPAfZgSFYJsVKGS2qSUMdsmnY3Ip2xoIyFCKSsdAQZd1BC6rpq0WobrO5jkDQrXKBJ8lVh69h3K2havIvHu1EEcSWTuFtHvjy3tAfRHLkhoE_FrN1uL1hrXzgDAZE5ct2fmDvdKSTjkFEk-zmK_8BKvqpjvsBIqUymXkxFq_lI85WsQtjZYAvLIfHwKMhgfW1pNH5H3rwnoX5aQLQoc9dXX9ByB2Em9wWcBfWdb2YuGVk8xBIeL0p7S2xYR2muOsBTpu2UJPPl2pTlUGb6OqBeZ-CRfPTfEuCbcCaHtjedUYU2Ysg70kH758OrV-aXAcPo32RjpRKGnR5gtl3IIRQeCO6mQ28WgrL2EQ5MxQ3YM7EpkqTiRMROxuYRm74RV-2NDEZZQDWZ6sfUCcmaWe6JeyMVkvvAD-eCD9bBJR2ZVgu7AAGhN-1tw51urgCUSk6AR_Rpr1tUDQ5QUdxoo7deSjTBmWLU7YNAWtWJGqOVab-ilVi6P13UrL2_CZhwz044YDwktraJMDJ4QcIqtFGhEzya34ywgcMgaIGZjRaQHw3mtxxvQNKVfVqDodXFgbNvGhAHGu79kxAYflQc-GRY_1j4SwzhVMK4Ij8TvFxLUQNcz7qyfywnLe9rWCZw-0PWON739XMg7CSH6PKHxanWhSWhGailvXW6SjeuHM5mo7uiZ5mbc2xpLsaHrtOUFPgBx774I53l77fzFZg5pZKH_hOTg7AYhmy-2rEEdE47XIpMFYN5X6OLCZ6HmWhKfWINVXTbYkwd4XxutgGN2OdxXNpxW-RTrBsS833F8fQJ95lBzIVP7VTT2nz_wk7TnYi4oeFfE9-YNs3uPODLiibB3J5W7iKUesjwkpFXstqn0ckwD-78WJl6yXpdvFGvNPFuhRyIs5RFiKtthk7ZbLiv9MkaVD89_7dsuPjTkQRYHUrXA3jkJIH6gVN9Y0uK45eJz1ecJ8lEpL_mV2NkEl0GgwdXJvapBx_H5EczmAGyhF_g55ToIFO4oVGcg2DRjVABFcQBVMN-_QH1jGJEvlF8XMRmcShb3925pZVuyxnQ4o56NVriVYLN34ks_j_yOUW8JGFhJASXsEk1r-etDoP98qG4U-zqr2E-aN6XxnGtaYlLQGeVWpH3oC--5F6amgd8NBlLoquNUpIdVu-roIf43eacbiQH8llOV9qSNj_7GuZwFtIVl6HfKTFdNUfRukme3jBHj9wdu8rQfL06Zwk6ujG_3tzt1-JjsYfkfHOGMdihc_xoY1ljmsYv_kk9Yh98DRgHaw7iPTu2qz1ILa5CYMjgNThE7Nspo5L-EH43448lhiIWgJ7nsCsucZVNmKOC2AHN94Up9A7BxVfQGN5zJFFvpjY6A69co0ACYfxv86rG9nRi9K_SSjysk2It-ikLSqxa3MOjftscjPcf3j8WpKT73Yba8VkssxfEdXb9kvFVJ0hREO_4bOSMOTwXZf0_siL_yfJh_MAgJgO6BV2S6JNYyPDyyuZh90mR2pVEWvdnRi6BFS4pez3-7FujlhWN_2_QvP3oFqgnM8MW2F0s_0nf30CqsIt0CxLc4aXz55jIgpRzgthz1eTIBb1nvoLGYTEP-woAw57AmLBUJ1O7px6yN2Yk9bKw_q2_PQhsGcs3gwi3KeonuAdjMlPuASYrb44waN-foo9i1c_8qyolA_wMJlgUOWcL6Ow1OXn57xbNlDZeawmKYQQEwU8QwLZfhzXPlfI1thMM6aKgRvhJynmCroXWaxEv9rmTpmIoZu2nj05rRBTVKd3hEq4jSmCYG2z4U-1DAYdAV4OvmfHlVcTyXpfwXc1JOfFo5pW7k-FwVuEP_xhPFlS57BQOoosI
+          type: reasoning
+        - name: search_tools
+          arguments: "{\"queries\":[\"get_exchange_rate exchange rate tool\",\"currency exchange rate get_exchange_rate\"]}"
+          call_id: call_1736020ee5cf42d7a014332868dda77b
+          type: function_call
+        - type: function_call_output
+          call_id: call_1736020ee5cf42d7a014332868dda77b
+          output: "{\"discovered_tools\":[{\"name\":\"get_exchange_rate\"}]}"
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: get_exchange_rate
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            type: function
+            description: Look up the exchange rate for a currency pair.
+            strict: true
+        - name: get_exchange_rate
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_vACBCmyMUkQ7LKNhmTXbO3mK
+          type: function_call
+          id: fc_0c5e0092bf727402006b04db290bf887d285c142f24d733f90
+          namespace: get_exchange_rate
+        - type: function_call_output
+          call_id: call_vACBCmyMUkQ7LKNhmTXbO3mK
+          output: "USD/EUR: 0.92"
+        - role: assistant
+          id: msg_0c5e0092bf727402006b04db2a66cc87d298bc05a2adc065eb
+          content:
+          - text: USD/EUR is 0.92.
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+        - role: user
+          content: Now call get_exchange_rate for GBP/USD without searching again.
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        reasoning:
+          effort: low
+          summary: auto
+        tool_choice: auto
+        tools:
+        - name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1765"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0c5e0092bf727402006b04db2b303487d2a7ea562e7b305ba9
+        object: response
+        created_at: 1795480363
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795480364
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations:
+        - id: rs_0c5e0092bf727402006b04db2597f087d2b4cf3fb8dcfbbaa2
+          type: reasoning
+          action: removed
+          reason: model_mismatch
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.2-2025-12-11
+        moderation: null
+        output:
+        - id: rs_0c5e0092bf727402006b04db2be63887d2a9d3b1020af703c0
+          type: reasoning
+          content: []
+          encrypted_content: >-
+            gAAAAABrBNss7MJ5urrbaEa_EfDjPTDvlguEGIn4BWes0YnnGWkniusmBSTeU2txpdiUZuHHZT1U3VqhNzc4qyhe0siNdJmXS6i5ODYJ8lXtTZXg7oGkdRqEuE5WgxYc-Q3PS273jh6Wg6wLNaXxGlcNSTzXGC7dMPmQ5PwCwb-qIBeTP8fFw1SeB2FP0CHwJPEcjFK1tx7vzaPG0m1CngZxtWVZq_sBCZFY1uRk1iuiTOZwRGdRO1G7A5r9hYz88edAOTu5x_F7om0dskgRGfrOl977QupUymrQ4PzRZOQ3azmjXjJVIY6AYuUrjjxthpaE2EK3NosQ94v0hLaTamLs0xDl4E0VAc8PEdhT4Jn_GrB4zyD08NGOL4VpoyOZLojL56bpQ94nvzOhrc7NJ7NxuBEqVjLD-HBB4YjJpJ_v_1KDEtNuRq71oOMfkfu2Wx1RatCaVRfIBl4OPO8tJ-9iq3J6GxiG7N-pgNA-l4beWwApShRsnyHzNWUtxiukm7QU6K3KiHYGywCJ6fL3kjDBMBTo4neWCwZihCyP4BbRiFOkUUztv-kIrebbGcvsS1DqfDi_g_2ZjoLzfqUIQaHmyjmOJ2sv0iG7pUKN-3MIG8sQSsTNkj_tl97InIm4aZyZoRreuRdqDF5t6fDUHjOhhXhyYILkuiithXNJCqm-9Qy-uk3Dt_FK0oy0wGm-yvEIV1uHl283RMn7c_NOkN3Nz7vTot9gbGo8ZgvmwJjI1zt_hOg7CFborDrjLa5YUxEHtzYpbTdziKNclOnKcveTcCELXT3WmMhV7apN6ujA8GoEukMTyo0fQClFGuYk5decxwFQekspGyYGG8yYqUlp11zs7YloJPZRGVy_BLqY6OiQnSXKEAz769r7gXTIx6j3yOqBbA6uoBvrcIzLQ28bwqqLXNlxAQfJLJvmMXVPeq2E5quibiJNeWBZYamF2VBVGAgAJpsNGvjuTK1Qe79NIbxtsjc4acdXsXr37IwWUhKlvhVPyHI3vd9tvIVNULSjr7TbrLpM4KgD7LMaKDb1B09UStK-i3hr08h6fC-uD2f_3Ne8JBTui6Kujg37HrP6tSDC4T2_ThQ_yRU2KHHbywjiDtG3CS9Pz95R4Ue9zc0y40zmM57KB0aD4NhviritwmWgeTUavuzOIzf2FJ8rWF0GWgU416Sf-5fqBDMdZrTzkHXVB6-UC1bflG9GmDgXkzg6HOFv_qIErrl3g_Hfahgqov5RVa3BmflGox8OegsWcqWD6pzhhWXA8X7OaMdpOaGzN5Yz1Gxk-1KHFVvwOMDkSzqbvSm7Kb6ss2SNKgDw1uxWqyEsMCnyqoxwvQD_zc8OD0tNUl-iakk9a40pB5GoHJtFaA_cxld4nRoco_qhzbzPrYOc9akxPbZNby8JK479l5nXmur7ID55pbSUIBmFnEtY-6yZYe8msTnRx45NMedA_KkzDFoZmJf9QLI7m1KyXK4efH6nPpbbK2NIl67ywbktDHP6jo5jsiidEpODlZx7SPoK_06i5R1VO20mKEfJzeBHPTdWvjvC2SPjAmEN3HBOpUlPVTIGDhgWhWNQDkJV5T-R3CFnDHlPy1PbKaVnQx2cD0H09X7isrVmGdTxFVOTGrwbb6DbKigMm4heB8WL79uDYCLLMPPgAZWiLHmud6zClc6rAPIEMeOTkNBcMcnompL1VSJEDdFxc6BS4O3Deasn_AZO3YwJdOJxC3VS-3AtIqS-S5eJuXx_SKGRs0bZ6RXqBHqzkrCMQOrDQYotomE=
+          summary: []
+        - id: fc_0c5e0092bf727402006b04db2c522487d2852a8ba585a8c5f7
+          type: function_call
+          status: completed
+          arguments: "{\"pair\":\"GBP/USD\"}"
+          call_id: call_Hb6DUQd1wxB3YIGcNFx5XT1P
+          name: get_exchange_rate
+          namespace: get_exchange_rate
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: current_turn
+          effort: low
+          mode: standard
+          summary: detailed
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          name: search_tools
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        - type: namespace
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          tools:
+          - type: function
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 416
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 33
+          output_tokens_details:
+            reasoning_tokens: 10
+          total_tokens: 449
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-24T00:32:44.912358+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "6794"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.2
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the USD/EUR exchange rate?
+        - id: rs_0c5e0092bf727402006b04db2597f087d2b4cf3fb8dcfbbaa2
+          summary: []
+          encrypted_content: >-
+            gAAAAABrBNsnuK42yjaeS63x-jUBD2Cgt4lpQC4zrLg1J5S7GTSaHMHW04poaEHrfbf_Y8raqrdEc43js7SeyQmAyO3x_0RDLbqNo2dTkZhSAj8RGBBLwjB4Fv4Q2kQIR8sSwqCmJgDu9tIH1aqkFoItHxPcVtuTw5A-H6UF2ZV9BM3vct3FYWjiZkHcZrjfKB1RY9RLCeXPAfZgSFYJsVKGS2qSUMdsmnY3Ip2xoIyFCKSsdAQZd1BC6rpq0WobrO5jkDQrXKBJ8lVh69h3K2havIvHu1EEcSWTuFtHvjy3tAfRHLkhoE_FrN1uL1hrXzgDAZE5ct2fmDvdKSTjkFEk-zmK_8BKvqpjvsBIqUymXkxFq_lI85WsQtjZYAvLIfHwKMhgfW1pNH5H3rwnoX5aQLQoc9dXX9ByB2Em9wWcBfWdb2YuGVk8xBIeL0p7S2xYR2muOsBTpu2UJPPl2pTlUGb6OqBeZ-CRfPTfEuCbcCaHtjedUYU2Ysg70kH758OrV-aXAcPo32RjpRKGnR5gtl3IIRQeCO6mQ28WgrL2EQ5MxQ3YM7EpkqTiRMROxuYRm74RV-2NDEZZQDWZ6sfUCcmaWe6JeyMVkvvAD-eCD9bBJR2ZVgu7AAGhN-1tw51urgCUSk6AR_Rpr1tUDQ5QUdxoo7deSjTBmWLU7YNAWtWJGqOVab-ilVi6P13UrL2_CZhwz044YDwktraJMDJ4QcIqtFGhEzya34ywgcMgaIGZjRaQHw3mtxxvQNKVfVqDodXFgbNvGhAHGu79kxAYflQc-GRY_1j4SwzhVMK4Ij8TvFxLUQNcz7qyfywnLe9rWCZw-0PWON739XMg7CSH6PKHxanWhSWhGailvXW6SjeuHM5mo7uiZ5mbc2xpLsaHrtOUFPgBx774I53l77fzFZg5pZKH_hOTg7AYhmy-2rEEdE47XIpMFYN5X6OLCZ6HmWhKfWINVXTbYkwd4XxutgGN2OdxXNpxW-RTrBsS833F8fQJ95lBzIVP7VTT2nz_wk7TnYi4oeFfE9-YNs3uPODLiibB3J5W7iKUesjwkpFXstqn0ckwD-78WJl6yXpdvFGvNPFuhRyIs5RFiKtthk7ZbLiv9MkaVD89_7dsuPjTkQRYHUrXA3jkJIH6gVN9Y0uK45eJz1ecJ8lEpL_mV2NkEl0GgwdXJvapBx_H5EczmAGyhF_g55ToIFO4oVGcg2DRjVABFcQBVMN-_QH1jGJEvlF8XMRmcShb3925pZVuyxnQ4o56NVriVYLN34ks_j_yOUW8JGFhJASXsEk1r-etDoP98qG4U-zqr2E-aN6XxnGtaYlLQGeVWpH3oC--5F6amgd8NBlLoquNUpIdVu-roIf43eacbiQH8llOV9qSNj_7GuZwFtIVl6HfKTFdNUfRukme3jBHj9wdu8rQfL06Zwk6ujG_3tzt1-JjsYfkfHOGMdihc_xoY1ljmsYv_kk9Yh98DRgHaw7iPTu2qz1ILa5CYMjgNThE7Nspo5L-EH43448lhiIWgJ7nsCsucZVNmKOC2AHN94Up9A7BxVfQGN5zJFFvpjY6A69co0ACYfxv86rG9nRi9K_SSjysk2It-ikLSqxa3MOjftscjPcf3j8WpKT73Yba8VkssxfEdXb9kvFVJ0hREO_4bOSMOTwXZf0_siL_yfJh_MAgJgO6BV2S6JNYyPDyyuZh90mR2pVEWvdnRi6BFS4pez3-7FujlhWN_2_QvP3oFqgnM8MW2F0s_0nf30CqsIt0CxLc4aXz55jIgpRzgthz1eTIBb1nvoLGYTEP-woAw57AmLBUJ1O7px6yN2Yk9bKw_q2_PQhsGcs3gwi3KeonuAdjMlPuASYrb44waN-foo9i1c_8qyolA_wMJlgUOWcL6Ow1OXn57xbNlDZeawmKYQQEwU8QwLZfhzXPlfI1thMM6aKgRvhJynmCroXWaxEv9rmTpmIoZu2nj05rRBTVKd3hEq4jSmCYG2z4U-1DAYdAV4OvmfHlVcTyXpfwXc1JOfFo5pW7k-FwVuEP_xhPFlS57BQOoosI
+          type: reasoning
+        - name: search_tools
+          arguments: "{\"queries\":[\"get_exchange_rate exchange rate tool\",\"currency exchange rate get_exchange_rate\"]}"
+          call_id: call_1736020ee5cf42d7a014332868dda77b
+          type: function_call
+        - type: function_call_output
+          call_id: call_1736020ee5cf42d7a014332868dda77b
+          output: "{\"discovered_tools\":[{\"name\":\"get_exchange_rate\"}]}"
+        - type: additional_tools
+          role: developer
+          tools:
+          - name: get_exchange_rate
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            type: function
+            description: Look up the exchange rate for a currency pair.
+            strict: true
+        - name: get_exchange_rate
+          arguments: "{\"pair\":\"USD/EUR\"}"
+          call_id: call_vACBCmyMUkQ7LKNhmTXbO3mK
+          type: function_call
+          id: fc_0c5e0092bf727402006b04db290bf887d285c142f24d733f90
+          namespace: get_exchange_rate
+        - type: function_call_output
+          call_id: call_vACBCmyMUkQ7LKNhmTXbO3mK
+          output: "USD/EUR: 0.92"
+        - role: assistant
+          id: msg_0c5e0092bf727402006b04db2a66cc87d298bc05a2adc065eb
+          content:
+          - text: USD/EUR is 0.92.
+            type: output_text
+            annotations: []
+          type: message
+          status: completed
+        - role: user
+          content: Now call get_exchange_rate for GBP/USD without searching again.
+        - id: rs_0c5e0092bf727402006b04db2be63887d2a9d3b1020af703c0
+          summary: []
+          encrypted_content: >-
+            gAAAAABrBNss7MJ5urrbaEa_EfDjPTDvlguEGIn4BWes0YnnGWkniusmBSTeU2txpdiUZuHHZT1U3VqhNzc4qyhe0siNdJmXS6i5ODYJ8lXtTZXg7oGkdRqEuE5WgxYc-Q3PS273jh6Wg6wLNaXxGlcNSTzXGC7dMPmQ5PwCwb-qIBeTP8fFw1SeB2FP0CHwJPEcjFK1tx7vzaPG0m1CngZxtWVZq_sBCZFY1uRk1iuiTOZwRGdRO1G7A5r9hYz88edAOTu5x_F7om0dskgRGfrOl977QupUymrQ4PzRZOQ3azmjXjJVIY6AYuUrjjxthpaE2EK3NosQ94v0hLaTamLs0xDl4E0VAc8PEdhT4Jn_GrB4zyD08NGOL4VpoyOZLojL56bpQ94nvzOhrc7NJ7NxuBEqVjLD-HBB4YjJpJ_v_1KDEtNuRq71oOMfkfu2Wx1RatCaVRfIBl4OPO8tJ-9iq3J6GxiG7N-pgNA-l4beWwApShRsnyHzNWUtxiukm7QU6K3KiHYGywCJ6fL3kjDBMBTo4neWCwZihCyP4BbRiFOkUUztv-kIrebbGcvsS1DqfDi_g_2ZjoLzfqUIQaHmyjmOJ2sv0iG7pUKN-3MIG8sQSsTNkj_tl97InIm4aZyZoRreuRdqDF5t6fDUHjOhhXhyYILkuiithXNJCqm-9Qy-uk3Dt_FK0oy0wGm-yvEIV1uHl283RMn7c_NOkN3Nz7vTot9gbGo8ZgvmwJjI1zt_hOg7CFborDrjLa5YUxEHtzYpbTdziKNclOnKcveTcCELXT3WmMhV7apN6ujA8GoEukMTyo0fQClFGuYk5decxwFQekspGyYGG8yYqUlp11zs7YloJPZRGVy_BLqY6OiQnSXKEAz769r7gXTIx6j3yOqBbA6uoBvrcIzLQ28bwqqLXNlxAQfJLJvmMXVPeq2E5quibiJNeWBZYamF2VBVGAgAJpsNGvjuTK1Qe79NIbxtsjc4acdXsXr37IwWUhKlvhVPyHI3vd9tvIVNULSjr7TbrLpM4KgD7LMaKDb1B09UStK-i3hr08h6fC-uD2f_3Ne8JBTui6Kujg37HrP6tSDC4T2_ThQ_yRU2KHHbywjiDtG3CS9Pz95R4Ue9zc0y40zmM57KB0aD4NhviritwmWgeTUavuzOIzf2FJ8rWF0GWgU416Sf-5fqBDMdZrTzkHXVB6-UC1bflG9GmDgXkzg6HOFv_qIErrl3g_Hfahgqov5RVa3BmflGox8OegsWcqWD6pzhhWXA8X7OaMdpOaGzN5Yz1Gxk-1KHFVvwOMDkSzqbvSm7Kb6ss2SNKgDw1uxWqyEsMCnyqoxwvQD_zc8OD0tNUl-iakk9a40pB5GoHJtFaA_cxld4nRoco_qhzbzPrYOc9akxPbZNby8JK479l5nXmur7ID55pbSUIBmFnEtY-6yZYe8msTnRx45NMedA_KkzDFoZmJf9QLI7m1KyXK4efH6nPpbbK2NIl67ywbktDHP6jo5jsiidEpODlZx7SPoK_06i5R1VO20mKEfJzeBHPTdWvjvC2SPjAmEN3HBOpUlPVTIGDhgWhWNQDkJV5T-R3CFnDHlPy1PbKaVnQx2cD0H09X7isrVmGdTxFVOTGrwbb6DbKigMm4heB8WL79uDYCLLMPPgAZWiLHmud6zClc6rAPIEMeOTkNBcMcnompL1VSJEDdFxc6BS4O3Deasn_AZO3YwJdOJxC3VS-3AtIqS-S5eJuXx_SKGRs0bZ6RXqBHqzkrCMQOrDQYotomE=
+          type: reasoning
+        - name: get_exchange_rate
+          arguments: "{\"pair\":\"GBP/USD\"}"
+          call_id: call_Hb6DUQd1wxB3YIGcNFx5XT1P
+          type: function_call
+          id: fc_0c5e0092bf727402006b04db2c522487d2852a8ba585a8c5f7
+          namespace: get_exchange_rate
+        - type: function_call_output
+          call_id: call_Hb6DUQd1wxB3YIGcNFx5XT1P
+          output: "GBP/USD: 0.92"
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        reasoning:
+          effort: low
+          summary: auto
+        tool_choice: auto
+        tools:
+        - name: search_tools
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1275"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0c5e0092bf727402006b04db2cfecc87d290d57aceaff00665
+        object: response
+        created_at: 1795480365
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795480365
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations:
+        - id: rs_0c5e0092bf727402006b04db2597f087d2b4cf3fb8dcfbbaa2
+          type: reasoning
+          action: removed
+          reason: model_mismatch
+        instructions: Always use get_exchange_rate to answer exchange-rate questions.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.2-2025-12-11
+        moderation: null
+        output:
+        - id: msg_0c5e0092bf727402006b04db2d8a8c87d2b5bf294ef56225d1
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: GBP/USD is 0.92.
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: current_turn
+          effort: low
+          mode: standard
+          summary: detailed
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: >-
+            Search first for a standalone deferred tool when current tools and catalog
+            descriptions do not name the requested operation. A capability id used as an ordinary
+            domain word does not request that capability. This cannot find capability-owned
+            tools; load a listed capability by id instead. If no tools are found, do not
+            retry.
+          name: search_tools
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              queries:
+                description: >-
+                  List of search queries to match against tool names and descriptions. Use
+                  specific words likely to appear in tool names or descriptions to narrow down relevant
+                  tools. Each query is independently tokenized; matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+          strict: true
+        - type: namespace
+          description: Look up the exchange rate for a currency pair.
+          name: get_exchange_rate
+          tools:
+          - type: function
+            description: Look up the exchange rate for a currency pair.
+            name: get_exchange_rate
+            output_schema: null
+            parameters:
+              additionalProperties: false
+              properties:
+                pair:
+                  type: string
+              required:
+              - pair
+              type: object
+            strict: true
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 470
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 12
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 482
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-24T00:32:46.258047+00:00

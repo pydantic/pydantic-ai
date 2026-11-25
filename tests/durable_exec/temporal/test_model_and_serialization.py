@@ -23,10 +23,12 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CodeExecutionTool,
+    DeprecatedModelWarning,
     DocumentUrl,
     FilePart,
     FunctionToolset,
     ImageUrl,
+    ModelDeprecation,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -45,7 +47,7 @@ from pydantic_ai import (
     WebSearchTool,
     WebSearchUserLocation,
 )
-from pydantic_ai._framing import SYSTEM_VOICE_ANNOUNCEMENT
+from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -62,7 +64,9 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelRateLimitError,
     ModelRequestRejectedError,
@@ -975,6 +979,55 @@ async def test_oversized_model_response_payload(client: Client):
             )
 
 
+async def _answer_ok(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('ok')])
+
+
+deprecated_model_agent = Agent(
+    FunctionModel(
+        _answer_ok,
+        model_name='retiring-model',
+        profile={'deprecation': ModelDeprecation(source_url='https://example.com/retiring-model')},
+    ),
+    name='deprecated_model_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DeprecatedModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await deprecated_model_agent.run(prompt)
+        return result.output
+
+
+async def test_deprecated_model_warns_once_from_its_activity(client: Client):
+    """A deprecated model warns once per request, from the activity that sends it.
+
+    The workflow prepares the request too, to resolve the output mode and describe it on the span, and a warning
+    there would repeat on every replay.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DeprecatedModelWorkflow],
+        plugins=[AgentPlugin(deprecated_model_agent)],
+    ):
+        with pytest.warns(DeprecatedModelWarning) as record:
+            output = await client.execute_workflow(
+                DeprecatedModelWorkflow.run,
+                args=['hello'],
+                id=DeprecatedModelWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    assert output == 'ok'
+    assert [str(w.message) for w in record if w.category is DeprecatedModelWarning] == snapshot(
+        ["Model 'function:retiring-model' is deprecated by its provider. See https://example.com/retiring-model"]
+    )
+
+
 # ============================================================================
 # DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
 # media_type is properly serialized through Temporal activities
@@ -1145,6 +1198,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
+        '_output_submitter',  # live view of the workflow's graph state; output can only be submitted from workflow code
         'workspace',  # live facade cannot cross the activity boundary; only a concrete ref is optionally carried
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',
@@ -1849,6 +1903,35 @@ def test_temporal_model_context_window_follows_active_model():
         # An unregistered model ID resolves through profile inference, not the wrapped default's window.
         assert temporal_model.context_window == infer_model_profile('openai:gpt-5').get('context_window')
         assert temporal_model.context_window not in (None, 100)
+
+
+class _OutsidePrefixTestModel(TestModel):
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        return True
+
+
+def test_temporal_model_rewrite_instructions_outside_prefix_follows_active_model():
+    """The instruction window rule comes from the active model, so a run moved off a default that reads dynamic
+    instructions outside the cached prefix keeps the shared rule.
+
+    A raw model string has no model to ask, so it keeps the shared rule, as `Model` does.
+    """
+    temporal_model = TemporalModel(
+        _OutsidePrefixTestModel(model_name='default-model'),
+        activity_name_prefix='test__rewrite_instructions_outside_prefix',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': TestModel(model_name='alt-model')},
+    )
+
+    assert temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('alt'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('openai-responses:gpt-6.2-sol'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
 
 
 def test_temporal_model_model_id_follows_active_model():
@@ -3215,11 +3298,11 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
-    # Foundry serves no mid-conversation system messages, so the standing prompt also says what `<system>` means.
+    # Foundry serves no mid-conversation system messages, so the system prompt also says what `<system>` means.
     assert rendered_requests == snapshot(
         [
             {
-                'system': f'{SYSTEM_VOICE_ANNOUNCEMENT}\n\nleading',
+                'system': f'{lookalike_note_announcement(system_role=False)}\n\nleading',
                 'messages': [
                     {'role': 'user', 'content': [{'text': 'first', 'type': 'text'}]},
                     {'role': 'assistant', 'content': [{'text': 'answer', 'type': 'text'}]},
@@ -3234,6 +3317,63 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
             }
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'setting, standing_prompt',
+    [
+        # Both put the announcement ahead of the standing prompt: `'when_needed'` here because of the mid-conversation
+        # prompt, `'always'` because there is a standing prompt.
+        pytest.param(None, ['<announcement>', 'leading'], id='default'),
+        pytest.param('always', ['<announcement>', 'leading'], id='always'),
+        pytest.param('never', ['leading'], id='never'),
+    ],
+)
+def test_temporal_model_reprepare_applies_the_framing_announcement_setting(
+    setting: str | None, standing_prompt: list[str]
+) -> None:
+    """The activity's re-prepare restores `framing_announcement` from the request's settings.
+
+    The private parameter field that carries it to `prepare_messages` isn't serialized, so without that the activity
+    would prepare with the profile's default, `'when_needed'`, whatever the run asked for.
+    """
+
+    class AnnouncingFunctionModel(FunctionModel):
+        _announces_lookalike_notes = True
+
+    concrete = AnnouncingFunctionModel(
+        lambda _messages, _info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_inline_system_prompts=False),
+    )
+    temporal_model = TemporalModel(
+        TestModel(),
+        activity_name_prefix='test__reprepare_framing_announcement',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=object,
+    )
+    params = _RequestParams(
+        messages=[
+            ModelRequest(parts=[SystemPromptPart('leading'), UserPromptPart('first')]),
+            ModelResponse(parts=[TextPart('answer')]),
+            ModelRequest(parts=[SystemPromptPart('mid'), UserPromptPart('second')]),
+        ],
+        model_settings={'framing_announcement': setting} if setting else None,
+        # As the activity receives them: the private field doesn't survive serialization.
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=None,
+        model_id='anthropic:claude-opus-5',
+    )
+
+    prepared = temporal_model._reprepare_messages(params, concrete)  # pyright: ignore[reportPrivateUsage]
+
+    first = prepared[0]
+    assert isinstance(first, ModelRequest)
+    announcement = lookalike_note_announcement(system_role=False)
+    assert [
+        '<announcement>' if part.content == announcement else part.content
+        for part in first.parts
+        if isinstance(part, SystemPromptPart)
+    ] == standing_prompt
 
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
@@ -3824,6 +3964,11 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             id='http-request-rejected',
         ),
         pytest.param(
+            ModelHTTPError.for_category(ModelTimeoutError, status_code=408, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-timeout',
+        ),
+        pytest.param(
             ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
             'ModelAPIError',
             id='not-found',
@@ -3838,6 +3983,16 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
         ),
         pytest.param(ModelAPIError('gpt-test', 'boom'), 'ModelAPIError', id='base'),
+        pytest.param(
+            ModelEmptyResponseError('gpt-test', 'Streamed response ended without content or tool calls'),
+            'UnexpectedModelBehavior',
+            id='empty-response',
+        ),
+        pytest.param(
+            ModelInvalidResponseError('gpt-test', 'Invalid response', body='<html>Bad gateway</html>'),
+            'UnexpectedModelBehavior',
+            id='invalid-response',
+        ),
         pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
     ],
 )
@@ -3850,6 +4005,7 @@ def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIE
     assert raised.value.type == type_name
     rebuilt = _crossed(error)
     assert type(rebuilt) is type(error)
+    assert str(rebuilt) == str(error)
 
 
 def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():

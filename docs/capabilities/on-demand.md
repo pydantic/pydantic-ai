@@ -36,11 +36,11 @@ agent = Agent(
 On the first turn, the refund workflow is collapsed to a catalog entry. The model sees its base instructions, the framework-managed `load_capability` tool, and the catalog appended to the instructions:
 
 ```text
-<context id="capability:deferred_capabilities">
+<pyai:context id="capability:deferred_capabilities">
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
 - refunds: Use for refund eligibility, refund status, or processing a refund.
-</context>
-A later <context> element with the same id replaces the earlier one and stays in effect until replaced again.
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.
 ```
 
 The catalog is tagged so that when it changes between runs of a conversation, for example because a capability was added, the change is [appended](../agent.md#appending-instruction-changes) instead of rewriting the cached prompt.
@@ -53,7 +53,7 @@ The model does not receive the refund instructions or the `refund_status` tool d
 
 If the capability's instructions change after it loads — a dynamic [`@refunds.instructions`][pydantic_ai.capabilities.Capability.instructions] function returns something new, or the instructions in code are edited between runs of a conversation — the change is [appended](../agent.md#appending-instruction-changes) to message history as an update for the block `capability:refunds`, holding the capability's complete instructions, or a diff against the text the model last received when that's shorter. The earlier statement isn't rewritten, so the cached prompt is kept. A capability whose instructions become empty, or that the agent no longer has, is withdrawn the same way. A `before_model_request` hook that leaves a loaded capability's parts out of `instruction_parts` doesn't affect it: the instructions are delivered as they resolved, changes included. To withdraw the block, keep its parts with empty content. Every loaded capability's changes are tracked, whatever the [`on_change`][pydantic_ai.messages.InstructionPart.on_change] policy of its instructions: a loaded capability's instructions are never in the prefix, so there is nothing to rewrite. An instruction function that returns something different on every request, such as the current time, appends an update to every request.
 
-Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one. A `load_capability` tool call for a capability that is already active, or one that an earlier call in the same response already loads, is answered with a retry prompt, and its instructions aren't stated again.
+Already-loaded capabilities stay loaded for the rest of the run — the model never needs to re-open one. A `load_capability` tool call for a capability that is already active is answered with a successful result confirming it is already active, and its instructions aren't stated again; a call for one that an earlier call in the same response already loads is answered with a retry prompt. A call with an id that isn't an on-demand capability is answered with a retry prompt listing the ids the model can load.
 
 Searching cannot reveal a capability-owned tool: it stays hidden until its capability loads. In runs that also have searchable deferred tools, the catalog explicitly steers the model to load the capability rather than search for its tools; in capability-only runs — where no search surface exists — the catalog omits any mention of searching.
 
@@ -178,6 +178,7 @@ A capability-owned tool is hidden until its capability loads, and it is never se
 - **Anthropic `tool_addition_mode='by_reference'`** references the revealed name in a `tool_addition` block. A capability-only run pre-advertises the definition with `defer_loading=True`; a mixed run with a search surface withholds it, then appends the deferred definition in the same request as the reveal.
 - **OpenAI Responses `tool_addition_mode='with_definitions'`** carries the full revealed definition in an appended `additional_tools` input item and leaves it out of `tools`.
 - **No provider-native reveal-item support (`tool_addition_mode=None`)** announces `The following tool(s) are now available: {names}` when the schema is visible. A remote MCP server chooses its own tool names, so a tool whose name contains a framing tag such as `</system>` is still sent but not named in the announcement. It synthesizes a `search_tools` exchange only when a result must reveal a schema that is still withheld.
+- **[Decision models](../models/decision.md#on-demand-capabilities)** cannot fill a free-form `id`, so they offer each capability as a route of their own, described by its `description`, and leave the catalog out of the framing every question carries. The ids travel on [`ModelRequestParameters.deferred_capabilities`][pydantic_ai.models.ModelRequestParameters.deferred_capabilities], the step's catalog with each capability's description and whether it's active, not on the `load_capability` schema, so what a language model is sent stays the same whichever capabilities a run has.
 
 Add a standalone `defer_loading=True` tool to the same run and tool search comes back for it, since that one genuinely is searchable. Capability-owned tools stay off the wire entirely while a search surface is present, so search remains fully native — server-executed where the model supports it — and no query can surface a tool whose capability has not loaded.
 
@@ -223,7 +224,7 @@ def refund_status(ctx: RunContext, order_id: str) -> str:
 
 In addition to `@capability.tool` and `@capability.tool_plain`, you can pass existing functions or [`Tool`][pydantic_ai.tools.Tool] instances via `tools=`, or hand in one or more [toolsets](../toolsets.md) via `toolsets=`. For dynamic instructions, use the [`@capability.instructions`][pydantic_ai.capabilities.Capability.instructions] decorator. For a dynamic catalog entry, pass a callable as `description=`.
 
-`@capability.tool` and `@capability.tool_plain` mirror [`@agent.tool`](../tools.md#registering-function-tools-via-decorator) exactly, including the `defer_loading` argument. On a deferred capability that per-tool flag is a no-op — the capability gates all its tools as a unit — so it only has an effect on a non-deferred `Capability`, where it opts an individual tool into [tool search](../tools-advanced.md#tool-search) discovery.
+`@capability.tool` and `@capability.tool_plain` mirror [`@agent.tool`](../tools.md#registering-function-tools-via-decorator) exactly, including the `defer_loading` argument. On a deferred capability that per-tool flag is a no-op — the capability gates all its tools as a unit — so it only has an effect on a non-deferred `Capability`, where it opts an individual tool into [tool search](../tools-advanced.md#tool-search) discovery. To choose searchable tools in one place instead, use [`ToolSearch(tools=...)`][pydantic_ai.capabilities.ToolSearch.tools]; tools a deferred capability gates stay gated either way.
 
 For anything beyond instructions, function tools, toolsets, and descriptions — model settings, hooks, native tools, wrapper toolsets, or custom per-run logic — subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] directly. When subclassing, override [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description] if the catalog entry needs to vary by run.
 
@@ -604,7 +605,7 @@ Each file shows up in the model's catalog as its `id` plus `description`; the bo
 !!! note "Composes with"
     On-demand capabilities are orthogonal to the rest of the framework — they layer onto features you may already be using:
 
-    - **[Tool search](../tools-advanced.md#tool-search)** — capability-level `defer_loading=True` gates the whole bundle as a unit; for per-*tool* discovery, set tool-level `defer_loading=True` on a non-deferred capability or on `@agent.tool`.
+    - **[Tool search](../tools-advanced.md#tool-search)** — capability-level `defer_loading=True` gates the whole bundle as a unit; for per-*tool* discovery, select tools with [`ToolSearch(tools=...)`][pydantic_ai.capabilities.ToolSearch.tools], or set tool-level `defer_loading=True` on a non-deferred capability or on `@agent.tool`.
     - **[MCP servers](../mcp/client.md)** — the [`MCP`][pydantic_ai.capabilities.MCP] capability accepts `defer_loading=True`, hiding the server's full tool list until the model opts in.
     - **[Native tools](../native-tools.md)** — [`WebSearch`][pydantic_ai.capabilities.WebSearch], [`WebFetch`][pydantic_ai.capabilities.WebFetch], [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration], and [`MCP`][pydantic_ai.capabilities.MCP] all defer the same way as function tools (see [Cache implications](#cache-implications)).
     - **[Hooks](../hooks.md)** — lifecycle hooks declared on a deferred capability (or via a deferred [`Hooks`][pydantic_ai.capabilities.Hooks] capability) stay dormant until the model opts in.

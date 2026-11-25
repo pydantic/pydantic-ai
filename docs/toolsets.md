@@ -122,6 +122,15 @@ _(This example is complete, it can be run "as is")_
 
 A tool that joins the run after its first model request, however it got there, is recorded in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], unless no plainly visible tool from before is still present to keep stable. A new tool with `defer_loading=True` joins the [tool search](tools-advanced.md#tool-search) corpus instead. See [Tools that appear mid-run](tools-advanced.md#mid-run-tool-additions) for how each provider delivers it.
 
+!!! note "Sharing a `Tool` between toolsets and agents"
+    A toolset currently writes its defaults onto each [`Tool`][pydantic_ai.tools.Tool] instance it adds, so every other toolset or agent holding the same `Tool` lists it with them too ([#12617](https://github.com/pydantic/pydantic-ai/issues/12617)):
+
+    - `strict`, `include_return_schema`, `max_retries` and `durable`, when the `Tool` leaves them unset.
+    - `sequential`, `defer_loading` and `requires_approval`, when the toolset sets them to `True`.
+    - `metadata`, merged into the `Tool`'s own, whose keys take precedence.
+
+    To keep a toolset's defaults off other holders, give each toolset or agent its own `Tool`.
+
 ### Toolset Instructions
 
 A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
@@ -448,6 +457,8 @@ This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
+A prepare function can't change which capability a tool belongs to either: a definition it returns keeps the [`capability_id`][pydantic_ai.tools.ToolDefinition.capability_id] of the one it replaces, even if the function built a new `ToolDefinition`. The tool's content stays [held to that capability's authority](capabilities/custom.md#where-the-content-came-from).
+
 To chain transformations, call [`prepared()`][pydantic_ai.toolsets.AbstractToolset.prepared] on any toolset.
 
 ```python {title="prepared_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py"}
@@ -569,6 +580,10 @@ DeferredToolRequests(
         ),
     ],
     metadata={},
+    validated_args={
+        'pyd_ai_tool_call_id__temperature_celsius': {'city': 'a'},
+        'pyd_ai_tool_call_id__temperature_fahrenheit': {'city': 'a'},
+    },
 )
 """
 
@@ -593,7 +608,7 @@ _(This example is complete, it can be run "as is")_
 
 [`DeferredLoadingToolset`][pydantic_ai.toolsets.DeferredLoadingToolset] wraps a toolset and marks its tools for deferred loading, hiding them from the model until discovered via [tool search](tools-advanced.md#tool-search). This is useful for large toolsets (e.g. MCP servers with many endpoints) where loading all tool definitions into the model's context would be wasteful.
 
-[`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] also accepts `defer_loading=True` in its constructor to mark all tools for deferred loading. For other toolsets, call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] — pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
+[`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] also accepts `defer_loading=True` in its constructor to mark all tools for deferred loading. It applies to `Tool` instances too; only a function added with `defer_loading=False` opts out. For other toolsets, call [`.defer_loading()`][pydantic_ai.toolsets.AbstractToolset.defer_loading] — pass a list of tool names to hide only specific tools, or `None` (the default) to hide all.
 
 ```python {title="deferred_loading_toolset.py" lint="skip" test="skip"}
 from pydantic_ai import Agent
@@ -726,7 +741,7 @@ _(This example is complete, it can be run "as is")_
 
 If your agent needs to be able to call [external tools](deferred-tools.md#external-tool-execution) that are provided and executed by an upstream service or frontend, you can build an [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] from a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] containing the tool names, arguments JSON schemas, and descriptions.
 
-When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
+When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, the arguments as the model sent them, and a unique tool call ID, plus [`validated_args`][pydantic_ai.tools.DeferredToolRequests.validated_args] holding each call's arguments once validated against the tool's schema. These are expected to be passed to the upstream service or frontend that will produce the results.
 
 When the tool call results are received from the upstream service or frontend, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or an exception in case the tool call failed: a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] if the model should [try again](tools-advanced.md#tool-retries), or a [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] if the failure should be reported to the model as a [failed result](tools-advanced.md#tool-failed) (without consuming the tool's retry budget) so it can decide how to proceed. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 
@@ -878,7 +893,7 @@ Toolsets can be built dynamically ahead of each agent run or run step using a fu
 
 To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator.
 
-By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run.
+By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run. Either way, the toolset it returns gets the [per-run and per-step lifecycle](#per-run-and-per-step-lifecycle) hooks: `for_run` before it is entered, and `for_run_step` on every step.
 
 Instructions from the toolset the function returns are attributed to the dynamic toolset, so for them to use `on_change='append'`, give the decorator an `id`: `@agent.toolset(id='orders')`.
 
@@ -964,6 +979,76 @@ Toolsets support lifecycle hooks for per-run isolation and per-step state manage
 
 - [`for_run(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run] -- called once per agent run, before `__aenter__`. Return a fresh instance to isolate state between runs. Default: returns `self`.
 - [`for_run_step(ctx)`][pydantic_ai.toolsets.AbstractToolset.for_run_step] -- called at the start of each run step. Manage internal transitions (e.g. refreshing tool availability) in-place. Default: returns `self`.
+
+### Custom toolsets and durable execution
+
+The [durable execution](durable_execution/overview.md) integrations wrap the toolset types they know: [`MCPToolset`][pydantic_ai.mcp.MCPToolset] and dynamic toolsets on all three engines, and [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] tool calls on Temporal (an activity) and Prefect (a task), while DBOS runs function tools in workflow code unless you decorate them with `@DBOS.step`. A custom toolset is not one of those types, so its own `get_tools()` and `call_tool()` run in workflow or flow code rather than inside an activity, step, or task. Each engine's page has the details for function tools: [Temporal](durable_execution/temporal.md), [DBOS](durable_execution/dbos.md), [Prefect](durable_execution/prefect.md).
+
+If your custom toolset is pure, with tool listing and calling that perform no I/O and are deterministic given the run context, that's fine, and it works with all three engines as is.
+
+If it performs I/O, or anything else that shouldn't re-run when a workflow replays, recovers, or a flow retries, you're better off with one of these instead:
+
+- Move the I/O into ordinary function tools on a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset], registered with [`add_function()`][pydantic_ai.toolsets.FunctionToolset.add_function] or the [`@toolset.tool`][pydantic_ai.toolsets.FunctionToolset.tool] decorator, and let each engine integrate those tools its own way (see the engine's docs). Subclassing `FunctionToolset` and keeping the I/O in an overridden `get_tools()` does not help: no engine wraps a function toolset's listing, so it would still run in workflow or flow code. An overridden `call_tool()` is wrapped on Temporal and Prefect, whose activity and task call the toolset's own `call_tool()`, but not on DBOS.
+- Return it from a [dynamic toolset](#dynamically-building-a-toolset) or a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability]. The engines wrap those, and the dynamic toolset lists and calls the tools from the toolset it returns inside the durable unit, so both are checkpointed like any other tool I/O. The factory is re-resolved inside each durable unit, and with `per_run_step=False` also once in workflow or flow code, so it needs to be deterministic given the run's dependencies: construct the toolset there and leave the I/O to its `get_tools()` and tools.
+
+Wrapping the custom toolset in a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] is the smallest version of that second option:
+
+```python {title="durable_custom_toolset.py"}
+from typing import Any
+
+from pydantic import TypeAdapter
+from pydantic_core import SchemaValidator
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ToolsetTool
+
+celsius_validator = SchemaValidator(TypeAdapter(dict[str, float]).core_schema)
+
+
+class UnitConversionToolset(AbstractToolset[None]):
+    @property
+    def id(self) -> str | None:
+        return None  # (1)!
+
+    async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+        return {
+            'celsius_to_fahrenheit': ToolsetTool(
+                toolset=self,
+                tool_def=ToolDefinition(
+                    name='celsius_to_fahrenheit',
+                    parameters_json_schema={
+                        'type': 'object',
+                        'properties': {'celsius': {'type': 'number'}},
+                        'required': ['celsius'],
+                    },
+                ),
+                max_retries=0,
+                args_validator=celsius_validator,
+            )
+        }
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+    ) -> Any:
+        # A real toolset would do I/O here; kept pure so the example runs as is.
+        return tool_args['celsius'] * 9 / 5 + 32
+
+
+def unit_conversion_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
+    return UnitConversionToolset()
+
+
+agent = Agent(
+    TestModel(),
+    deps_type=None,
+    toolsets=[DynamicToolset[None](unit_conversion_toolset, id='unit_conversion')],  # (2)!
+)
+```
+
+1. The dynamic toolset carries the `id` that names the durable units, so the inner toolset doesn't need one of its own.
+2. The `id` must be stable, since it names the activities, steps, or tasks that list and call these tools. Pass the `DynamicToolset` to the agent constructor rather than registering it with the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator: the decorator registers after the engine created its durable units, so a durable engine rejects it.
 
 ## Third-Party Toolsets
 
