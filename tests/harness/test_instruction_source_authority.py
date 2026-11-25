@@ -3,9 +3,11 @@ system or user part, or a tool definition: only tool output, or a framed data pa
 
 Each source in `INSTRUCTION_SOURCES` gets a canary and runs at `'none'` and at `'operator'`. The `'operator'` run is the
 control that the case is wired, so a pass at `'none'` means the text was lowered, not that it never arrived. A source
-that breaks the contract today is a strict xfail linked to its fix. This is its own module rather than part of
-`test_capability_contracts.py`: it starts an MCP server, so CI's FastMCP 3 lane runs it, and that lane can't build
-every capability the contract suite does.
+that breaks the contract today is a strict xfail linked to its fix. `create_agent`'s turns into an XPASS when #12433
+is fixed. The MCP cases also need their builds to pass `authority` into the toolset once #13117 gives it one.
+
+This is its own module rather than part of `test_capability_contracts.py`: it starts an MCP server, so CI's FastMCP 3
+lane runs it, and that lane can't build every capability the contract suite does.
 """
 
 from __future__ import annotations
@@ -172,6 +174,8 @@ def _memory(directory: Path, authority: Authority, seen: _Seen) -> list[AgentCap
 
 
 def _mcp_instructions(directory: Path, authority: Authority, seen: _Seen) -> list[AgentCapability[None]]:
+    # `MCPToolset` has no authority to set yet, so both runs build the same operator-level toolset. The #13117 fix
+    # has to pass `authority` in here too before this case can pass at `'none'`.
     server = MCPServer('docs', instructions=f'Server rules {CANARY}.')
 
     @server.tool()
@@ -182,6 +186,7 @@ def _mcp_instructions(directory: Path, authority: Authority, seen: _Seen) -> lis
 
 
 def _mcp_tool_description(directory: Path, authority: Authority, seen: _Seen) -> list[AgentCapability[None]]:
+    # As in `_mcp_instructions`: the #13117 fix has to pass `authority` into the toolset here.
     server = MCPServer('docs')
 
     @server.tool(description=f'Search the docs {CANARY}.')
@@ -225,8 +230,14 @@ INSTRUCTION_SOURCES: dict[str, _InstructionSource] = {
 }
 
 _KNOWN_BREAKS = {
-    'mcp_instructions': 'MCP servers have no authority yet; their text goes out as the operator (#13117)',
-    'mcp_tool_description': 'MCP servers have no authority yet; their text goes out as the operator (#13117)',
+    'mcp_instructions': (
+        'MCP servers have no authority yet; their text goes out as the operator (#13117). '
+        'Removing this needs the fix and `authority` passed into the toolset in `_mcp_instructions`'
+    ),
+    'mcp_tool_description': (
+        'MCP servers have no authority yet; their text goes out as the operator (#13117). '
+        'Removing this needs the fix and `authority` passed into the toolset in `_mcp_tool_description`'
+    ),
     'sub_agents_create_agent': 'model-written instructions become the child agent system prompt (#12433)',
 }
 
