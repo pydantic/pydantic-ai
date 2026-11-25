@@ -117,6 +117,8 @@ class Selection:
             return max(row, 0) * width + min(max(column, 0), width - 1)
 
         start, end = (index(cell) for cell in sorted((self.anchor, self.head)))
+        if start % width and frame.chars[start] == WIDE_TAIL:
+            start -= 1  # The right half of a double-width character holds no text; its left half does.
         if self.clicks > 1:
             within = _in_word if self.clicks == 2 else _any_cell
             start = _reach(frame, start, -1, rows=rows, joins=joins, within=within)

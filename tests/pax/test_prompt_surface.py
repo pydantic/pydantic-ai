@@ -794,6 +794,16 @@ def test_a_soft_wrap_before_a_double_width_character_copies_no_padding() -> None
     assert screen.surface.transcript_key('mouse', release(4, 2)) == 'ab日本語'
 
 
+def test_a_drag_from_the_right_half_of_a_double_width_character_keeps_it() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('日本語 text\n')
+    for report in (press(4, 1), drag(6, 1)):
+        screen.surface.transcript_key('mouse', report)
+    assert highlighted(screen.surface) == ['本語']
+    assert screen.surface.transcript_key('mouse', release(6, 1)) == '本語'
+
+
 def test_a_wrapped_line_copies_without_its_trailing_blanks() -> None:
     screen = Screen(width=5, height=8)
     screen.surface.paint(('ED',))
