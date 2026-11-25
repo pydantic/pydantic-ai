@@ -116,13 +116,16 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     CapabilitySource,
     DataCapabilityPart,
     InstructionCapabilityPart,
     LoadCapabilityReturnPart,
     OperatorSource,
     OperatorText,
+    RunInstructionSource,
     ToolResultSource,
+    ToolsetInstructionSource,
 )
 from pydantic_ai.models import (
     Model,
@@ -2392,6 +2395,37 @@ def test_cache_policy_normalizes_a_synthetic_capability_id_on_a_source():
 
     assert key_for('<fetcher:abc123>') == key_for('<fetcher:def456>')
     assert key_for('fetcher') != key_for('crawler')
+
+
+def test_cache_policy_keys_for_instruction_ids_are_pinned():
+    """Instruction sources' `kind` tag stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digests were computed before the tag existed; a model request's parameters carry its instruction parts' ids.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    ids = [
+        InstructionId(AgentInstructionSource(), name='persona'),
+        InstructionId(RunInstructionSource(), name='task'),
+        InstructionId(ToolsetInstructionSource('memory')),
+        InstructionId(CapabilityInstructionSource('memory'), name='usage'),
+    ]
+    part = InstructionPart(content='Keep notes short.', id=InstructionId(CapabilityInstructionSource('memory')))
+    parameters = ModelRequestParameters(instruction_parts=[part])
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    assert key_for(part) == snapshot('371a510820fa52497114a702b5fe1bcf')
+    assert key_for(parameters) == snapshot('a7303d336722ed24df27df4bca54d50f')
+    assert [key_for(id) for id in ids] == snapshot(
+        [
+            '5006ff5014df6944343041dd24711207',
+            'c71eb5db3f64fbc25e31531a0433cd26',
+            '0888bba0476c0180b3f2a7766bd379b7',
+            'd080d54547ecfe63be80e0edb1942c8c',
+        ]
+    )
 
 
 def test_cache_policy_normalizes_only_framework_tool_call_ids():

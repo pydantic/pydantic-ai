@@ -11,10 +11,10 @@ repository's main checkout, so its worktrees and subdirectories share it, while 
 submodule, a clone) gets its own. Outside a repository it is kept for the folder and covers its subfolders. In your
 home folder, or the filesystem root, it holds for the session only, so Pax asks again next time.
 
-TODO(#11837, #11838, #11839): harness `RepoContext`'s walk-up files, the `Skills` catalog and disk sub-agents don't
-read `Workspace.authority` yet, so they load as before in an untrusted folder; once they do, an untrusted folder's
-instruction files, skills and agents stop reaching system voice with no change here. TODO: a `/sandbox`
-conversation's workspace comes from the sandbox plugin, which doesn't take this decision yet.
+Harness `RepoContext` and `Skills` read `Workspace.authority`: an untrusted folder's instruction files and skills
+reach the model as the repository's, not in the instructions. TODO(#11839): disk sub-agents don't read it yet, so an
+untrusted folder's agents still load as before. TODO: a `/sandbox` conversation's workspace comes from the sandbox
+plugin, which doesn't take this decision yet.
 """
 
 import os

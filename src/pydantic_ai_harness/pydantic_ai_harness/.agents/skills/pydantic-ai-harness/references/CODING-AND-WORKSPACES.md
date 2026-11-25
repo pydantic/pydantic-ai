@@ -125,8 +125,9 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
   capabilities such as approval gates), up to 3 levels deep.
 - **The rule against unrequested delegation is GPT-only:** `Coder` tells the model not to call
   `delegate_task` unless the user or `AGENTS.md` asks only when the model's profile sets
-  `delegates_unprompted` (OpenAI's GPT models, not gpt-oss). After a `ModelFallback` fallback to a model
-  without it, the rule is withdrawn by an appended note; a `FallbackModel` gets no rule (and a one-time
+  `delegates_unprompted` (OpenAI's GPT models, not gpt-oss). After a `ModelFallback` fallback or a later
+  run on another model, the new model is sent the instructions it would have had from the start (the
+  block rewrites the prefix; no withdrawal note); a `FallbackModel` gets no rule (and a one-time
   `UserWarning`: use the `ModelFallback` capability). To make another
   model hold back, pass `profile={'delegates_unprompted': True}` to its model or say so in `instructions=`.
 - **GPT-only `'max'` guidance:** at `autonomy='max'`, three more blocks follow the same per-model pattern:
@@ -711,6 +712,10 @@ trusted instructions, not `/` or all of home; repository links can select readab
 files beneath it. See
 [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/#shared-instruction-symlinks)
 for resolution, labels, and backend requirements.
+Below `'operator'` workspace authority, each walk-up file is read at `authority_of(path)` (an ancestor:
+its `path_authority` entry's level, else the workspace's), and only `'operator'` files go in the
+instructions: the working directory's own file is named for the model to read with its file tools, and
+an ancestor's file is sent once as a workspace-sourced `ContextFilePart` (again when it changes).
 
 `nested_traversal=True` (the default) surfaces the instruction files between the working directory and
 whatever `FileSystem` reads, lists, writes or edits in, shallowest first, each directory once while its note is in the

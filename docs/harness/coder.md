@@ -210,8 +210,8 @@ On OpenAI's GPT models, `Coder`'s instructions tell the agent not to spawn sub-a
 unless the user or `AGENTS.md` asks, the rule Codex gives its models for `spawn_agent`. Without it, GPT models delegate
 work nobody asked for, and Claude, measured the same way, doesn't. The rule goes to models whose profile sets
 `delegates_unprompted`, and follows the model handling each request: after a fallback with the
-[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without it, the
-model is told the rule was withdrawn. A `FallbackModel` gets no model-specific instructions, and `Coder` warns once
+[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability, or a later run on another
+model, the new model is sent the instructions it would have had from the start, with or without the rule. A `FallbackModel` gets no model-specific instructions, and `Coder` warns once
 when it runs on one. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 A delegate explores the project again from a fresh context, so delegation the user did not ask for multiplies tool
@@ -282,8 +282,9 @@ with the three sentences against 51.0 without them (measured with the classify s
 check; both are sent here), within that benchmark's single-run noise of about 5.6 points. Like the rule against
 unrequested delegation (see [Sub-agents](#sub-agents)), each is its own instruction block that follows the model
 handling each request: after a fallback with the
-[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without the flag, the
-model is told the sentences were withdrawn. Models without the flags get only the shared `'max'` guidance. See
+[`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability, or a later run on another
+model, the new model is sent the instructions it would have had from the start, with or without the sentences. Models
+without the flags get only the shared `'max'` guidance. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing
