@@ -100,11 +100,12 @@ class _Hold:
     """The events of one model response's stream that wait on a verdict.
 
     Text and thinking parts are screened at their end event. Tool-call parts are screened when the
-    stream ends, as a provider can still stream arguments to a call after another part started.
+    response or the stream ends, as a provider can still stream arguments to a call after another part started.
     A delta for a part already released is dropped, as the guard never saw it.
 
     The response a `ModelResponseEndEvent` carries is released as screened too: each screened part as the guard
-    left it, and without a part the guard never saw complete.
+    left it, and without a part the guard never saw complete. When that changes its parts, it loses its
+    `history_digest`, which covers the parts as the model sent them.
     """
 
     screen: _Screen
@@ -117,6 +118,11 @@ class _Hold:
 
     async def feed(self, event: AgentStreamEvent) -> list[AgentStreamEvent]:
         """Take `event` and return the events that can be released now."""
+        if isinstance(event, ModelResponseEndEvent):
+            # The response is complete, so its held tool calls are too: screen them now, so its end is made of
+            # this response's parts rather than those of a response streamed after it at the same indexes.
+            self.held.append(event)
+            return await self.finish()
         if isinstance(event, ModelResponseStartEvent):
             self.screened.clear()
         elif isinstance(event, PartStartEvent):
@@ -135,7 +141,7 @@ class _Hold:
         return self._release()
 
     async def finish(self) -> list[AgentStreamEvent]:
-        """Screen the held tool calls once the stream has ended, and return what can be released."""
+        """Screen the held tool calls once the response or the stream has ended, and return what can be released."""
         for index in self.streaming:
             self.held = _drop_part(self.held, index)
         self.streaming.clear()
@@ -187,7 +193,11 @@ class _Hold:
             for index, part in enumerate(event.response.parts)
             if not _is_part(part) or index in self.screened
         ]
-        return replace(event, response=replace(event.response, parts=parts))
+        if parts == event.response.parts:
+            return event
+        # The digest covers the parts as the model sent them, and would let a reader check a guess at what was
+        # redacted, so a copy whose parts the guard changed doesn't keep it.
+        return replace(event, response=replace(event.response, parts=parts, history_digest=None))
 
 
 @dataclass

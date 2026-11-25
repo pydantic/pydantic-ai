@@ -19,7 +19,10 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     ModelResponseEndEvent,
+    ModelResponseOrigin,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     PartDeltaEvent,
     PartEndEvent,
@@ -543,3 +546,69 @@ class TestStreamGuardrail:
             "PartEndEvent 0 text 'kept'",
         ]
         assert screened == [str(TextPart(content='kept'))]
+
+    async def test_a_held_response_end_keeps_its_own_screened_parts(self):
+        """An interrupted response's end, held behind its tool call, isn't rewritten with the next response's parts."""
+        first = ModelResponseOrigin(run_id='run', run_step=1)
+        second = ModelResponseOrigin(run_id='run', run_step=1, attempt=2)
+        call = ToolCallPart(tool_name='weather', args='{"city": "Paris"}', tool_call_id='call-1')
+        before = TextPart(content='first')
+        text = TextPart(content='replacement')
+        stream: list[AgentStreamEvent] = [
+            ModelResponseStartEvent(origin=first, model_name='a', provider_name=None),
+            PartStartEvent(index=0, part=before),
+            PartEndEvent(index=0, part=before),
+            PartStartEvent(index=1, part=call),
+            PartEndEvent(index=1, part=call),
+            ModelResponseEndEvent(origin=first, status='interrupted', response=ModelResponse(parts=[before, call])),
+            ModelResponseStartEvent(origin=second, model_name='b', provider_name=None, replaces=first.response_id),
+            PartStartEvent(index=0, part=text),
+            PartEndEvent(index=0, part=text),
+            ModelResponseEndEvent(origin=second, status='complete', response=ModelResponse(parts=[text])),
+        ]
+
+        async def events() -> AsyncIterator[AgentStreamEvent]:
+            for event in stream:
+                yield event
+
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        guardrail = StreamGuardrail(guard=lambda part: GuardrailResult.allow())
+        released = [event async for event in guardrail.wrap_run_event_stream(ctx, stream=events())]
+
+        ends = [event for event in released if isinstance(event, ModelResponseEndEvent)]
+        assert [(end.status, end.response.parts if end.response else None) for end in ends] == snapshot(
+            [
+                (
+                    'interrupted',
+                    [
+                        TextPart(content='first'),
+                        ToolCallPart(tool_name='weather', args='{"city": "Paris"}', tool_call_id='call-1'),
+                    ],
+                ),
+                ('complete', [TextPart(content='replacement')]),
+            ]
+        )
+
+    async def test_a_redacted_response_end_drops_the_history_digest(self):
+        """The digest covers the parts as the model sent them, so a copy with a part replaced can't keep it."""
+        origin = ModelResponseOrigin(run_id='run', run_step=1)
+        secret = TextPart(content='SSN 123')
+        kept = TextPart(content='fine')
+
+        async def events(response: ModelResponse) -> AsyncIterator[AgentStreamEvent]:
+            yield ModelResponseStartEvent(origin=origin, model_name='a', provider_name=None)
+            for index, part in enumerate(response.parts):
+                yield PartStartEvent(index=index, part=part)
+                yield PartEndEvent(index=index, part=part)
+            yield ModelResponseEndEvent(origin=origin, status='complete', response=response)
+
+        async def end_digest(response: ModelResponse) -> str | None:
+            ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+            guardrail = StreamGuardrail(guard=_redact_ssn)
+            released = [event async for event in guardrail.wrap_run_event_stream(ctx, stream=events(response))]
+            end = released[-1]
+            assert isinstance(end, ModelResponseEndEvent) and end.response is not None
+            return end.response.history_digest
+
+        assert await end_digest(ModelResponse(parts=[secret], history_digest='digest')) is None
+        assert await end_digest(ModelResponse(parts=[kept], history_digest='digest')) == 'digest'
