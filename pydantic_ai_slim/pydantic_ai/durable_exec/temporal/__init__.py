@@ -38,6 +38,7 @@ from ._event_stream import (
     workflow_stream_event_handler,
 )
 from ._external_events import fail_external_event, resolve_external_event
+from ._keep_partial import KeepPartialInterceptor
 from ._logfire import LogfirePlugin
 from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
@@ -208,6 +209,8 @@ class PydanticAIPlugin(SimplePlugin):
             name='PydanticAIPlugin',
             data_converter=_data_converter,
             workflow_runner=_workflow_runner,
+            # Tells a streamed model activity configured to keep its partial on a cancellation that it should.
+            interceptors=[KeepPartialInterceptor()],
             # `AgentRunError` covers deterministic run failures that can now surface in
             # workflow code, like `UsageLimitExceeded` and the `UnexpectedModelBehavior`
             # continuation ceilings raised by the workflow-side continuation loop: they

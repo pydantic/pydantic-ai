@@ -898,6 +898,16 @@ async def _replay_partial_cancellation(history: WorkflowHistory) -> None:
     ).replay_workflow(history)
 
 
+def _scheduled_model_activity(history: WorkflowHistory) -> Any:
+    [scheduled] = [
+        event.activity_task_scheduled_event_attributes
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+        and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__model_request_stream')
+    ]
+    return scheduled
+
+
 def _has_patch_marker(history: WorkflowHistory) -> bool:
     """Whether the run recorded the `pydantic_ai:stream_cancel_partial` patch marker."""
     return any(
@@ -911,7 +921,10 @@ async def test_temporal_run_cancelled_by_signal_loses_streamed_partial_by_defaul
     """By default, a run cancelled while its model activity streams stops at once and records an empty response.
 
     The run issues exactly the commands it did before streamed partials could be kept: it never checks the patch
-    marker, so none is recorded.
+    marker, so none is recorded, and it schedules the model activity with the same input (its parameters and deps)
+    and no header, so the activity fails on the cancellation as before rather than returning what it streamed. The
+    history can't show that last part: the workflow completes before the activity learns of the cancellation, from the
+    response to a heartbeat up to 24 seconds later, after which nothing is recorded.
     """
     messages, history = await _run_partial_cancellation_workflow(client, by_signal=True, opted_in=False)
 
@@ -923,6 +936,9 @@ async def test_temporal_run_cancelled_by_signal_loses_streamed_partial_by_defaul
     [wait] = _partial_cancellation_waits
     assert wait < timedelta(seconds=5)
     assert not _has_patch_marker(history)
+    scheduled = _scheduled_model_activity(history)
+    assert len(scheduled.input.payloads) == 2
+    assert dict(scheduled.header.fields) == {}
     await _replay_partial_cancellation(history)
 
 
@@ -932,6 +948,10 @@ async def test_temporal_run_cancelled_by_signal_keeps_streamed_partial_response(
 
     _assert_streamed_partial_kept(messages)
     assert _has_patch_marker(history)
+    # The same input, and a header that has the activity return what it streamed for the cancellation.
+    scheduled = _scheduled_model_activity(history)
+    assert len(scheduled.input.payloads) == 2
+    assert list(scheduled.header.fields) == ['pydantic-ai-keep-partial-on-cancel']
     await _replay_partial_cancellation(history)
 
 

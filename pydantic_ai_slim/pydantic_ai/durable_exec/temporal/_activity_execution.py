@@ -37,6 +37,8 @@ from temporalio import workflow
 from temporalio.workflow import ActivityConfig, ChildWorkflowConfig, LocalActivityConfig
 from typing_extensions import Unpack
 
+from ._keep_partial import marking_keep_partial
+
 CancelledResultHandler = Callable[[asyncio.CancelledError, Any], None]
 """Receives the cancellation and the result of an activity that completed after it was cancelled."""
 
@@ -56,10 +58,14 @@ async def execute_activity(
     `skips_wait_on_cancel` answers `True` for a cancellation, such as a deadline's, which doesn't keep that result,
     the cancellation is raised without waiting for the activity to acknowledge it.
     """
+    if on_cancelled_result is None:
+        handle = workflow.start_activity(activity, args=args, **config)
+    else:
+        # Only an activity whose result is handed over on a cancellation returns one for it.
+        with marking_keep_partial():
+            handle = workflow.start_activity(activity, args=args, **config)
     return await _await_with_single_cancel(
-        workflow.start_activity(activity, args=args, **config),
-        on_cancelled_result=on_cancelled_result,
-        skips_wait_on_cancel=skips_wait_on_cancel,
+        handle, on_cancelled_result=on_cancelled_result, skips_wait_on_cancel=skips_wait_on_cancel
     )
 
 

@@ -63,6 +63,7 @@ from ._event_stream import (
 )
 from ._external_events import TemporalExternalEventWaiter, ask_activity
 from ._function_toolset import gate_tool_instance_defaults
+from ._keep_partial import keeps_partial_on_cancel
 from ._operation_backend import (
     TemporalBoundOperation,
     TemporalOperationBackend,
@@ -620,11 +621,13 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         return workflow.patched(_DURABLE_COUNT_TOKENS_PATCH)
 
     def _returns_cancelled_stream_output(self) -> bool:
-        # Only for a cancellation the workflow requested: a worker shutting down, a pause, a reset or a heartbeat
-        # timeout ends the attempt for Temporal to retry, so the activity still fails.
+        # Only for a workflow that waits for the result (see `_keep_partial`), and for a cancellation it requested: a
+        # worker shutting down, a pause, a reset or a heartbeat timeout ends the attempt for Temporal to retry, so the
+        # activity still fails.
         details = activity.cancellation_details() if activity.in_activity() else None
         return (
-            details is not None
+            keeps_partial_on_cancel()
+            and details is not None
             and details.cancel_requested
             and not (details.worker_shutdown or details.paused or details.reset or details.timed_out)
         )
