@@ -1503,7 +1503,7 @@ class TestNestedTraversal:
                     UserPromptPart(
                         [
                             TextContent(
-                                '<pyai:data kind="repo_context.context_file" path="sub/AGENTS.md">NESTED BODY</pyai:data>',
+                                '<context_file path="sub/AGENTS.md">NESTED BODY</context_file>',
                                 metadata=legacy,
                             )
                         ]
