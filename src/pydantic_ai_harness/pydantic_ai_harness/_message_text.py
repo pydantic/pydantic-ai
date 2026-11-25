@@ -59,16 +59,25 @@ def user_prompt_text(part: UserPromptPart) -> str:
 
 
 def tool_return_text(part: ToolReturnPart) -> str:
-    """The tool return's content as text, with each file named by identifier rather than spelled out.
+    """The tool return's content as text, then its attachments', with each file named by identifier rather than spelled out.
 
     The reference is the one a text-only tool result gives the model in its place
     (`ToolReturnPart.model_response_str_and_user_content`).
     """
     if not part.files:
-        return str(part.content)
-    return ' '.join(
-        f'See file {item.identifier}.' if is_multi_modal_content(item) else str(item) for item in part.content_items()
-    )
+        text = str(part.content)
+    else:
+        text = ' '.join(
+            f'See file {item.identifier}.' if is_multi_modal_content(item) else str(item)
+            for item in part.content_items()
+        )
+    for attachment in part.attachments:
+        item = attachment.content
+        if isinstance(item, str | TextContent):
+            text = f'{text} {item if isinstance(item, str) else item.content}'
+        elif is_multi_modal_content(item):
+            text = f'{text} See file {item.identifier}.'
+    return text
 
 
 def capability_part_text(part: CapabilityPart) -> str:

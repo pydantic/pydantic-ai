@@ -151,13 +151,13 @@ metadata is dropped so notes cannot claim framework provenance. The answered eve
 the original response before validation, so observers must treat its note metadata as user input.
 
 With notes, `ask_user_result` returns a `ToolReturn`: `return_value` is the unchanged answer
-dictionary, and `content` sends the notes as `UserPromptPart` content rather than tool data.
+dictionary, and `content` carries the notes, which are kept with the tool's result as its attachments and sent
+after it as data.
 Each note is framed by `<answer_note header="...">` and `</answer_note>` text items. Headers and
 framing tags inside text are escaped; images remain multimodal items between those boundaries.
 The boundary items are `TextContent` with `metadata` containing
 `origin='user.pydantic-ai-harness.ask_user.answer_note.v1'`, `request_id` and `header`, so applications
 can identify the record without matching visible text.
-The user-content origin keeps notes classified as user turns during compaction.
 Without notes, the result is the answer dictionary or decline text.
 
 Annotate results with `AskUserResult` from `pydantic_ai_harness.ask_user`. To inspect wrapped

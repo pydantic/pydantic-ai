@@ -550,18 +550,17 @@ def assert_file_in_tool_return(messages: list[ModelMessage], file_type: FileType
     raise AssertionError(f'No {file_type} found in any ToolReturnPart')  # pragma: no cover
 
 
-def assert_file_in_user_prompt(messages: list[ModelMessage], file_type: FileType) -> None:
-    """Assert that file content of the expected type is present in a UserPromptPart.
+def assert_file_in_attachments(messages: list[ModelMessage], file_type: FileType) -> None:
+    """Assert that file content of the expected type is kept with a ToolReturnPart as an attachment.
 
-    For tool_return_content style, files are moved to a separate UserPromptPart
-    by design of ToolReturn.content. This verifies files ended up in user messages.
+    For tool_return_content style, files are part of the tool's result, but not of its return value,
+    by design of ToolReturn.content: they're sent after the tool results, framed as data.
     """
-    for upp in iter_message_parts(messages, ModelRequest, UserPromptPart):
-        if isinstance(upp.content, list):
-            for item in upp.content:  # pragma: no branch
-                if _is_file_type(item, file_type):  # pragma: no branch
-                    return
-    raise AssertionError(f'No {file_type} found in any UserPromptPart')  # pragma: no cover
+    for trp in iter_message_parts(messages, ModelRequest, ToolReturnPart):
+        for attachment in trp.attachments:  # pragma: no branch
+            if _is_file_type(attachment.content, file_type):  # pragma: no branch
+                return
+    raise AssertionError(f'No {file_type} found in any ToolReturnPart attachments')  # pragma: no cover
 
 
 def assert_multimodal_result(
@@ -571,11 +570,11 @@ def assert_multimodal_result(
 ) -> None:
     """Assert that multimodal content was handled correctly.
 
-    For 'tool_return_content' style, files go to a separate UserPromptPart.
+    For 'tool_return_content' style, files are kept with the ToolReturnPart as attachments.
     For 'direct' style, files should be in ToolReturnPart.
     """
     if return_style == 'tool_return_content':
-        assert_file_in_user_prompt(messages, file_type)
+        assert_file_in_attachments(messages, file_type)
     else:
         assert_file_in_tool_return(messages, file_type)
 

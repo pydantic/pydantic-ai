@@ -3,12 +3,12 @@ from __future__ import annotations
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import ToolReturn, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ToolReturn, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.tool_output_limits import Band, Passthrough, ToolOutputLimits, Truncate, TruncationStrategy
 
 
-async def _run(value: object, capability: ToolOutputLimits[object]) -> tuple[ToolReturnPart, list[UserPromptPart]]:
+async def _run(value: object, capability: ToolOutputLimits[object]) -> ToolReturnPart:
     agent = Agent(TestModel(call_tools=['output']), capabilities=[capability])
 
     @agent.tool_plain
@@ -19,11 +19,11 @@ async def _run(value: object, capability: ToolOutputLimits[object]) -> tuple[Too
     parts = [part for message in result.all_messages() for part in message.parts]
     returns = [part for part in parts if isinstance(part, ToolReturnPart)]
     assert len(returns) == 1
-    return returns[0], [part for part in parts if isinstance(part, UserPromptPart)]
+    return returns[0]
 
 
 async def _truncate(text: str, action: Truncate) -> str:
-    part, _ = await _run(text, ToolOutputLimits(bands=[Band(over=0, action=action)]))
+    part = await _run(text, ToolOutputLimits(bands=[Band(over=0, action=action)]))
     assert isinstance(part.content, str)
     return part.content
 
@@ -133,12 +133,12 @@ class TestKeepTailLines:
         capability: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=0, action=Truncate(TruncationStrategy.head, 200, keep_tail_lines=1))]
         )
-        part, prompts = await _run(ToolReturn(return_value=value, content=content, metadata={'id': 7}), capability)
+        part = await _run(ToolReturn(return_value=value, content=content, metadata={'id': 7}), capability)
         assert part.metadata == {'id': 7}
         assert isinstance(part.content, str) and part.content.endswith('value_end') and len(part.content) <= 200
-        assert len(prompts) == 2
-        assert isinstance(prompts[-1].content, str)
-        assert prompts[-1].content.endswith('content_end') and len(prompts[-1].content) <= 200
+        [attachment] = part.attachments
+        assert isinstance(attachment.content, str)
+        assert attachment.content.endswith('content_end') and len(attachment.content) <= 200
 
     async def test_serializer_ansi_and_token_threshold(self):
         text = 'body\n' * 200 + '\x1b[31mpid=123\nexit=0\x1b[0m'
@@ -154,7 +154,7 @@ class TestKeepTailLines:
             over_tokens=True,
             tokenizer=lambda text: 1,
         )
-        part, _ = await _run({'status': 'ok'}, capability)
+        part = await _run({'status': 'ok'}, capability)
         assert isinstance(part.content, str)
         assert part.content.endswith('pid=123\nexit=0') and '\x1b' not in part.content
         assert len(part.content) <= 200
@@ -163,5 +163,5 @@ class TestKeepTailLines:
         capability: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=0, action=Truncate(max_chars=1, then=Passthrough(), keep_tail_lines=1))]
         )
-        part, _ = await _run(b'raw\nbytes', capability)
+        part = await _run(b'raw\nbytes', capability)
         assert part.content == b'raw\nbytes'

@@ -102,8 +102,7 @@ The model can then tell the user, or try another tool. Like the framing, the not
 
 For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
 
-- Separate the structured return value from additional content sent to the model
-- Explicitly send content as a separate user message (rather than in the tool result)
+- Separate the structured return value from additional content sent to the model, such as a screenshot
 - Include additional metadata that shouldn't be sent to the LLM
 - Reveal deferred tools by name for the next model request
 
@@ -144,7 +143,8 @@ print(result.output)
 
 - **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result. Can include multimodal content directly (see [Tool Output](#function-tool-output) above).
 - **`tools`**: Names of tools marked with `defer_loading=True` that this call made available. Pydantic AI records them in a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart] immediately after this call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], in the same [`ModelRequest`][pydantic_ai.messages.ModelRequest]. The names remain revealed when history is resumed, while the current tool definitions still come from the agent.
-- **`content`**: Content sent as a **separate user message** after the tool result. Use this when you explicitly want content to appear outside the tool result, or when combining structured return values with rich content. It is sent as you wrote it — this is you adding user content deliberately, so it is not framed the way a file the model API couldn't take is (see [Where a returned file is sent](#tool-return-file-provenance)).
+- **`content`**: Content that's part of the tool's result but not of its return value, such as the screenshots above next to a summary. It's kept on the call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] as [`attachments`][pydantic_ai.messages.ToolReturnPart.attachments], and sent after the request's tool results as data framed on the user channel, behind a note naming the tool, or the [capability](capabilities/overview.md) that contributed it. Like the return value, the model reads it as information from the tool, not as the user's or the application's words, whatever it says. To have the model read something as the user's message or the application's instruction instead, enqueue it with [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue], which holds a capability's tool to the capability's [authority](capabilities/custom.md#capability-parts).
+- **`attachments`**: The `content` of the tools this tool called, each attributed to the call that produced it. Only a tool that runs other tools sets it, such as [Code Mode](harness/code-mode.md)'s `run_code`, so the content keeps naming the tool that produced it.
 - **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature 'artifacts'.
 
 This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic. For multimodal content that should be sent natively in the tool result (when supported by the model), return it directly from the tool function or include it in `return_value` (see [Tool Output](#function-tool-output) above).

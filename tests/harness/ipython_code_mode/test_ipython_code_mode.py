@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolResultAttachment,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -509,7 +510,18 @@ def book(*, trip: Trip, travellers: int) -> str:
             for part in message.parts
             if isinstance(part, UserPromptPart) and part.content != 'Run the code'
         ]
-        assert prompts == [['Note: first', 'Note: second']]
+        assert prompts == []
+        # Kept with the `run_code` result, each attributed to the nested call that produced it.
+        [run_code_return] = [
+            part
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        ]
+        assert run_code_return.attachments == [
+            ToolResultAttachment(content='Note: first', tool_call_id='call_0__1', tool_name='note'),
+            ToolResultAttachment(content='Note: second', tool_call_id='call_0__2', tool_name='note'),
+        ]
 
     async def test_tool_calls_count_toward_usage_limits(self, kernel: IPythonKernel) -> None:
         def ping() -> str:

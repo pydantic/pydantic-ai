@@ -3,8 +3,9 @@
 Each case's `calls` run with every capability it builds lowered to `with_authority('none')`, once as plain tool calls
 (the native route) and once through each other route in `ROUTES`. What a call returns travels in a carrier of the
 route's own, such as the `run_code` result or a background result, so the check compares everything else the calls
-put in the history: each part's type, source, capability id, authority and frame must be the native route's. The
-same tools must run, too, so a call a route never makes can't pass.
+put in the history, including the content a carrier keeps with what a call returned (`ToolReturnPart.attachments`),
+as the parts it reaches the model as: each part's type, source, capability id, authority and frame must be the native
+route's. The same tools must run, too, so a call a route never makes can't pass.
 
 A route that breaks this for a case is a known finding, marked `xfail(strict=True)` in `KNOWN` with what fixes it, so
 the fix fails the suite until its entry is removed. A route that doesn't apply to a case is skipped with its reason.
@@ -25,6 +26,7 @@ import pytest
 from _pytest.mark import ParameterSet
 
 from pydantic_ai import Agent, AgentRunResult, RunContext, ToolReturn
+from pydantic_ai._capability_parts import tool_result_attachment_parts
 from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools, ValidatedToolArgs
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -123,26 +125,17 @@ PROBES: dict[str, Calls] = {
 part to compare while few cases' calls do: one returns `ToolReturn.content`, the other calls `ctx.enqueue`."""
 
 _PULL = 'https://github.com/pydantic/pydantic-ai/pull/'
-_CONTENT = f"{_PULL}14327: a nested call's `ToolReturn.content` is attributed to the route's own tool"
 _ATTRIBUTE_FROM_TOOLSET = (
     f"{_PULL}14374: the call's capability is looked up from `ToolDefinition.capability_id`, which a prepare hook "
     'that rebuilds the definition leaves out'
 )
 _ISSUE = 'https://github.com/pydantic/pydantic-ai/issues/'
-_BACKGROUND_NAME = (
-    f'{_ISSUE}12391: `BackgroundTools` folds `ToolReturn.content` into its result frame, which keeps the frame but drops the '
-    'capability that wrote it (`background_tools/_capability.py`, `_format_background_result`)'
-)
 _PLAN_IN_CARRIER = (
     f"{_ISSUE}14441: `Planning` finds the plan a plan tool returned only in that tool's own `ToolReturnPart`, so after a plan tool "
     'runs inside another carrier it records the plan again in a `<plan_reminder>`'
 )
 
 KNOWN: dict[tuple[str, Route], tuple[str, type[Exception]]] = {
-    ('probe:tool_return_content', 'code_mode'): (_CONTENT, AssertionError),
-    ('probe:tool_return_content', 'ipython_code_mode'): (_CONTENT, AssertionError),
-    ('probe:tool_return_content', 'tool_bridge'): (_CONTENT, AssertionError),
-    ('probe:tool_return_content', 'background_tools'): (_BACKGROUND_NAME, AssertionError),
     ('probe:tool_return_content', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, AssertionError),
     ('probe:enqueued', 'prepare_hook'): (_ATTRIBUTE_FROM_TOOLSET, AssertionError),
     # A tool that emits capability events is refused once its definition no longer names its capability.
@@ -182,10 +175,19 @@ _CARRIERS = (ToolReturnPart, BackgroundToolResultPart)
 """Parts that carry what a call returned, which each route wraps its own way."""
 
 
+def _parts_seen(part: object) -> Iterator[Seen]:
+    """What the model sees of `part`: a carrier's attachments as the parts they reach the model as, or the part."""
+    if isinstance(part, ToolReturnPart):
+        for attachment_part in tool_result_attachment_parts(part.attachments, timestamp=part.timestamp):
+            yield _seen(attachment_part)
+    elif not isinstance(part, _CARRIERS):
+        yield _seen(part)
+
+
 def typed_history(messages: Sequence[ModelMessage]) -> list[Seen]:
     """What the model sees of each part the calls put in the history, besides the prompt and what each call returned."""
     requests = [message for message in messages if isinstance(message, ModelRequest)]
-    return [_seen(part) for request in requests[1:] for part in request.parts if not isinstance(part, _CARRIERS)]
+    return [seen for request in requests[1:] for part in request.parts for seen in _parts_seen(part)]
 
 
 @dataclass

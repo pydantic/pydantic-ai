@@ -27,10 +27,10 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     InstructionPart,
     ToolCallPart,
+    ToolResultAttachment,
     ToolReturn,
     ToolReturnContent,
     ToolReturnPart,
-    UserContent,
 )
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
@@ -733,9 +733,9 @@ class RunCodeExecution:
     budget_exhausted: bool = False
     nested_calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
     nested_returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
-    # Nested `ToolReturn.content` never enters the sandbox; it reaches the model on the `run_code` return.
-    # Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
-    user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
+    # Nested `ToolReturn.content` never enters the sandbox; it's kept with the `run_code` result, attributed to the
+    # nested call. Each call reserves its slot when it starts, so concurrent calls keep call order, as core does.
+    attachments: dict[str, list[ToolResultAttachment]] = field(default_factory=dict[str, list[ToolResultAttachment]])
     # Each nested call's error, by call ID in the order the calls settled. Monty hands back only an
     # uncaught error's text, so this is how the feed tells that a `ToolFailed` escaped the snippet.
     nested_errors: dict[str, Exception] = field(default_factory=dict[str, Exception])
@@ -753,13 +753,13 @@ class RunCodeExecution:
             )
         self.call_count += 1
         tool_call_id = f'{self.parent_tool_call_id}__{self.call_count}'
-        self.user_content[tool_call_id] = []
+        self.attachments[tool_call_id] = []
         return tool_call_id
 
     def finish(self, call_part: ToolCallPart, outcome: NestedCallOutcome) -> Any:
         """Record a nested call's outcome in history, then hand the sandbox its value or its error."""
         record_nested_call(
-            call_part, outcome, calls=self.nested_calls, returns=self.nested_returns, user_content=self.user_content
+            call_part, outcome, calls=self.nested_calls, returns=self.nested_returns, attachments=self.attachments
         )
         if outcome.error is not None:
             self.nested_errors[call_part.tool_call_id] = outcome.error
@@ -783,7 +783,7 @@ class RunCodeExecution:
 
         return ToolReturn(
             return_value=return_value,
-            content=[item for items in self.user_content.values() for item in items] or None,
+            attachments=[attachment for attachments in self.attachments.values() for attachment in attachments],
             metadata={
                 'code_mode': True,
                 'tool_calls': self.nested_calls,

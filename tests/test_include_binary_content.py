@@ -33,7 +33,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.messages import ModelMessagesTypeAdapter
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ToolResultAttachment
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
@@ -101,7 +101,7 @@ def image_returning_tool_agent(settings: InstrumentationSettings) -> Agent[None,
 
 
 def tool_return_agent(settings: InstrumentationSettings) -> Agent[None, str]:
-    """An agent whose tool wraps the image in a `ToolReturn`, in each of its value fields."""
+    """An agent whose tool wraps the image in a `ToolReturn`, in each of its value fields, a nested call's content included."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -115,7 +115,10 @@ def tool_return_agent(settings: InstrumentationSettings) -> Agent[None, str]:
 
     @agent.tool_plain
     def gen_image() -> ToolReturn:
-        return ToolReturn(return_value=thumbnailed, content=['here it is', IMAGE], metadata={'img': IMAGE})
+        nested = ToolResultAttachment(content=IMAGE, tool_call_id='nested', tool_name='render')
+        return ToolReturn(
+            return_value=thumbnailed, content=['here it is', IMAGE], attachments=[nested], metadata={'img': IMAGE}
+        )
 
     return agent
 
@@ -284,6 +287,9 @@ CASES = [
             {
                 'return_value': {**REDACTED_IMAGE, 'vendor_metadata': {'thumbnail': REDACTED_IMAGE}},
                 'content': ['here it is', REDACTED_IMAGE],
+                'attachments': [
+                    {'content': REDACTED_IMAGE, 'tool_call_id': 'nested', 'tool_name': 'render', 'capability_id': None}
+                ],
                 'metadata': {'img': REDACTED_IMAGE},
                 'tools': None,
                 'kind': 'tool-return',
@@ -636,7 +642,15 @@ def test_redacted_shapes_keep_every_field_but_the_data() -> None:
     dumped = ModelMessagesTypeAdapter.dump_python([ModelRequest(parts=[UserPromptPart(content=[IMAGE])])], mode='json')
     assert set(dumped[0]['parts'][0]['content'][0]) == set(REDACTED_IMAGE) | {'data'}
 
-    assert {f.name for f in fields(ToolReturn)} == {'return_value', 'content', 'metadata', 'tools', 'kind'}
+    assert {f.name for f in fields(ToolReturn)} == {
+        'return_value',
+        'content',
+        'attachments',
+        'metadata',
+        'tools',
+        'kind',
+    }
+    assert {f.name for f in fields(ToolResultAttachment)} == {'content', 'tool_call_id', 'tool_name', 'capability_id'}
     # `validated_args` is dropped on purpose: the redacted shape leaves it out, as the
     # `deferred_requests_validated_args` case pins.
     assert {f.name for f in fields(DeferredToolRequests)} == {

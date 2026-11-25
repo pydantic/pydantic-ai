@@ -31,10 +31,10 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolResultAttachment,
     ToolReturn,
     ToolReturnPart,
     ToolSearchReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -724,9 +724,8 @@ class TestTruncate:
         assert returns[0].metadata == {'k': 1}
         value = returns[0].content
         assert isinstance(value, str) and len(value) <= 200 and 'truncated' in value
-        prompts = [p for m in result.all_messages() for p in m.parts if isinstance(p, UserPromptPart)]
-        assert len(prompts) == 2
-        content = prompts[-1].content
+        [attachment] = returns[0].attachments
+        content = attachment.content
         assert isinstance(content, str) and len(content) <= 200 and 'truncated' in content
 
     async def test_strip_ansi_applied(self):
@@ -743,9 +742,13 @@ class TestTruncate:
 
     async def test_tool_return_envelope_preserved(self):
         cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=20))])
-        out = await _run(cap, ToolReturn(return_value='a' * 100, content='note', metadata={'k': 1}))
+        nested = ToolResultAttachment(content='nested note', tool_call_id='nested', tool_name='inner')
+        out = await _run(
+            cap, ToolReturn(return_value='a' * 100, content='note', attachments=[nested], metadata={'k': 1})
+        )
         assert isinstance(out, ToolReturn)
         assert out.content == 'note'
+        assert out.attachments == [nested]
         assert out.metadata == {'k': 1}
 
     async def test_dense_output_obeys_token_budget(self):

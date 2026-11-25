@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, cast
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai._tool_execution import tool_result_attachments
 from pydantic_ai.capabilities import ToolSearchFunc, keywords_search
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -20,7 +21,7 @@ from pydantic_ai.exceptions import (
     ToolRetryError,
     UserError,
 )
-from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturnPart
+from pydantic_ai.messages import ToolCallPart, ToolKind, ToolReturn, ToolReturnPart
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import WrapperToolset
@@ -244,7 +245,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         ctx.usage.tool_calls += reserved
         reserved *= 2
         try:
-            return await manager.handle_call(call)
+            result = await manager.handle_call(call)
         except (ApprovalRequired, CallDeferred) as exc:
             raise UserError(
                 f'Tool {name!r} raised `{type(exc).__name__}` behind `ToolBridge`, and no `HandleDeferredToolCalls` '
@@ -261,3 +262,13 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
+        if not isinstance(result, ToolReturn):
+            return result
+        # The bridged tool's content keeps naming that tool, and the capability that contributed it, rather than
+        # becoming `tool_call`'s own.
+        tool_return = cast(ToolReturn[Any], result)
+        tool_def = manager.get_tool_def(name)
+        attachments = tool_result_attachments(
+            tool_return, call=call, capability_id=tool_def.capability_id if tool_def is not None else None
+        )
+        return replace(tool_return, content=None, attachments=attachments)

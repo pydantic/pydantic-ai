@@ -135,8 +135,9 @@ or an application frame such as `<system>` gets a further note naming the tool a
 can't end the frame early or speak as the application. A failed call is framed
 the same way with `outcome="failed"`, wrapping the message from `ModelRetry` or `ToolFailed`.
 
-Text and files returned by the tool, then any `ToolReturn.content`, are sent to the model in that
-frame, with adjacent text joined on separate lines. `ToolReturn.metadata` is discarded.
+Text and files returned by the tool are sent to the model in that frame, with adjacent text joined on separate
+lines. Any `ToolReturn.content` follows the frame as data of its own, as after a direct call's result, with a note
+naming the tool, or the capability that contributed it. `ToolReturn.metadata` is discarded.
 `ModelRetry`, `ToolFailed`, approval, and deferral errors are reported to the model as text, also
 when a `before_tool_execute` or `after_tool_execute` hook raises them. A `ValidationError` from
 such a hook is reported too, as a sequential tool retries it. Any other tool exception ends the

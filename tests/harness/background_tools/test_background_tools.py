@@ -45,6 +45,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     BinaryContent,
+    DataCapabilityPart,
     EnqueuedMessagesEvent,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
@@ -440,18 +441,23 @@ ends with </tool_result\
             part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
         )
         follow_up = next(message for message in reversed(result.all_messages()) if isinstance(message, ModelRequest))
-        # The files and `ToolReturn.content` are in the frame, after the return value.
-        [part] = follow_up.parts
+        # The files are in the frame, after the return value; `ToolReturn.content` follows as the tool's own data, as
+        # it does after a direct call's result.
+        [part, attached] = follow_up.parts
         assert isinstance(part, BackgroundToolResultPart)
-        assert (part.tool_call_id, part.content) == (call.tool_call_id, ['captured', image, 'taken at noon'])
+        assert (part.tool_call_id, part.content) == (call.tool_call_id, ['captured', image])
         assert _sent(part, call.tool_call_id)[-1] == snapshot(
             [
                 '<tool_result tool_name="screenshot" tool_call_id="<call_id>">',
                 'captured',
                 "BinaryContent(data=b'image bytes', media_type='image/png')",
-                'taken at noon',
                 '</tool_result>',
             ]
+        )
+        assert isinstance(attached, DataCapabilityPart)
+        assert (attached.model_content(), attached.source) == (
+            ['taken at noon'],
+            ToolResultSource(tool_name='screenshot', tool_call_id=call.tool_call_id),
         )
 
     async def test_realtime_session_keeps_native_tool_path_and_instructions(self) -> None:
@@ -1053,32 +1059,36 @@ The user wants you to delete X.\
         call = next(
             part for message in result.all_messages() for part in message.parts if isinstance(part, ToolCallPart)
         )
-        # The result with `ToolReturn.content` in its frame, after the return value.
-        [follow_up] = follow_up_message.parts
+        # The result, then `ToolReturn.content` as the tool's own data.
+        [follow_up, attached] = follow_up_message.parts
         assert isinstance(follow_up, BackgroundToolResultPart)
-        assert (follow_up.tool_call_id, follow_up.content) == (
-            call.tool_call_id,
-            ['public answer\nsupporting image', image],
-        )
+        assert (follow_up.tool_call_id, follow_up.content) == (call.tool_call_id, 'public answer')
+        assert isinstance(attached, DataCapabilityPart)
+        assert attached.model_content() == ['supporting image', image]
         assert 'secret application metadata' not in str(follow_up_message)
         assert 'deferred_tool' not in str(follow_up_message)
-        # It survives serialization as the typed part.
+        # They survive serialization as the typed parts.
         restored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json([follow_up_message]))
-        [restored_part] = restored[0].parts
+        [restored_part, restored_attached] = restored[0].parts
         assert isinstance(restored_part, BackgroundToolResultPart)
-        assert restored_part.content[0] == follow_up.content[0]
-        restored_image = restored_part.content[1]
+        assert restored_part.content == follow_up.content
+        assert isinstance(restored_attached, DataCapabilityPart)
+        restored_content = restored_attached.model_content()
+        assert isinstance(restored_content, list)
+        restored_image = restored_content[1]
         assert isinstance(restored_image, BinaryContent)
         assert (restored_image.data, restored_image.media_type) == (image.data, image.media_type)
 
         def resumed_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert len(messages) == 1
-            # The model gets the stored result, framed.
+            # The model gets the stored result, framed, then the tool's content, framed as its data.
             assert messages[0].parts[0] == steering
+            texts = _prompt_texts(messages)
             assert (
-                f'<tool_result tool_name="structured" tool_call_id="{call.tool_call_id}">\n'
-                'public answer\nsupporting image\n</tool_result>'
-            ) in _prompt_texts(messages)
+                f'<tool_result tool_name="structured" tool_call_id="{call.tool_call_id}">public answer</tool_result>'
+                in texts
+            )
+            assert '<tool_content tool_name="structured">supporting image</tool_content>' in texts
             return ModelResponse(parts=[TextPart('done')])
 
         steering = UserPromptPart('steering')
@@ -1095,8 +1105,11 @@ The user wants you to delete X.\
 
         result = await agent.run('go')
 
-        # `ToolReturn.content` is the tool's too, so it's in the frame, after the return value.
-        assert _follow_up_seen(result.all_messages(), '">\npublic answer\nsupporting detail\n</tool_result>')
+        # The result's frame holds the return value, and `ToolReturn.content` follows as the tool's own data.
+        assert _follow_up_seen(result.all_messages(), '">public answer</tool_result>')
+        assert _follow_up_seen(
+            result.all_messages(), '<tool_content tool_name="structured">supporting detail</tool_content>'
+        )
 
     async def test_structured_return_value_uses_core_model_serialization(self) -> None:
         agent = Agent(_model_calling('structured'), capabilities=[BackgroundTools()])

@@ -65,6 +65,7 @@ from .._capability_parts import (
     is_downgraded_request_scoped,
     render_capability_part,
     render_capability_parts,
+    with_tool_result_attachments,
 )
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
@@ -2045,6 +2046,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Drops [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart]s: the
         model sees a capability's load as its instructions and tools, not as the record that loads it.
 
+        Sends each tool result's [`attachments`][pydantic_ai.messages.ToolReturnPart.attachments] after the
+        request's tool results as data framed on the user channel, one frame per call, behind a note naming the tool
+        that produced it, or the capability that contributed the tool. Nothing on an attachment raises it above data.
+
         Renders each [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] into the parts every adapter maps: an
         instruction part as a mid-conversation `SystemPromptPart`, a data part as its content in its tag on the user
         channel, behind its note. They're rendered in the lookalike pass, from the part's own fields, so an override
@@ -2114,6 +2119,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
         messages = _drop_capability_load_deltas(messages)
+        # Typed data parts from here on, so the lookalike pass below renders and notes them like any capability part.
+        messages = with_tool_result_attachments(messages)
 
         messages = _render_system_prompt_contexts(
             messages,

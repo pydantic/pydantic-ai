@@ -57,8 +57,8 @@ where to continue ([Querying a spill](#querying-a-spill)).
 
 ### Return-value and content handling
 
-A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
-separate, model-visible part which also persists in history. This capability measures and
+A `ToolReturn` carries a `return_value` and an optional `content` that core keeps with the
+tool's result in history and sends to the model as data after it. This capability measures and
 reduces both with the same bands, and they spill to distinct handles.
 
 A return value that holds files, such as the `[header, BinaryContent]` that `read_file` returns

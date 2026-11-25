@@ -460,11 +460,16 @@ def _build_session_tool_return(
 ) -> tuple[ToolReturnPart, str | Sequence[UserContent] | None]:
     """Translate a settled session tool result into its history part, rejecting mid-session reveals."""
     tool_def = tool_manager.get_tool_def(call_part.tool_name)
-    result_part, user_content, tools_added = build_tool_return_part(
+    result_part, attachments, tools_added = build_tool_return_part(
         tool_result,
         call=call_part,
         tool_kind=tool_def.tool_kind if tool_def else None,
     )
+    # TODO: send the attachments as data on the live channel, as `Model.prepare_messages` does for a run (a follow-up
+    # to https://github.com/pydantic/pydantic-ai/issues/12391). Until then a session sends them as user content, as
+    # it always did, a lone string as it was returned.
+    contents = [attachment.content for attachment in attachments]
+    user_content = contents[0] if len(contents) == 1 and isinstance(contents[0], str) else contents or None
     if tools_added:
         # Mirrors the graph (`_tool_execution._call_tool`), which rejects only a name owned by an
         # unloaded capability and treats every other name — a typo, an already-visible tool — as a

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from genai_prices.types import PriceCalculation
 
     from pydantic_ai.capabilities.abstract import AbstractCapability
-    from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, ModelResponse
+    from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, ModelResponse, ToolResultAttachment
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
@@ -314,6 +314,23 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> obje
         return f'Unable to redact binary content: {type(e).__name__}'
 
 
+def _redact_attachments(attachments: Sequence[ToolResultAttachment], active: set[int]) -> dict[str, object]:
+    """Redact a `ToolReturn`'s attachments, serialized only when there are any, as the type does."""
+    if not attachments:
+        return {}
+    return {
+        'attachments': [
+            {
+                'content': _redact_binary_content(attachment.content, active),
+                'tool_call_id': attachment.tool_call_id,
+                'tool_name': attachment.tool_name,
+                'capability_id': attachment.capability_id,
+            }
+            for attachment in attachments
+        ]
+    }
+
+
 def _redact_binary_content(value: Any, active: set[int]) -> object:
     from pydantic_ai._deferred import DeferredToolRequests
     from pydantic_ai._mcp_apps import redact_mcp_app_binary
@@ -342,6 +359,8 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
             return {
                 'return_value': _redact_binary_content(value.return_value, active),
                 'content': _redact_binary_content(value.content, active),
+                # Serialized only when there are any, as the type does.
+                **_redact_attachments(value.attachments, active),
                 'metadata': _redact_binary_content(redact_mcp_app_binary(value.metadata), active),
                 # Tool names, so never binary.
                 'tools': value.tools,
