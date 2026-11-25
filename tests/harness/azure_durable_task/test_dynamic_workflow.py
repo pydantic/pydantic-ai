@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-
 import pytest
 
 from pydantic_ai import Agent, Tool
@@ -15,7 +13,7 @@ with try_import() as imports_successful:
     from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow, WorkflowResourceLimits
 
     from ..dynamic_workflow._concurrent_sub_agents import orchestrator_model, summarize_model
-    from .worker import InMemoryWorker, agent_orchestrator, completed, registered_agent, schedule_agent
+    from .worker import InMemoryWorker, agent_orchestrator, completed, portal_threads, registered_agent, schedule_agent
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='durabletask or pydantic-monty not installed')
 
@@ -66,7 +64,6 @@ def test_workflow_script_resumes_on_a_new_worker_without_repeating_work(durable_
     """
     model_calls: list[str] = []
     tool_calls: list[str] = []
-    threads = threading.active_count()
 
     orchestrator, summarize = _agents(model_calls, tool_calls)
     with registered_agent(durable_worker, orchestrator), registered_agent(durable_worker, summarize):
@@ -85,7 +82,7 @@ def test_workflow_script_resumes_on_a_new_worker_without_repeating_work(durable_
         *[model_request] * 2,
     ]
     # Each dispatch closes its Monty worker and portal thread.
-    assert threading.active_count() == threads
+    assert portal_threads() == []
 
     replacement = InMemoryWorker()
     replacement.instances = durable_worker.instances
@@ -113,7 +110,7 @@ def test_workflow_script_resumes_on_a_new_worker_without_repeating_work(durable_
         'summarize__model.request',
         'orchestrator__model.request',
     ]
-    assert threading.active_count() == threads
+    assert portal_threads() == []
 
 
 # Pure computation: far longer than the limit below, with no sub-agent call to wait on.
@@ -131,8 +128,10 @@ def test_elapsed_time_limit_is_off_in_orchestrator_code(durable_worker: InMemory
     orchestrator, summarize = _agents([], [], script=_BUSY_SCRIPT, resource_limits=limits)
 
     # Outside an orchestration, the limit stops the script.
-    outside = Agent(
-        orchestrator_model(_BUSY_SCRIPT), capabilities=[DynamicWorkflow(agents=[summarize], resource_limits=limits)]
+    outside = Agent[None, str](
+        orchestrator_model(_BUSY_SCRIPT),
+        deps_type=type(None),
+        capabilities=[DynamicWorkflow[None](agents=[summarize], resource_limits=limits)],
     )
     assert 'time limit exceeded' in outside.run_sync('Hi').output.lower()
 
