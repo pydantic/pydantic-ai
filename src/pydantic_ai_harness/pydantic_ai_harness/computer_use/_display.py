@@ -155,6 +155,11 @@ class LiveViewDisplay(LazyDisplay):
         self._live_view = live_view
 
     async def live_view_url(self) -> str:
-        async with self._operation():
-            await self._start_unless_running()
-            return await self._live_view()
+        try:
+            async with self._operation():
+                await self._start_unless_running()
+                return await self._live_view()
+        except Exception:
+            # As in `_run_on_driver`: the display may have stopped, so the next call starts it again.
+            self._running = False
+            raise

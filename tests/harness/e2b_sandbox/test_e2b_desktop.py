@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -17,10 +18,11 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.computer_use import ComputerUse, SupportsLiveView
 from pydantic_ai_harness.e2b_sandbox import E2BSandbox, E2BSandboxBackend
+from tests._ports import reserve_loopback_port
 
 from ..computer_use._fake_x_display import FakeDisplay
 from ..computer_use.display_fakes import FAKE_SCREENSHOT, full_display, look_click_then_finish
-from .fake_e2b import FakeE2B
+from .fake_e2b import FakeE2B, Responder
 
 
 @pytest.fixture
@@ -220,24 +222,27 @@ class TestStartScript:
         assert not (stubs / 'xfce-starts').exists()
 
 
-async def test_the_live_view_starts_once_behind_a_password(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+def _with_live_view(display: FakeDisplay) -> Responder:
+    """Answer the live view's start script with the password the sandbox keeps, and everything else as `display`."""
+
+    def respond(command: str, timeout: float | None) -> tuple[str, str, int]:
+        return ('kept-pw1\n', '', 0) if 'x11vnc' in command else display(command, timeout)
+
+    return respond
+
+
+async def test_the_live_view_url_holds_the_password_the_sandbox_keeps(fake_e2b: FakeE2B, display: FakeDisplay) -> None:
+    fake_e2b.responder = _with_live_view(display)
     screen = E2BSandboxBackend(desktop=True).display
     assert isinstance(screen, SupportsLiveView)
 
     url = await screen.live_view_url()
-    assert await screen.live_view_url() == url
 
-    commands = fake_e2b.sandboxes[0].commands.calls
-    (start,) = [call for call in commands if 'x11vnc' in call.command]
-    assert start.envs is not None
-    password = start.envs['VNC_PASSWORD']
-    assert len(password) == 8
-    # The password reaches x11vnc through the env, so it isn't in the command line.
-    assert password not in start.command
-    assert '-viewonly' in start.command and '-passwd "$VNC_PASSWORD"' in start.command
-    assert url == (
-        'https://6080-sbx-1.e2b.app/vnc.html?autoconnect=true&view_only=true&resize=scale&password=' + password
-    )
+    assert url == 'https://6080-sbx-1.e2b.app/vnc.html?autoconnect=true&view_only=true&resize=scale&password=kept-pw1'
+    (start,) = [call for call in fake_e2b.sandboxes[0].commands.calls if 'x11vnc' in call.command]
+    # A new password reaches the script through the env, for a sandbox that has none yet.
+    assert start.envs is not None and len(start.envs['VNC_PASSWORD']) == 8
+    assert start.envs['VNC_PASSWORD'] not in start.command
     # The display started first, so x11vnc has a screen to share.
     assert len(display.starts) == 1
 
@@ -257,3 +262,106 @@ async def test_a_live_view_that_cannot_start_says_why(fake_e2b: FakeE2B, display
         match=r'^Could not start the live view in E2B sandbox sbx-1: the live view needs x11vnc and noVNC in /opt/noVNC$',
     ):
         await screen.live_view_url()
+    # The display may be what failed, so the next call starts it again.
+    with pytest.raises(WorkspaceError):
+        await screen.live_view_url()
+    assert len(display.starts) == 2
+
+
+_LIVE_VIEW_STUBS = {
+    'setsid': 'exec "$@"',
+    'pgrep': '[ -e "$bin/x11vnc-running" ]',
+    'x11vnc': 'echo "$*" >>"$bin/x11vnc-starts"',
+}
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
+class TestLiveViewScript:
+    """Runs the live view's start script, captured from the fake SDK, in a real bash with stub programs."""
+
+    @pytest.fixture
+    async def script(self, fake_e2b: FakeE2B, display: FakeDisplay) -> str:
+        scripts: list[str] = []
+        live_view = _with_live_view(display)
+
+        def respond(command: str, timeout: float | None) -> tuple[str, str, int]:
+            args = shlex.split(command)
+            if args[:2] == ['bash', '-c']:
+                scripts.append(args[2])
+            return live_view(command, timeout)
+
+        fake_e2b.responder = respond
+        screen = E2BSandboxBackend(desktop=True).display
+        assert isinstance(screen, SupportsLiveView)
+        await screen.live_view_url()
+        (script,) = scripts
+        return script
+
+    @pytest.fixture
+    def stubs(self, tmp_path: Path) -> Path:
+        bin_dir = tmp_path / 'bin'
+        bin_dir.mkdir()
+        for name, body in _LIVE_VIEW_STUBS.items():
+            (bin_dir / name).write_text(f'#!/bin/sh\nbin={bin_dir}\n{body}\n')
+            (bin_dir / name).chmod(0o755)
+        for name in ('cat', 'sleep', 'tail'):
+            tool = shutil.which(name)
+            assert tool is not None, name
+            (bin_dir / name).symlink_to(tool)
+        proxy = tmp_path / 'opt/noVNC/utils/novnc_proxy'
+        proxy.parent.mkdir(parents=True)
+        proxy.write_text(f'#!/bin/sh\necho "$*" >>{bin_dir}/novnc-starts\n')  # started in the background
+        proxy.chmod(0o755)
+        return bin_dir
+
+    def _run(self, script: str, stubs: Path, port: int) -> subprocess.CompletedProcess[str]:
+        root = stubs.parent
+        # Its files move into the test's directory, it checks a port of the test's, and it waits 0.3 seconds for noVNC.
+        for old, new in [('/tmp/', f'{root}/'), ('/opt/noVNC/', f'{root}/opt/noVNC/'), ('6080', str(port))]:
+            script = script.replace(old, new)
+        script = script.replace('-ge 100', '-ge 3')
+        env = {'PATH': str(stubs), 'HOME': str(root), 'VNC_PASSWORD': 'new-pw12'}
+        return subprocess.run(['/bin/bash', '-c', script], env=env, capture_output=True, text=True, timeout=30)
+
+    def test_a_sandbox_without_novnc_says_what_it_needs(self, script: str, stubs: Path) -> None:
+        (stubs.parent / 'opt/noVNC/utils/novnc_proxy').unlink()
+
+        result = self._run(script, stubs, reserve_loopback_port())
+
+        assert result.returncode == 1
+        assert (
+            result.stderr == 'the live view needs x11vnc and noVNC in /opt/noVNC, which the E2B desktop template has\n'
+        )
+
+    def test_a_first_call_keeps_the_password_and_starts_x11vnc_with_it(self, script: str, stubs: Path) -> None:
+        with socket.create_server(('127.0.0.1', 0)) as novnc:
+            result = self._run(script, stubs, novnc.getsockname()[1])
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == 'new-pw12\n'
+        password_file = stubs.parent / '.pydantic-ai-vnc-password'
+        assert password_file.stat().st_mode & 0o777 == 0o600
+        (x11vnc,) = (stubs / 'x11vnc-starts').read_text().splitlines()
+        assert '-viewonly' in x11vnc and f'-passwdfile {password_file}' in x11vnc
+        assert not (stubs / 'novnc-starts').exists()
+
+    def test_a_running_live_view_starts_nothing_and_keeps_its_password(self, script: str, stubs: Path) -> None:
+        (stubs.parent / '.pydantic-ai-vnc-password').write_text('old-pw12\n')
+        (stubs / 'x11vnc-running').touch()
+
+        with socket.create_server(('127.0.0.1', 0)) as novnc:
+            result = self._run(script, stubs, novnc.getsockname()[1])
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == 'old-pw12\n'
+        assert not (stubs / 'x11vnc-starts').exists()
+        assert not (stubs / 'novnc-starts').exists()
+
+    def test_novnc_that_never_serves_fails_the_call(self, script: str, stubs: Path) -> None:
+        (stubs / 'x11vnc-running').touch()
+
+        result = self._run(script, stubs, reserve_loopback_port())
+
+        assert result.returncode == 1
+        # Then the end of noVNC's log, which the stub doesn't write.
+        assert result.stderr.startswith('noVNC did not start:\n')

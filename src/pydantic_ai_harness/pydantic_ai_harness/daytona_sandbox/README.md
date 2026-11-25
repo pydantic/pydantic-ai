@@ -128,6 +128,7 @@ Daytona's default snapshot has a desktop with a terminal and Chromium. A custom 
 
 - The desktop runs a VNC server with no password on one of the sandbox's preview ports.
 - On a private sandbox, anyone who holds a preview token for that port can see the screen and control the mouse and keyboard.
+  [`live_view_url()`](../computer_use/#watch-the-screen) makes such a token, signed into a URL that works for an hour.
 - On a public sandbox, Daytona's preview links need no token, so anyone with the preview URL can see and control the desktop.
 - Where the snapshot's Chromium can't run its own sandbox, as in Daytona's default snapshot, the desktop start adds `--no-sandbox` to Chromium's flags through a file in `/etc/chromium.d/`. It writes the file as root or with passwordless `sudo`, on sandboxes it creates and on ones you attach with `ref=` or `sandbox=`. The file stays after the run, so a web page that breaks out of Chromium's renderer can reach the rest of the sandbox. A custom snapshot whose Chromium sandbox works is left alone.
 - Keep the sandbox private if others shouldn't see or control the desktop.

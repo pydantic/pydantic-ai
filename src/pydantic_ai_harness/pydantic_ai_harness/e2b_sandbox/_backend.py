@@ -166,24 +166,31 @@ _NOVNC_LOG = '/tmp/pydantic-ai-novnc.log'
 
 _NOVNC_PROXY = '/opt/noVNC/utils/novnc_proxy'
 
+_VNC_PASSWORD_FILE = '$HOME/.pydantic-ai-vnc-password'
+
 _START_LIVE_VIEW = (
+    'exec 9>/tmp/.pydantic-ai-live-view.lock; ! command -v flock >/dev/null || flock 9; '
     f'if ! command -v x11vnc >/dev/null || [ ! -x {_NOVNC_PROXY} ]; then '
     "echo 'the live view needs x11vnc and noVNC in /opt/noVNC, which the E2B desktop template has' >&2; exit 1; fi; "
-    'if pkill -x x11vnc; then while pgrep -x x11vnc >/dev/null; do sleep 0.1; done; fi; '
-    f'x11vnc -display {DISPLAY} -localhost -rfbport 5900 -viewonly -shared -forever -passwd "$VNC_PASSWORD" '
-    f'-bg -o {_VNC_LOG} >/dev/null 2>&1 || {{ tail -n 5 {_VNC_LOG} >&2; exit 1; }}; '
+    f'[ -s {_VNC_PASSWORD_FILE} ] || (umask 077; printf "%s\\n" "$VNC_PASSWORD" >{_VNC_PASSWORD_FILE}) || exit 1; '
+    'pgrep -x x11vnc >/dev/null || '
+    f'x11vnc -display {DISPLAY} -localhost -rfbport 5900 -viewonly -shared -forever -passwdfile {_VNC_PASSWORD_FILE} '
+    f'-bg -o {_VNC_LOG} >/dev/null 2>&1 9>&- || {{ tail -n 5 {_VNC_LOG} >&2; exit 1; }}; '
     f'serving() {{ (exec 3<>/dev/tcp/127.0.0.1/{_LIVE_VIEW_PORT}) 2>/dev/null; }}; '
-    f'serving || {{ setsid {_NOVNC_PROXY} --vnc localhost:5900 --listen {_LIVE_VIEW_PORT} >{_NOVNC_LOG} 2>&1 & }}; '
+    'serving || { '
+    f'setsid {_NOVNC_PROXY} --vnc localhost:5900 --listen {_LIVE_VIEW_PORT} >{_NOVNC_LOG} 2>&1 9>&- & '
     'i=0; until serving; do '
     f"if [ $i -ge 100 ]; then echo 'noVNC did not start:' >&2; tail -n 5 {_NOVNC_LOG} >&2; exit 1; fi; "
-    'sleep 0.1; i=$((i+1)); done'
+    'sleep 0.1; i=$((i+1)); done; }; '
+    f'cat {_VNC_PASSWORD_FILE}'
 )
-"""A bash script that serves the screen as a web page on `_LIVE_VIEW_PORT`, with the programs in E2B's desktop template.
+"""A bash script that serves the screen as a web page on `_LIVE_VIEW_PORT`, then prints the page's password.
 
-x11vnc shares the screen view-only and asks for the password in `VNC_PASSWORD`. Any x11vnc already running is
-stopped first, since it may hold another backend's password. noVNC turns the VNC stream into the web page. Both log to
-files, because E2B keeps a command open while a program it started in the background still holds the command's
-output.
+It starts x11vnc unless one runs, and noVNC unless the port answers, so a call after the X server restarted brings the
+page back. x11vnc shares the screen view-only. Its password is in a file only the sandbox user can read, made from
+`VNC_PASSWORD` the first time, so every backend on the sandbox gets the same URL. noVNC turns the VNC stream into the
+web page. Both log to files, because E2B keeps a command open while a program it started in the background still holds
+the command's output. They close the lock's file descriptor, or they would hold the lock for as long as they run.
 """
 
 
@@ -389,9 +396,6 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
             start_script=_START_DESKTOP,
             live_view=self._live_view_url,
         )
-        # Set by the first live view, with its password in it; the noVNC page is public, so the password is its lock.
-        self._live_view: str | None = None
-        self._live_view_lock = anyio.Lock()
         if self._display:
             self._env = {'DISPLAY': DISPLAY, **(self._env or {})}
         self._setsid: bool | None = None
@@ -861,28 +865,26 @@ class E2BSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem, 
         return self._display
 
     async def _live_view_url(self) -> str:
-        """The noVNC page of the screen, view-only, started the first time it is asked for.
+        """The noVNC page of the screen, view-only, started unless it is serving.
 
         E2B serves every port of a sandbox on a public URL, so the page asks for a random password, which the URL holds.
         """
-        async with self._live_view_lock:
-            if self._live_view is None:
-                # VNC's password check reads only the first 8 characters.
-                password = secrets.token_urlsafe(6)
-                sandbox = await self._sandbox_for_operation()
-                result = await self._run_argv(
-                    ['bash', '-c', _START_LIVE_VIEW],
-                    env={'VNC_PASSWORD': password},
-                    timeout=_LIVE_VIEW_START_TIMEOUT,
-                )
-                if result.exit_code != 0:
-                    raise WorkspaceError(
-                        f'Could not start the live view in E2B sandbox {sandbox.sandbox_id}: '
-                        f'{(result.stderr or result.stdout).strip()}'
-                    )
-                query = urlencode({'autoconnect': 'true', 'view_only': 'true', 'resize': 'scale', 'password': password})
-                self._live_view = f'https://{sandbox.get_host(_LIVE_VIEW_PORT)}/vnc.html?{query}'
-            return self._live_view
+        sandbox = await self._sandbox_for_operation()
+        # Used only the first time a backend asks for a live view of this sandbox. VNC reads only 8 characters.
+        result = await self._run_argv(
+            ['bash', '-c', _START_LIVE_VIEW],
+            env={'VNC_PASSWORD': secrets.token_urlsafe(6)},
+            timeout=_LIVE_VIEW_START_TIMEOUT,
+        )
+        if result.exit_code != 0:
+            raise WorkspaceError(
+                f'Could not start the live view in E2B sandbox {sandbox.sandbox_id}: '
+                f'{(result.stderr or result.stdout).strip()}'
+            )
+        query = urlencode(
+            {'autoconnect': 'true', 'view_only': 'true', 'resize': 'scale', 'password': result.stdout.strip()}
+        )
+        return f'https://{sandbox.get_host(_LIVE_VIEW_PORT)}/vnc.html?{query}'
 
     async def _stop_command(
         self, sandbox: e2b.AsyncSandbox, *, claim: str, pgid_file: str, identify: str, isolated: bool

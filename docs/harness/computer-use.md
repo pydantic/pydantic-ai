@@ -88,7 +88,7 @@ shows the screen live:
 
 | Sandbox | The page |
 |---|---|
-| [E2B](e2b-sandbox.md#give-the-agent-a-desktop) | noVNC, served from the sandbox. Anyone can reach the page, so the URL holds a random password, and the screen is view-only. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC`, which E2B's `desktop` template has. |
+| [E2B](e2b-sandbox.md#give-the-agent-a-desktop) | noVNC, served from the sandbox. Anyone can reach the page, so the URL holds a random password, which the sandbox keeps and gives every backend that asks. The screen is view-only. Each call starts x11vnc and noVNC again if they stopped. A custom `template` needs `x11vnc` and noVNC in `/opt/noVNC`, which E2B's `desktop` template has. |
 | [Daytona](daytona-sandbox.md#give-the-agent-a-desktop) | Daytona's noVNC, on a signed URL that works for an hour. The page sends no input, but anyone with the URL could. Call `live_view_url()` again for a new URL. |
 | [boxd](boxd-sandbox.md#give-the-agent-a-desktop) | The machine's desktop in boxd's console. Only a browser signed in to boxd can open it. |
 
