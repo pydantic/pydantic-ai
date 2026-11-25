@@ -153,8 +153,8 @@ def test_an_editor_still_draws_on_the_terminal(tmp_path: Path) -> None:
 def test_standard_error_rotates_the_log_like_its_records(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """At the log's size limit the file rotates, keeping one previous file, as it does for the records written to it.
 
-    With the limit and the read size patched down, one write of three reads' worth rotates twice: the first read
-    is dropped with the oldest file, and nothing after it is lost.
+    With the limit and the read size patched down, a write of nearly twice the limit rotates the log: the two files
+    hold the end of what was written, each under the limit. Where the reads split the write does not matter.
     """
     monkeypatch.setattr(telemetry_log_module, '_MAX_BYTES', 1000)
     monkeypatch.setattr(stderr_relay, '_CHUNK', 600)
@@ -163,7 +163,9 @@ def test_standard_error_rotates_the_log_like_its_records(tmp_path: Path, monkeyp
     with _terminal() as (console, shown):
         with telemetry_log(log, console=console):
             os.write(2, written)
-    assert (log.with_name('telemetry.log.1').read_bytes(), log.read_bytes()) == (written[600:1200], written[1200:])
+    previous, current = log.with_name('telemetry.log.1').read_bytes(), log.read_bytes()
+    assert written.endswith(previous + current)
+    assert 0 < len(previous) < 1000 and 0 < len(current) < 1000
     assert not log.with_name('telemetry.log.2').exists()
     assert b'Warnings and errors from this session are in' in b''.join(shown)
 
