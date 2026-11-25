@@ -60,16 +60,28 @@ pull request through `gh api` and only parsing what it reads (`touched_entries` 
 Review. Both run this file and the manifest as the base branch has them, never the pull request's
 copies.
 
+A durable-exec reviewer signs off by commenting on the pull request with the line `--signoff-marker`
+prints, `<!-- durable-exec-signoff fingerprint=<sha256> head=<commit> -->`, and removing the label.
+The fingerprint (`fingerprint` has the rules) covers the pull request's own added and removed lines
+in the core files whose gating entries it touches, and not the hunk headers and context lines that
+merging the base branch in shifts. While the label is off, the label job runs `--signed-off`, and
+leaves the label off when the newest marker comment by a user with write access to the repository
+carries the current fingerprint.
+
 Usage:
     uv run python scripts/durable_exec_contract.py          # exit 1 if the manifest is stale
     uv run python scripts/durable_exec_contract.py --write  # regenerate it
     uv run python scripts/durable_exec_contract.py --touched REPO PR BASE_SHA HEAD_SHA
+    uv run python scripts/durable_exec_contract.py --fingerprint REPO PR BASE_SHA HEAD_SHA
+    uv run python scripts/durable_exec_contract.py --signoff-marker REPO PR BASE_SHA HEAD_SHA
+    uv run python scripts/durable_exec_contract.py --signed-off REPO PR BASE_SHA HEAD_SHA
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import importlib.util
 import io
 import json
@@ -115,6 +127,13 @@ _REPOSITORY = re.compile(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+')
 _PULL_REQUEST = re.compile(r'[1-9][0-9]*')
 _COMMIT = re.compile(r'[0-9a-f]{40}')
 _CORE_FILE = re.compile(r'(?:[A-Za-z0-9_]+/)+[A-Za-z0-9_]+\.py')
+# A comment author's login, before it reaches a request URL.
+_LOGIN = re.compile(r'[A-Za-z0-9-]{1,39}')
+# The permissions `collaborators/{login}/permission` reports that let a user sign off.
+_WRITE_PERMISSIONS = frozenset({'admin', 'maintain', 'write'})
+
+# A sign-off is a comment line that is exactly this marker, so a quote of one (`> <!-- ...`) is not.
+_SIGNOFF_MARKER = re.compile(r'<!-- durable-exec-signoff fingerprint=([0-9a-f]{64}) head=([0-9a-f]{40}) -->')
 
 _HUNK_HEADER = re.compile(r'@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@')
 
@@ -1098,6 +1117,84 @@ class _Spans:
         }
 
 
+def fingerprint(files: Iterable[ChangedFile], touched: Mapping[str, object]) -> str:
+    """The sha256 of a pull request's own changes to the core files whose gating entries it touches.
+
+    `touched` is what `touched_entries` returns for `files`. The fingerprint covers each listed file whose path, or
+    previous path, is a key of `touched`: its paths, its status, and the lines its patch adds and removes, in order.
+    It leaves out hunk headers and context lines. GitHub diffs a pull request against its merge base, so merging the
+    base branch in moves only those, and the fingerprint stays the same until the pull request's own lines change.
+    Which files it covers follows `touched`, and so the manifest: a base branch change that gives a changed core file
+    its first touched gating entry, or takes away its last, changes the fingerprint too.
+
+    Raises `ValueError` for such a file whose patch GitHub left out, since its changed lines are unknown.
+    """
+    records: list[tuple[str, str | None, str, list[str]]] = []
+    for file in files:
+        if not {file.filename, file.previous_filename} & touched.keys():
+            continue
+        if file.patch is None:
+            raise ValueError(f'GitHub left out the patch of {file.filename!r}')
+        records.append((file.filename, file.previous_filename, file.status, _patch_lines(file.patch)))
+    records.sort(key=lambda record: record[0])
+    return hashlib.sha256(json.dumps(records).encode()).hexdigest()
+
+
+def _patch_lines(patch: str) -> list[str]:
+    """A patch's added and removed lines, in order: no file header before its first hunk, hunk header or context."""
+    lines = patch.split('\n')
+    start = next((number for number, line in enumerate(lines) if _HUNK_HEADER.match(line)), len(lines))
+    return [line for line in lines[start:] if line.startswith(('+', '-'))]
+
+
+def signoff_marker(digest: str, head: str) -> str:
+    """The comment line that signs off the durable-exec review of the changes with fingerprint `digest` at `head`."""
+    return f'<!-- durable-exec-signoff fingerprint={digest} head={head} -->'
+
+
+class Signoff(NamedTuple):
+    """A sign-off marker in a pull request comment, and who wrote it."""
+
+    fingerprint: str
+    head: str
+    login: str
+
+
+def parse_signoff(body: str, login: str) -> Signoff | None:
+    """The last line of a comment `body` that is exactly a sign-off marker, or `None` if no line is."""
+    found: Signoff | None = None
+    # Only `\n` ends a line: `splitlines` also splits on `\u2028` and the like, which leave a quoted marker unquoted.
+    # Leading spaces stay, so a marker quoted as an indented code block does not count either.
+    for line in body.split('\n'):
+        if marker := _SIGNOFF_MARKER.fullmatch(line.rstrip()):
+            found = Signoff(marker[1], marker[2], login)
+    return found
+
+
+def latest_signoff(repository: str, pull_request: str, gh: Callable[..., str]) -> Signoff | None:
+    """The sign-off in the newest of the pull request's comments that has one and whose author can write to the repo.
+
+    Only a `User` counts, never a bot, whose comments can carry text someone else wrote. Write access is the
+    author's current permission on the repository, not their association with the pull request.
+    """
+    pages = json.loads(gh('--paginate', '--slurp', f'repos/{repository}/issues/{pull_request}/comments?per_page=100'))
+    comments = sorted((comment for page in pages for comment in page), key=lambda comment: comment['id'])
+    can_write: dict[str, bool] = {}
+    for comment in reversed(comments):
+        user: dict[str, object] = comment.get('user') or {}
+        login, body = user.get('login'), comment.get('body')
+        if user.get('type') != 'User' or not isinstance(login, str) or not _LOGIN.fullmatch(login):
+            continue
+        if not isinstance(body, str) or (signoff := parse_signoff(body, login)) is None:
+            continue
+        if login not in can_write:
+            permission = gh(f'repos/{repository}/collaborators/{login}/permission', '--jq', '.permission')
+            can_write[login] = permission.strip() in _WRITE_PERMISSIONS
+        if can_write[login]:
+            return signoff
+    return None
+
+
 # Runs `gh`; the tests pass a fake.
 def _gh(*arguments: str) -> str:  # pragma: no cover
     """What `gh api` prints for `arguments`."""
@@ -1109,45 +1206,97 @@ def render_manifest(manifest: Manifest) -> str:
     return json.dumps(manifest, indent=2, sort_keys=True) + '\n'
 
 
+def _classify(
+    parser: argparse.ArgumentParser, arguments: Sequence[str], root: Path, gh: Callable[..., str], *, pin_head: bool
+) -> tuple[list[ChangedFile], Manifest] | None:
+    """The files pull request `arguments` lists and the gating entries they touch, or `None` if it cannot tell.
+
+    The files listing is always the pull request's live head. With `pin_head`, it also returns `None` unless the live
+    head is `HEAD_SHA` both before and after the listing, so a fingerprint is never computed for an unnamed head.
+    """
+    repository, pull_request, base, head = arguments
+    manifest: Manifest = json.loads((root / MANIFEST_PATH).read_text(encoding='utf-8'))
+    shapes = [(repository, _REPOSITORY), (pull_request, _PULL_REQUEST), (base, _COMMIT), (head, _COMMIT)]
+    shapes += [(core_file, _CORE_FILE) for core_file in manifest]
+    if invalid := [value for value, pattern in shapes if not pattern.fullmatch(value)]:
+        parser.error(f'refusing to request anything for {", ".join(map(repr, invalid))}')
+    merge_base = gh(f'repos/{repository}/compare/{base}...{head}', '--jq', '.merge_base_commit.sha').strip()
+    live_head = (f'repos/{repository}/pulls/{pull_request}', '--jq', '.head.sha')
+    heads = [gh(*live_head).strip()] if pin_head else []
+    pages = json.loads(gh('--paginate', '--slurp', f'repos/{repository}/pulls/{pull_request}/files?per_page=100'))
+    if pin_head:
+        heads.append(gh(*live_head).strip())
+    if any(live != head for live in heads):
+        print(f'cannot fingerprint: the pull request head is {heads}, not {head}', file=sys.stderr)
+        return None
+    files = [
+        ChangedFile(item['filename'], item['status'], item.get('previous_filename'), item.get('patch'))
+        for page in pages
+        for item in page
+    ]
+    if not _COMMIT.fullmatch(merge_base) or len(files) >= 3000:
+        # GitHub lists at most 3000 files, so a pull request at the cap may change core files it leaves out.
+        print(f'cannot classify: merge base {merge_base!r}, {len(files)} files listed', file=sys.stderr)
+        return None
+    raw = ('-H', 'Accept: application/vnd.github.raw+json')
+    touched = touched_entries(
+        manifest,
+        files,
+        lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={merge_base}'),
+        lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={head}'),
+    )
+    return files, touched
+
+
+def _pull_request_command(
+    parser: argparse.ArgumentParser, command: str, arguments: Sequence[str], root: Path, gh: Callable[..., str]
+) -> int:
+    """Run `--touched`, `--fingerprint`, `--signoff-marker` or `--signed-off` for pull request `arguments`."""
+    if (classified := _classify(parser, arguments, root, gh, pin_head=command != 'touched')) is None:
+        return 1
+    files, touched = classified
+    if command == 'touched':
+        print(render_manifest(touched), end='')
+        return 0
+    try:
+        digest = fingerprint(files, touched)
+    except ValueError as error:
+        print(f'cannot fingerprint: {error}', file=sys.stderr)
+        return 1
+    repository, pull_request, _, head = arguments
+    if command == 'fingerprint':
+        print(digest)
+    elif command == 'signoff_marker':
+        print(signoff_marker(digest, head))
+    elif (signoff := latest_signoff(repository, pull_request, gh)) is None or signoff.fingerprint != digest:
+        print(f'no sign-off covers fingerprint {digest}; the latest sign-off is {signoff}', file=sys.stderr)
+        return 1
+    else:
+        print(f'The durable-exec sign-off by {signoff.login} at {signoff.head} still covers fingerprint {digest}.')
+    return 0
+
+
+_PULL_REQUEST_COMMANDS = {
+    'touched': 'print the entries pull request PR touches that gate review; BASE_SHA is the base branch commit',
+    'fingerprint': "print the fingerprint of the pull request's own changes to the core files it touches entries of",
+    'signoff_marker': 'print the comment line that signs off the durable-exec review of those changes',
+    'signed_off': "exit 0 only if the latest sign-off by a user with write access has the pull request's fingerprint",
+}
+
+
 def main(argv: Sequence[str] | None = None, *, root: Path = REPO_ROOT, gh: Callable[..., str] = _gh) -> int:
-    """Check the committed manifest is current, rewrite it with `--write`, or print what `--touched` names."""
+    """Check the committed manifest is current, rewrite it with `--write`, or run a pull request command."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--write', action='store_true', help='regenerate the manifest instead of checking it')
-    mode.add_argument(
-        '--touched',
-        nargs=4,
-        metavar=('REPO', 'PR', 'BASE_SHA', 'HEAD_SHA'),
-        help='print the entries pull request PR touches that gate review; BASE_SHA is the base branch commit',
-    )
-    args = parser.parse_args(argv)
-    if args.touched:
-        repository, pull_request, base, head = args.touched
-        manifest: Manifest = json.loads((root / MANIFEST_PATH).read_text(encoding='utf-8'))
-        shapes = [(repository, _REPOSITORY), (pull_request, _PULL_REQUEST), (base, _COMMIT), (head, _COMMIT)]
-        shapes += [(core_file, _CORE_FILE) for core_file in manifest]
-        if invalid := [value for value, pattern in shapes if not pattern.fullmatch(value)]:
-            parser.error(f'refusing to request anything for {", ".join(map(repr, invalid))}')
-        merge_base = gh(f'repos/{repository}/compare/{base}...{head}', '--jq', '.merge_base_commit.sha').strip()
-        pages = json.loads(gh('--paginate', '--slurp', f'repos/{repository}/pulls/{pull_request}/files?per_page=100'))
-        files = [
-            ChangedFile(item['filename'], item['status'], item.get('previous_filename'), item.get('patch'))
-            for page in pages
-            for item in page
-        ]
-        if not _COMMIT.fullmatch(merge_base) or len(files) >= 3000:
-            # GitHub lists at most 3000 files, so a pull request at the cap may change core files it leaves out.
-            print(f'cannot classify: merge base {merge_base!r}, {len(files)} files listed', file=sys.stderr)
-            return 1
-        raw = ('-H', 'Accept: application/vnd.github.raw+json')
-        touched = touched_entries(
-            manifest,
-            files,
-            lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={merge_base}'),
-            lambda path: gh(*raw, f'repos/{repository}/contents/{path}?ref={head}'),
+    for command, description in _PULL_REQUEST_COMMANDS.items():
+        mode.add_argument(
+            f'--{command.replace("_", "-")}', nargs=4, metavar=('REPO', 'PR', 'BASE_SHA', 'HEAD_SHA'), help=description
         )
-        print(render_manifest(touched), end='')
-        return 0
+    args = parser.parse_args(argv)
+    for command in _PULL_REQUEST_COMMANDS:
+        if arguments := getattr(args, command):
+            return _pull_request_command(parser, command, arguments, root, gh)
     expected = render_manifest(build_manifest(root))
     manifest_path = root / MANIFEST_PATH
     if args.write:

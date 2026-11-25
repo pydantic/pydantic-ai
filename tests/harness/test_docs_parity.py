@@ -190,6 +190,7 @@ _CAPABILITY_PAGE_META = {
     'keenable-search.md': ('keenable', 'Keenable Search'),
     'macroscope.md': ('macroscope', 'Macroscope'),
     'browser-use.md': ('browser_use', 'Browser Use'),
+    'cdp-browser.md': ('cdp_browser', 'CDP Browser'),
     'compaction.md': ('compaction', 'Compaction'),
     'tool-output-limits.md': ('tool_output_limits', 'Tool Output Limits'),
     'tool-bridge.md': ('tool_bridge', 'Tool Bridge'),

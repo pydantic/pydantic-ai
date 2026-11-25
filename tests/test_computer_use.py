@@ -55,6 +55,13 @@ def test_a_computer_call_with_incomplete_arguments_has_no_actions() -> None:
     assert ComputerCallPart('computer', '{"actions": [').actions is None
 
 
+def test_a_computer_call_reads_the_confirmation_its_provider_asked_for() -> None:
+    flagged = ComputerCallPart('computer', {'actions': []}, provider_details={'confirmation': 'It sends a message.'})
+    assert flagged.confirmation == 'It sends a message.'
+    assert ComputerCallPart('computer', {'actions': []}).confirmation is None
+    assert ComputerCallPart('computer', {'actions': []}, provider_details={'confirmation': True}).confirmation is None
+
+
 def test_a_computer_result_reads_its_outcome_and_screenshot() -> None:
     request = ModelRequest(
         parts=[
