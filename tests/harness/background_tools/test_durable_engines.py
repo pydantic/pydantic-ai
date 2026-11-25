@@ -36,9 +36,8 @@ from ...conftest import try_import
 # module-level skip some of those helpers raise.
 with try_import() as temporal_imports:
     from temporalio import workflow
-    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.client import Client
     from temporalio.common import RetryPolicy
-    from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
@@ -301,25 +300,13 @@ def test_an_untested_cell_skips(monkeypatch: pytest.MonkeyPatch) -> None:
         _cell('BackgroundTools.runs_in_background', 'render')
 
 
-@pytest.fixture(scope='module')
-async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
-    async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
-        dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
-        download_dest_dir=temporal_dev_server_cache_dir(),
-    ) as env:
-        yield env
-
-
-@pytest.mark.temporal
-@pytest.mark.xdist_group(name='harness-temporal')
-@ignore_source_reads_left_open
 @dataclass
 class _NoDurability(AbstractCapability[None]):
     """Stands in for an engine where only the error handling is under test."""
 
 
 async def test_an_unexpected_error_propagates() -> None:
-    """An error that isn't the engine's refusal fails the test instead of becoming the observed outcome."""
+    """An error that isn't the engine's refusal fails the test instead of becoming the observed outcome; its runs raise before any request, so none to record."""
 
     async def run(agent: Agent[None, str], gate: _Gate) -> str:
         raise RuntimeError('unrelated')
@@ -333,13 +320,24 @@ async def test_an_unexpected_error_propagates() -> None:
         _check_sync('BackgroundTools.runs_in_background', 'aws_lambda', run_sync, _NoDurability)
 
 
-@pytest.mark.skipif(not temporal_imports() or not azure_imports(), reason='temporalio or durabletask not installed')
+@pytest.mark.skipif(not azure_imports(), reason='durabletask not installed')
 def test_engine_unwraps_ignore_other_errors() -> None:
     """Only the engine's wrapped `UserError` counts as a refusal; a table check, so no request to record."""
-    assert _temporal_user_error(RuntimeError()) is None
     assert _azure_user_error(RuntimeError()) is None
 
 
+@pytest.fixture(scope='module')
+async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
+    async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
+        dev_server_extra_args=['--dynamic-config-value', 'frontend.enableServerVersionCheck=false'],
+        download_dest_dir=temporal_dev_server_cache_dir(),
+    ) as env:
+        yield env
+
+
+@pytest.mark.temporal
+@pytest.mark.xdist_group(name='harness-temporal')
+@ignore_source_reads_left_open
 @pytest.mark.skipif(not temporal_imports(), reason='temporalio not installed')
 @parametrize_scenarios
 async def test_temporal(scenario: Scenario, temporal_env: WorkflowEnvironment) -> None:
@@ -373,17 +371,7 @@ async def test_temporal(scenario: Scenario, temporal_env: WorkflowEnvironment) -
         'temporal',
         run,
         lambda: TemporalDurability[None](activity_config=activity_config),
-        unwrap=_temporal_user_error,
     )
-
-
-def _temporal_user_error(error: Exception) -> str | None:
-    """The `UserError` that failed the workflow, which Temporal raises to the client as an `ApplicationError`."""
-    if isinstance(error, WorkflowFailureError):
-        cause = error.cause
-        if isinstance(cause, ApplicationError) and cause.type == 'UserError':
-            return cause.message
-    return None
 
 
 @pytest.mark.xdist_group(name='harness-dbos')
