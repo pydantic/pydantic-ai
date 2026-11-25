@@ -55,7 +55,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     sanitize_messages,
 )
-from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model
+from pydantic_ai.models import ModelRequestParameters, get_user_agent, infer_model, infer_model_profile
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import FileSearchTool, ImageGenerationTool, MCPServerTool, MemoryTool
 from pydantic_ai.profiles import ModelProfile
@@ -282,6 +282,16 @@ def test_interactions_profile_model_names(model_name: str, monkeypatch: pytest.M
     model = GoogleInteractionsModel(model_name)
     assert 'audio/mpeg' in model.profile.get('google_supported_mime_types_in_tool_returns', ())
     assert 'video/mp4' in model.profile.get('google_supported_mime_types_in_tool_returns', ())
+
+
+@pytest.mark.parametrize('model_name', ['gemini-3.8-flash', 'gemini-4-carbon'])
+def test_infer_model_profile_matches_model(model_name: str, monkeypatch: pytest.MonkeyPatch):
+    """The profile inferred from a `google-interactions:` id, as Temporal and Pax use it, is the model's own."""
+    monkeypatch.setenv('GOOGLE_API_KEY', 'test-key')
+    model = GoogleInteractionsModel(model_name)
+    inferred = infer_model_profile(f'google-interactions:{model_name}')
+    keys = ('supports_tool_return_schema', 'google_supported_mime_types_in_tool_returns', 'context_window')
+    assert {key: inferred.get(key) for key in keys} == {key: model.profile.get(key) for key in keys}
 
 
 async def test_settings_and_usage(

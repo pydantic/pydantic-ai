@@ -237,6 +237,8 @@ An MCP result's content is the server's MCP `CallToolResult` (`content`, `struct
 Inline images, audio and embedded binary resources in it appear as
 [`BinaryContent`][pydantic_ai.messages.BinaryContent] values. They respect `include_binary_content` in
 telemetry and are converted back to the MCP format when replayed from serialized message history.
+The rest of each such MCP content block, such as a resource's `uri`, is kept for that conversion in the value's
+`vendor_metadata['google_interactions_mcp_content']`.
 
 ### Interactions settings
 
