@@ -974,5 +974,5 @@ async def test_in_flight_is_refused(
 
 IN_FLIGHT_REFUSALS = {
     'sequential': '`ctx.in_flight` is not supported in this Absurd run, which executes tool calls sequentially: work running alongside the run could start steps in an order a replay does not reproduce. Run the work in the tool call itself instead.',
-    'parallel_ordered_events': '`ctx.in_flight` is not supported in a Absurd run yet: Absurd identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
+    'parallel_ordered_events': '`ctx.in_flight` is not supported in Absurd runs yet: Absurd identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
 }

@@ -1421,7 +1421,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
             if durability.engine_spec._steps_identified_by_start_order:  # pyright: ignore[reportPrivateUsage]
                 engine, unit = durability.engine_name, durability.durable_unit_noun
                 raise UserError(
-                    f'`ctx.in_flight` is not supported in a {engine} run yet: {engine} identifies each recorded {unit} '
+                    f'`ctx.in_flight` is not supported in {engine} runs yet: {engine} identifies each recorded {unit} '
                     f'by the order it starts in, so on recovery work running alongside the run could start its '
                     f'{durability.durable_unit_plural} in a different order and read the recorded result of another '
                     f'{unit} (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call '

@@ -4374,7 +4374,7 @@ async def test_dbos_rejects_in_flight_in_workflow_code_and_steps(dbos: DBOS) -> 
     await run_workflow()
     assert sorted(set(errors)) == snapshot(
         [
-            '`ctx.in_flight` is not supported in a DBOS run yet: DBOS identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
+            '`ctx.in_flight` is not supported in DBOS runs yet: DBOS identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
             "`ctx.in_flight` is not supported inside a durable step: the durable runtime replays the step's recorded result without re-running your code, so work it started or registered would be lost.",
         ]
     )

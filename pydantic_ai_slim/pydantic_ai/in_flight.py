@@ -648,8 +648,10 @@ class InFlightRegistry:
             while any(not self._is_in_wait(work) for work in self._draining()):
                 await self._changed.wait()
         finally:
+            # One entry per holder, found by identity: holders are lists, and two empty ones compare equal, while the
+            # same holder is listed once for each wait its work is in.
             for started in chain:
-                self._in_wait.remove(started)
+                del self._in_wait[next(i for i, held in enumerate(self._in_wait) if held is started)]
 
     def _is_in_wait(self, work: InFlightWork[Any]) -> bool:
         return any(work in started for started in self._in_wait)
