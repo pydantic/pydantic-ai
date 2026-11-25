@@ -115,15 +115,14 @@ class ImmediateDecisionCapability(AbstractCapability[None]):
 
     id = 'immediate_decision'
 
-    def __init__(
-        self, decision: ProtectedDecision, protected_actions: list[str], emit_errors: list[Exception] | None = None
-    ) -> None:
+    def __init__(self, decision: ProtectedDecision, protected_actions: list[str]) -> None:
+        self.emit_errors: list[Exception] = []
+
         async def protected_operation(ctx: RunContext[None]) -> str:
             try:
                 await ctx.emit(ImmediateDecisionEvent(operation='publish'))
             except Exception as exc:
-                if emit_errors is not None:
-                    emit_errors.append(exc)
+                self.emit_errors.append(exc)
                 raise
             if decision.allowed:
                 protected_actions.append('published')
@@ -421,8 +420,7 @@ async def test_immediate_capability_event_inline_control_respects_decision(denie
 async def test_immediate_capability_event_fails_before_protected_action() -> None:
     decision = ProtectedDecision()
     protected_actions: list[str] = []
-    emit_errors: list[Exception] = []
-    capability = ImmediateDecisionCapability(decision, protected_actions, emit_errors)
+    capability = ImmediateDecisionCapability(decision, protected_actions)
     runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
     agent = Agent[None, str](
         TestModel(call_tools=['protected_operation']),
@@ -439,6 +437,7 @@ async def test_immediate_capability_event_fails_before_protected_action() -> Non
         await run_agent_in_task(agent, runtime, context, usage=RunUsage())
 
     # The tool sees a `UserError`, and its task finishes with a permanent error rather than a retryable failure.
+    emit_errors = capability.emit_errors
     assert [type(exc) for exc in emit_errors] == [UnsupportedInChildTaskError]
     assert isinstance(emit_errors[0], UserError)
     task_name, result = context.results[-1]
