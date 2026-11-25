@@ -7,7 +7,7 @@
 # pngquant, oxipng, and the JetBrains Mono font. On macOS:
 #   brew install vhs pngquant oxipng && brew install --cask font-jetbrains-mono
 #
-# Every tape runs the checkout's `clai2` in a fixed-size VHS terminal against a throwaway HOME and
+# Every tape runs the checkout's `pax` in a fixed-size VHS terminal against a throwaway HOME and
 # XDG_CONFIG_HOME, with a clean environment: no API keys, sign-ins, saved sessions, or real paths
 # reach the images. Turns use the scripted `demo:tour` model from `demo_model.py`, a drop-in plugin,
 # so no model is called and every built-in plugin still loads. With TAPE names (such as `hero`),
@@ -17,14 +17,14 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
 images="$repo/src/pydantic_ai_pax/docs/images"
-[ -x "$repo/.venv/bin/clai2" ] || { echo "no $repo/.venv/bin/clai2: run make install" >&2; exit 1; }
+[ -x "$repo/.venv/bin/pax" ] || { echo "no $repo/.venv/bin/pax: run make install" >&2; exit 1; }
 tools=""
 for tool in vhs pngquant oxipng git; do
   found=$(command -v "$tool") || { echo "missing $tool; see the top of $0" >&2; exit 1; }
   tools="$tools:$(dirname "$found")"
 done
 
-root=$(mktemp -d "${TMPDIR:-/tmp}/clai2-shots.XXXXXX")
+root=$(mktemp -d "${TMPDIR:-/tmp}/pax-shots.XXXXXX")
 root=$(cd "$root" && pwd -P)
 # CLAI_SHOTS_KEEP=1 keeps the throwaway directory for debugging a tape.
 if [ -n "${CLAI_SHOTS_KEEP:-}" ]; then echo "keeping $root"; else trap 'rm -rf "$root"' EXIT; fi
@@ -33,7 +33,7 @@ project="$home/code/weather"
 mkdir -p "$home/.config/pydantic-clai2/plugins" "$project" "$root/shots"
 cp "$here/demo_model.py" "$home/.config/pydantic-clai2/plugins/demo_model.py"
 
-# A clean environment: only what the terminal, VHS, Git, and the checkout's `clai2` need. Your own
+# A clean environment: only what the terminal, VHS, Git, and the checkout's `pax` need. Your own
 # Git configuration, API keys, and keychain stay out.
 run() {
   env -i \
@@ -160,20 +160,20 @@ cat > "$home/bin/clai-demo" <<'EOF'
 set -e
 cd "$PROJECT"
 git checkout -q . && git clean -qfd
-# `clai2 config` refuses run settings, since the agent can run it too; this is the user's own setup.
+# `pax config` refuses run settings, since the agent can run it too; this is the user's own setup.
 python -c "from pydantic_ai_pax.config.settings_store import SettingsStore as S; s = S(); s.set('model', 'demo:tour'); s.reset('run.speculative_code_mode')"
-clai2 config reset display.theme > /dev/null
-exec clai2 "$@"
+pax config reset display.theme > /dev/null
+exec pax "$@"
 EOF
 chmod +x "$home/bin/clai-demo"
 run python -c "from pydantic_ai_pax.config.settings_store import SettingsStore; SettingsStore().set('model', 'demo:tour')"
 
 # Saved sessions for the browser, made headless in each project.
-(cd "$other" && run clai2 -p 'Add retry with backoff to the orders client' > /dev/null)
-(cd "$other" && run clai2 -p 'Add an index to speed up order search' > /dev/null)
-(cd "$project" && run clai2 -p 'Rewrite the README install section' > /dev/null)
-(cd "$project" && run clai2 -p 'Explain how a forecast is fetched' > /dev/null)
-(cd "$project" && run clai2 -p 'Write tests for the parser' > /dev/null)
+(cd "$other" && run pax -p 'Add retry with backoff to the orders client' > /dev/null)
+(cd "$other" && run pax -p 'Add an index to speed up order search' > /dev/null)
+(cd "$project" && run pax -p 'Rewrite the README install section' > /dev/null)
+(cd "$project" && run pax -p 'Explain how a forecast is fetched' > /dev/null)
+(cd "$project" && run pax -p 'Write tests for the parser' > /dev/null)
 
 # Every tape, in order: the browser goes first, so it shows only the sessions made above. Add new tapes here.
 tapes=("$@")

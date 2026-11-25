@@ -1574,9 +1574,11 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                     yield result_event
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks, msg=e.args[0] if len(e.args) != 0 else None)
+                    self._record_completed_results(tasks, function_parts, function_user_parts)
                     raise
                 except BaseException:
                     await cancel_and_drain(*tasks)
+                    self._record_completed_results(tasks, function_parts, function_user_parts)
                     raise
 
             if self.final_result is None:
@@ -1652,3 +1654,19 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             deferred_validated_args=self.deferred_validated_args,
         )
         self.ctx.state.output_retries_used += self.output_retries_increment
+
+    def _record_completed_results(
+        self,
+        tasks: list[asyncio.Task[tuple[int, _ToolCallPayload[NodeRunEndT]]]],
+        function_parts: dict[int, _FunctionCallParts],
+        function_user_parts: dict[int, _messages.ModelRequestPart],
+    ) -> None:
+        """Record payloads of tasks that finished before a sibling failed or the run was cancelled."""
+        for task in tasks:
+            if task.done() and not task.cancelled() and task.exception() is None:
+                index, payload = task.result()
+                if index not in function_parts and isinstance(payload, tuple):
+                    tool_parts, tool_user_content = payload
+                    function_parts[index] = tool_parts
+                    if tool_user_content:
+                        function_user_parts[index] = self._tool_user_part(self.tool_calls[index], tool_user_content)
