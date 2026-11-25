@@ -43,7 +43,7 @@ The response is cached in `pydantic-ai/version-check.json` under the user cache 
 
 The cache contains no identifying information and is never sent to the server.
 
-[Pax](harness/clai2.md), the coding agent for your terminal, asks the same endpoint for its newest release when it checks for an update, with the same `User-Agent` plus `pydantic-ai-pax/{version}`. With the check turned off, Pax never checks on its own; when you run `/update` or `pax update`, it asks PyPI directly.
+[Pax](harness/clai2.md), the coding agent for your terminal, asks the same endpoint for its newest release when it checks for an update, with the same `User-Agent` plus `pydantic-ai-pax/{version}`. With the check turned off, Pax never checks on its own; when you run `/update` or `pax update`, it asks PyPI (or, on the `main` update channel, GitHub) directly.
 
 ### Turning the version check off {#turning-the-version-check-off}
 
