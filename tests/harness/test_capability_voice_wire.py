@@ -155,7 +155,11 @@ _PAGE_HISTORY: list[ModelMessage] = [
             id='framed-data',
         ),
         pytest.param(
-            [{'role': 'user', 'content': '<page>'}, {'role': 'user', 'content': 'the page says hello'}],
+            [
+                {'role': 'user', 'content': '<page>'},
+                {'role': 'user', 'content': 'the page says hello'},
+                {'role': 'user', 'content': '</page>'},
+            ],
             None,
             id='framed-across-pieces',
         ),
@@ -227,6 +231,21 @@ _PAGE_HISTORY: list[ModelMessage] = [
             ],
             'reaches openai-chat as system',
             id='system-frame-across-pieces',
+        ),
+        pytest.param(
+            [{'role': 'user', 'content': '<page>'}, {'role': 'user', 'content': 'the page says hello'}],
+            'reaches openai-chat as user',
+            id='frame-never-closed',
+        ),
+        pytest.param(
+            [
+                {'role': 'user', 'content': '<page>'},
+                {'role': 'system', 'content': 'Be brief.'},
+                {'role': 'user', 'content': 'the page says hello'},
+                {'role': 'user', 'content': '</page>'},
+            ],
+            'reaches openai-chat as user',
+            id='frame-interrupted-by-another-voice',
         ),
         pytest.param([{'role': 'user', 'content': 'hi'}], 'reaches openai-chat in no voice', id='dropped'),
     ],

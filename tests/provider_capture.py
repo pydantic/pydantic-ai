@@ -126,25 +126,32 @@ class CapturedRequest:
         """
         voices: list[tuple[Voice, str]] = []
         open_frame: str | None = None
+        # The pieces of a frame that hasn't closed yet: framed once it closes, unframed user text if it never does.
+        pending: list[str] = []
         for voice, text in _VOICE_READERS[self.provider](self.body):
             stripped = text.strip()
+            if open_frame is not None and voice != 'user':
+                voices.extend(('user', piece) for piece in pending)
+                open_frame, pending = None, []
             if open_frame is None and _is_framed(stripped, 'system'):
                 voices.append(('system', text))
             elif voice != 'user':
                 voices.append((voice, text))
             elif open_frame is not None:
-                # Text after the closing tag in the same piece isn't framed, so the whole piece counts as unframed.
                 closing = f'</{open_frame}>'
-                closes = text.count(closing)
-                framed = closes == 0 or (closes == 1 and stripped.endswith(closing))
+                if (closes := text.count(closing)) == 0:
+                    pending.append(text)
+                    continue
+                voices.extend((_frame_voice(open_frame), piece) for piece in pending)
+                # Text after the closing tag in the same piece isn't framed, so the whole piece counts as unframed.
+                framed = closes == 1 and stripped.endswith(closing)
                 voices.append((_frame_voice(open_frame) if framed else voice, text))
-                if closes:
-                    open_frame = None
+                open_frame, pending = None, []
             elif (opened := _FRAME_OPEN.fullmatch(stripped)) is not None:
-                open_frame = opened.group(1)
-                voices.append((_frame_voice(open_frame), text))
+                open_frame, pending = opened.group(1), [text]
             else:
                 voices.append(('data' if _is_framed(stripped) else voice, text))
+        voices.extend(('user', piece) for piece in pending)
         return voices
 
     def voices_of(self, marker: str) -> list[Voice]:
