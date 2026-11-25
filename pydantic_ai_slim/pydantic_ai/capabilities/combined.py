@@ -375,10 +375,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         is answered by its children rather than routed back into its own override.
         """
         instructions: list[SourcedInstruction[AgentDepsT]] = []
+        lowered = {id(source) for source in self._lowered_instruction_sources()}
         for capability in self._ordered_instruction_sources():
-            if capability.defer_loading is not True:
+            # A capability below operator authority states its instructions in history instead.
+            if capability.defer_loading is not True and id(capability) not in lowered:
                 instructions.extend(capability._collect_instructions())
         return instructions
+
+    def _lowered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
+        # Composition merges a container's children into the enclosing one, and `with_authority` lowers each of them,
+        # so each child is judged on its own.
+        return [source for capability in self._dispatch for source in capability._lowered_instruction_sources()]
 
     def get_model_settings(self) -> ModelSettings | Callable[[RunContext[AgentDepsT]], ModelSettings] | None:
         # Collect settings in order, preserving each capability's position in the merge chain.

@@ -290,6 +290,13 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # otherwise flatten every leaf's contribution into one unaddressable part.
         return self.wrapped._collect_instructions()
 
+    def _lowered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
+        # A wrapper at operator authority passes its wrapped capability's instructions along, so any below it are the
+        # wrapped tree's.
+        if self.defer_loading is not True and self._effective_authority == 'operator':
+            return self.wrapped._lowered_instruction_sources()
+        return super()._lowered_instruction_sources()
+
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         return self.wrapped.get_model_settings()
 

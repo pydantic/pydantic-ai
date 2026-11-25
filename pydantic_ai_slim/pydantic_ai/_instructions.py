@@ -4,7 +4,9 @@ import warnings
 from collections import Counter
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Generic, TypeGuard
+from typing import TYPE_CHECKING, Any, Generic, TypeGuard
+
+from pydantic.alias_generators import to_snake
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -13,6 +15,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _UNSTATED_LOADS_KEY,  # pyright: ignore[reportPrivateUsage]
+    Authority,
     CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
@@ -707,6 +710,94 @@ def _restore_statements(
             history[position] = restored
 
 
+@dataclass
+class LoweredInstructions:
+    """Each lowered capability's instructions as the model last received them, and the authority they carried.
+
+    A capability whose authority is below `'operator'`, lowered by
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority] or its class's `authority`, has its
+    instructions, its own and its toolsets', delivered as one block, `capability:<id>`, that never enters the prefix.
+    Like a loaded capability's block (see `LoadedInstructionValues`), every statement of it is an
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] in history, carrying the block's authority:
+    the first on the request it first applies to, and one for each change since. Only the parts in the
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] are folded, so a compaction ends every
+    block, and the next request states it again.
+    """
+
+    values: dict[InstructionId, tuple[str, Authority]] = field(
+        default_factory=dict[InstructionId, tuple[str, Authority]]
+    )
+    """Each block's text and authority, by id. A withdrawn block isn't in it."""
+
+    @classmethod
+    def of(cls, messages: Sequence[ModelMessage]) -> LoweredInstructions:
+        """The values at the end of `messages`."""
+        lowered = cls()
+        for _, part in loaded_window_parts(messages):
+            if is_lowered_statement(part):
+                lowered.apply(part)
+        return lowered
+
+    def apply(self, change: InstructionDeltaPart) -> bool:
+        """Fold in a statement `is_lowered_statement` accepted, returning whether an earlier one was in effect."""
+        assert change.id is not None
+        restated = self.values.pop(change.id, None) is not None
+        if change.content is not None:
+            self.values[change.id] = (change.content, change.authority)
+        return restated
+
+
+def lowered_block_id(capability: AbstractCapability[Any]) -> str:
+    """The id a capability below `'operator'` authority states its instructions under, as `capability:<id>`.
+
+    Its `id`, or for a capability without one, its class's name in snake case in angle brackets, which a capability's
+    `id` can't take: stable across runs, unlike the key a run registers such a capability under. Capabilities of one
+    class without an `id` share the block.
+    """
+    return capability.id if capability.id is not None else f'<{to_snake(type(capability).__name__)}>'
+
+
+def is_lowered_statement(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
+    """Whether `part` states a block of instructions below `'operator'` authority, which never enters the prefix."""
+    return isinstance(part, InstructionDeltaPart) and part.authority != 'operator' and part.id is not None
+
+
+def update_lowered_instruction_history(
+    messages: Sequence[ModelMessage],
+    parts: Sequence[InstructionPart],
+    authorities: Mapping[str, Authority],
+    targets: Sequence[ModelRequest],
+) -> None:
+    """Record changes to the instructions of capabilities below `'operator'` authority on `targets`.
+
+    `authorities` are those capabilities, by the id their block is keyed beneath, and `parts` the instruction parts
+    this request resolved, after the `before_model_request` hooks; parts of other blocks are ignored. A block whose
+    joined text or authority differs from what the model last received is stated again, at the authority it has now,
+    and one in history that resolved to nothing, or whose capability is no longer lowered or configured, is withdrawn.
+    """
+    current = {
+        loaded_instruction_id(capability_id): (text, authorities[capability_id])
+        for capability_id, text in _loaded_texts(
+            [part for part in parts if loaded_part_capability_id(part) in authorities]
+        ).items()
+        if text is not None
+    }
+    recorded = LoweredInstructions.of(messages).values
+    changes = [
+        InstructionDeltaPart(id=instruction_id, content=content, authority=authority)
+        for instruction_id, (content, authority) in current.items()
+        if recorded.get(instruction_id) != (content, authority)
+    ]
+    changes.extend(
+        InstructionDeltaPart(id=instruction_id, content=None, authority=authority)
+        for instruction_id, (_, authority) in recorded.items()
+        if instruction_id not in current
+    )
+    if changes:
+        for target in targets:
+            target.parts = [*target.parts, *changes]
+
+
 def _recorded_instruction_values(
     messages: Sequence[ModelMessage], baseline: InstructionBaselinePart
 ) -> dict[InstructionId, str | None] | None:
@@ -726,7 +817,8 @@ def _recorded_instruction_values(
             # A loaded capability's block is delivered through history, not the prefix: its changes are no part of
             # this window, and leaving it out of `current` is no withdrawal.
             loaded.apply(part)
-        elif in_window and isinstance(part, InstructionDeltaPart):
+        elif in_window and isinstance(part, InstructionDeltaPart) and part.authority == 'operator':
+            # A block below operator authority is delivered through history, never the prefix (`LoweredInstructions`).
             if part.id is None:
                 return None
             values.apply(part)

@@ -238,8 +238,10 @@ class _CapabilityAuthority:
     content you don't fully control, such as one built from a plugin or another team's code: as a class attribute of
     a subclass, or as a field of the capability's own. To lower one instance, use
     [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. The ceiling covers what the
-    capability sends mid-conversation, including its tools' `ToolReturn.content`. It doesn't cap the capability's
-    instructions, its tool names and descriptions, or its tools' return values: review or leave those out yourself.
+    capability sends mid-conversation, including its tools' `ToolReturn.content`, and its instructions, which below
+    `'operator'` reach the model as [framed data](../capabilities/custom.md#lowered-instructions) instead of as
+    instructions. It doesn't cap its tool names and descriptions or its tools' return values: review or leave those
+    out yourself.
 
     For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the
     default authority of the workspace's files. A file another capability reads through a workspace carries the
@@ -590,14 +592,16 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         """Prepare an emitted event synchronously before immediate listeners or stream delivery."""
 
     def with_authority(self, authority: Authority) -> Self:
-        """Return a copy of this capability whose enqueued parts carry no more than `authority`.
+        """Return a copy of this capability whose enqueued parts and instructions carry no more than `authority`.
 
         Lowers this one instance, where the [`authority`][pydantic_ai.capabilities.AbstractCapability]
         class attribute lowers every instance of a class: for example, one plugin's capability at `'none'` while
         another instance of its class keeps `'operator'`. It only ever lowers: asking for more authority than the
         capability already has leaves it where it is. Like the class attribute, it covers what the capability sends
-        mid-conversation, not its instructions or tool definitions: for an MCP server you don't trust, also pass
-        `include_instructions=False`.
+        mid-conversation and its instructions, its own and its toolsets', which then never enter the instruction
+        prefix: they're stated in history as framed data at that authority, never in the application's voice. It
+        doesn't cover its tool definitions: an MCP server's tool names and descriptions still reach the model as the
+        server wrote them.
         """
         return _utils.replace_no_init(self, _authority_ceiling=_lower_authority(self._effective_authority, authority))
 
@@ -612,6 +616,17 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         authority: Authority = self.authority if self.authority in _AUTHORITIES else 'none'
         ceiling = self._authority_ceiling
         return authority if ceiling is None else _lower_authority(authority, ceiling)
+
+    def _lowered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
+        """The capabilities in this tree whose instructions are below `'operator'` authority, in dispatch order.
+
+        Their instructions, their own and their toolsets', never enter the instruction prefix: each is stated in
+        history as one block at its authority (see `LoweredInstructions`). A deferred capability's instructions are
+        delivered when it's loaded instead.
+        """
+        if self.defer_loading is True or self._effective_authority == 'operator':
+            return []
+        return [self]
 
     def _keep_authority(self, resolved: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Carry this instance's authority to what its `for_run` or `for_agent` returned.
@@ -688,6 +703,11 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         When [`defer_loading`][pydantic_ai.capabilities.AbstractCapability.defer_loading] is
         True, these instructions are resolved only after the model calls the
         `load_capability` tool for this capability.
+
+        They follow the capability's authority: below `'operator'`, set by the `authority` class
+        attribute or [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority],
+        they never enter the instructions and reach the model as framed data at that authority; see
+        [instructions below operator authority](../capabilities/custom.md#lowered-instructions).
         """
         return None
 

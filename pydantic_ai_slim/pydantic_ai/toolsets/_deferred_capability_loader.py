@@ -166,7 +166,21 @@ async def resolve_loaded_capability_instructions(
     part is re-keyed beneath that block, keeping its `name`. The `load_capability` return and every later
     request resolve the same parts, so the block only changes when the instructions do.
     """
-    capability = ctx.capabilities[capability_id]
+    return await resolve_capability_block_instructions(ctx.capabilities[capability_id], capability_id, toolset, ctx)
+
+
+async def resolve_capability_block_instructions(
+    capability: AbstractCapability[AgentDepsT],
+    block_id: str,
+    toolset: AbstractToolset[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+) -> list[InstructionPart]:
+    """Resolve everything `capability` tells the model as one block, each part addressed beneath `capability:<block_id>`.
+
+    That's the capability's own instructions, sourced through `_collect_instructions`, followed by those of the
+    toolsets it owns in `toolset`, keeping each part's `name`. A loaded capability's block and that of a capability
+    below operator authority are both delivered through history this way.
+    """
     sourced = capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
     parts = await resolve_sourced_instructions(sourced, ctx)
 
@@ -180,7 +194,7 @@ async def resolve_loaded_capability_instructions(
     for ts in owned:
         parts.extend(await collect_toolset_instructions(ts.wrapped, ctx))
 
-    source = CapabilityInstructionSource(capability_id)
+    source = CapabilityInstructionSource(block_id)
     return [replace(part, id=InstructionId(source, name=part.name)) for part in parts]
 
 
