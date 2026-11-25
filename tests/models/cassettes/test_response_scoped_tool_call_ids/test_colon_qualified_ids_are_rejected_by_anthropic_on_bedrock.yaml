@@ -1,0 +1,62 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-haiku-4-5-20251001-v1%3A0/converse-stream
+    headers:
+      amz-sdk-invocation-id:
+      - 30854cf4-e1e7-4ae6-a75c-0036635050bc
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "634"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: Look it up, then say done.
+        - role: assistant
+          content:
+          - toolUse:
+              toolUseId: resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0
+              name: lookup
+              input: {}
+        - role: user
+          content:
+          - toolResult:
+              toolUseId: resp_43amfn3g3uar3i4sa5b7sz35cukuufaisldkwel5v6o47xzpr5va:call_0
+              content:
+              - text: a
+              status: success
+        system: []
+        inferenceConfig:
+          maxTokens: 64000
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: lookup
+              inputSchema:
+                json:
+                  type: object
+                  properties: {}
+          toolChoice:
+            auto: {}
+  response:
+    status: 400
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "136"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        message: "The model returned the following errors: messages.1.content.0.tool_use.id: String should match pattern '^[a-zA-Z0-9_-]+$'"
+  recorded_at: 2026-11-10T23:30:25.919058+00:00

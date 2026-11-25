@@ -111,11 +111,16 @@ class PostgresMediaStore:
         self._schema_lock = anyio.Lock()
 
     async def _ensure_schema(self) -> None:
+        """Create the table once, unless it exists, so a role without `CREATE` on the schema can use it."""
         if self._schema_ready:
             return
         async with self._schema_lock:
             if self._schema_ready:
                 return
+            async with self._pool.acquire() as connection:
+                if await connection.fetchval('SELECT to_regclass($1) IS NOT NULL', self._table):
+                    self._schema_ready = True
+                    return
             async with self._pool.acquire() as connection, connection.transaction():
                 # `CREATE TABLE IF NOT EXISTS` is not race-free in Postgres: concurrent
                 # callers can collide on `pg_type`'s unique index.

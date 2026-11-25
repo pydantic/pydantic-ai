@@ -7,8 +7,8 @@
 
 ## Sandbox environment
 
-**CLAI 2 tools** -- use Coder's `read_file`, `grep`, `list_files`, and `shell`.
-CLAI may expose these through `run_code`; follow that tool's instructions.
+**Pax tools** -- use Coder's `read_file`, `grep`, `list_files`, and `shell`.
+Pax may expose these through `run_code`; follow that tool's instructions.
 References to `Read`, `Grep`, `Glob`, `LS`, and `Bash` in task prompts refer to
 those corresponding Coder tools. `Task` remains a read-only delegate tool.
 

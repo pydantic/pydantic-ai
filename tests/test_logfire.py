@@ -11,7 +11,7 @@ from dirty_equals import IsJson, IsList
 
 # `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
 from opentelemetry.trace import StatusCode
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError, model_serializer
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -470,6 +470,7 @@ def test_logfire(
                                 'kind': 'function',
                                 'metadata': None,
                                 'timeout': None,
+                                'durable': None,
                                 'defer_loading': False,
                                 'toolset_id': None,
                                 'unless_native': None,
@@ -486,6 +487,7 @@ def test_logfire(
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
@@ -1282,6 +1284,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'tool',
                         'output_object': None,
                         'output_tools': [
@@ -1300,6 +1303,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'kind': 'output',
                                 'metadata': None,
                                 'timeout': None,
+                                'durable': None,
                                 'defer_loading': False,
                                 'toolset_id': '<output>',
                                 'unless_native': None,
@@ -1596,6 +1600,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'revealed_tool_names': [],
                         'introduced_tool_names': [],
                         'deferred_capability_ids': [],
+                        'deferred_capabilities': [],
                         'output_mode': 'text',
                         'output_object': None,
                         'output_tools': [],
@@ -5316,6 +5321,32 @@ def test_exception_recording_skipped_when_span_is_not_recording() -> None:
     )
     with pytest.raises(Unformattable):
         agent.run_sync('hello')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_model_request_attributes_are_not_serialized_when_span_is_not_recording() -> None:
+    """A sampled-out request span drops its attributes, so the request isn't serialized for it."""
+    serializations: list[str] = []
+
+    class Tracked(BaseModel):
+        @model_serializer
+        def serialize(self) -> str:
+            serializations.append('tracked')
+            return 'tracked'
+
+    agent = Agent(
+        TestModel(call_tools=[]),
+        capabilities=[
+            Instrumentation(settings=InstrumentationSettings(tracer_provider=TracerProvider(sampler=ALWAYS_OFF)))
+        ],
+    )
+
+    @agent.tool_plain(metadata={'tracked': Tracked()})
+    def get_weather(city: str) -> str:
+        return city  # pragma: no cover
+
+    assert agent.run_sync('hello').output == 'success (no tool calls)'
+    assert serializations == []
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')

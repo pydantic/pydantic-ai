@@ -8,12 +8,17 @@
             - ReadOnlyWorkspace
             - AuthorityWorkspace
             - LocalWorkspaceBackend
+            - WindowsWorkspaceBackend
             - UnavailableWorkspace
             - WorkspaceRef
             - WorkspaceBackend
             - SupportsCommands
             - SupportsFilesystem
             - SupportsRealpath
+            - SupportsPlatform
+            - SupportsRunInDirectory
+            - WorkspacePlatform
+            - WorkspacePaths
             - WorkspaceCommand
             - CommandResult
             - FileEntry
@@ -29,3 +34,10 @@
     options:
         members:
             - WorkspaceBackendSuite
+
+# `pydantic_ai.workspaces.windows`
+
+::: pydantic_ai.workspaces.windows
+    options:
+        members:
+            - powershell_script

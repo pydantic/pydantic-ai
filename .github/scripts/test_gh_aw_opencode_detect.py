@@ -213,13 +213,14 @@ def test_go_refusal_runs_detection_on_the_coding_plan(detection_dir: Path, monke
     # Go takes a minute to refuse, on the clock the launcher reads.
     clock = [1000.0]
     invoked = answer(monkeypatch, 'THREAT_DETECTION_RESULT:' + json.dumps(CLEAN), refused_runs=1, clock=clock)
-    monkeypatch.setattr(douwebot_opencode_run, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    stub = SimpleNamespace(monotonic=lambda: clock[0], time_ns=douwebot_opencode_run.time.time_ns)
+    monkeypatch.setattr(douwebot_opencode_run, 'time', stub)
 
     gh_aw_opencode_detect.main()
 
     go, zai = invoked
     assert isinstance(go['args'], list) and isinstance(zai['args'], list)
-    assert (go['args'][4], zai['args'][4]) == ('opencode-go/deepseek-v4.1-flash', 'zai-coding-plan/glm-5.3-flash')
+    assert (go['args'][4], zai['args'][4]) == ('opencode-go/deepseek-v4.1-flash', 'zai-coding-plan/glm-5.4')
     env = TypeAdapter(dict[str, str]).validate_python(zai['env'])
     assert env['ZHIPU_API_KEY'] == 'zai-key'
     assert 'OPENCODE_API_KEY' not in env and 'ZAI_API_KEY' not in env
@@ -253,7 +254,7 @@ def test_coding_plan_failure_names_its_error_type(
         gh_aw_opencode_detect.main()
 
     assert capsys.readouterr().out.splitlines()[-3:] == [
-        'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan failed with error type provider.auth, status 401.',
+        'OpenCode run on zai-coding-plan/glm-5.4 on the primary Coding Plan failed with error type provider.auth, status 401.',
         'OpenCode threat detection attempt 1 failed: CalledProcessError',
         'THREAT_DETECTION_STATUS: reason=engine_error exit=2',
     ]

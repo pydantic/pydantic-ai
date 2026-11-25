@@ -9,9 +9,17 @@ from typing import Any
 from render import RenderAsync
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
+from pydantic_ai_harness._workspace import with_authority
+from pydantic_ai_harness._workspace_provider import (
+    check_path_authority,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
 
 from ._backend import (
     DEFAULT_SANDBOX_TIMEOUT,
@@ -54,10 +62,27 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
     env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables every command gets, also on an attached sandbox; nothing is read from the host."""
 
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the sandbox's files: `'none'` for files nobody on the
+    application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Paths are sandbox paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+
+    desktop: bool | tuple[int, int] = False
+    """Give the sandbox a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`. The first use installs the desktop's programs with `apt-get`, so creating
+    a new sandbox without `allow_internet_access` raises `UserError`; attaching to one doesn't."""
+
     def __post_init__(self) -> None:
         reject_defer_loading('RenderSandbox', self.defer_loading)
         check_sandbox_timeout(self.sandbox_timeout)
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
+        checked_desktop_size(self.desktop)
 
     @classmethod
     def from_spec(
@@ -70,6 +95,9 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         sandbox_timeout: int = DEFAULT_SANDBOX_TIMEOUT,
         working_dir: str | None = None,
         env: Mapping[str, str] | None = None,
+        authority: Authority = 'operator',
+        path_authority: Mapping[str, Authority] | None = None,
+        desktop: bool | tuple[int, int] = False,
     ) -> RenderSandbox[Any]:
         """Build from an agent spec, naming the fields a spec can express.
 
@@ -84,11 +112,16 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=sandbox_timeout,
             working_dir=working_dir,
             env=env,
+            authority=authority,
+            path_authority=path_authority,
+            desktop=desktop,
         )
 
     def backend(self, ref: WorkspaceRef) -> RenderSandboxBackend:
         """Attach lazily to an existing Render sandbox."""
-        return RenderSandboxBackend(client=self.client, ref=ref, working_dir=self.working_dir, env=self.env)
+        return RenderSandboxBackend(
+            client=self.client, ref=ref, working_dir=self.working_dir, env=self.env, desktop=self.desktop
+        )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Terminate the sandbox identified by `ref`; an already terminated or unknown one returns quietly.
@@ -99,6 +132,10 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
         await terminate_sandbox(self.client, ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""
+        return with_authority(self._run_backend(ctx, ref=ref), self.authority, self.path_authority)
+
+    def _run_backend(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Supply a new sandbox workspace or attach to a recognized Render reference."""
         del ctx
         if ref is not None and ref.provider != 'render':
@@ -110,4 +147,5 @@ class RenderSandbox(AbstractCapability[AgentDepsT]):
             sandbox_timeout=self.sandbox_timeout,
             working_dir=self.working_dir,
             env=self.env,
+            desktop=self.desktop,
         )

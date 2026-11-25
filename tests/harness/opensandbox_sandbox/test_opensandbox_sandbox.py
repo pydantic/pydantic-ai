@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 from opensandbox.config import ConnectionConfig
+from opensandbox.models.sandboxes import NetworkPolicy
 
 import pydantic_ai_harness.opensandbox_sandbox as opensandbox_package
 from pydantic_ai import Agent, RunContext, models
@@ -27,6 +28,8 @@ from pydantic_ai_harness.opensandbox_sandbox import OpenSandbox, OpenSandboxBack
 
 from .._docs_examples import python_blocks
 from .fake_opensandbox import FakeOpenSandbox
+
+pytestmark = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 def _call_pwd_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -61,10 +64,13 @@ class TestConfiguration:
         definitions = AgentSpec.model_json_schema_with_capabilities([OpenSandbox])['$defs']
         assert sorted(definitions['spec_params_OpenSandbox']['properties']) == [
             'allow_internet_access',
+            'authority',
             'description',
+            'desktop',
             'env',
             'id',
             'image',
+            'path_authority',
             'resource',
             'sandbox_timeout',
             'secure_access',
@@ -82,6 +88,7 @@ class TestConfiguration:
             'sandbox_timeout': 60,
             'working_dir': '/project',
             'env': {'CONFIGURED': 'value'},
+            'desktop': (1280, 800),
         }
         assert OpenSandbox[None].from_spec(**fields) == OpenSandbox(**fields)
 
@@ -96,6 +103,12 @@ class TestConfiguration:
             ({'working_dir': 'relative'}, UserError, 'working_dir must be an absolute POSIX path'),
             ({'sandbox_timeout': 0}, UserError, 'sandbox_timeout must be an integer of at least 1'),
             ({'env': {'A=B': 'x'}}, ValueError, 'env keys must be non-empty without `=`'),
+            ({'desktop': (0, 800)}, UserError, r'`desktop` must be a `\(width, height\)` of at least 1 pixel each'),
+            (
+                {'network_policy': NetworkPolicy(), 'allow_internet_access': False},
+                UserError,
+                'pass `network_policy` or `allow_internet_access=False`, not both',
+            ),
         ],
     )
     def test_bad_values_fail_where_they_are_written(
@@ -237,6 +250,17 @@ class TestRuns:
         await _agent(capability).run('where are you?')
         [sandbox] = server.sandboxes.values()
         assert sandbox.network_policy == {'defaultAction': 'deny'}
+
+    async def test_network_policy_reaches_creation(self, server: FakeOpenSandbox, working_dir: str) -> None:
+        capability = OpenSandbox[None](
+            image='fake-image',
+            connection=server.connection,
+            working_dir=working_dir,
+            network_policy=NetworkPolicy(defaultAction='allow'),
+        )
+        await _agent(capability).run('where are you?')
+        [sandbox] = server.sandboxes.values()
+        assert sandbox.network_policy == {'defaultAction': 'allow'}
 
     @pytest.mark.parametrize('use_agent', [False, True], ids=['backend', 'agent'])
     async def test_disabling_internet_does_not_change_an_existing_sandbox(

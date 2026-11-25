@@ -1,4 +1,4 @@
-"""Exercise repository policy through the agent and CLAI's headless entry point."""
+"""Exercise repository policy through the agent and Pax's headless entry point."""
 
 import asyncio
 import json
@@ -10,13 +10,15 @@ from contextvars import Context
 from functools import partial
 from pathlib import Path
 
+import httpx2
 import pytest
+from fastmcp.exceptions import McpError
 from logfire.testing import CaptureLogfire
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
+from tenacity import stop_after_attempt, wait_none
 
 from pydantic_ai import Agent, ModelRetry, PydanticAIDeprecationWarning, RunContext
 from pydantic_ai.exceptions import ModelHTTPError
@@ -31,16 +33,19 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model, ModelResolutionContext
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.retries import AsyncHTTPX2TenacityTransport
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.shell import MAX_FOREGROUND_WAIT
-from pydantic_clai2.cli.headless import run_headless
-from pydantic_clai2.config import Settings
-from pydantic_clai2.config.project_settings import ProjectSettings
-from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_ai_pax.cli.headless import run_headless
+from pydantic_ai_pax.config import Settings
+from pydantic_ai_pax.config.project_settings import ProjectSettings
+from pydantic_ai_pax.config.settings_store import SettingsStore
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -293,7 +298,7 @@ async def test_safe_output_past_its_limit_is_answered_and_no_longer_offered(
 
     def noop(message: str) -> str:
         if sink.exists():
-            error = McpError(ErrorData(code=-32602, message='calling "tools/call": E002: noop limit reached'))
+            error = McpError(code=-32602, message='calling "tools/call": E002: noop limit reached')
             raise ModelRetry(str(error)) from error
         sink.write_text(json.dumps({'type': 'noop', 'message': message}) + '\n')
         return 'ok'
@@ -356,7 +361,7 @@ async def test_noop_in_the_time_reserve_leaves_the_model_no_tools(
 
     def noop(message: str) -> str:
         if sink.exists():
-            error = McpError(ErrorData(code=-32602, message='calling "tools/call": E002: noop limit reached'))
+            error = McpError(code=-32602, message='calling "tools/call": E002: noop limit reached')
             raise ModelRetry(str(error)) from error
         sink.write_text(json.dumps({'type': 'noop', 'message': message}) + '\n')
         return 'ok'
@@ -758,7 +763,7 @@ async def test_cancelled_delegate_preserves_usage(monkeypatch: pytest.MonkeyPatc
 
 @pytest.mark.parametrize('summary_fails', [False, True])
 async def test_compaction_retains_the_exact_workflow_task(monkeypatch: pytest.MonkeyPatch, summary_fails: bool) -> None:
-    """Neither a summary nor its failure can erase CLAI's original task."""
+    """Neither a summary nor its failure can erase Pax's original task."""
     monkeypatch.setattr(cli, 'COMPACTION_TRIGGER_CHARS', 1)
     task = ModelRequest(parts=[UserPromptPart('Required verdict, target and safe-output constraints')])
     messages: list[ModelMessage] = [task, *[ModelResponse(parts=[TextPart('Evidence ' * 100)]) for _ in range(20)]]
@@ -796,3 +801,189 @@ async def test_compaction_fallback_resumes_at_the_tail_after_the_task(monkeypatc
     compacted = await cli.compact_history(ctx, messages, preserve_prompt=True)
     assert compacted == [task, *messages[-cli.COMPACTION_KEEP_RECENT :]]
     assert isinstance(compacted[1], ModelResponse)
+
+
+_ZAI_OVERLOADED = {
+    'type': 'error',
+    'error': {
+        'type': 'overloaded_error',
+        'code': '1305',
+        'message': '[1305][The service may be temporarily overloaded]',
+    },
+}
+
+
+def zai_message(model: str) -> httpx2.Response:
+    """A Z.ai Messages API answer from `model`."""
+    return httpx2.Response(
+        200,
+        json={
+            'id': 'msg_1',
+            'type': 'message',
+            'role': 'assistant',
+            'model': model,
+            'content': [{'type': 'text', 'text': 'ok'}],
+            'stop_reason': 'end_turn',
+            'stop_sequence': None,
+            'usage': {'input_tokens': 1, 'output_tokens': 1},
+        },
+    )
+
+
+def zai_stream(model: str) -> httpx2.Response:
+    """The answer of `zai_message`, streamed as Z.ai's Anthropic endpoint streams it."""
+    message: dict[str, object] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'model': model,
+        'content': [],
+        'stop_reason': None,
+        'stop_sequence': None,
+        'usage': {'input_tokens': 1, 'output_tokens': 1},
+    }
+    events: list[tuple[str, dict[str, object]]] = [
+        ('message_start', {'message': message}),
+        ('content_block_start', {'index': 0, 'content_block': {'type': 'text', 'text': ''}}),
+        ('content_block_delta', {'index': 0, 'delta': {'type': 'text_delta', 'text': 'ok'}}),
+        ('content_block_stop', {'index': 0}),
+        ('message_delta', {'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': 1}}),
+        ('message_stop', {}),
+    ]
+    return httpx2.Response(
+        200,
+        headers={'content-type': 'text/event-stream'},
+        content=''.join(f'event: {kind}\ndata: {json.dumps(dict(data, type=kind))}\n\n' for kind, data in events),
+    )
+
+
+def zai_workflow_model(
+    monkeypatch: pytest.MonkeyPatch, respond: Callable[[str], httpx2.Response], *, fallback: str = 'glm-5.3-flash'
+) -> tuple[Model, list[dict[str, object]]]:
+    """Resolve the workflow's `glm-5.4` with its overload fallback on a mock Z.ai, and the request bodies it sends.
+
+    `respond` answers each request from the model the request names. Neither the SDK nor the shim's transport
+    retries, so each body is one attempt.
+    """
+    bodies: list[dict[str, object]] = []
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        return respond(body['model'])
+
+    def transport() -> AsyncHTTPX2TenacityTransport:
+        retrying = rate_limit_retry_transport(httpx2.MockTransport(handle))
+        retrying.config['wait'] = wait_none()
+        retrying.config['stop'] = stop_after_attempt(1)
+        return retrying
+
+    rate_limit_retry_transport = cli.rate_limit_retry_transport
+    monkeypatch.setattr(cli, 'rate_limit_retry_transport', transport)
+    monkeypatch.setattr(cli, '_LLM_MAX_RETRIES', 0)
+    monkeypatch.setenv('ANTHROPIC_BASE_URL', 'http://api-proxy:10001')
+    monkeypatch.setenv(workflow.OVERLOAD_FALLBACK_MODEL_ENV, fallback)
+    monkeypatch.setattr(workflow, '_model', None)
+    monkeypatch.setattr(workflow, '_run_model', None)
+    context: ModelResolutionContext[object] = ModelResolutionContext(agent=Agent(), deps=None)
+    return workflow.workflow_model(context, 'anthropic:glm-5.4'), bodies
+
+
+@pytest.mark.parametrize(
+    ('status', 'body', 'reason'),
+    [
+        pytest.param(529, _ZAI_OVERLOADED, 'HTTP 529, Z.ai code 1305', id='anthropic-endpoint'),
+        # Z.ai's code table lists `1305` under HTTP 429.
+        pytest.param(
+            429,
+            {'type': 'error', 'error': {'type': 'rate_limit_error', 'code': '1305', 'message': 'overloaded'}},
+            'HTTP 429, Z.ai code 1305',
+            id='code-table',
+        ),
+        pytest.param(
+            529,
+            {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'overloaded'}},
+            'HTTP 529',
+            id='no-code',
+        ),
+    ],
+)
+# gh-aw runs stream: Pax passes an `event_stream_handler`, so `FallbackModel.request_stream` serves them.
+@pytest.mark.parametrize('streamed', [False, True], ids=['request', 'stream'])
+async def test_overloaded_model_falls_back_for_that_request(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    agent_spans: InMemorySpanExporter,
+    status: int,
+    body: dict[str, object],
+    reason: str,
+    streamed: bool,
+) -> None:
+    """An overload refusal sends that request to GLM-5.3-Flash at low effort; the next request tries GLM-5.4 again."""
+    refusals = [httpx2.Response(status, json=body)]
+    answer = zai_stream if streamed else zai_message
+    model, bodies = zai_workflow_model(monkeypatch, lambda name: refusals.pop() if refusals else answer(name))
+
+    async def drain(ctx: RunContext[object], events: AsyncIterable[object]) -> None:
+        async for _ in events:
+            pass
+
+    handler = drain if streamed else None
+    first = await Agent(model).run('hi', event_stream_handler=handler)
+    second = await Agent(model).run('hi', event_stream_handler=handler)
+
+    assert [(body['model'], body['output_config'], body.get('stream', False)) for body in bodies] == [
+        ('glm-5.4', {'effort': 'low'}, streamed),
+        ('glm-5.3-flash', {'effort': 'low'}, streamed),
+        ('glm-5.4', {'effort': 'low'}, streamed),
+    ]
+    [served_first] = [m for m in first.new_messages() if isinstance(m, ModelResponse)]
+    [served_second] = [m for m in second.new_messages() if isinstance(m, ModelResponse)]
+    assert (served_first.model_name, served_second.model_name) == ('glm-5.3-flash', 'glm-5.4')
+    assert f'glm-5.4 is overloaded ({reason}); this request falls back to glm-5.3-flash' in capsys.readouterr().err
+    spans = agent_spans.get_finished_spans()
+    chat_models = [
+        (span.attributes or {}).get('gen_ai.request.model') for span in spans if span.name.startswith('chat ')
+    ]
+    assert chat_models == ['glm-5.3-flash', 'glm-5.4']
+    [refused] = [span for span in spans if span.status.status_code is StatusCode.ERROR]
+    assert (refused.attributes or {}).get('gen_ai.request.model') == 'glm-5.4'
+
+
+@pytest.mark.parametrize(
+    ('status', 'error', 'models_tried'),
+    [
+        pytest.param(401, {'type': 'authentication_error', 'message': 'invalid key'}, ['glm-5.4'], id='401'),
+        pytest.param(403, {'type': 'permission_error', 'message': 'forbidden'}, ['glm-5.4'], id='403'),
+        pytest.param(
+            429, {'type': 'rate_limit_error', 'code': '1302', 'message': 'rate limit'}, ['glm-5.4'], id='1302'
+        ),
+        pytest.param(
+            429, {'type': 'rate_limit_error', 'code': '1308', 'message': 'usage limit'}, ['glm-5.4'], id='1308'
+        ),
+        pytest.param(
+            429, {'type': 'rate_limit_error', 'code': '1310', 'message': 'weekly limit'}, ['glm-5.4'], id='1310'
+        ),
+        pytest.param(500, {'type': 'api_error', 'message': 'internal error'}, ['glm-5.4'], id='500'),
+        pytest.param(529, _ZAI_OVERLOADED['error'], ['glm-5.4', 'glm-5.3-flash'], id='fallback-overloaded'),
+    ],
+)
+async def test_other_refusals_fail_the_run_with_their_own_error(
+    monkeypatch: pytest.MonkeyPatch, status: int, error: dict[str, str], models_tried: list[str]
+) -> None:
+    """Only the configured model's overload falls back; every other refusal, and the fallback's own, fails as is."""
+    model, bodies = zai_workflow_model(
+        monkeypatch, lambda _: httpx2.Response(status, json={'type': 'error', 'error': error})
+    )
+    with pytest.raises(ModelHTTPError) as raised:
+        await Agent(model).run('hi')
+    assert [body['model'] for body in bodies] == models_tried
+    assert (raised.value.status_code, raised.value.model_name) == (status, models_tried[-1])
+
+
+@pytest.mark.parametrize('fallback', ['', 'glm-5.4'])
+def test_no_fallback_without_another_model(monkeypatch: pytest.MonkeyPatch, fallback: str) -> None:
+    """With no fallback, or one naming the configured model, the workflow runs the configured model alone."""
+    model, _ = zai_workflow_model(monkeypatch, zai_message, fallback=fallback)
+    assert isinstance(model, AnthropicModel)
+    assert model.model_name == 'glm-5.4'

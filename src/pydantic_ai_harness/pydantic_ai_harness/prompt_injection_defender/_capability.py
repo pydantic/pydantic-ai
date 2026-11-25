@@ -72,6 +72,28 @@ def _diagnostics(verdict: DefenseResult) -> dict[str, object]:
     }
 
 
+def _trace(ctx: RunContext[Any], call: ToolCallPart, verdict: DefenseResult) -> None:
+    """Mark a flagged verdict with a zero-duration span.
+
+    Sanitized field names come from the tool result, so they are only recorded with `trace_include_content`.
+    """
+    span = ctx.tracer.start_span('prompt_injection flagged')
+    if span.is_recording():
+        attributes: dict[str, str | float | list[str]] = {
+            'gen_ai.tool.name': call.tool_name,
+            'gen_ai.tool.call.id': call.tool_call_id,
+            'prompt_injection.action': 'reported' if verdict.allowed else 'blocked',
+            'prompt_injection.risk_level': verdict.risk_level,
+            'prompt_injection.detections': list(verdict.detections),
+        }
+        if verdict.tier2_score is not None:
+            attributes['prompt_injection.tier2_score'] = verdict.tier2_score
+        if ctx.trace_include_content:
+            attributes['prompt_injection.fields_sanitized'] = list(verdict.fields_sanitized)
+        span.set_attributes(attributes)
+    span.end()
+
+
 def _payload(value: object) -> object:
     """Put a bare string under Defender's standard `content` field."""
     return {'content': value} if isinstance(value, str) else to_jsonable_python(value, fallback=str)
@@ -107,8 +129,8 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     returns. A result passes through unchanged unless the defense rejects it. With
     `block_high_risk=True`, the built-in defense rejects detected high or critical risk
     results, which are replaced with `blocked_message` so their content never reaches the
-    model. Every flagged verdict is reported through
-    `on_detection`, and a withheld result carries a diagnostics summary on
+    model. Every flagged verdict is recorded as a `prompt_injection flagged` span and reported
+    through `on_detection`, and a withheld result carries a diagnostics summary on
     `ToolReturn.metadata` (not visible to the model).
 
     Pass `semantic_detection=True` to add the local ML classifier, which is what catches
@@ -266,6 +288,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         return [await self._defense.defend_tool_result_async(payload, tool_name) for payload in payloads]
 
     async def _notify(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:
+        _trace(ctx, call, verdict)
         if self.on_detection is None:
             return
         outcome = self.on_detection(ctx, call, verdict)

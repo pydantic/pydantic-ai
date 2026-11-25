@@ -169,7 +169,7 @@ class _CapturingAnthropicClient:
         )
 
 
-def _render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict[str, Any] | None]:
+def render_anthropic_bodies(requests: list[RecordedRequest]) -> list[dict[str, Any] | None]:
     """The body `AnthropicModel` would send for each request, without `cache_control`, or `None` if it can't."""
     try:
         from anthropic import AsyncAnthropic
@@ -286,7 +286,7 @@ def _content_blocks(body: dict[str, Any]) -> list[PrefixBlock]:
 
 def function_model_prefix_violations(requests: list[RecordedRequest]) -> list[CassettePrefixViolation]:
     """The prefix violations between each request and the request it follows in its conversation."""
-    bodies = _render_anthropic_bodies(requests)
+    bodies = render_anthropic_bodies(requests)
     violations: list[CassettePrefixViolation] = []
     for later_index, later_body in enumerate(bodies):
         earlier_index = _previous_request(requests, later_index)
