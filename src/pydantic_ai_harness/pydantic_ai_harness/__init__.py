@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
     from .announce_current_time import AnnounceCurrentTime
+    from .announce_working_directory import AnnounceWorkingDirectory
     from .approval_reviewer import ApprovalReviewer
     from .artifact_scanning import ArtifactScanner
     from .ask_user import AskUser
@@ -119,6 +120,7 @@ __all__ = [
     'AbsurdDurability',
     'Advisor',
     'AnnounceCurrentTime',
+    'AnnounceWorkingDirectory',
     'ApprovalReviewer',
     'ArtifactScanner',
     'AskUser',
@@ -252,6 +254,7 @@ _LAZY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
     'AnnounceCurrentTime': 'announce_current_time',
+    'AnnounceWorkingDirectory': 'announce_working_directory',
     'ApprovalReviewer': 'approval_reviewer',
     'ArtifactScanner': 'artifact_scanning',
     'AskUser': 'ask_user',

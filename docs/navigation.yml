@@ -362,7 +362,6 @@ navigation:
       - page: "Building Custom Capabilities"
         path: "capabilities/custom.md"
         slug: "capabilities/custom"
-      # harness/clai2.md is intentionally unpublished; see UNPUBLISHED_PAGES in tests/test_docs_navigation.py.
       - page: "Pydantic AI Harness"
         path: "harness/index.md"
         slug: "harness"
@@ -433,6 +432,9 @@ navigation:
           - page: "Shell"
             path: "harness/shell.md"
             slug: "harness/shell"
+          - page: "Announce Working Directory"
+            path: "harness/announce-working-directory.md"
+            slug: "harness/announce-working-directory"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:
@@ -767,6 +769,14 @@ navigation:
       - page: "Third-Party Capabilities"
         path: "capabilities/third-party.md"
         slug: "capabilities/third-party"
+  - section: "Pax TUI"
+    slug: ""
+    contents:
+      - page: "Overview"
+        path: "harness/clai2.md"
+        slug: "pax"
+        aliases:
+          - "harness/pax"
   - section: "Realtime (speech-to-speech)"
     slug: ""
     contents:

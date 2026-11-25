@@ -11,7 +11,7 @@ import httpx2
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelAPIError, ModelEmptyResponseError
 
 from ...conftest import try_import
 
@@ -60,7 +60,7 @@ async def test_stream_that_breaks_raises_model_api_error(allow_model_requests: N
         await agent.run('hello')
 
 
-async def test_empty_stream_raises_unexpected_model_behavior(allow_model_requests: None) -> None:
+async def test_empty_stream_raises_model_empty_response_error(allow_model_requests: None) -> None:
     """A 200 response whose stream carries no events raises the same error a streamed run raises.
 
     Mocked because the API doesn't send an empty stream on demand.
@@ -71,5 +71,5 @@ async def test_empty_stream_raises_unexpected_model_behavior(allow_model_request
 
     client = AsyncAnthropic(api_key='test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
     agent = Agent(AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=client)))
-    with pytest.raises(UnexpectedModelBehavior, match='Streamed response ended without content or tool calls'):
+    with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
         await agent.run('hello')

@@ -83,7 +83,7 @@ from .._cancel import (
     take_run_binding,
 )
 from .._deferred_capabilities import registered_loaded_capability_ids
-from .._instructions import AgentInstructions
+from .._instructions import AgentInstructions, lowered_block_id
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
 from .._run_conversation import failed_run_conversation
@@ -4062,7 +4062,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     return await output_cap.prepare_output_tools(output_ctx, tool_defs)
 
                 output_toolset = PreparedToolset(output_toolset, _dispatch_prepare_output_tools)
-            toolset = CombinedToolset([output_toolset, toolset])
+            toolset = _agent_graph.OutputToolsFirstToolset([output_toolset, toolset])
 
         return toolset
 
@@ -4449,14 +4449,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
             # A standard run states a loaded deferred capability's instructions in history, after its load return,
             # which seeding skips: a session has no channel for them. They join the session's own instructions
-            # instead, after the rest, resolved as the graph resolves them before each request.
+            # instead, after the rest, resolved as the graph resolves them before each request, unless they're below
+            # operator authority, which must never reach a session as instructions.
             # KEEP IN SYNC with the graph's `_get_loaded_instructions`.
-            loaded_capability_ids = [
-                capability_id
-                for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history
-                if (capability := run_context.capabilities.get(capability_id)) is not None
-                and capability.defer_loading is True
-            ]
+            loaded_capability_ids = _session_loaded_capability_ids(message_history, run_context, run_capability)
 
             async def resolve_instruction_parts(
                 ctx: RunContext[AgentDepsT], toolset: AbstractToolset[AgentDepsT]
@@ -5693,6 +5689,54 @@ def _resolve_layered_model_settings(
         layered = merge_model_settings(layered, resolved)
         run_context.model_settings = merged
     return _agent_graph.StepModelSettings(merged=merged, layered=layered)
+
+
+def _session_loaded_capability_ids(
+    message_history: Sequence[_messages.ModelMessage] | None,
+    run_context: RunContext[Any],
+    run_capability: AbstractCapability[Any],
+) -> list[str]:
+    """The deferred capabilities a realtime session's seeded history loaded, whose instructions join the session's.
+
+    Those below operator authority are left out, as are the eager ones below it: a session has no channel to send them
+    as data, and they must never reach it as instructions. A warning names them.
+    """
+    loaded = [
+        (capability_id, capability)
+        for capability_id in _instructions.LoadedInstructionValues.of(message_history or ()).stated_in_history
+        if (capability := run_context.capabilities.get(capability_id)) is not None and capability.defer_loading is True
+    ]
+    ids = [
+        capability_id
+        for capability_id, capability in loaded
+        if capability._effective_authority == 'operator'  # pyright: ignore[reportPrivateUsage]
+    ]
+    _warn_lowered_instructions_not_sent(
+        [
+            *(lowered_block_id(source.capability) for source in run_capability._lowered_instruction_sources()),  # pyright: ignore[reportPrivateUsage]
+            *(capability_id for capability_id, _ in loaded if capability_id not in ids),
+        ]
+    )
+    return ids
+
+
+def _warn_lowered_instructions_not_sent(block_ids: Sequence[str]) -> None:
+    """Warn that a realtime session leaves out the instructions of the capabilities below operator authority.
+
+    A standard run states them in history as framed data, which a session has no channel for, and they must not reach it
+    as instructions.
+    """
+    # TODO(#14458): send them to a realtime session as framed data, too.
+    lowered = sorted(set(block_ids))
+    if lowered:
+        names = ', '.join(f'{name!r}' for name in lowered)
+        warnings.warn(
+            f'The instructions of capabilities below operator authority ({names}) are not sent to a realtime session: '
+            'a standard run sends them as framed data in the message history, which a session has no channel for yet. '
+            'See https://github.com/pydantic/pydantic-ai/issues/14458.',
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
