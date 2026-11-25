@@ -63,7 +63,7 @@ def _read(*, query: bytes, timeout: float) -> bytes:
     saved = termios.tcgetattr(0)
     modes = termios.tcgetattr(0)
     modes[3] &= ~(termios.ICANON | termios.ECHO)  # The reply is read as it comes, and is not echoed.
-    modes[0] &= ~termios.ICRNL  # Enter typed meanwhile stays Enter for the prompt, not Ctrl-J.
+    modes[0] &= ~termios.ICRNL  # Enter typed meanwhile stays Enter for the prompt, not Ctrl+J.
     termios.tcsetattr(0, termios.TCSANOW, modes)
     try:
         os.write(1, query)
