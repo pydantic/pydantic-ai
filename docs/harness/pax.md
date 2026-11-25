@@ -65,6 +65,7 @@ uv tool install --compile-bytecode pydantic-ai-pax
 ```
 
 This gives you the `pax` command (and `pydantic-ai-pax`, which does the same).
+If `pax` doesn't start Pax right after installing, open a new terminal (or run `rehash`), or run it as `pydantic-ai-pax`.
 The package used to be `pydantic-clai2`, with the command `clai2`. Those names still work and print a note
 pointing here; your settings, sessions, and plugins carry over. A plugin that imports `pydantic_clai2` needs
 the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_pax`.
@@ -103,7 +104,8 @@ A few keys to know:
 |---|---|
 | <kbd>Enter</kbd> | Send. While Pax works, <kbd>Enter</kbd> queues your message for after the current turn. |
 | <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> on [Windows](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#windows-terminal)) | Steer: send your message to the turn that is running now. |
-| <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
+| <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays, and queued messages run next, in order. |
+| <kbd>Up</kbd> | Edit a queued message. <kbd>Esc</kbd> stops editing; clear it to remove it. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | Show or hide the full output of commands. Output already in the terminal's scrollback is shown on the alternate screen, which stays for the session. |
