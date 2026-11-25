@@ -108,16 +108,17 @@ when given. Unwrap a refusal the engine wraps back into `UserError`. Return `Fal
 `can_fork_mid_run` when the engine can't recover from part of its record, and document the limit.
 Start the engine once per class (`scope='class'`, as a `classmethod`), with no real waits.
 
-Declare the engine's support as plain data in its own package, `<engine>/_conformance.py`:
-`SUPPORT`, the cells that aren't `supported` (each `Support` with its `reason`, `match`, `check` and
-`issue` as its level requires), and `RECOVERY`, `Recovery('restart', ...)` for an engine that restarts
-a run instead of replaying it. Import nothing from the engine's SDK there. Point the subclass at both,
-add the table to `ENGINE_SUPPORT_MODULES` (`tests/capability_cases.py`) and to `TABLES` in
-`scripts/durable_exec_support.py`, take the engine out of `PENDING_ENGINES`
-(`tests/harness/test_engine_support.py`), and regenerate the docs table with
-`uv run python scripts/durable_exec_support.py --write`. A built-in engine's subclass extends
-`BuiltInEngineSuite` (`tests/harness/_durable_cases.py`), which runs every case and scenario and pins
-the case units to `Calls.durable_steps`. `TestDBOS` and `TestTemporal` are the examples, and
+Each built-in engine already declares its support as plain data in its own package, `_conformance.py`:
+`SUPPORT` (each `Support` with its `reason`, `match`, `check` and `issue` as its level requires) and
+`RECOVERY`, `Recovery('restart', ...)` for an engine that restarts a run instead of replaying it. It
+imports nothing from the engine's SDK. While the engine is in `PENDING_ENGINES`
+(`tests/harness/test_engine_support.py`), its table lists every cell measured elsewhere, `supported`
+ones included. When it joins the suite, point its subclass at both, take it out of `PENDING_ENGINES`,
+keep only the cells that aren't `supported`, and regenerate the docs table with
+`uv run python scripts/durable_exec_support.py --write`. A new engine adds its table to
+`ENGINE_SUPPORT_MODULES` (`tests/capability_cases.py`) and `TABLES` in that script. A built-in
+engine's subclass extends `BuiltInEngineSuite` (`tests/harness/_durable_cases.py`), which runs every
+case and scenario and pins the case units to `Calls.durable_steps`. `TestDBOS` and `TestTemporal` are the examples, and
 `agent_docs/capability-conformance.md` ("Durable execution") says what each level checks.
 
 ## Core changes that engines depend on

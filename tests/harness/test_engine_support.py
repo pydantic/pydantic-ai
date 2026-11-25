@@ -37,10 +37,21 @@ from ._contracts import CASES, PUBLIC
 from .capability_cases import HARNESS_CAPABILITY_PACKAGES
 
 REPO_ROOT = Path(__file__).parents[2]
-sys.path.insert(0, str(REPO_ROOT / 'scripts'))
 
-import durable_exec_contract  # noqa: E402
-import durable_exec_support  # noqa: E402
+
+def _script(name: str) -> ModuleType:
+    """The module of `scripts/<name>.py`, imported from its path: `scripts/` is no package."""
+    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / 'scripts' / f'{name}.py')
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # A dataclass resolves its module's annotations through `sys.modules`.
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+durable_exec_contract = _script('durable_exec_contract')
+durable_exec_support = _script('durable_exec_support')
 
 DURABILITY_PACKAGES = ('pydantic_ai.durable_exec', *HARNESS_CAPABILITY_PACKAGES)
 """The packages that define durability capabilities, one per engine."""
@@ -93,31 +104,53 @@ def test_every_durability_capability_has_a_suite() -> None:
     assert set(SUITES).isdisjoint(PENDING_ENGINES)
     assert {*SUITES, *PENDING_ENGINES} == set(ENGINES) == set(ENGINE_CAPABILITIES)
     assert PENDING_ENGINES == snapshot(('prefect', 'aws_lambda', 'absurd', 'pgtask', 'azure_durable_task', 'render'))
-    assert set(ENGINE_SUPPORT_MODULES) == set(SUITES)
+    assert set(ENGINE_SUPPORT_MODULES) == set(ENGINES)
     for path, class_name in SUITES.values():
         tree = ast.parse((REPO_ROOT / path).read_text())
         assert any(isinstance(node, ast.ClassDef) and node.name == class_name for node in tree.body), path
 
 
+def test_measured_cells_only_go_up() -> None:
+    """How many cases each engine's suite measures: an engine that joins the suite raises its count, and none lowers it.
+
+    Every cell of an engine with a suite is measured, whatever its level; an engine still pending measures none.
+    """
+    measured = sum(name in PUBLIC and case.calls is not None for name, case in CASES.items())
+    counts = {engine: measured if engine in SUITES else 0 for engine in ENGINES}
+    assert counts == snapshot(
+        {
+            'dbos': 51,
+            'temporal': 51,
+            'prefect': 0,
+            'aws_lambda': 0,
+            'absurd': 0,
+            'pgtask': 0,
+            'azure_durable_task': 0,
+            'render': 0,
+        }
+    )
+
+
 def test_the_manifest_and_the_docs_name_every_engine() -> None:
     """Adding an engine touches the contract manifest's roots, the docs tables and the suites alike."""
     assert set(durable_exec_contract.ENGINES) - {'durable_exec'} == set(ENGINES)
-    assert set(durable_exec_support.TABLES) == set(SUITES)
-    assert set(durable_exec_support.PENDING) == set(PENDING_ENGINES)
-    assert {module for _, module in durable_exec_support.TABLES.values()} == {
-        ENGINE_SUPPORT_MODULES[engine] for engine in SUITES
-    }
+    assert {engine: module for engine, (_, module) in durable_exec_support.TABLES.items()} == ENGINE_SUPPORT_MODULES
+    assert durable_exec_support.PENDING == set(PENDING_ENGINES)
 
 
-@pytest.mark.parametrize('engine', sorted(SUITES))
+@pytest.mark.parametrize('engine', ENGINES)
 def test_every_cell_names_a_real_case_or_scenario(engine: Engine) -> None:
-    """A cell only means something for a case whose calls the suite runs, or for a scenario."""
+    """A cell only means something for a case whose calls the suite runs, or for a scenario.
+
+    An engine with a suite lists only the cells that aren't `supported`; one still pending lists what is measured.
+    """
     table = _table(engine)
     cells: Mapping[str, Support] = table.SUPPORT
     assert isinstance(table.RECOVERY, Recovery)
     for name, cell in cells.items():
         assert isinstance(cell, Support)
-        assert cell.level != 'untested', f'{name}: a suite runs every cell, so none is `untested`'
+        assert cell.level != 'untested', f'{name}: an unlisted cell is what is untested'
+        assert engine in PENDING_ENGINES or cell.level != 'supported', f'{name}: an unlisted cell is `supported`'
         if name in SCENARIOS:
             continue
         assert name in PUBLIC, f'{engine} names {name}, which is neither a scenario nor a public capability'
@@ -180,6 +213,6 @@ def test_the_suites_run_every_run_context_scenario() -> None:
 
 def test_the_compatibility_page_is_current(capsys: pytest.CaptureFixture[str]) -> None:
     """`docs/durable_execution/compatibility.md` shows the tables as the engines declare them."""
-    for engine in SUITES:
+    for engine in ENGINES:
         _table(engine)
     assert durable_exec_support.main([]) == 0, capsys.readouterr().err

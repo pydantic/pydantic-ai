@@ -8,7 +8,6 @@ and pins the units each case records to its `durable_steps`.
 from __future__ import annotations
 
 import os
-import tempfile
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
@@ -54,10 +53,7 @@ class SuiteCase:
 
     def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
         skip_unless_installed(self.name, CASES[self.name].requires)
-        # A fresh directory right under the system's temporary one, rather than the test's own: `RepoContext` (and
-        # `Coder`) makes a workspace call per parent directory, so the units the `durable_steps` pin depend on depth.
-        del directory
-        return build_case(self.name, Path(tempfile.mkdtemp(prefix=f'durable_engine_suite_{self.name}_')))
+        return build_case(self.name, directory)
 
 
 @dataclass(frozen=True)
@@ -80,7 +76,7 @@ class SuiteScenario:
 def suite_cases(contract: Contract) -> dict[str, SuiteCase]:
     """The public cases `contract` applies to, for the suite to run."""
     return {
-        name: SuiteCase(name, case.calls.made)
+        name: SuiteCase(name, case.calls.made, case.calls.follow_ups)
         for name, case in CASES.items()
         if name in PUBLIC and contract.applies(name, case) and case.calls is not None
     }

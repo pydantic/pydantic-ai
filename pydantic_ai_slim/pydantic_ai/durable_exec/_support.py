@@ -93,3 +93,16 @@ class Recovery:
     def __post_init__(self) -> None:
         if self.mode == 'restart' and (not self.reason or self.issue is None):
             raise ValueError('a `restart` recovery needs a `reason` and the `issue` that tracks it')
+
+
+INLINE_ANSWER = 'inline result'
+"""What a `BackgroundTools` scenario's model answers when the backgrounded call's result came back inline, as its
+normal tool return, rather than as a follow-up message."""
+
+
+def ran_in_foreground(run: EngineRun) -> None:
+    """The `limited` check of an engine that runs a backgrounded call in the foreground: its result came back inline.
+
+    The engine runs tool calls one at a time, so `BackgroundTools` runs the call in the foreground.
+    """
+    assert run.output == INLINE_ANSWER, f'the call ran in the background, or failed: {run.output!r}'

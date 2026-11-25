@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 """Generate the durable engine compatibility tables in `docs/durable_execution/compatibility.md`.
 
-Each engine that runs `DurableEngineSuite` declares, in its own package, the cells of its support table that aren't
-`supported` (`SUPPORT`) and how it recovers a run (`RECOVERY`): `pydantic_ai/durable_exec/<engine>/_conformance.py`.
-This renders them as an engine x capability table and an engine x scenario table, between the page's generated
-markers. A cell no engine lists isn't shown: it is supported under every engine, unless that engine restarts rather
-than replays, which its `Recovery` row says.
+Each engine declares, in its own package, the cells of its support table that aren't `supported` (`SUPPORT`) and how
+it recovers a run (`RECOVERY`): `_conformance.py` in `pydantic_ai/durable_exec/<engine>/` or
+`pydantic_ai_harness/<engine>/`. This renders them as an engine x capability table and an engine x scenario table,
+between the page's generated markers. A cell no engine lists isn't shown: it is supported under every engine that runs
+`DurableEngineSuite`, unless that engine restarts rather than replays, which its `Recovery` row says. Under an engine
+in `PENDING`, which doesn't run the suite yet, a cell its table doesn't list is untested.
 
 Importing a table imports its engine's package, and so its SDK: run this with every engine installed.
 
@@ -20,6 +21,7 @@ import argparse
 import importlib
 import sys
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic_ai.durable_exec._support import Recovery, Support
@@ -33,18 +35,17 @@ ISSUES = 'https://github.com/pydantic/pydantic-ai/issues/'
 TABLES: dict[str, tuple[str, str]] = {
     'dbos': ('DBOS', 'pydantic_ai.durable_exec.dbos._conformance'),
     'temporal': ('Temporal', 'pydantic_ai.durable_exec.temporal._conformance'),
+    'prefect': ('Prefect', 'pydantic_ai.durable_exec.prefect._conformance'),
+    'aws_lambda': ('AWS Lambda', 'pydantic_ai_harness.aws_lambda._conformance'),
+    'absurd': ('Absurd', 'pydantic_ai_harness.absurd._conformance'),
+    'pgtask': ('pgtask', 'pydantic_ai_harness.pgtask._conformance'),
+    'azure_durable_task': ('Azure Durable Task', 'pydantic_ai_harness.azure_durable_task._conformance'),
+    'render': ('Render', 'pydantic_ai_harness.render._conformance'),
 }
-"""Each engine that runs the suite: its display name, and the module with its support table."""
+"""Each engine's display name, and the module with its support table."""
 
-PENDING: dict[str, str] = {
-    'prefect': 'Prefect',
-    'aws_lambda': 'AWS Lambda',
-    'absurd': 'Absurd',
-    'pgtask': 'pgtask',
-    'azure_durable_task': 'Azure Durable Task',
-    'render': 'Render',
-}
-"""Each engine that doesn't run the suite yet, by display name."""
+PENDING = frozenset({'prefect', 'aws_lambda', 'absurd', 'pgtask', 'azure_durable_task', 'render'})
+"""The engines that don't run the suite yet: a cell their table doesn't list is untested, not supported."""
 
 UNTESTED_ISSUE = 12291
 """Tracks running the suite under every engine."""
@@ -61,11 +62,20 @@ def _badge(label: str, reason: str, issue: int | None) -> str:
     return f'{badge}: {_text(reason)}'
 
 
-def _cell(cell: Support | None, recovery: Recovery) -> str:
+@dataclass(frozen=True)
+class _Engine:
+    cells: Mapping[str, Support]
+    recovery: Recovery
+    pending: bool
+
+
+def _cell(cell: Support | None, engine: _Engine) -> str:
     if cell is not None and cell.level != 'supported':
         return _badge(_LEVELS[cell.level], cell.reason, cell.issue)
-    if recovery.mode == 'restart':
-        return _badge('Limited', recovery.reason, recovery.issue)
+    if cell is None and engine.pending:
+        return f'[Untested]({ISSUES}{UNTESTED_ISSUE})'
+    if engine.recovery.mode == 'restart':
+        return _badge('Limited', engine.recovery.reason, engine.recovery.issue)
     return 'Supported'
 
 
@@ -75,10 +85,10 @@ def _recovery(recovery: Recovery) -> str:
     return 'Replays the record'
 
 
-def _table(heading: str, names: Sequence[str], tables: Mapping[str, tuple[Mapping[str, Support], Recovery]]) -> str:
-    rows = [f'| {heading} | {" | ".join(tables)} |', f'|---|{"---|" * len(tables)}']
+def _table(heading: str, names: Sequence[str], engines: Mapping[str, _Engine]) -> str:
+    rows = [f'| {heading} | {" | ".join(engines)} |', f'|---|{"---|" * len(engines)}']
     rows += [
-        f'| `{name}` | {" | ".join(_cell(cells.get(name), recovery) for cells, recovery in tables.values())} |'
+        f'| `{name}` | {" | ".join(_cell(engine.cells.get(name), engine) for engine in engines.values())} |'
         for name in names
     ]
     return '\n'.join(rows)
@@ -86,26 +96,28 @@ def _table(heading: str, names: Sequence[str], tables: Mapping[str, tuple[Mappin
 
 def render() -> str:
     """The generated part of the page, from the engines' support tables."""
-    tables: dict[str, tuple[Mapping[str, Support], Recovery]] = {}
-    for title, module_name in TABLES.values():
+    engines: dict[str, _Engine] = {}
+    for key, (title, module_name) in TABLES.items():
         module = importlib.import_module(module_name)
-        tables[title] = (module.SUPPORT, module.RECOVERY)
-    names = sorted({name for cells, _ in tables.values() for name in cells})
-    recovery = f'| Recovery | {" | ".join(_recovery(recovery) for _, recovery in tables.values())} |'
-    *others, last = PENDING.values()
+        engines[title] = _Engine(module.SUPPORT, module.RECOVERY, key in PENDING)
+    names = sorted({name for engine in engines.values() for name in engine.cells})
+    recovery = f'| Recovery | {" | ".join(_recovery(engine.recovery) for engine in engines.values())} |'
+    *others, last = [TABLES[key][0] for key in TABLES if key in PENDING]
     pending = f'{", ".join(others)} and {last}'
+    every = 'Every {} not listed here is supported under each engine that runs the suite.'
     return '\n\n'.join(
         [
             START,
+            f"{pending} [don't run the suite yet]({ISSUES}{UNTESTED_ISSUE}): their columns show only the cells "
+            'measured elsewhere, and everything else as untested.',
             '## Recovery',
-            f'| | {" | ".join(tables)} |\n|---|{"---|" * len(tables)}\n{recovery}',
+            f'| | {" | ".join(engines)} |\n|---|{"---|" * len(engines)}\n{recovery}',
             '## Capabilities',
-            'Every capability not listed here is supported under each engine above.',
-            _table('Capability', [name for name in names if '.' not in name], tables),
+            every.format('capability'),
+            _table('Capability', [name for name in names if '.' not in name], engines),
             '## Scenarios',
-            'Every scenario not listed here is supported under each engine above.',
-            _table('Scenario', [name for name in names if '.' in name], tables),
-            f"{pending} [don't run the suite yet]({ISSUES}{UNTESTED_ISSUE}).",
+            every.format('scenario'),
+            _table('Scenario', [name for name in names if '.' in name], engines),
             END,
         ]
     )

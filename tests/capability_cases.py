@@ -181,8 +181,8 @@ class DurableSteps:
 
     The names are persisted: a workflow recorded by one release replays by them in the next, so `DURABLE_DBOS` and
     `DURABLE_TEMPORAL` fail when a case records anything else. The run's own model requests are left out, as
-    every case makes one per call and one to answer. A case whose tools do no I/O through a durable unit records
-    nothing, which is checked too.
+    every case makes one per call, one per follow-up its calls' `follow_ups` counts, and one to answer. A case
+    whose tools do no I/O through a durable unit records nothing, which is checked too.
     """
 
     dbos: tuple[str, ...] = ()
@@ -209,6 +209,9 @@ class Calls:
     registers a workflow before launch. A toolset it builds has an `id`, which Temporal names its activities by."""
     durable_steps: DurableSteps = DurableSteps()
     """What the calls record under each durable engine, run one per response."""
+    follow_ups: int = 0
+    """How many extra model requests the calls cause in all, one per result that arrives as a follow-up message
+    (`BackgroundTools` delivers each backgrounded call's result in a later request). `journal_breaks` adds it once."""
     moves_cache_prefix: str | None = None
     """Why running the calls rewrites earlier history by design, which moves the prompt-cache prefix: a suite
     that runs them one per response marks the run `moves_cache_prefix` with it."""
@@ -859,7 +862,7 @@ DECLARES_CALLS = Contract(
         ),
         'BubblewrappedWorkspace': Exempt('needs a sandbox backend: the `bwrap` binary and user namespaces'),
         'PlaywrightBrowser': Exempt('needs a browser that Playwright launches'),
-        **dict.fromkeys(('BackgroundTools', 'ToolSearch'), Exempt(_ROUTE)),
+        **dict.fromkeys(('ToolSearch',), Exempt(_ROUTE)),
         **dict.fromkeys(
             (
                 'AskUser',
@@ -902,11 +905,18 @@ ENGINE_CAPABILITIES: Mapping[Engine, str] = {
 ENGINE_SUPPORT_MODULES: Mapping[Engine, str] = {
     'dbos': 'pydantic_ai.durable_exec.dbos._conformance',
     'temporal': 'pydantic_ai.durable_exec.temporal._conformance',
+    'prefect': 'pydantic_ai.durable_exec.prefect._conformance',
+    'aws_lambda': 'pydantic_ai_harness.aws_lambda._conformance',
+    'absurd': 'pydantic_ai_harness.absurd._conformance',
+    'pgtask': 'pydantic_ai_harness.pgtask._conformance',
+    'azure_durable_task': 'pydantic_ai_harness.azure_durable_task._conformance',
+    'render': 'pydantic_ai_harness.render._conformance',
 }
-"""The support table of each engine that runs `DurableEngineSuite`: a module with its `SUPPORT` and `RECOVERY`.
+"""The support table of each engine: a module with its `SUPPORT` and `RECOVERY`.
 
-The tables live in the engines' own packages, as plain data: the suite subclasses and the docs generator
-(`scripts/durable_exec_support.py`) read them. Importing one imports its engine's SDK, through its package.
+The tables live in the engines' own packages, as plain data: the `DurableEngineSuite` subclasses and the docs
+generator (`scripts/durable_exec_support.py`) read them. An engine that doesn't run the suite yet lists only what is
+measured elsewhere. Importing a table imports its engine's SDK, through its package.
 """
 
 ID_LESS_TOOLSETS = ('BrowserUse', 'PydanticAIDocs')
