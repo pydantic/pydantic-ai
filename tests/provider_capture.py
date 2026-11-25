@@ -225,8 +225,8 @@ def _chat_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
 
 
 def _responses_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
-    for text in _texts(body.get('instructions')):
-        yield 'system', text
+    # `OpenAIResponsesModel` sends system text as `input` items, not `instructions`. If it ever moved there, the text
+    # would be found in no voice, which the voice check fails on rather than passing.
     for item in body['input']:
         if 'role' in item:
             for text in _texts(item.get('content')):
