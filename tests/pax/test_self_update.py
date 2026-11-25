@@ -24,6 +24,7 @@ from rich.console import Console
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
+from pydantic_ai._version_check import VERSION_CHECK_URL
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_ai_pax import app, chat, cli
@@ -159,15 +160,58 @@ def test_latest_reads_pypi_and_the_bleeding_release(monkeypatch: pytest.MonkeyPa
 
     transport = httpx.MockTransport(respond)
     monkeypatch.delenv('CLAI_BLEEDING_URL', raising=False)
+    # With the version check turned off, `stable` asks PyPI and nothing else.
+    monkeypatch.setenv('PYDANTIC_AI_NO_VERSION_CHECK', '1')
     assert latest('stable', transport=transport) == '0.53.0'
     assert latest('main', transport=transport) == NEWER
     monkeypatch.setenv('CLAI_BLEEDING_URL', 'http://localhost:8000/')
     assert latest('main', transport=transport) == NEWER
     # A release download, not a GitHub API request.
-    assert seen[1:] == [
+    assert seen == [
+        PYPI_URL,
         'https://github.com/pydantic/pydantic-ai/releases/download/clai2-bleeding/clai2-bleeding.json',
         'http://localhost:8000/clai2-bleeding.json',
     ]
+
+
+def test_latest_stable_asks_the_version_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not a VCR test: the endpoint's answer is pinned to show Pax reads it and skips PyPI."""
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK', raising=False)
+    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
+    seen: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={'pypi': {'pydantic-ai-pax': {'latest': '1.0.0b2'}, 'other': {'x': 1}}})
+
+    assert latest('stable', transport=httpx.MockTransport(respond)) == '1.0.0b2'
+    [request] = seen
+    assert str(request.url) == VERSION_CHECK_URL
+    pax = f'pydantic-ai-pax/{metadata.version("pydantic-ai-pax")}'
+    assert pax in request.headers['user-agent'].split()
+    assert request.headers['user-agent'].startswith('pydantic-ai/')
+
+
+@pytest.mark.parametrize(
+    'endpoint',
+    [
+        pytest.param(httpx.Response(503), id='unavailable'),
+        pytest.param(httpx.Response(200, json={'pypi': {'pydantic-ai-slim': {'latest': '2.70.0'}}}), id='no-pax'),
+        pytest.param(httpx.Response(200, json={'pypi': {'pydantic-ai-pax': {'latest': '1.0\x1b[31m'}}}), id='unsafe'),
+        pytest.param(httpx.Response(200, text='not json'), id='not-json'),
+    ],
+)
+def test_latest_stable_falls_back_to_pypi(monkeypatch: pytest.MonkeyPatch, endpoint: httpx.Response) -> None:
+    """Not a VCR test: the live endpoint can't be made to fail, omit Pax, or send terminal escapes on demand."""
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK', raising=False)
+    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == PYPI_URL:
+            return httpx.Response(200, json={'info': {'version': '0.53.0'}})
+        return endpoint
+
+    assert latest('stable', transport=httpx.MockTransport(respond)) == '0.53.0'
 
 
 def test_bleeding_url() -> None:

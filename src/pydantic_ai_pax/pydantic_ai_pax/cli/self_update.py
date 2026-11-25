@@ -29,9 +29,10 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Annotated
 
 from anyio import CancelScope, open_process, run_process, to_thread
-from pydantic import StringConstraints, TypeAdapter
+from pydantic import StringConstraints, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
+from pydantic_ai import _version_check
 from pydantic_ai_pax.cli.install import DISTRIBUTION, command_name, tool_distribution
 from pydantic_ai_pax.config import UpdateChannel
 from pydantic_ai_pax.plugins import InstallProgress, UpdateStage
@@ -57,6 +58,7 @@ MANIFEST = 'clai2-bleeding.json'
 _COMMIT_ARCHIVE = re.compile(r'.*[/-]([0-9a-f]{40})\.tar\.gz')
 """A `main` sdist, or the commit archive earlier builds installed: the full commit ends the file name."""
 PYPI_URL = 'https://pypi.org/pypi/pydantic-ai-pax/json'
+"""Where `stable` looks when the version check is turned off, or its endpoint doesn't name a Pax release."""
 TIMEOUT = 10.0
 """Seconds a release lookup may take."""
 
@@ -78,12 +80,27 @@ class _PyPIProject(TypedDict):
     info: _ProjectInfo
 
 
+_Version = Annotated[str, StringConstraints(pattern=r'^\d+(\.\d+)*((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?$')]
+"""A plain PEP 440 version, the only text from the endpoint the status row prints."""
+
+
+class _Release(TypedDict):
+    latest: _Version
+
+
+class _Registries(TypedDict):
+    pypi: dict[str, object]
+    """Only Pax's entry is read, so another package's never keeps Pax from its answer."""
+
+
 class _Manifest(TypedDict):
     commit: Annotated[str, StringConstraints(pattern=r'^[0-9a-f]{40}$')]
 
 
 _DIRECT_URL = TypeAdapter(_DirectURL)
 _PYPI_PROJECT = TypeAdapter(_PyPIProject)
+_REGISTRIES = TypeAdapter(_Registries)
+_RELEASE = TypeAdapter(_Release)
 _MANIFEST = TypeAdapter(_Manifest)
 
 
@@ -124,15 +141,36 @@ def installed() -> Installed:
 
 
 def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = None) -> str:
-    """The newest PyPI version for `stable`, or the commit the `clai2-bleeding` release was built from for `main`."""
+    """The newest release for `stable`, or the commit the `clai2-bleeding` release was built from for `main`."""
     import httpx
 
     with httpx.Client(transport=transport, timeout=TIMEOUT, follow_redirects=True) as client:
         if channel == 'stable':
+            if _version_check.version_check_enabled() and (version := _checked_version(client)) is not None:
+                return version
             response = client.get(PYPI_URL).raise_for_status()
             return _PYPI_PROJECT.validate_json(response.content)['info']['version']
         response = client.get(f'{bleeding_url()}/{MANIFEST}').raise_for_status()
     return _MANIFEST.validate_json(response.content)['commit']
+
+
+def _checked_version(client: 'httpx.Client') -> str | None:
+    """The newest Pax release from Pydantic AI's version check, or `None` when it can't say and PyPI should.
+
+    Sends the version check's `User-Agent`, see https://pydantic.dev/docs/ai/production/network-requests/.
+    """
+    import httpx
+
+    product = f'{DISTRIBUTION}/{metadata.version(DISTRIBUTION)}'
+    try:
+        response = client.get(
+            _version_check.VERSION_CHECK_URL, headers={'User-Agent': _version_check.user_agent(product)}
+        ).raise_for_status()
+        if (entry := _REGISTRIES.validate_json(response.content)['pypi'].get(DISTRIBUTION)) is None:
+            return None
+        return _RELEASE.validate_python(entry)['latest']
+    except (httpx.HTTPError, ValidationError):
+        return None
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -43,6 +43,8 @@ The response is cached in `pydantic-ai/version-check.json` under the user cache 
 
 The cache contains no identifying information and is never sent to the server.
 
+[Pax](harness/clai2.md), the coding agent for your terminal, asks the same endpoint for its newest release when it checks for an update, with the same `User-Agent` plus `pydantic-ai-pax/{version}`. With the check turned off, Pax asks PyPI instead.
+
 ### Turning the version check off {#turning-the-version-check-off}
 
 Set `PYDANTIC_AI_NO_VERSION_CHECK` to any value (for example, `PYDANTIC_AI_NO_VERSION_CHECK=1`) to turn the check off without hiding the banner. A non-empty `DO_NOT_TRACK` value other than `0` or `false` also turns it off. Anything that keeps the banner from being displayed, as described in [the first-run banner](logfire.md#the-first-run-banner), also keeps the check from running.
