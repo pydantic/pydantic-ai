@@ -42,6 +42,8 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 types, and persistence for pausing and resuming. Reach for it when the control flow is a real state
 machine; plain Python and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) cover the rest.
 
+**Can I control which content my agent treats as instructions?** Yes. Everything a capability adds to the conversation is a typed part that records who wrote it (you, your user, or nobody you trust), and Pydantic AI speaks it in the voice that authority allows; what a capability enqueues can be lowered, never raised, as it moves through a run. Tool results, fetched pages and files stay data on every provider, and text that imitates the framework's own frames is flagged to the model. You can mark a workspace's files as untrusted, path by path. See [Capability parts](../message-history.md#capability-parts) and [Marking who wrote the files](../workspace-custom.md#workspace-authority).
+
 *Last checked: 2026-09-24*
 
 ## Sources
