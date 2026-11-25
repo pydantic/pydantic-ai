@@ -55,6 +55,7 @@ with try_import() as groq_imports:
 
 with try_import() as google_imports:
     from google.genai import errors as google_errors
+    from google.genai.types import HttpRetryOptions
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.google_interactions import GoogleInteractionsModel
@@ -1228,12 +1229,14 @@ async def test_google_interactions_stream_errors(
         streams.append(stream)
         return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, stream=stream)
 
+    # The Interactions SDK retries a 5xx with backoff; retrying only a status no case returns keeps the test off the clock.
     model = GoogleInteractionsModel(
         'gemini-3.8-flash',
         provider=GoogleProvider(
             api_key='test',
             base_url='http://localhost',
             http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+            retry_options=HttpRetryOptions(http_status_codes=[599]),
         ),
     )
     with pytest.raises(expected) as caught:
