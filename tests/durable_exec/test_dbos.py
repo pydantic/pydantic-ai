@@ -127,6 +127,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 from ..conftest import IsDatetime, IsNow, IsStr
 from ..realtime_connections import InferredConnection
 from .override_rebind_cases import REBIND_CASES, RebindCase
+from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 from .span_utils import drop_fastmcp_client_spans
 
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
@@ -2892,6 +2893,61 @@ async def test_dbos_durability_model_error_reaches_workflow_with_its_type(dbos: 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
 
 
+async def test_dbos_durability_submit_output_from_a_function_tool(dbos: DBOS) -> None:
+    """DBOS runs function tools in workflow code, so `submit_output()` from one ends the run."""
+
+    async def finish(ctx: RunContext[None]) -> str:
+        await ctx.submit_output('final_result', {'response': 'submitted'})
+        return 'done'
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='durability_submit_output',
+        deps_type=type(None),
+        tools=[finish],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    assert await run_durable_agent() == 'submitted'
+
+
+@DBOS.step()
+async def _submit_output_in_a_step(ctx: RunContext[None]) -> None:
+    await ctx.submit_output('final_result', {'response': 'submitted'})
+
+
+async def test_dbos_durability_submit_output_refused_in_a_users_step(dbos: DBOS) -> None:
+    """A step the tool's own code runs records its result, and recovery wouldn't submit again, so it's refused."""
+
+    async def finish(ctx: RunContext[None]) -> None:
+        await _submit_output_in_a_step(ctx)
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='durability_submit_output_in_a_step',
+        deps_type=type(None),
+        tools=[finish],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
+        await run_durable_agent()
+
+
 def _retry_after_model(*errors: ModelHTTPError | None) -> tuple[FunctionModel, list[float]]:
     """A model that raises `errors` in turn, then answers, recording when each attempt started."""
     attempts: list[float] = []
@@ -5464,6 +5520,30 @@ async def test_dbos_durability_routes_concurrent_calls_to_same_dynamic_operation
         return [result.output for result in results]
 
     assert await run_agent() == ['{"read_route":"left"}', '{"read_route":"right"}']
+
+
+@pytest.mark.parametrize('variant', VARIANTS)
+async def test_dbos_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
+    dbos: DBOS, variant: Variant
+) -> None:
+    """Parallel tool-call units list and call their tools through the toolset prepared once for the step.
+
+    A `per_run_step=False` `DynamicToolset` is resolved once per run and shared by every durable unit, as a
+    non-durable run shares it. `FunctionModel` drives it rather than a cassette: the race is between the
+    tool-call units, after the model response that requests both calls.
+    """
+    state = StepState()
+    agent = parallel_calls_agent(f'dbos_parallel_run_held_dynamic_{variant}', variant, state, DBOSDurability())
+
+    @DBOS.workflow(name=f'dbos_parallel_run_held_dynamic_workflow_{variant}')
+    async def run_agent() -> str:
+        return (await agent.run('go')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        assert await run_agent() == 'done'
+    assert state.listed.keys() == {'call-a', 'call-b'}
+    assert state.called == state.listed
+    assert len(set(state.listed.values())) == 1
 
 
 async def test_dbos_durability_nested_agent_in_tool_routes_to_inner_registrations(dbos: DBOS) -> None:

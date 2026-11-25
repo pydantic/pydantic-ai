@@ -27,6 +27,12 @@ Choose the backend tier from the engine SDK's execution model:
   the five model operations during agent assembly, so `registrations()` is complete before worker
   start; pass the collected registrations to the engine SDK when creating the worker.
 
+If user code can open its own durable unit around tool code in the same process (a DBOS step via
+`DBOS.step_id`, a Prefect task via `TaskRunContext`), override `in_durable_unit` to detect it, as the
+DBOS and Prefect capabilities do. `RunContext.submit_output()` refuses inside a unit, because replaying
+the unit's recorded result wouldn't submit the output again; a unit the capability can't see would
+lose the submission on recovery.
+
 When durable units can run in another process (Temporal activities, Render child tasks), give the
 backend a `ParameterTransports` subclass that moves the public `*Params` types across the boundary,
 and serialize and rebuild their `RunContext` with `DurableRunContext` (subclass it for
@@ -62,9 +68,14 @@ the run, which the durable container closes: that is the deliberate exception to
 it is what lets an `MCPToolset` hold one session per run instead of one per unit. Declare it with the
 `'enter-in-durable-unit'` lifecycle, which is only for engines whose units run in the container's own
 process; connecting still happens inside a unit, so the engine retries it. A `DynamicToolset` built
-with `per_run_step=False` is held the same way, except that the run resolves it first: that factory
-runs in container code, so it carries the same determinism requirement as every other factory that
-runs there.
+with `per_run_step=False` is held the same way, except that the run resolves it first: that factory,
+and the `for_run` of the toolset it returns, run in container code, so they carry the same
+determinism requirement as every other factory that runs there. It needs no lifecycle declaration:
+`_build_dynamic_toolset` passes `units_share_run_context=True`, and `DurableDynamicToolset.for_run`
+holds it, only when the engine's dynamic toolset transports are the default
+`IdentityParameterTransport`, which hands each unit the run's own `RunContext`. An engine whose
+`ParameterTransports` carry the context to another process gets per-unit resolution without declaring
+anything.
 
 Workspaces are routed by the base, not by engines: when a construction-time capability overrides
 `get_workspace`, `_bind_workspace_operation` binds one operation, `CapabilityOperationId('workspace',

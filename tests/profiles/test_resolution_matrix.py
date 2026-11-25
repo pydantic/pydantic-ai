@@ -188,6 +188,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'openai_system_prompt_role': None,
     'openai_chat_supports_multiple_system_messages': True,
     'openai_chat_streaming_repeats_usage_totals': False,
+    'openai_chat_completion_tokens_omit_reasoning': False,
     'openai_chat_supports_web_search': False,
     'openai_chat_audio_input_encoding': 'base64',
     'openai_chat_supports_file_urls': False,
