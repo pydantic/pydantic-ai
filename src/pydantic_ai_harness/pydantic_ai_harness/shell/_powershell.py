@@ -121,6 +121,7 @@ _LAUNCHER = """try {
   New-Item -ItemType Directory -Force -Path (Split-Path -LiteralPath $dir) -ErrorAction Stop | Out-Null
   # Without `-Force`, so of two launches that claim the same directory, only one creates it.
   New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
+# `claimed` is the word `Job.launch` looks for (`_jobs._CLAIMED`).
 } catch { if ($exclusive -and (Test-Path -LiteralPath $dir)) { [Console]::Out.Write('claimed') }; exit 125 }
 # Owner-only, before any job file is written, as `umask 077` makes the `sh` side's: the command and its output
 # may hold secrets, and a checkout's own ACL can let other local users read it.
