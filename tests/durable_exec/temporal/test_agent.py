@@ -12,7 +12,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, fields, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -780,18 +780,30 @@ async def _partial_cancellation_event_stream_handler(
         pass
 
 
-_partial_cancellation_agent = Agent(
-    FunctionModel(stream_function=_partial_cancellation_stream_model),
-    name='partial_cancellation_agent',
-    deps_type=type(None),
-    capabilities=[
-        TemporalDurability(
-            event_stream_handler=_partial_cancellation_event_stream_handler,
-            # A short heartbeat timeout delivers the cancellation to the activity quickly.
-            model_activity_config=ActivityConfig(heartbeat_timeout=timedelta(seconds=1)),
-        )
-    ],
-)
+_partial_cancellation_agents: dict[bool, Agent[None, str]] = {
+    # Opted in to keeping what was streamed. A short heartbeat timeout delivers the cancellation to the activity quickly.
+    True: Agent(
+        FunctionModel(stream_function=_partial_cancellation_stream_model),
+        name='partial_cancellation_agent',
+        deps_type=type(None),
+        capabilities=[
+            TemporalDurability(
+                event_stream_handler=_partial_cancellation_event_stream_handler,
+                model_activity_config=ActivityConfig(
+                    heartbeat_timeout=timedelta(seconds=1),
+                    cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
+                ),
+            )
+        ],
+    ),
+    # The default config, with the default `heartbeat_timeout`, so waiting for the activity would show.
+    False: Agent(
+        FunctionModel(stream_function=_partial_cancellation_stream_model),
+        name='default_partial_cancellation_agent',
+        deps_type=type(None),
+        capabilities=[TemporalDurability(event_stream_handler=_partial_cancellation_event_stream_handler)],
+    ),
+}
 
 _partial_cancellation_messages: list[ModelMessage] = []
 """What the cancelled run recorded, as a workflow cancelled by `handle.cancel()` can't return it."""
@@ -799,17 +811,23 @@ _partial_cancellation_messages: list[ModelMessage] = []
 _partial_cancellation_usage: list[RunUsage] = []
 """The usage the cancelled run recorded."""
 
+_partial_cancellation_waits: list[timedelta] = []
+"""How long, on the workflow's clock, the run took to raise once the signal cancelled it."""
+
 
 @workflow.defn
 class PartialCancellationWorkflow:
     def __init__(self) -> None:
         self._token = CancellationToken()
+        self._cancelled_at: datetime | None = None
 
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str, opted_in: bool) -> str:
         try:
-            await _partial_cancellation_agent.run(prompt, cancellation_token=self._token)
+            await _partial_cancellation_agents[opted_in].run(prompt, cancellation_token=self._token)
         except RunCancelled as exc:
+            assert self._cancelled_at is not None
+            _partial_cancellation_waits[:] = [workflow.now() - self._cancelled_at]
             _partial_cancellation_messages[:] = exc.all_messages()
             _partial_cancellation_usage[:] = [exc.usage]
             return 'run cancelled'
@@ -823,27 +841,29 @@ class PartialCancellationWorkflow:
 
     @workflow.signal
     def cancel(self) -> None:
+        self._cancelled_at = workflow.now()
         self._token.cancel()
 
 
 async def _run_partial_cancellation_workflow(
-    client: Client, *, by_signal: bool
+    client: Client, *, by_signal: bool, opted_in: bool = True
 ) -> tuple[list[ModelMessage], WorkflowHistory]:
     global _partial_cancellation_activity_started
 
     _partial_cancellation_activity_started = asyncio.Event()
     _partial_cancellation_messages.clear()
     _partial_cancellation_usage.clear()
+    _partial_cancellation_waits.clear()
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[PartialCancellationWorkflow],
-        plugins=[AgentPlugin(_partial_cancellation_agent)],
+        plugins=[AgentPlugin(agent) for agent in _partial_cancellation_agents.values()],
         workflow_runner=UnsandboxedWorkflowRunner(),
     ):
         handle = await client.start_workflow(
             PartialCancellationWorkflow.run,
-            args=['Write a reply.'],
+            args=['Write a reply.', opted_in],
             id=f'{PartialCancellationWorkflow.__name__}-{uuid.uuid4()}',
             task_queue=TASK_QUEUE,
         )
@@ -878,16 +898,45 @@ async def _replay_partial_cancellation(history: WorkflowHistory) -> None:
     ).replay_workflow(history)
 
 
+def _has_patch_marker(history: WorkflowHistory) -> bool:
+    """Whether the run recorded the `pydantic_ai:stream_cancel_partial` patch marker."""
+    return any(
+        event.HasField('marker_recorded_event_attributes')
+        and b'pydantic_ai:stream_cancel_partial' in event.SerializeToString()
+        for event in history.events
+    )
+
+
+async def test_temporal_run_cancelled_by_signal_loses_streamed_partial_by_default(client: Client) -> None:
+    """By default, a run cancelled while its model activity streams stops at once and records an empty response.
+
+    The run issues exactly the commands it did before streamed partials could be kept: it never checks the patch
+    marker, so none is recorded.
+    """
+    messages, history = await _run_partial_cancellation_workflow(client, by_signal=True, opted_in=False)
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == []
+    assert response.state == 'interrupted'
+    # Waiting for the activity would take up to 24 seconds, with the default `heartbeat_timeout` of 30.
+    [wait] = _partial_cancellation_waits
+    assert wait < timedelta(seconds=5)
+    assert not _has_patch_marker(history)
+    await _replay_partial_cancellation(history)
+
+
 async def test_temporal_run_cancelled_by_signal_keeps_streamed_partial_response(client: Client) -> None:
-    """A run cancelled while its model activity streams keeps what was streamed, as an `'interrupted'` response."""
+    """Opted in, a run cancelled while its model activity streams keeps what was streamed, as `'interrupted'`."""
     messages, history = await _run_partial_cancellation_workflow(client, by_signal=True)
 
     _assert_streamed_partial_kept(messages)
+    assert _has_patch_marker(history)
     await _replay_partial_cancellation(history)
 
 
 async def test_temporal_workflow_cancel_keeps_streamed_partial_response(client: Client) -> None:
-    """Cancelling the workflow keeps what the run's model activity streamed, and the workflow still ends cancelled."""
+    """Opted in, cancelling the workflow keeps what the run's model activity streamed; the workflow still ends cancelled."""
     messages, history = await _run_partial_cancellation_workflow(client, by_signal=False)
 
     _assert_streamed_partial_kept(messages)
@@ -897,10 +946,10 @@ async def test_temporal_workflow_cancel_keeps_streamed_partial_response(client: 
 async def test_temporal_stream_cancellation_replays_history_recorded_without_the_partial(
     client: Client, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A history recorded before a cancelled stream's activity handed over its partial replays as it was recorded.
+    """A history an opted-in run recorded before a cancelled stream's activity handed over its partial replays.
 
-    Without the patch marker, the activity's cancellation resolves straight away (`TRY_CANCEL`), so the run
-    records an empty interrupted response.
+    Without the patch marker, the run waits for the activity (`WAIT_CANCELLATION_COMPLETED`) but discards its result,
+    so it records an empty interrupted response.
     """
     patched = workflow.patched
 

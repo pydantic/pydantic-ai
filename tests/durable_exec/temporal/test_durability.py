@@ -178,7 +178,7 @@ try:
         WorkflowInterceptorClassInput,
         WorkflowOutboundInterceptor,
     )
-    from temporalio.workflow import ActivityConfig, ActivityHandle, ChildWorkflowConfig
+    from temporalio.workflow import ActivityCancellationType, ActivityConfig, ActivityHandle, ChildWorkflowConfig
 
     import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
@@ -1786,9 +1786,19 @@ async def _hanging_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> A
     yield 'unreachable'  # pragma: no cover
 
 
+_KEEP_STREAMED_PARTIAL = ActivityConfig(cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED)
+"""The model activity config that opts in to keeping what a cancelled stream produced, by waiting for it."""
+
+
 def _request_timeout_agent(name: str, model: FunctionModel, *, streamed: bool = False) -> Agent[None, str]:
     capabilities: list[AbstractCapability[None]] = [ProcessEventStream(_drain_events)] if streamed else []
-    capabilities.append(TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG))
+    capabilities.append(
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            # Opted in to keeping a cancelled stream's partial, which a deadline still doesn't wait for.
+            model_activity_config=_KEEP_STREAMED_PARTIAL if streamed else None,
+        )
+    )
     return Agent(
         model,
         name=name,
@@ -1830,8 +1840,8 @@ class RequestTimeoutWorkflow:
 )
 async def test_durability_request_timeout_cancels_the_model_activity(client: Client, agent: Agent[None, str]):
     """The deadline is a workflow timer: when it fires, the hanging model activity is cancelled and the workflow sees
-    `ModelRequestTimeout` at once, well within the activity's own timeouts, also when streaming, where a run's own
-    cancellation waits for the activity to hand over what it streamed."""
+    `ModelRequestTimeout` at once, well within the activity's own timeouts, also for a stream opted in to keeping
+    what it streamed, whose activity a run's own cancellation waits for."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -1861,7 +1871,10 @@ streamed_run_timeout_agent = Agent(
     FunctionModel(stream_function=_hanging_stream_fn, model_name='hanging'),
     name='durability_streamed_run_timeout',
     deps_type=type(None),
-    capabilities=[ProcessEventStream(_drain_events), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    capabilities=[
+        ProcessEventStream(_drain_events),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, model_activity_config=_KEEP_STREAMED_PARTIAL),
+    ],
 )
 
 
@@ -1880,8 +1893,8 @@ class StreamedRunTimeoutWorkflow:
 
 
 async def test_durability_streamed_run_timeout_does_not_wait_for_the_model_activity(client: Client):
-    """A run's `timeout=` cancels its streamed model activity and raises `RunTimedOut` at once, without waiting for
-    the activity to hand over what it streamed, as a cancel from the run's token or the workflow does."""
+    """A run's `timeout=` cancels its streamed model activity and raises `RunTimedOut` at once, also when opted in
+    to keeping what it streamed, where a cancel from the run's token or the workflow waits for the activity."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,

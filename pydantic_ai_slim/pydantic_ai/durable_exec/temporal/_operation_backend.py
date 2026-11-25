@@ -69,8 +69,10 @@ TemporalOperationConfigValue = ActivityConfig | ChildWorkflowOperationConfig
 _STREAM_CANCEL_PARTIAL_PATCH = 'pydantic_ai:stream_cancel_partial'
 """`workflow.patched()` ID marking histories in which a cancelled model stream's activity hands over what it streamed.
 
-The activity waits for its cancellation to complete (`WAIT_CANCELLATION_COMPLETED`) and the run records its result,
-where histories without the marker resolved the cancellation straight away (`TRY_CANCEL`).
+Only a streamed model activity configured with `WAIT_CANCELLATION_COMPLETED` checks it, so a run with the default
+`TRY_CANCEL` issues the commands it always did. With the marker, the run records the result the activity returns for
+the cancellation, and a deadline doesn't wait for it; without it, the run waited for that result and discarded it, on
+a deadline too.
 """
 
 
@@ -190,15 +192,13 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
             if (
                 isinstance(operation_id, ModelRequestId)
                 and operation_id.streaming
+                and activity_config.get('cancellation_type') == ActivityCancellationType.WAIT_CANCELLATION_COMPLETED
                 and workflow.patched(_STREAM_CANCEL_PARTIAL_PATCH)
             ):
+                # The stream's activity returns what it streamed when the run cancels it, which the run waits for and
+                # records. A deadline raises a timeout that keeps nothing, so it doesn't wait.
                 on_cancelled_result = mark_streamed_before_failing
-                if 'cancellation_type' not in activity_config:
-                    # A stream's activity returns what it streamed when the run cancels it, so wait for that result
-                    # to record it. A deadline keeps nothing, so it doesn't wait, as it didn't before.
-                    activity_config['cancellation_type'] = ActivityCancellationType.WAIT_CANCELLATION_COMPLETED
-                    run_context = cast(ModelRequestParams, params).run_context
-                    skips_wait_on_cancel = partial(_cancelled_by_a_deadline, run_context)
+                skips_wait_on_cancel = partial(_cancelled_by_a_deadline, cast(ModelRequestParams, params).run_context)
             with rebuilt_model_errors(), model_response_payload_errors(model_name):
                 return await execute_activity(
                     activity=self.registration,
