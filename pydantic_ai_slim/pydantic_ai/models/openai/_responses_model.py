@@ -71,6 +71,7 @@ from ...computer_use import COMPUTER_KIND
 from ...durable_exec._operation_backend import in_durable_unit
 from ...exceptions import (
     ModelConnectionError,
+    ModelEmptyResponseError,
     SuspendedResponseExpired,
     UnsupportedSettingWarning,
     UserError,
@@ -167,6 +168,7 @@ from ._caching import (
     move_leading_cache_breakpoints,
     openai_effective_cache_settings,
     resolve_legacy_cache_retention,
+    split_stable_instructions,
     translate_openai_cache,
 )
 from ._chat_model import preload_openai_sdk_resource_modules
@@ -868,6 +870,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         instructions_override: str | None = None,
     ) -> responses.CompactedResponse | ModelResponse:
         """Call the OpenAI Responses compaction endpoint."""
+        # No `chained_instructions`: the compaction item keeps the window's leading system items, so a chain whose
+        # stored input starts with the instructions would carry them past the compaction, next to the top-level ones
+        # each later request sends. Such a chain's responses don't match, so the window is resent without them.
         previous_response_id, new_messages = self._resolve_previous_response_id(
             model_settings.get('openai_previous_response_id'),
             messages,
@@ -1002,7 +1007,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         In WebSocket mode that's every response, including one sent over HTTP instead, since a later socket request
         continues from it by default.
-        A request's top-level instructions are omitted unless sent as input.
+        A request's top-level instructions are omitted unless sent as input, and an `'auto'` chain's leading ones are
+        recorded ahead of the history.
         """
         if settings.get('openai_previous_response_id') is None and settings.get('openai_transport') != 'websocket':
             return None
@@ -1010,6 +1016,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             messages,
             self._history_digest_key,
             with_instructions=self._sends_instructions_as_input(model_request_parameters),
+            leading_instructions=self._chained_instructions(messages, settings, model_request_parameters),
         )
 
     def _sends_instructions_as_input(self, model_request_parameters: ModelRequestParameters) -> bool:
@@ -1034,21 +1041,31 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         has changed since, or it recorded none, none is returned: the merged response keeps the suspended one's digest,
         if any, which no longer matches, so it isn't continued from.
         """
-        if not self._history_known_unchanged(suspended, history):
+        chained_instructions = self._chained_instructions(history, settings, model_request_parameters)
+        if not self._history_known_unchanged(suspended, history, chained_instructions):
             return None
         return self._history_to_record(history, settings, model_request_parameters)
 
-    def _history_known_unchanged(self, response: ModelResponse, history: Sequence[ModelMessage]) -> bool:
+    def _history_known_unchanged(
+        self, response: ModelResponse, history: Sequence[ModelMessage], chained_instructions: Sequence[str]
+    ) -> bool:
         """Whether `response`, and `history`, the messages before it, are as they were when the response was created.
 
-        Without a recorded digest there's no telling, so a response that has none doesn't count.
+        Without a recorded digest there's no telling, so a response that has none doesn't count. Nor does one whose
+        stored input starts with other leading instructions than `chained_instructions`, the ones the request would send.
         """
         if response.history_digest is None:
             return False
         return any(
             response.history_digest
             == continuation_digest(
-                history_hasher(history, self._history_digest_key, with_instructions=with_instructions), response.parts
+                history_hasher(
+                    history,
+                    self._history_digest_key,
+                    with_instructions=with_instructions,
+                    leading_instructions=chained_instructions,
+                ),
+                response.parts,
             )
             for with_instructions in (False, True)
         )
@@ -1423,7 +1440,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
         if isinstance(first_chunk, responses.ResponseErrorEvent):
             # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
             raise response_error(self.model_name, first_chunk.code, first_chunk.message, in_stream=True)
@@ -1551,6 +1568,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             model_settings.get('openai_previous_response_id') is not None
             or model_settings.get('openai_conversation_id') is not None
         )
+        chained_instructions = self._chained_instructions(messages, model_settings, model_request_parameters)
         wire_request_parameters = self._wire_request_parameters(
             trimmed_messages,
             resolved_tool_choice,
@@ -1574,7 +1592,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             tool_choice = None
 
         previous_response_id, conversation_id, new_messages = await self._resolve_server_side_state(
-            model_settings, messages
+            model_settings, messages, chained_instructions=chained_instructions
         )
         server_computer_calls = self._server_stored_computer_calls(
             messages,
@@ -1598,20 +1616,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         reasoning = self._translate_thinking(model_settings, effort_request_parameters)
 
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
-        if self._should_relocate_cached_instructions(
+        instructions = self._place_instructions(
+            instructions,
+            openai_messages,
+            messages,
             model_settings,
+            wire_request_parameters,
             profile,
             system_prompt_role,
-            messages,
-            openai_messages,
+            chained_instructions=chained_instructions,
+            continues_chain=previous_response_id is not None,
             uses_server_side_state=uses_server_side_state,
-        ):
-            instructions = self._relocate_cached_instructions(
-                instructions,
-                openai_messages,
-                self._get_instruction_parts(messages, wire_request_parameters) or [],
-                system_prompt_role,
-            )
+        )
 
         text, instructions = self._responses_text_config(
             model_settings, model_request_parameters, profile, instructions, openai_messages, system_prompt_role
@@ -1654,6 +1670,46 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if 'openai_context_management' in unsupported_settings
             else model_settings.get('openai_context_management', OMIT),
         )
+
+    def _place_instructions(
+        self,
+        instructions: str | Omit,
+        openai_messages: list[responses.ResponseInputItemParam],
+        messages: list[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+        profile: OpenAIModelProfile,
+        system_prompt_role: OpenAISystemPromptRole,
+        *,
+        chained_instructions: Sequence[str],
+        continues_chain: bool,
+        uses_server_side_state: bool,
+    ) -> str | Omit:
+        """Move the instructions that belong in leading input messages there, and return what's left of the field.
+
+        Mutates `openai_messages`.
+        """
+        if chained_instructions and continues_chain:
+            # A continued chain's stored input already starts with the stable ones, as its history digest confirmed.
+            _, rest = split_stable_instructions(self._get_instruction_parts(messages, model_request_parameters) or [])
+            return InstructionPart.join(rest) or OMIT
+        if chained_instructions or self._should_relocate_instructions(
+            model_settings,
+            profile,
+            system_prompt_role,
+            messages,
+            openai_messages,
+            uses_server_side_state=uses_server_side_state,
+        ):
+            return self._relocate_instructions(
+                instructions,
+                openai_messages,
+                self._get_instruction_parts(messages, model_request_parameters) or [],
+                system_prompt_role,
+                add_breakpoint=self._adds_instruction_breakpoint(model_settings, profile),
+                stable_only=profile.get('openai_responses_stable_instructions_as_input', False),
+            )
+        return instructions
 
     @staticmethod
     def _wire_request_parameters(
@@ -1707,7 +1763,49 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return model_request_parameters
 
     @staticmethod
-    def _should_relocate_cached_instructions(
+    def _adds_instruction_breakpoint(model_settings: OpenAIResponsesModelSettings, profile: OpenAIModelProfile) -> bool:
+        """Whether `openai_cache_instructions` asks for a cache breakpoint after the instructions this model accepts."""
+        return bool(
+            model_settings.get('openai_cache_instructions')
+            and profile.get('openai_supports_prompt_cache_breakpoints', False)
+        )
+
+    def _chained_instructions(
+        self,
+        messages: Sequence[ModelMessage],
+        model_settings: OpenAIResponsesModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> list[str]:
+        """The instructions an `openai_previous_response_id='auto'` chain keeps at the start of its stored input.
+
+        On a model whose profile sends the instructions that keep the prefix stable as leading input messages, a request
+        that starts the chain or resends the history sends them there, and a request that continues it leaves them out.
+        Each response's history digest records them, so a request only continues while it would send the same ones.
+        Empty where they stay in the top-level field: see `_instructions_stay_top_level`, and a compacted history,
+        whose compaction item keeps the window's leading system items.
+        """
+        profile = self.profile
+        if (
+            model_settings.get('openai_previous_response_id') != 'auto'
+            or not profile.get('openai_responses_stable_instructions_as_input', False)
+            or self._instructions_stay_top_level(profile.get('openai_system_prompt_role', None) or 'system', messages)
+            or any(isinstance(part, CompactionPart) for message in messages for part in message.parts)
+        ):
+            return []
+        stable, _ = split_stable_instructions(self._get_instruction_parts(messages, model_request_parameters) or [])
+        return [part.content for part in stable]
+
+    @staticmethod
+    def _instructions_stay_top_level(
+        system_prompt_role: OpenAISystemPromptRole, messages: Sequence[ModelMessage]
+    ) -> bool:
+        """Whether the instructions stay in the top-level field whatever the settings and server-side state."""
+        # A `'user'` system prompt role can't be told apart from a real user turn, and a dynamic system prompt changes
+        # between requests, so it can't sit in the cached prefix.
+        return system_prompt_role == 'user' or has_dynamic_system_prompt(messages)
+
+    def _should_relocate_instructions(
+        self,
         model_settings: OpenAIResponsesModelSettings,
         profile: OpenAIModelProfile,
         system_prompt_role: OpenAISystemPromptRole,
@@ -1716,17 +1814,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         uses_server_side_state: bool,
     ) -> bool:
-        """Whether `openai_cache_instructions` can move the instructions into the input to mark a cache breakpoint."""
+        """Whether the instructions move into the input, to be cached or to carry a cache breakpoint after them."""
         return bool(
-            model_settings.get('openai_cache_instructions')
-            and profile.get('openai_supports_prompt_cache_breakpoints', False)
-            # A `'user'` system prompt role can't be told apart from a real user turn.
-            and system_prompt_role != 'user'
+            (
+                self._adds_instruction_breakpoint(model_settings, profile)
+                or profile.get('openai_responses_stable_instructions_as_input', False)
+            )
+            and not self._instructions_stay_top_level(system_prompt_role, messages)
             # Instructions relocated into a stored response's input would be replayed to any request
             # that continues it, next to that request's own instructions.
             and not uses_server_side_state
-            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
-            and not has_dynamic_system_prompt(messages)
             # A compaction item retains the window's leading system items, so they aren't resent.
             and not any(isinstance(item, dict) and item.get('type') == 'compaction' for item in openai_messages)
         )
@@ -1757,7 +1854,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # Without this trick, we'd hit this error:
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
             # Apparently they're only checking input messages for "JSON", not instructions.
-            # `openai_cache_instructions` may already have moved them into the input messages.
+            # `_relocate_instructions` may already have moved them into the input messages.
             if isinstance(instructions, str):
                 system_prompt_count = leading_system_message_count(openai_messages, system_prompt_role)
                 openai_messages.insert(
@@ -1772,16 +1869,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return text, instructions
 
     @staticmethod
-    def _relocate_cached_instructions(
+    def _relocate_instructions(
         instructions: str | Omit,
         openai_messages: list[responses.ResponseInputItemParam],
         instruction_parts: list[InstructionPart],
         system_prompt_role: OpenAISystemPromptRole,
+        *,
+        add_breakpoint: bool,
+        stable_only: bool,
     ) -> str | Omit:
-        """Move the instructions into leading input messages and mark a cache breakpoint after the last static one.
+        """Move instructions into leading input messages, with `add_breakpoint` marking the last static one for caching.
 
-        The top-level `instructions` field cannot carry a breakpoint. Mutates `openai_messages` and
-        returns what's left of the top-level `instructions`.
+        The top-level `instructions` field cannot carry a breakpoint. With `stable_only`, the parts that rewrite the
+        prefix when they change stay in the top-level field, which the model reads after the input. Mutates
+        `openai_messages` and returns what's left of the top-level `instructions`.
         """
         # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt. Kept
         # apart from `leading_system_message_count`: checking `type` there would also move where
@@ -1794,15 +1895,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             ),
             len(openai_messages),
         )
-        breakpoint_index = system_prompt_count + cacheable_instruction_count(instruction_parts) - 1
-        # With nothing static to cache, the instructions stay in the top-level field.
-        if breakpoint_index >= 0:
-            if instruction_parts:
-                openai_messages[system_prompt_count:system_prompt_count] = [
-                    responses.EasyInputMessageParam(role=system_prompt_role, content=part.content)
-                    for part in instruction_parts
-                ]
-                instructions = OMIT
+        if stable_only:
+            moved, kept = split_stable_instructions(instruction_parts)
+        else:
+            moved, kept = instruction_parts, []
+        breakpoint_index = system_prompt_count + cacheable_instruction_count(moved) - 1
+        # For the breakpoint alone, they move only when there's a static instruction or a system prompt to put it on.
+        if moved and (stable_only or breakpoint_index >= 0):
+            openai_messages[system_prompt_count:system_prompt_count] = [
+                responses.EasyInputMessageParam(role=system_prompt_role, content=part.content) for part in moved
+            ]
+            instructions = InstructionPart.join(kept) or OMIT
+        # With nothing static to cache, there's no breakpoint.
+        if add_breakpoint and breakpoint_index >= 0:
             target = cast(responses.EasyInputMessageParam, openai_messages[breakpoint_index])
             # A system prompt's content is already a list when a leading `CachePoint` attached its breakpoint there.
             content: str | responses.ResponseInputMessageContentListParam = target['content']
@@ -2461,6 +2566,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         store: bool | Omit | None = OMIT,
         allow_no_new_messages: bool = False,
         websocket_mode: bool = False,
+        chained_instructions: Sequence[str] = (),
     ) -> tuple[str | None, list[ModelMessage]]:
         # Resolve the effective `previous_response_id` and trim already-stored messages.
         #
@@ -2476,7 +2582,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if setting is None:
             return None, messages
         auto_id, trimmed, at_boundary = self._get_previous_response_id_and_new_messages(
-            messages, store=store, allow_no_new_messages=allow_no_new_messages, websocket_mode=websocket_mode
+            messages,
+            store=store,
+            allow_no_new_messages=allow_no_new_messages,
+            websocket_mode=websocket_mode,
+            chained_instructions=chained_instructions,
         )
         if auto_id is not None:
             return auto_id, trimmed
@@ -2559,6 +2669,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         store: bool | Omit | None = OMIT,
         allow_no_new_messages: bool = False,
         websocket_mode: bool = False,
+        chained_instructions: Sequence[str] = (),
     ) -> tuple[str | None, list[ModelMessage], bool]:
         # Find the most recent `provider_response_id` from messages produced by this
         # provider, and return it along with the messages that came after it (which
@@ -2574,7 +2685,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 # Continue from the compaction item instead of restoring the older server-side context.
                 return None, messages, True
             if isinstance(m, ModelResponse) and self.accepts_server_state(m):
-                at_boundary = self._chain_break(m, messages[:index], store, websocket_mode=websocket_mode)
+                at_boundary = self._chain_break(
+                    m, messages[:index], store, websocket_mode=websocket_mode, chained_instructions=chained_instructions
+                )
                 if at_boundary is not None:
                     return None, messages, at_boundary
                 previous_response_id = m.provider_response_id
@@ -2592,12 +2705,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         store: bool | Omit | None,
         *,
         websocket_mode: bool,
+        chained_instructions: Sequence[str],
     ) -> bool | None:
         """`None` if a request can continue from `response`, else whether the break is a chain boundary."""
         # The server continues from this response and the history it was created with, so if
-        # either has changed since (a history processor redacted or trimmed them, say),
+        # either has changed since (a history processor redacted or trimmed them, say), or the
+        # leading instructions it holds aren't the ones this request would send (a handoff),
         # continuing would silently drop the change: resend everything instead.
-        if not self._history_known_unchanged(response, prior_messages):
+        if not self._history_known_unchanged(response, prior_messages, chained_instructions):
             return True
         # A response cached only on another socket, or one that's gone, means replaying the history.
         if not self._is_response_id_reachable(response, store, websocket_mode=websocket_mode):
@@ -2652,7 +2767,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return stored_computer_call(part)
 
     async def _resolve_server_side_state(
-        self, model_settings: OpenAIResponsesModelSettings, messages: list[ModelMessage]
+        self,
+        model_settings: OpenAIResponsesModelSettings,
+        messages: list[ModelMessage],
+        *,
+        chained_instructions: Sequence[str],
     ) -> tuple[str | None, str | None, list[ModelMessage]]:
         previous_response_id_setting = model_settings.get('openai_previous_response_id')
         conversation_id_setting = model_settings.get('openai_conversation_id')
@@ -2673,6 +2792,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             messages,
             store=self._resolve_store(model_settings),
             websocket_mode=model_settings.get('openai_transport') == 'websocket',
+            chained_instructions=chained_instructions,
         )
         return previous_response_id, None, messages
 

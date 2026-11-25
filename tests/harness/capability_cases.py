@@ -1209,6 +1209,14 @@ CASES: dict[str, CapabilityCase] = {
         ),
         requires='playwright',
     ),
+    'CDPBrowser': CapabilityCase(
+        Narrows(
+            'one browser per id, and its commands and egress settings are an access boundary',
+            lambda cls: (cls(), cls(allowed_methods=['Runtime.evaluate'])),
+        ),
+        build=Unbuildable('Launches Chrome when a run starts, which the offline suites have no binary for.'),
+        requires='websockets',
+    ),
     'ConversationSearch': CapabilityCase(
         Narrows(
             'one `search_conversation_history` tool per id, and its source and scope bound what it can read',
