@@ -95,7 +95,7 @@ agent = Agent(
 
 On a remote sandbox, `Coder` loads repo instructions at run start and may create the sandbox before the first model tool call. Use `Coder(repo_context=False)` for lazy creation.
 
-Compose your own when you want a different agent, not a safer one. A researcher that reads and greps but never writes or runs anything is a few capabilities, and nothing `Coder` exposes turns it into that:
+Compose your own when you want a different agent, not a safer one. A code reader that greps and reads but never writes or runs anything is a few capabilities, and nothing `Coder` exposes turns it into that:
 
 ```python
 from pydantic_ai import Agent
@@ -129,7 +129,8 @@ Containment is the workspace's job, because that is the layer with the kernel be
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness import BubblewrappedWorkspace, Coder, LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import BubblewrappedWorkspace, Coder
 
 agent = Agent(
     '{{ anthropic:large }}',
