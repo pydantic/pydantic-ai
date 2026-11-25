@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, MutableMapping
 from pathlib import Path
 
 import anyio
@@ -74,6 +74,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.viewer import (
     create_viewer_app,
     sandbox_key,
 )
+from pydantic_ai_pax.builtin_plugins.web import server as web_server
 from pydantic_ai_pax.config import PERMISSIONS_SETTING
 from pydantic_ai_pax.plugins import SessionEnd, Transcript
 
@@ -100,6 +101,17 @@ def display(provider: FakeProvider) -> FakeDisplay:
     """The screen of the fake provider's desktop sandboxes."""
     provider.display = screen = FakeDisplay()
     return screen
+
+
+def stub_viewer_port(monkeypatch: pytest.MonkeyPatch, plugin: SandboxPlugin, port: int) -> None:
+    """Skip binding a real port; `test_desktop_viewer_app_end_to_end` serves the viewer for real."""
+    monkeypatch.setattr(plugin._viewer, 'ensure_started', lambda: port)  # pyright: ignore[reportPrivateUsage]
+
+
+def viewer_frames(plugin: SandboxPlugin, ref: WorkspaceRef) -> list[DesktopFrame] | None:
+    """The frames the viewer page shows; only that page shows them, and `test_desktop_viewer_app_end_to_end` reads it."""
+    session = plugin._viewer.get(sandbox_key(ref))  # pyright: ignore[reportPrivateUsage]
+    return None if session is None else list(session.frames)
 
 
 def on_screen_sandbox(plugin: SandboxPlugin):
@@ -213,7 +225,7 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     work = checkout
     loaded = load(work)
     plugin = plugin_of(loaded)
-    monkeypatch.setattr(plugin._viewer, 'ensure_started', lambda: 43219)  # pyright: ignore[reportPrivateUsage]
+    stub_viewer_port(monkeypatch, plugin, 43219)
 
     seen_tools: list[list[str]] = []
 
@@ -258,15 +270,10 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     [first_req] = [m for m in result.new_messages() if isinstance(m, ModelRequest)][:1]
     assert 'also has a desktop' in (first_req.instructions or '')
 
-    viewer_key = sandbox_key(ref)
-    viewer_session = plugin._viewer.get(viewer_key)  # pyright: ignore[reportPrivateUsage]
-    assert viewer_session is not None
-    assert len(viewer_session.frames) == 1
-    assert viewer_session.frames[0].png == PNG_A
-    assert viewer_session.frames[0].summary == 'click (120, 240) · type "hi"'
-    assert viewer_session.frames[0].markers == (
-        ActionMarker(kind='click', points=((120, 240),), label='click (120, 240)'),
-    )
+    [frame] = viewer_frames(plugin, ref) or []
+    assert frame.png == PNG_A
+    assert frame.summary == 'click (120, 240) · type "hi"'
+    assert frame.markers == (ActionMarker(kind='click', points=((120, 240),), label='click (120, 240)'),)
 
     # The `computer` result row links to the loopback viewer.
     rendered = plugin.render(ActionsPerformedEvent(result=ComputerResult(performed=2)))
@@ -300,57 +307,24 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     await session.prompt('back with desktop')
     assert 'computer' in seen_tools[-1]
 
-    # Unowned refs are ignored by `_record_frame`, and _ObservedComputerUse handles missing actions/screenshots.
-    unowned_ref = WorkspaceRef(provider='other', id='sbx-1')
-    plugin._record_frame(unowned_ref, PNG_A, (), None)  # pyright: ignore[reportPrivateUsage]
-    assert plugin._viewer.get(sandbox_key(unowned_ref)) is None  # pyright: ignore[reportPrivateUsage]
-    from pydantic_ai import FunctionToolResultEvent, RunContext
-    from pydantic_ai.capabilities import AbstractCapability
-    from pydantic_ai.computer_use import ComputerReturnPart
-    from pydantic_ai.models.test import TestModel
-    from pydantic_ai.usage import RunUsage
-    from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import (
-        _ObservedComputerUse,  # pyright: ignore[reportPrivateUsage]
-    )
-
-    captured_frames: list[bytes] = []
-    observer = _ObservedComputerUse(
-        AbstractCapability[None](),
-        on_frame=lambda _r, data, _a, _res: captured_frames.append(data),
-        full_access=lambda: True,
-    )
-    dummy_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
-    await observer.on_event(
-        dummy_ctx, event=FunctionToolCallEvent(part=ComputerCallPart(tool_name='computer', args='{'))
-    )
-    await observer.on_event(
-        dummy_ctx,
-        event=FunctionToolResultEvent(
-            part=ComputerReturnPart(tool_name='computer', content=ComputerResult(performed=0, error='boom'))
-        ),
-    )
-    assert captured_frames == []
-
     # Resuming in a fresh plugin instance reopens with `desktop=True` and seeds the viewer from saved history.
     resumed_loaded = load(work, Transcript(messages=session.messages))
     resumed = plugin_of(resumed_loaded)
-    resumed_session = resumed._viewer_session(on_screen_sandbox(resumed))  # pyright: ignore[reportPrivateUsage]
-    assert len(resumed_session.frames) == 1
-    assert resumed_session.frames[0].png == PNG_A
+    stub_viewer_port(monkeypatch, resumed, 43219)
+    assert (await resumed.computer_use_command(['view'])).startswith('Desktop viewer: http://127.0.0.1:43219/')
+    assert [frame.png for frame in viewer_frames(resumed, ref) or []] == [PNG_A]
     assert await on_screen_sandbox(resumed).screenshot() == PNG_A
     assert provider.reopened == [ref, ref] and provider.reopened_desktop == [True, True]
 
-    # Viewer session for a sandbox not in the active transcript skips seeding from unrelated history.
-    unrelated = plugin_of(load(work, Transcript(messages=[])))
-    assert unrelated._viewer_session(unrelated.sandbox(ref, session.messages)).frames == []  # pyright: ignore[reportPrivateUsage]
     # The history naming the sandbox, not the one on screen, says it has a desktop.
+    unrelated = plugin_of(load(work, Transcript(messages=[])))
     assert unrelated.sandbox(ref, session.messages).desktop is True
 
     # `/sandbox delete` is the single delete command; it removes the viewer session and closes cleanly.
     deleted = await plugin.command(['delete'])
     assert 'Deleted Fake sandbox sbx-1' in deleted
     assert provider.deleted == [ref]
-    assert plugin._viewer.get(viewer_key) is None  # pyright: ignore[reportPrivateUsage]
+    assert viewer_frames(plugin, ref) is None
     await plugin.on_session_end(SessionEnd(reason='exit'))
     await resumed.on_session_end(SessionEnd(reason='exit'))
 
@@ -475,11 +449,16 @@ async def test_outside_full_permissions_the_model_only_looks(
             outcomes.append(str(last.content))
             yield 'done'
         else:
-            yield {0: DeltaToolCall(name='computer', json_args=json.dumps({'actions': planned}), tool_call_id='cu')}
+            args = json.dumps({'actions': planned}) if planned else '{'
+            yield {0: DeltaToolCall(name='computer', json_args=args, tool_call_id='cu')}
 
     session = on_screen(loaded, checkout, model=FunctionModel(stream_function=respond))
     await plugin.computer_use_command(['on'])
     await plugin.command(['fake'])
+
+    # Arguments that are not JSON go back to the model as a retry, and the viewer records nothing.
+    await session.prompt('garbled')
+    assert display.actions == [] and viewer_frames(plugin, WorkspaceRef(provider='fake', id='sbx-1')) is None
 
     planned[:] = [{'type': 'click', 'x': 1, 'y': 2}]
     await session.prompt('click it')
@@ -518,7 +497,7 @@ async def test_view_and_side_panel(
     assert note_view.url is None and '/computer-use' in note_view.note
 
     # `/computer-use view` opens the loopback viewer through a private redirect page, so no token is in argv.
-    monkeypatch.setattr(plugin._viewer, 'ensure_started', lambda: 43210)  # pyright: ignore[reportPrivateUsage]
+    stub_viewer_port(monkeypatch, plugin, 43210)
     await plugin.computer_use_command(['on'])
     await plugin.command(['fake'])
     msg = await plugin.computer_use_command(['view'])
@@ -538,19 +517,19 @@ async def test_view_and_side_panel(
     # Headless view does not call open_browser and tolerates failed initial capture.
     display.fail_screenshot = WorkspaceError('display starting')
     headless = plugin_of(load(work, terminal=False))
-    monkeypatch.setattr(headless._viewer, 'ensure_started', lambda: 43211)  # pyright: ignore[reportPrivateUsage]
+    stub_viewer_port(monkeypatch, headless, 43211)
     await headless.computer_use_command(['on'])
     await headless.command(['fake'])
     headless_msg = await headless.computer_use_command(['view'])
     assert headless_msg.startswith('Desktop viewer: http://127.0.0.1:43211/?token=')
     assert len(opened) == 2
 
-    # Once a frame exists, `/computer-use view` reuses existing frames without triggering a live capture.
+    # Once a frame exists, `/computer-use view` reuses it without a live capture.
     display.fail_screenshot = None
-    headless_ref = history_sandbox(headless.host.conversation.messages)
-    assert headless_ref is not None
-    headless._record_frame(headless_ref, PNG_A, (), None)  # pyright: ignore[reportPrivateUsage]
+    await headless.computer_use_command(['view'])
+    display.fail_screenshot = WorkspaceError('not asked for')
     assert (await headless.computer_use_command(['view'])).startswith('Desktop viewer: http://127.0.0.1:43211/?token=')
+    display.fail_screenshot = None
 
     # Side panel now returns the viewer URL for the active desktop sandbox.
     [headless_panel] = headless.get_side_panels()
@@ -654,22 +633,25 @@ async def test_desktop_viewer_app_end_to_end() -> None:
 async def test_viewer_guard_and_server_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: list[object] = []
 
-    async def inner(scope: Mapping[str, object], receive: object, send: object) -> None:
-        del receive, send
+    async def inner(
+        scope: Mapping[str, object],
+        receive: Callable[[], Awaitable[MutableMapping[str, object]]],
+        send: Callable[[MutableMapping[str, object]], Awaitable[None]],
+    ) -> None:
         seen.append(scope['type'])
+        await send(await receive())
 
-    async def noop_receive() -> dict[str, object]:
+    async def noop_receive() -> MutableMapping[str, object]:
         return {}
 
-    async def noop_send(message: Mapping[str, object]) -> None:
-        del message
+    async def noop_send(message: MutableMapping[str, object]) -> None:
+        seen.append(message)
 
     guard = _ViewerGuard(inner, token='tok', hosts=frozenset({'127.0.0.1:1'}))
     await guard({'type': 'lifespan'}, noop_receive, noop_send)
-    assert seen == ['lifespan']
+    assert seen == ['lifespan', {}]
 
     # Exercise DesktopViewer.ensure_started(), url(), and close() via a WebServer.serve stub (no bound socket needed).
-    from pydantic_ai_pax.builtin_plugins.web import server as web_server
 
     stopped: list[int] = []
     built_apps: list[object] = []

@@ -3247,8 +3247,8 @@ not in the web UI.
   no `!` line), and otherwise asks you to run `/new`, `/computer-use`, then `/sandbox PROVIDER`.
 - **Turning it off**: `/computer-use off` removes the `computer` tool from the next turn. The sandbox
   keeps running until `/sandbox delete`.
-- **Permissions**: outside `/permissions full`, the model can only look at the desktop (screenshots and
-  zoom). A call that would click or type does not run, and the model is told `/permissions full` allows it.
+- **Permissions**: outside `/permissions full`, the model can only look at the desktop (screenshots,
+  zoom, the pointer position, and waits). A call that would click or type does not run, and the model is told `/permissions full` allows it.
 - `local smol` needs `smolmachines` for a desktop (`pydantic-ai-pax[local]`, on macOS Apple silicon
   or Linux), so not on Windows. With a `gh` login, `opensandbox` allows `deb.debian.org` and
   `security.debian.org` while it installs the desktop, before your GitHub token reaches its proxy.
