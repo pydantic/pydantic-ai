@@ -365,6 +365,9 @@ def test_minimal_reasoning_effort_off_only_on_openai_provider_gpt_5_1_to_5_5(mod
 
     `OpenAICodexProvider` keeps it on too: the Codex backend is unverified, and its dialect profile restates the
     shared one over `OpenAIProvider`'s.
+
+    Not a VCR test: the claim is the resolved flag per provider and model id, which no single recorded request
+    exposes. `test_openai_responses_gpt_5_4_minimal_thinking_uses_low_effort` records the request it changes.
     """
     provider_profile = OpenAIProvider.model_profile(model_name)
     assert isinstance(provider_profile, dict)
