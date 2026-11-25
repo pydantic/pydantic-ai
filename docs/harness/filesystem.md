@@ -386,8 +386,14 @@ applies the same rule to absolute symlink targets.
   Office documents or Matroska, and OpenAI-compatible endpoints report audio
   input for models that reject it), which would fail the request rather than
   become a note.
-  With `max_image_side` set (`Coder` sets 1024), an image larger than that on its longest side is downscaled to it first, in its own format and aspect ratio, and the header names both sizes; the hash is still that of the file. An image over 25 megapixels (for a baseline JPEG, at the 1/2 to 1/8 scale it decodes at) is described instead of decoded. Downscaling needs Pillow, which the `coder` extra installs; setting `max_image_side` without it raises an `ImportError`. A file still over 5 MB after that, the strictest mainstream per-image limit, is
-  described instead, as is any other binary file.
+  With `max_image_side` set (`Coder` sets 1024), an image larger than that on
+  its longest side is downscaled to it first, in its own format and aspect
+  ratio, and the header names both sizes; the hash is still that of the file. An
+  image over 25 megapixels (for a baseline JPEG, at the 1/2 to 1/8 scale it
+  decodes at) is described instead of decoded. Downscaling needs Pillow, which
+  the `coder` extra installs; setting `max_image_side` without it raises an
+  `ImportError`. A file still over 5 MB after that, the strictest mainstream
+  per-image limit, is described instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than overwriting newer content.
