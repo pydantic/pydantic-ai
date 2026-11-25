@@ -237,8 +237,7 @@ class TaskRequestEvent(ParentMessageEvent, abstract=True):
     """Whether the sub-agent gets an `ask_parent` tool."""
 
     task_authority: TaskAuthority = 'none'
-    """How much authority `prompt` carries with the sub-agent, as `SubAgent.task_authority`, and on a worker the
-    messages that steer the run too.
+    """How much authority `prompt` carries with the sub-agent, as `SubAgent.task_authority`.
 
     A listener can change it, such as to `'user'` for a prompt the application sends on the user's behalf."""
 
@@ -268,6 +267,10 @@ class TaskSteeredEvent(ParentMessageEvent, name='task_message'):
 
     message: str
     """The steering message. A listener can rewrite it."""
+
+    task_authority: TaskAuthority = 'none'
+    """How much authority `message` carries with the task: the delegate's `task_authority`, which a listener can
+    change. A start event's `task_authority` applies to its prompt alone, so a later message never inherits it."""
 
 
 @dataclass(kw_only=True)

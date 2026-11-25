@@ -1328,18 +1328,20 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(f'Task {task_id} runs in a durable unit of its own, which messages cannot reach.')
         if record.status != 'running':
             return await self._resume_by_message(ctx, record, message)
-        event = await self._announce(
-            ctx, owner, record, TaskSteeredEvent(task_id=task_id, agent_name=record.agent_name, message=message)
+        remote = self._remote.get(record.agent_name)
+        # The delegate's own setting, never the start event's: a listener may have raised that for its prompt alone.
+        authority = (remote or self._resolve_agent(ctx, record.agent_name)).task_authority
+        steered = TaskSteeredEvent(
+            task_id=task_id, agent_name=record.agent_name, message=message, task_authority=authority
         )
+        event = await self._announce(ctx, owner, record, steered)
         if event.vetoed:
             return _vetoed_reply('The message was not sent', event)
-        if record.agent_name in self._remote:
+        if remote is not None:
             assert self._transport is not None
             await self._transport.send(event)
-        else:
-            authority = self._resolve_agent(ctx, record.agent_name).task_authority
-            if not owner.steer(task_id, task_message(event.message, authority)):
-                return f'Task {task_id} finished before the message reached it.'
+        elif not owner.steer(task_id, task_message(event.message, event.task_authority)):
+            return f'Task {task_id} finished before the message reached it.'
         return f'Message sent to task {task_id}.'
 
     async def _resume_by_message(self, ctx: RunContext[AgentDepsT], record: DelegationTask, message: str) -> object:

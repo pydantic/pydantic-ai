@@ -65,7 +65,7 @@ class _WorkerLink(TaskLink):
         self.forced = False
         self._ctx: RunContext[Any] | None = None
         self._stop_requested = False
-        self._pending_messages: list[str] = []
+        self._pending_messages: list[TaskSteeredEvent] = []
         self._answers: dict[str, tuple[anyio.Event, list[str]]] = {}
 
     def stopping(self) -> bool:
@@ -83,12 +83,12 @@ class _WorkerLink(TaskLink):
         await answered.wait()
         return answer[0]
 
-    def steer(self, ctx: RunContext[Any], message: str) -> None:
-        """Queue the delegating agent's message on the task's run, with the task's authority.
+    def steer(self, ctx: RunContext[Any], message: TaskSteeredEvent) -> None:
+        """Queue the delegating agent's message on the task's run, with the authority the message carries.
 
         A run that has read its last queued messages drops it, as a local task does.
         """
-        enqueue_while_open(ctx, task_message(message, self.start.task_authority), priority='asap')
+        enqueue_while_open(ctx, task_message(message.message, message.task_authority), priority='asap')
 
     async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> Any:
         self._ctx = ctx
@@ -119,9 +119,9 @@ class _WorkerLink(TaskLink):
 
     def _handle_message(self, message: TaskSteeredEvent) -> None:
         if self._ctx is None:
-            self._pending_messages.append(message.message)
+            self._pending_messages.append(message)
         else:
-            self.steer(self._ctx, message.message)
+            self.steer(self._ctx, message)
 
     def _handle_answer(self, message: TaskAnsweredEvent) -> None:
         if (waiter := self._answers.pop(message.question_id, None)) is not None:

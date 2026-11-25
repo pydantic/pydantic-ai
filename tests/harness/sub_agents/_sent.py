@@ -37,7 +37,5 @@ def sent_texts(messages: Sequence[ModelMessage]) -> list[str]:
                     texts.append(part.content)
                 continue
             text = ''.join(item.content for item in part.content if isinstance(item, TextContent))
-            if text.startswith('<agent_message>') and text.endswith('</agent_message>'):
-                text = text.removeprefix('<agent_message>').removesuffix('</agent_message>').strip('\n')
-            texts.append(text)
+            texts.append(text.removeprefix('<agent_message>').removesuffix('</agent_message>').strip('\n'))
     return texts

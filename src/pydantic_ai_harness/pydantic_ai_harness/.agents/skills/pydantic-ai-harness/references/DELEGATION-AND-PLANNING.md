@@ -210,7 +210,8 @@ Gotchas:
   never the user's consent. The child's own (operator) instructions are unchanged; a created agent has none of its own.
 - `ctx.prompt` is still the task text, so the child's `InputGuardrail` screens it. Text an application steers in with
   `DelegationTasks.steer(task_id, text)` stays a user prompt; a `TaskAssignedEvent`/`TaskResumedEvent` listener can set
-  `task_authority='user'` for text sent on the user's behalf.
+  `task_authority='user'` for text sent on the user's behalf. That covers its prompt alone; a `message_task` message carries
+  its own `TaskSteeredEvent.task_authority`, the delegate's setting.
 - Earlier voices: `SubAgent(task_authority='user')`, `RemoteSubAgent(task_authority='user')`,
   `DynamicAgents(instructions_authority='operator', task_authority='user')`.
 
