@@ -138,6 +138,9 @@ beyond the project directory without spelling out absolute paths. `root_dir`
 must contain the working directory. To work in a subdirectory, set it on the
 workspace instead (`LocalWorkspace('./repo')`).
 
+The instructions name the working directory through [`AnnounceWorkingDirectory`](../announce_working_directory/), which states it once however
+many capabilities bring it, and starts a sandbox that isn't running to ask for it.
+
 [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) renames the tools so the model can tell two
 `FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
 doesn't scope them to a folder. Every `FileSystem` in a run works in the run's one
