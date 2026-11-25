@@ -34,9 +34,8 @@ from ..append_only import ToolArgs, ToolCall, drain_events, run_through_ui, ui_i
 from ..capability_cases import Calls
 from ..conftest import try_import
 from .capability_runs import (
-    CASES,
     PROBES,
-    PUBLIC,
+    SUBJECTS,
     RouteRun,
     Script,
     build_lowered,
@@ -196,11 +195,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
 
 
 def _matrix(routes: Sequence[Route]) -> Iterator[ParameterSet]:
-    subjects: dict[str, Calls] = {
-        **{name: case.calls for name, case in sorted(CASES.items()) if name in PUBLIC and case.calls is not None},
-        **PROBES,
-    }
-    for name, calls in subjects.items():
+    for name, calls in SUBJECTS.items():
         for route in routes:
             marks: list[pytest.MarkDecorator] = []
             if (known := KNOWN.get((name, route))) is not None:
@@ -263,8 +258,7 @@ async def test_calls_reach_the_model_the_same_through_ipython_code_mode(
 
 def test_every_known_entry_names_a_case_and_route() -> None:
     """An entry for a case that no longer has calls, or a route that's gone, would hide the next finding there."""
-    subjects = {name for name, case in CASES.items() if name in PUBLIC and case.calls is not None} | set(PROBES)
-    assert [key for key in KNOWN if key[0] not in subjects or key[1] not in ROUTES] == []
+    assert [key for key in KNOWN if key[0] not in SUBJECTS or key[1] not in ROUTES] == []
 
 
 async def test_the_native_route_attributes_the_probes(tmp_path: Path) -> None:

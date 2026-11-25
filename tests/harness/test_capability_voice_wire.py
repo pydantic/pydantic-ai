@@ -9,8 +9,8 @@ the predicate the in-process sink check (C2) uses too, here applied to what each
 `voice_authority` says, once for every provider, what authority the model hears each wire voice with: the system or
 developer voice needs `'operator'`, the unframed user turn `'user'` or above, framed data and tool results take any
 authority, and no request part may reach the assistant's turn. A part may land lower than its authority, never
-higher. Every line of
-its text must land somewhere: a line that reaches the model in no voice at all has lost its voice.
+higher. Every line of its text must land somewhere: a line that reaches the model in no voice at all has lost its
+voice.
 
 A provider that breaks this for a case is a known finding in `KNOWN`, a strict `xfail` with what fixes it, so the fix
 fails the suite until its entry is removed.
@@ -40,7 +40,7 @@ from pydantic_ai.messages import (
 )
 
 from ..provider_capture import CAPTURED_PROVIDERS, CapturedProvider, CapturedRequest, Voice, capture
-from .capability_runs import CASES, PROBES, PUBLIC, case_calls, run_native
+from .capability_runs import PROBES, SUBJECTS, case_calls, run_native
 
 _RANK: dict[Authority, int] = {'none': 0, 'user': 1, 'operator': 2}
 
@@ -71,7 +71,7 @@ def markers(part: CapabilityPart) -> list[str]:
     content = part.model_content()
     items = [content] if isinstance(content, str | StructuredContent) else list(content)
     texts = [item if isinstance(item, str) else item.content for item in items if isinstance(item, str | TextContent)]
-    lines = [line.strip()[:60] for text in texts for line in text.splitlines() if line.strip()]
+    lines = [line.strip() for text in texts for line in text.splitlines() if line.strip()]
     return [line for index, line in enumerate(lines) if index == 0 or len(line) >= _MIN_MARKER]
 
 
@@ -104,10 +104,7 @@ KNOWN: dict[tuple[str, CapturedProvider], str] = {}
 
 
 def _matrix() -> Iterator[ParameterSet]:
-    names = [name for name, case in sorted(CASES.items()) if name in PUBLIC and case.calls is not None]
-    for name in [*names, *PROBES]:
-        calls = PROBES[name] if name in PROBES else CASES[name].calls
-        assert calls is not None
+    for name, calls in SUBJECTS.items():
         for provider in CAPTURED_PROVIDERS:
             marks: list[pytest.MarkDecorator] = []
             if calls.moves_cache_prefix is not None:
@@ -293,5 +290,4 @@ def test_a_part_is_found_by_each_line_of_its_text(
 
 def test_every_known_entry_names_a_case_and_provider() -> None:
     """An entry for a case that no longer has calls, or a provider that's gone, would hide the next finding there."""
-    subjects = {name for name, case in CASES.items() if name in PUBLIC and case.calls is not None} | set(PROBES)
-    assert [key for key in KNOWN if key[0] not in subjects or key[1] not in CAPTURED_PROVIDERS] == []
+    assert [key for key in KNOWN if key[0] not in SUBJECTS or key[1] not in CAPTURED_PROVIDERS] == []

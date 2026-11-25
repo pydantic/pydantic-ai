@@ -60,6 +60,12 @@ PROBES: dict[str, Calls] = {
 """Capabilities built only here, whose calls put more than their return value in the history, so every route has a
 part to compare while few cases' calls do: one returns `ToolReturn.content`, the other calls `ctx.enqueue`."""
 
+SUBJECTS: dict[str, Calls] = {
+    **{name: case.calls for name, case in sorted(CASES.items()) if name in PUBLIC and case.calls is not None},
+    **PROBES,
+}
+"""What the conformance suites run: every public case with `calls`, then the probes."""
+
 
 @dataclass(frozen=True)
 class Seen:
