@@ -26,6 +26,12 @@ A result's content is a short summary, what each action returned, then a screens
 The summary's wording can change between releases;
 [`ComputerResult`][pydantic_ai.computer_use.ComputerResult], in the result's `metadata`, does not.
 
+A call with a [`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation] must not run until a person
+approves it. The runner enforces this, as `ComputerUse` does: a custom runner that skips the check runs flagged
+actions without approval. A runner that ran it after a person approved it sets
+[`confirmed`][pydantic_ai.computer_use.ComputerResult.confirmed] on the result. A model adapter tells the provider that
+a person confirmed the call only when it is set, and otherwise says nobody did.
+
 In the message history, the tool's calls and results become
 [`ComputerCallPart`][pydantic_ai.computer_use.ComputerCallPart] and
 [`ComputerReturnPart`][pydantic_ai.computer_use.ComputerReturnPart], whatever the tool's name.
@@ -325,6 +331,10 @@ class ComputerResult(TypedDict):
     changed them. A model adapter then sends the summary instead of reporting the model's actions as the ones that
     ran."""
 
+    confirmed: NotRequired[Literal[True]]
+    """Set by the runner when a person approved this call; providers that need an acknowledgement send one only when it
+    is set."""
+
 
 COMPUTER_KIND = ToolKind(
     'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
@@ -332,7 +342,10 @@ COMPUTER_KIND = ToolKind(
 """The tool kind that marks a tool as the `computer` tool.
 
 When a request includes a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool], the provider's own computer tool is
-sent to the model in place of the tool of this kind, which still runs the calls."""
+sent to the model in place of the tool of this kind, which still runs the calls.
+
+A runner must set [`confirmed`][pydantic_ai.computer_use.ComputerResult.confirmed] on the result of a call with a
+[`confirmation`][pydantic_ai.computer_use.ComputerCallPart.confirmation] that a person approved."""
 
 
 class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
@@ -343,6 +356,17 @@ class ComputerCallPart(ToolCallPart[ComputerArgs], kind=COMPUTER_KIND):
         """The actions the model asked for, or `None` if the arguments are incomplete (still streaming) or malformed."""
         typed = self.typed_args
         return typed['actions'] if typed is not None else None
+
+    @property
+    def confirmation(self) -> str | None:
+        """The provider's reason this call must be approved by a person before it runs, or `None`.
+
+        A provider sets it on actions its safety checks flag, such as accepting a cookie banner or sending a message. A
+        model adapter sets it by putting the reason, as a string, under the `'confirmation'` key of the call's
+        `provider_details`.
+        """
+        reason = (self.provider_details or {}).get('confirmation')
+        return reason if isinstance(reason, str) else None
 
 
 class ComputerReturnPart(ToolReturnPart[ComputerContent, ComputerResult], kind=COMPUTER_KIND):

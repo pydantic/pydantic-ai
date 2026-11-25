@@ -2295,7 +2295,7 @@ n
                 'node': 'test_tool_plumbing.py::test_sampling_fails',
                 'target': 'pydantic_ai.models.mcp_sampling.MCPSamplingModel.request',
                 'model_settings': None,
-                'error': 'UnexpectedModelBehavior: Unexpected result from MCP sampling, expected "assistant" role, got user.',
+                'error': 'ModelInvalidResponseError: Unexpected result from MCP sampling, expected "assistant" role, got user.',
             },
             {
                 'node': 'test_tool_plumbing.py::test_sampling_fails',
@@ -2322,7 +2322,7 @@ n
     assert [record['exception'] for record in records if record['kind'] == 'exception'] == snapshot(
         [
             {
-                'type': 'pydantic_ai.exceptions.UnexpectedModelBehavior',
+                'type': 'pydantic_ai.exceptions.ModelInvalidResponseError',
                 'message': 'Unexpected result from MCP sampling, expected "assistant" role, got user.',
                 'suppress_context': True,
             },

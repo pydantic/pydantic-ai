@@ -66,13 +66,16 @@ class PromptBuffer:
     def replace_range(self, start: int, end: int, text: str, *, group: str | None = None) -> None:
         """Replace an editing range, revealing overlapping pastes.
 
-        An edit that changes text ends a recall walk, so the edited text becomes the draft the
-        next walk restores. A no-op deletion at either end keeps the walk going. Consecutive
+        Editing a recalled entry keeps the walk when it protects a nonempty original draft;
+        Down past the newest entry restores that draft, and undo can recover the edited entry.
+        Otherwise an edit ends the walk, making the edited text the next walk's draft.
+        A no-op deletion at either end keeps the walk going. Consecutive
         edits in the same `group` that continue where the last one left the cursor share an
         undo step; any other change is a step of its own.
         """
         if text or start != end:
-            self.history_index = None
+            if not (self.saved_draft and self.history_index is not None and self.history_index < len(self._entries)):
+                self.history_index = None
             self._checkpoint(group)
         shift = len(text) - (end - start)
         self._pastes = [

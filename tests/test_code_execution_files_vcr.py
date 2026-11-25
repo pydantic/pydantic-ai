@@ -548,6 +548,42 @@ async def test_anthropic_code_execution_files_cache_prefix_stable(
     assert second.usage.cache_read_tokens >= first.usage.cache_write_tokens
 
 
+@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
+async def test_anthropic_code_execution_files_count_tokens(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
+    """`count_tokens` counts a request whose code execution tool uploads files.
+
+    The count endpoint rejects a `container_upload` block with a 400 ("File sources are not supported in the
+    token counting endpoint."), so the count leaves the blocks out and keeps the `code_execution` tool.
+    Read off the wire, as the default matchers ignore the body.
+    """
+    client = anthropic.AsyncAnthropic(api_key=anthropic_api_key, http_client=request_capture.client)
+    uploaded = await client.beta.files.upload(
+        file=('data.csv', _CSV_BYTES, 'text/csv'),
+        betas=['files-api-2025-04-14'],
+    )
+
+    try:
+        model = AnthropicModel('claude-fable-5-2', provider=AnthropicProvider(anthropic_client=client))
+        params = model.customize_request_parameters(
+            ModelRequestParameters(
+                native_tools=[CodeExecutionTool(files=[UploadedFile(file_id=uploaded.id, provider_name='anthropic')])]
+            )
+        )
+        usage = await model.count_tokens([ModelRequest(parts=[UserPromptPart(content=_PROMPT)])], None, params)
+    finally:
+        await client.beta.files.delete(uploaded.id, betas=['files-api-2025-04-14'])
+        await client.close()
+
+    assert usage.input_tokens == snapshot(2896)
+    body = request_capture.body('/v1/messages/count_tokens')
+    assert content_blocks(body, 'container_upload') == []
+    tools = body['tools']
+    assert isinstance(tools, list)
+    assert [tool['type'] for tool in tools if isinstance(tool, dict)] == snapshot(['code_execution_20260120'])
+
+
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 async def test_openai_code_execution_files(allow_model_requests: None, openai_api_key: str, vcr: Any):
     """Upload a real file to the OpenAI Files API and have code execution read it."""
