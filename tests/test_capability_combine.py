@@ -1022,6 +1022,36 @@ async def test_run_wrapper_overrides_preserve_identity_and_tool_prefixes(agent_d
     assert seen == [['run_' * run_depth + 'lookup']]
 
 
+@dataclass
+class _BringsACompanion(AbstractCapability[object]):
+    """Adds a companion capability for each run, holding itself next to it in a container."""
+
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        return CombinedCapability([self, ReinjectSystemPrompt()])
+
+    def get_toolset(self) -> FunctionToolset[object]:
+        def lookup() -> str:
+            return 'found'  # pragma: no cover
+
+        return FunctionToolset([lookup])
+
+
+async def test_wrapper_readopts_identity_when_the_run_copy_is_a_container() -> None:
+    """A wrapper that adopted its capability's `id` doesn't keep it once that capability returns a container for the run.
+
+    The container holds the capability, which keeps the `id`; the wrapper claiming it too would be two types under one id.
+    """
+    seen: list[list[str]] = []
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append([tool.name for tool in info.function_tools])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[_BringsACompanion(id='lookup').prefix_tools('p')])
+    await agent.run('hi')
+    assert seen == [['p_lookup']]
+
+
 async def test_explicitly_renamed_wrapper_does_not_adopt_an_unrelated_identity() -> None:
     agent = Agent(TestModel(call_tools=[]), capabilities=[Thinking(id='shared')])
     wrapper = WrapperCapability(wrapped=Thinking(id='other'), id='shared')

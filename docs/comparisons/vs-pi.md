@@ -47,5 +47,5 @@ built from the pieces `Coder` puts together.
 
 ## Sources
 
-- [Pi coding agent documentation](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent)
-- [Pi packages](https://github.com/badlogic/pi-mono/tree/main/packages)
+- [Pi coding agent documentation](https://github.com/earendil-works/pi/tree/main/packages/coding-agent)
+- [Pi packages](https://github.com/earendil-works/pi/tree/main/packages)

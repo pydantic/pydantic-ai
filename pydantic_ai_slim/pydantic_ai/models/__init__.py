@@ -63,6 +63,7 @@ from .._canonical_system import accepts_stateless_artifact
 from .._capability_parts import (
     LookalikeNaming,
     is_downgraded_request_scoped,
+    lowered_instruction_statement,
     render_capability_part,
     render_capability_parts,
 )
@@ -96,8 +97,10 @@ from .._http import (
 from .._instructions import (
     InstructionValues,
     LoadedInstructionValues,
+    LoweredInstructions,
     advance_instruction_window,
     instruction_window_start,
+    is_lowered_statement,
     window_boundary_index,
 )
 from .._json_schema import (
@@ -116,6 +119,7 @@ from .._special_tokens import (
     restore_special_tokens_in_response,
     restore_special_tokens_in_stream,
 )
+from .._tool_status import TOOL_STATUS_TEXTS
 from .._unsupported_settings import (
     DEPRECATED_MODEL_WARNING_SUPPRESSED,
     SUPPRESSED_WARNINGS,
@@ -1543,6 +1547,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     _honors_compaction_boundaries: ClassVar[bool] = False
     """Whether the adapter drops the history before a compaction part it sends, with `_trim_before_compaction`."""
 
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        """Whether this model reads dynamic rewrite-mode instructions outside the cached prompt prefix.
+
+        A change to one then doesn't end the instruction window (see `update_instruction_history`).
+        """
+        return False
+
     def _model_for_response(self, response: ModelResponse) -> Model:
         """The model that produced `response`, for a model that delegates requests to others."""
         return self
@@ -2082,7 +2094,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         tool results in each request in the order of the calls they answer, so the request bytes
         (and the provider's prompt cache) don't depend on the order a history happened to store
         them in. When the profile sets `tool_call_id_length`, tool call IDs that don't fit it are
-        replaced with stable hashes that do.
+        replaced with stable hashes that do. When it sets `needs_json_string_tool_returns`, a successful
+        tool return of a string goes out as a `{"tool_output": ...}` JSON string field.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -2142,6 +2155,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
             sealed=self._seals_system_blocks,
         )
+        # Ahead of the file replacement, so a note the framework puts in place of an unreadable file isn't wrapped.
+        messages = _tool_returns_as_json_strings(messages, self.profile)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         # After retry feedback becomes user text, and before any step below renders the application's own text.
         messages = break_special_tokens_in_messages(messages, self.profile, self.accepts_stateless_artifacts)
@@ -5191,6 +5206,39 @@ def _text_file_content(item: object) -> str | None:
     return None
 
 
+def _tool_returns_as_json_strings(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
+    """Send each successful string tool return as a JSON string field, where the profile asks for it.
+
+    See [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns]. Parts are
+    replaced one for one, and only in the outgoing copy. The status text Pydantic AI writes for an output tool or a
+    skipped call isn't a tool's output, so it's left as is. Returns the original list when nothing changed.
+    """
+    if not profile.get('needs_json_string_tool_returns', False):
+        return messages
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [_as_json_string_tool_return(part) for part in message.parts]
+            if _parts_changed(parts, message.parts):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _as_json_string_tool_return(part: ModelRequestPart) -> ModelRequestPart:
+    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful string return of a tool's text."""
+    if (
+        not isinstance(part, ToolReturnPart)
+        or part.outcome != 'success'
+        or not isinstance(part.content, str)
+        or part.content in TOOL_STATUS_TEXTS
+    ):
+        return part
+    return replace(part, content=json.dumps({'tool_output': part.content}, ensure_ascii=False))
+
+
 def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
     """Replace each file a tool returned that the profile says the model can't read with a note naming it.
 
@@ -5293,6 +5341,10 @@ def _project_instruction_state(
     statements are rendered until the compaction that ends the load, each change as a diff against the text an
     earlier statement delivered.
 
+    So is a statement of a block below `'operator'` authority, a lowered capability's instructions: it's rendered until
+    the latest compaction as a capability part at its authority, framed data on the user channel that the lookalike
+    pass renders like any other (`lowered_instruction_statement`), never in the application's voice.
+
     The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
     `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,
     tagged, for the adapters that read a request's instructions from history rather than from the request
@@ -5303,6 +5355,7 @@ def _project_instruction_state(
     window: InstructionBaselinePart | None = None
     values = InstructionValues.at(None)
     loaded = LoadedInstructionValues()
+    lowered = LoweredInstructions()
     # Loads are folded over the post-compaction window alone, as everywhere else they're derived from history.
     loads_start = _post_compaction_window_start(messages)
     projected: list[ModelMessage] = []
@@ -5322,22 +5375,23 @@ def _project_instruction_state(
         opened_at = window_boundary_index(message) if index == current_start else -1
         for part_index, part in enumerate(message.parts):
             in_loads_window = (index, part_index) >= loads_start
-            if in_loads_window and loaded.tracks(part):
+            if is_lowered_statement(part):
+                parts.extend(_project_lowered_statement(part, lowered, in_window=in_loads_window, message=message))
+            elif in_loads_window and loaded.tracks(part):
                 # A statement of a loaded capability's block, which no instruction window restates, so it stays in
                 # effect until the compaction that ends the load.
                 text = part.render(inline_system=inline_system, previous=loaded.apply(part))
                 parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            elif isinstance(part, InstructionDeltaPart):
-                # A change a newer version wrote, which this one can't address, is superseded by the window
-                # the next request opens.
-                if index >= current_start and part_index > opened_at and part.id is not None:
-                    text = part.render(inline_system=inline_system, previous=values.apply(part))
-                    parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            else:
+            elif not isinstance(part, InstructionDeltaPart):
                 if in_loads_window:
                     loaded.observe(part)
                 if not isinstance(part, InstructionBaselinePart):
                     parts.append(part)
+            # A change a newer version wrote, which this one can't address, is superseded by the window the next
+            # request opens.
+            elif index >= current_start and part_index > opened_at and part.id is not None:
+                text = part.render(inline_system=inline_system, previous=values.apply(part))
+                parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
         instructions = message.instructions
         if (
             window is not None
@@ -5351,6 +5405,21 @@ def _project_instruction_state(
             message = replace(message, parts=parts, instructions=instructions)
         projected.append(message)
     return projected
+
+
+def _project_lowered_statement(
+    part: InstructionDeltaPart, lowered: LoweredInstructions, *, in_window: bool, message: ModelRequest
+) -> list[SystemPromptPart | CapabilityPart]:
+    """What a statement of a block below operator authority in `message` is projected as.
+
+    No instruction window restates such a block, so its statements stay in effect until the latest compaction, before
+    which they're dropped (`in_window` is `False`). Each is a capability part at the block's authority.
+    """
+    if not in_window:
+        return []
+    return lowered_instruction_statement(
+        part, restated=lowered.apply(part), timestamp=message.timestamp or _utils.now_utc()
+    )
 
 
 def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
