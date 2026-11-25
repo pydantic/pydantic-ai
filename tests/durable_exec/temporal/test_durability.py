@@ -1789,6 +1789,46 @@ async def test_durability_request_timeout_cancels_the_model_activity(client: Cli
     ).replay_workflow(history)
 
 
+streamed_run_timeout_agent = Agent(
+    FunctionModel(stream_function=_hanging_stream_fn, model_name='hanging'),
+    name='durability_streamed_run_timeout',
+    deps_type=type(None),
+    capabilities=[ProcessEventStream(_drain_events), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class StreamedRunTimeoutWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        start = workflow.now()
+        try:
+            await streamed_run_timeout_agent.run('hello', timeout=0.2)
+        except RunTimedOut:
+            # As for a request deadline, the run's own deadline doesn't wait for the cancelled model activity to
+            # acknowledge its cancellation, up to 24 seconds later with the default `heartbeat_timeout`.
+            return f'RunTimedOut fast={workflow.now() - start < timedelta(seconds=5)}'
+        raise AssertionError('unreachable')  # pragma: no cover
+
+
+async def test_durability_streamed_run_timeout_does_not_wait_for_the_model_activity(client: Client):
+    """A run's `timeout=` cancels its streamed model activity and raises `RunTimedOut` at once, without waiting for
+    the activity to hand over what it streamed, as a cancel from the run's token or the workflow does."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[StreamedRunTimeoutWorkflow],
+        plugins=[AgentPlugin(streamed_run_timeout_agent)],
+    ):
+        output = await client.execute_workflow(
+            StreamedRunTimeoutWorkflow.run,
+            id=f'{StreamedRunTimeoutWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'RunTimedOut fast=True'
+
+
 _pausing_model_fresh_starts = 0
 
 

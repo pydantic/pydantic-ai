@@ -18,7 +18,7 @@ in-flight agent run — the graph engine runs its steps as anyio task-group chil
 This executor keeps the cancellation delivery on OUR task instead (by awaiting the handle through
 `asyncio.wait`, which neither cancels it nor, unlike `asyncio.shield`, logs its error), forwards
 exactly one cancellation to Temporal's graceful machinery, and waits for the configured
-`ActivityCancellationType` resolution (except where a request deadline needn't, see `execute_activity`)
+`ActivityCancellationType` resolution (except where a deadline needn't, see `execute_activity`)
 inside an anyio-shielded scope so re-delivery stops and the
 activation can complete. Re-raising the original `CancelledError` also keeps standard asyncio
 semantics at the caller: `asyncio.wait_for` produces `TimeoutError` instead of leaking the
@@ -37,8 +37,6 @@ from temporalio import workflow
 from temporalio.workflow import ActivityConfig, ChildWorkflowConfig
 from typing_extensions import Unpack
 
-from pydantic_ai.models._request_timeout import request_deadline_passed
-
 CancelledResultHandler = Callable[[asyncio.CancelledError, Any], None]
 """Receives the cancellation and the result of an activity that completed after it was cancelled."""
 
@@ -48,20 +46,20 @@ async def execute_activity(
     *,
     args: Sequence[Any],
     on_cancelled_result: CancelledResultHandler | None = None,
-    waits_on_request_deadline: bool = True,
+    skips_wait_on_cancel: Callable[[], bool] | None = None,
     **config: Unpack[ActivityConfig],
 ) -> Any:
     """Drop-in replacement for `workflow.execute_activity()` — see the module docstring for why.
 
     An activity that completes after the cancellation was sent, which `WAIT_CANCELLATION_COMPLETED` waits for, has
-    its result passed to `on_cancelled_result` with the cancellation, which is then still raised. Unless
-    `waits_on_request_deadline`, a request deadline that cancels it raises its timeout without waiting for the
-    activity to acknowledge the cancellation, as it doesn't keep that result.
+    its result passed to `on_cancelled_result` with the cancellation, which is then still raised. When
+    `skips_wait_on_cancel` answers `True` for a cancellation, such as a deadline's, which doesn't keep that result,
+    the cancellation is raised without waiting for the activity to acknowledge it.
     """
     return await _await_with_single_cancel(
         workflow.start_activity(activity, args=args, **config),
         on_cancelled_result=on_cancelled_result,
-        waits_on_request_deadline=waits_on_request_deadline,
+        skips_wait_on_cancel=skips_wait_on_cancel,
     )
 
 
@@ -77,7 +75,7 @@ async def _await_with_single_cancel(
     handle: asyncio.Future[Any],
     *,
     on_cancelled_result: CancelledResultHandler | None = None,
-    waits_on_request_deadline: bool = True,
+    skips_wait_on_cancel: Callable[[], bool] | None = None,
 ) -> Any:
     try:
         await asyncio.wait([handle])
@@ -88,10 +86,10 @@ async def _await_with_single_cancel(
         # The handle is already done when the cancel lands in the same tick it resolves.
         if not handle.done():
             handle.cancel()
-            if not waits_on_request_deadline and request_deadline_passed():
-                # The request's deadline cancelled it, which raises `ModelRequestTimeout` instead, so there's nothing
-                # to hand over: leave the activity to acknowledge the cancellation in its own time, as a
-                # `TRY_CANCEL` activity does, rather than hold up the timeout and any fallback by a heartbeat.
+            if skips_wait_on_cancel is not None and skips_wait_on_cancel():
+                # A deadline that raises a timeout instead keeps nothing to hand over: leave the activity to
+                # acknowledge the cancellation in its own time, as a `TRY_CANCEL` activity does, rather than hold up
+                # the timeout and any fallback by a heartbeat.
                 handle.add_done_callback(_retrieve_error)
                 raise
             with anyio.CancelScope(shield=True):

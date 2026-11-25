@@ -17,7 +17,7 @@ import anyio
 import pytest
 
 from pydantic_ai.exceptions import ModelRequestTimeout
-from pydantic_ai.models._request_timeout import RequestDeadline
+from pydantic_ai.models._request_timeout import RequestDeadline, request_deadline_passed
 
 from ..conftest import try_import
 
@@ -124,7 +124,7 @@ async def _time_out_while_awaiting(handle: asyncio.Future[Any]) -> None:
     """Await `handle` under a request deadline that has already passed, as a stream's model activity is."""
     with pytest.raises(ModelRequestTimeout):
         with _passed_deadline().enforce():
-            await _await_with_single_cancel(handle, waits_on_request_deadline=False)
+            await _await_with_single_cancel(handle, skips_wait_on_cancel=request_deadline_passed)
     # The handle resolves after the timeout was raised, and then has its error retrieved.
     await asyncio.sleep(0)
     await asyncio.sleep(0)
@@ -151,7 +151,7 @@ async def test_request_deadline_does_not_wait_for_the_cancelled_activity(
 
 
 async def test_request_deadline_waits_for_the_cancelled_activity_by_default(anyio_backend: str) -> None:
-    """Unless told otherwise, a request deadline waits for the activity it cancelled, as the configured cancellation
+    """Unless told to skip it, a request deadline waits for the activity it cancelled, as the configured cancellation
     type says, such as an explicit `WAIT_CANCELLATION_COMPLETED`."""
     handle = _ActivityHandle()
     with pytest.raises(ModelRequestTimeout):
