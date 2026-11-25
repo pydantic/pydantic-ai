@@ -474,9 +474,10 @@ class Skills(AbstractCapability[AgentDepsT]):
         run._lowered_names = frozenset(entry.skill.name for entry in invocable if entry.skill.name in lowered)
         if run_id is not None:
             self._runs[run_id] = run
-        if any(entry.skill.name == self.id for entry in trusted):
-            # An `'operator'` skill can be named like this capability's id; without one, the copy doesn't clash with it.
-            run.id = None
+        # Its own id, the one its toolset has: a wrapper such as `PrefixTools` carries this capability's id, and
+        # would claim it alongside the copy it holds, as an `'operator'` skill of that name would. No skill can
+        # have this one, since skill names have no underscores. A run's copy still replaces the agent's.
+        run.id = None if self.id is None else f'{self.id}_lowered'
         return CombinedCapability([*offered, run])
 
     async def load(self, workspace: WorkspaceBackend | None = None) -> SkillCatalog:

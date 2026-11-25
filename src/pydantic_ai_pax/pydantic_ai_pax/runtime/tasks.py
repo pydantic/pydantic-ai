@@ -660,7 +660,7 @@ class Tasks:
         # From here the run settles the prompt, also once this caller is cancelled, as a dropped request is.
         run = self._prompts[record.id] = asyncio.create_task(
             self._run_prompt(self.prompt_task, record, text, starting, stopped=stopped),
-            name=f'clai2-task-prompt-{record.id}',
+            name=f'pax-task-prompt-{record.id}',
         )
         started = asyncio.create_task(starting.wait())
         try:
