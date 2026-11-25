@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Self, cast
@@ -20,7 +20,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest, SkipModelRequest, UserError
-from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ModelResponsePart, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -790,17 +790,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                held = _held_to_ceiling(cap_ctx)
-                try:
-                    returned = await capability.after_model_request(
-                        cap_ctx, request_context=request_context, response=response
-                    )
-                except ModelRetry as e:
-                    hold_feedback(e, held)
-                    raise
-                if held is not None and returned is not response:
-                    raise _writes_model_turn(held, 'return a different response from `after_model_request`')
-                response = returned
+                response = await _after_model_request_held(capability, cap_ctx, request_context, response)
         return response
 
     async def wrap_model_request(
@@ -840,6 +830,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     # an outer one recover from — or re-wrap — the request for another attempt.
                     raise
                 except Exception as new_error:
+                    if new_error is not error:
+                        _hold_raised_from_error_hook(cap_ctx, new_error)
                     error = new_error
                     continue
                 if (held := _held_to_ceiling(cap_ctx)) is not None:
@@ -1162,7 +1154,8 @@ def _make_model_request_wrap(
         if held is None:
             return await cap.wrap_model_request(cap_ctx, request_context=request_context, handler=inner)
         # What the handler returned or raised is the model's or an inner capability's, not this one's.
-        from_handler: list[ModelResponse] = []
+        # Each response with a copy of its parts, so a change made to it in place isn't taken for the handler's.
+        from_handler: list[tuple[ModelResponse, Sequence[ModelResponsePart]]] = []
         raised_by_handler: list[BaseException] = []
 
         async def handler(request_context: ModelRequestContext) -> ModelResponse:
@@ -1171,7 +1164,7 @@ def _make_model_request_wrap(
             except BaseException as e:
                 raised_by_handler.append(e)
                 raise
-            from_handler.append(response)
+            from_handler.append((response, deepcopy(response.parts)))
             return response
 
         try:
@@ -1182,10 +1175,13 @@ def _make_model_request_wrap(
             raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
         except ModelRetry as e:
             if not any(e is raised for raised in raised_by_handler):
+                # The retry keeps the handler's response in history, so it can't have changed it either.
+                _check_handler_responses_unchanged(held, from_handler)
                 hold_feedback(e, held)
             raise
-        if not any(response is returned for returned in from_handler):
+        if not any(response is returned for returned, _ in from_handler):
             raise _writes_model_turn(held, "return a response from `wrap_model_request` other than its handler's")
+        _check_handler_responses_unchanged(held, from_handler)
         return response
 
     return wrapped
@@ -1417,7 +1413,7 @@ async def _before_model_request_held(
     adds to the request's messages is held as if it had enqueued it.
     """
     held = _held_to_ceiling(cap_ctx)
-    if held is None:
+    if held is None or type(capability).before_model_request is AbstractCapability.before_model_request:
         return await capability.before_model_request(cap_ctx, request_context)
     snapshot = snapshot_messages(request_context.messages)
     try:
@@ -1425,10 +1421,62 @@ async def _before_model_request_held(
     except SkipModelRequest as e:
         raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
     except ModelRetry as e:
+        # What it added is already in the history the deprecated mirroring appends to, and the retry keeps it.
+        hold_added_messages(request_context.messages, snapshot, *held)
         hold_feedback(e, held)
         raise
     hold_added_messages(request_context.messages, snapshot, *held)
     return request_context
+
+
+async def _after_model_request_held(
+    capability: AbstractCapability[AgentDepsT],
+    cap_ctx: RunContext[AgentDepsT],
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+) -> ModelResponse:
+    """`capability`'s `after_model_request`, held to its authority when that's below `'operator'`.
+
+    It can't replace the response, change its parts in place or skip with a response of its own, and its `ModelRetry`
+    feedback is its own text.
+    """
+    held = _held_to_ceiling(cap_ctx)
+    if held is None or type(capability).after_model_request is AbstractCapability.after_model_request:
+        return await capability.after_model_request(cap_ctx, request_context=request_context, response=response)
+    parts = deepcopy(response.parts)
+    try:
+        returned = await capability.after_model_request(cap_ctx, request_context=request_context, response=response)
+    except SkipModelRequest as e:
+        raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
+    except ModelRetry as e:
+        # The retry keeps the response in history, so it can't have changed it either.
+        _check_handler_responses_unchanged(held, [(response, parts)], 'in `after_model_request`')
+        hold_feedback(e, held)
+        raise
+    if returned is not response:
+        raise _writes_model_turn(held, 'return a different response from `after_model_request`')
+    _check_handler_responses_unchanged(held, [(response, parts)], 'in `after_model_request`')
+    return returned
+
+
+def _check_handler_responses_unchanged(
+    held: tuple[str, Authority],
+    responses: Sequence[tuple[ModelResponse, Sequence[ModelResponsePart]]],
+    where: str = 'its handler returned in `wrap_model_request`',
+) -> None:
+    """Raise if a capability below operator authority changed a response's parts in place since they were copied."""
+    if any(response.parts != parts for response, parts in responses):
+        raise _writes_model_turn(held, f"change the response's parts {where}")
+
+
+def _hold_raised_from_error_hook(cap_ctx: RunContext[Any], raised: Exception) -> None:
+    """Hold what a capability's `on_model_request_error` raised itself, rather than handed on, to its authority."""
+    if (held := _held_to_ceiling(cap_ctx)) is None:
+        return
+    if isinstance(raised, SkipModelRequest):
+        raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from raised
+    if isinstance(raised, ModelRetry):
+        hold_feedback(raised, held)
 
 
 def _held_to_ceiling(cap_ctx: RunContext[Any]) -> tuple[str, Authority] | None:

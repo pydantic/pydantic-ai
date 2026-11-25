@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterable, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
 
@@ -681,53 +682,96 @@ def feedback_held_to(error: ModelRetry) -> tuple[str, Authority] | None:
     return getattr(error, '_held_to', None)
 
 
-def snapshot_messages(messages: Sequence[ModelMessage]) -> tuple[list[ModelMessage], list[ModelRequestPart]]:
+@dataclass
+class MessagesSnapshot:
+    """The messages a hook received and what each said then, for `hold_added_messages`."""
+
+    messages: list[ModelMessage]
+    parts: list[ModelRequestPart]
+    # By the `id` of each message and request part received, what it said, to tell one the hook edited in place.
+    said: dict[int, object]
+
+
+def snapshot_messages(messages: Sequence[ModelMessage]) -> MessagesSnapshot:
     """The messages and request parts of `messages` before a hook runs, for `hold_added_messages`."""
-    return list(messages), [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+    parts: list[ModelRequestPart] = []
+    said: dict[int, object] = {}
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            said[id(message)] = deepcopy(message)
+            continue
+        said[id(message)] = _request_shape(message)
+        for part in message.parts:
+            parts.append(part)
+            # A tool's return reaches the model as tool output whoever edits it, and can hold any object.
+            said[id(part)] = part if isinstance(part, ToolReturnPart) else deepcopy(part)
+    return MessagesSnapshot(list(messages), parts, said)
 
 
 def hold_added_messages(
-    messages: Sequence[ModelMessage],
-    snapshot: tuple[list[ModelMessage], list[ModelRequestPart]],
-    capability_id: str,
-    ceiling: Authority,
+    messages: Sequence[ModelMessage], snapshot: MessagesSnapshot, capability_id: str, ceiling: Authority
 ) -> None:
     """Hold what a capability below operator authority added to `messages` in a hook to its ceiling, in place.
 
-    A part or message counts as added when it's neither one the hook received nor equal to one, so a hook that copies
-    the history or only removes from it adds nothing. Each added request part is held as `ctx.enqueue` holds it, and
-    an added `ModelResponse`, or a new `ModelRequest` with `instructions`, raises `UserError`. Held in place, so the
-    history the deprecated mirroring already appended them to is held too.
+    A part or message counts as added when it's a new one equal to none the hook received, or one it received and
+    changed in place, so a hook that copies the history or only removes from it adds nothing. Each added request part
+    is held as `ctx.enqueue` holds it, and an added or changed `ModelResponse`, or `instructions` no request it
+    received had, raises `UserError`. Held in place, so the history the deprecated mirroring already appended them to
+    is held too.
     """
     if ceiling == 'operator':
         return
-    added = _Added(*snapshot)
+    added = _Added(snapshot)
+    instructions = {message.instructions for message in snapshot.messages if isinstance(message, ModelRequest)}
     for message in messages:
         if added(message):
-            # Raises for what a capability below operator authority can't send at all.
-            _message_within_ceiling(message, capability_id, ceiling)
+            _check_added_message(message, instructions, capability_id, ceiling)
         if isinstance(message, ModelRequest):
             message.parts = [
                 _held_part(part, capability_id, ceiling) if added(part) else part for part in message.parts
             ]
 
 
-def _message_within_ceiling(message: ModelMessage, capability_id: str, ceiling: Authority) -> ModelMessage:
+def _check_added_message(
+    message: ModelMessage, instructions: set[str | None], capability_id: str, ceiling: Authority
+) -> None:
+    """Raise for an added message a capability below operator authority can't send at all.
+
+    Only the message itself: a copy of one the hook received keeps that one's parts and instructions, which it didn't
+    add, and `hold_added_messages` holds the parts it did add.
+    """
     if isinstance(message, ModelResponse):
-        return _response_within_ceiling(message, capability_id, ceiling)
-    return _request_within_ceiling(message, capability_id, ceiling)
+        _response_within_ceiling(message, capability_id, ceiling)
+    elif message.instructions not in instructions:
+        _request_within_ceiling(replace(message, parts=[]), capability_id, ceiling)
+
+
+def _request_shape(message: ModelRequest) -> tuple[str | None, list[int]]:
+    """A request's instructions and which parts it has, which an edit in place to the request itself changes."""
+    return message.instructions, [id(part) for part in message.parts]
+
+
+_NOT_RECEIVED = object()
 
 
 class _Added:
-    """Whether a message or part is one a hook added: neither one it received nor equal to one."""
+    """Whether a message or part is one a hook added: a new one equal to none it received, or one it changed."""
 
-    def __init__(self, messages: list[ModelMessage], parts: list[ModelRequestPart]):
-        self._olds: dict[bool, list[ModelMessage | ModelRequestPart]] = {True: [*messages], False: [*parts]}
-        self._ids = {id(item) for item in (*messages, *parts)}
+    def __init__(self, snapshot: MessagesSnapshot):
+        self._olds: dict[bool, list[ModelMessage | ModelRequestPart]] = {
+            True: [*snapshot.messages],
+            False: [*snapshot.parts],
+        }
+        self._said = snapshot.said
 
     def __call__(self, item: ModelMessage | ModelRequestPart) -> bool:
-        olds = self._olds[isinstance(item, ModelRequest | ModelResponse)]
-        return id(item) not in self._ids and not any(item == old for old in olds)
+        said = self._said.get(id(item), _NOT_RECEIVED)
+        if said is _NOT_RECEIVED:
+            olds = self._olds[isinstance(item, ModelRequest | ModelResponse)]
+            return not any(item == old for old in olds)
+        if isinstance(item, ModelRequest):
+            return _request_shape(item) != said
+        return item != said
 
 
 def _held_part(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
