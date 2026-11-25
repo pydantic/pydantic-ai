@@ -204,8 +204,8 @@ class Calls:
     durable_steps: DurableSteps = DurableSteps()
     """What the calls record under each durable engine, run one per response."""
     follow_ups: int = 0
-    """The extra model requests a call's result causes when it arrives as a follow-up message: `BackgroundTools`
-    delivers each backgrounded call's result in a later request."""
+    """How many extra model requests the calls cause in all, one per result that arrives as a follow-up message
+    (`BackgroundTools` delivers each backgrounded call's result in a later request). `journal_breaks` adds it once."""
     moves_cache_prefix: str | None = None
     """Why running the calls rewrites earlier history by design, which moves the prompt-cache prefix: a suite
     that runs them one per response marks the run `moves_cache_prefix` with it."""

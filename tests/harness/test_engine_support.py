@@ -67,23 +67,26 @@ def test_every_cell_is_a_case_with_calls() -> None:
         assert CASES[name].calls is not None, f'`ENGINE_SUPPORT` names {name}, which has no `calls` to run'
 
 
-def test_untested_cells_only_go_down() -> None:
-    """How many cases each engine runs no suite for: test a cell to lower its engine's count, never raise it."""
-    untested = Counter(
+def test_measured_cells_only_go_up() -> None:
+    """How many cases each engine's suites measure, i.e. the cells that aren't `untested`: a PR may raise an
+    engine's count by testing a cell, never lower it."""
+    measured = Counter(
         engine
         for name, case in CASES.items()
         if name in PUBLIC and case.calls is not None
         for engine in ENGINES
-        if engine_support(name, engine).level == 'untested'
+        if engine_support(name, engine).level != 'untested'
     )
-    assert dict(untested) == snapshot(
+    assert {engine: measured[engine] for engine in ENGINES} == snapshot(
         {
-            'prefect': 44,
-            'aws_lambda': 44,
-            'absurd': 44,
-            'pgtask': 44,
-            'azure_durable_task': 44,
-            'render': 44,
+            'dbos': 44,
+            'temporal': 44,
+            'prefect': 0,
+            'aws_lambda': 0,
+            'absurd': 0,
+            'pgtask': 0,
+            'azure_durable_task': 0,
+            'render': 0,
         }
     )
 

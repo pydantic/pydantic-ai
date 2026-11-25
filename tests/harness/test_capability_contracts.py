@@ -103,6 +103,10 @@ _GENERATED_ID = re.compile(r'\b[0-9a-f]{8}\b')
 """An ID a tool generates at random, such as a `Planning` step's, which no two runs share."""
 
 
+_PREFIX = 'p'
+"""The prefix the `renamed` contract runs a case's tools under."""
+
+
 def _comparable(content: object, directory: Path) -> object:
     """`content` with the run's directory written as `<dir>` and each generated ID as `<id>`."""
     if not isinstance(content, str):
@@ -127,8 +131,8 @@ async def _run_calls(
     # Built off the event loop, as an app builds its agent: building can import a client library.
     capabilities = _capabilities(await anyio.to_thread.run_sync(case.calls.build, directory))
     if prefixed:
-        capabilities = [capability.prefix_tools('p') for capability in capabilities]
-    model = _one_call_per_response(case.calls.made, 'p_' if prefixed else '')
+        capabilities = [capability.prefix_tools(_PREFIX) for capability in capabilities]
+    model = _one_call_per_response(case.calls.made, f'{_PREFIX}_' if prefixed else '')
     # Streamed, so a tool that emits a capability event has a handler to deliver it to.
     return await Agent(model, capabilities=capabilities).run(
         'go', event_stream_handler=drain_events, usage_limits=usage_limits
@@ -149,7 +153,7 @@ async def _tool_results(case: CapabilityCase, directory: Path, *, prefixed: bool
     assert case.calls is not None
     # A reply that quotes its tool by the name the model sees, as `BackgroundTools`' acknowledgement does, is the same
     # reply under a prefix.
-    names = {f"'p_{name}'": f"'{name}'" for name, _ in case.calls.made} if prefixed else {}
+    names = {f"'{_PREFIX}_{name}'": f"'{name}'" for name, _ in case.calls.made} if prefixed else {}
     return [
         (
             part.tool_call_id,
