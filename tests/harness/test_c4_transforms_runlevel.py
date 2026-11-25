@@ -2,21 +2,27 @@
 
 A transform that silently changed nothing would pass every check. Each test here runs a probe's native history through
 one transform and checks it was transformed: the fallback switched models, compaction replaced history with a summary
-or a window, the provider trim cut at the boundary, the processor dropped the model's text. Not a VCR test: every
+or a window, the provider trim cut at the boundary, the processor ran before every request. Not a VCR test: every
 model is a `FunctionModel`, and the provider trim runs offline.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic_ai.messages import CompactionPart, ModelRequest, ModelResponse, SystemPromptPart, TextPart
+from pydantic_ai.messages import CompactionPart, ModelRequest, ModelResponse, SystemPromptPart
 from pydantic_ai_harness.compaction._receipts import is_receipt_message
 
+from .c4_transforms_runlevel import PROCESSED
 from .test_capability_routes import PROBES, _native  # pyright: ignore[reportPrivateUsage]
-from .test_history_transformations import TRANSFORMS, NativeRun
+from .test_history_transformations import TRANSFORMS, NativeRun, Signature, signature
 
 _PROBE = next(iter(PROBES))
+
+
+def _signatures(messages: Sequence[object]) -> list[Signature]:
+    return [signature(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts]
 
 
 async def _transformed(transformation: str, directory: Path) -> tuple[NativeRun, list[object]]:
@@ -72,17 +78,8 @@ async def test_the_provider_trim_cuts_at_the_compaction_block(tmp_path: Path) ->
     )
 
 
-async def test_the_processor_drops_the_models_text(tmp_path: Path) -> None:
+async def test_the_processor_runs_before_every_request(tmp_path: Path) -> None:
+    PROCESSED.clear()
     native, output = await _transformed('history_processor', tmp_path)
-    assert any(
-        isinstance(part, TextPart)
-        for message in native.messages
-        if isinstance(message, ModelResponse)
-        for part in message.parts
-    )
-    assert not any(
-        isinstance(part, TextPart) for message in output if isinstance(message, ModelResponse) for part in message.parts
-    )
-    assert [message for message in output if isinstance(message, ModelRequest)] == [
-        message for message in native.messages if isinstance(message, ModelRequest)
-    ]
+    assert len(PROCESSED) == sum(isinstance(message, ModelResponse) for message in native.messages)
+    assert _signatures(output) == _signatures(native.messages)

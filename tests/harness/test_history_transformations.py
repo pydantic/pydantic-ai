@@ -608,6 +608,23 @@ TRANSFORM_EXEMPT: dict[str, str] = {
         ],
         _PENDING,
     ),
+    # Reached only on paths the run-level transforms in `c4_transforms_runlevel.py` don't take yet.
+    'pydantic_ai.models.fallback._rewind_messages': (
+        'PENDING: runs only when a pinned continuation fails after a suspended response, which the '
+        '`model_fallback_switch` transform (a plain 503 on a tool turn) never produces'
+    ),
+    'pydantic_ai_harness.compaction._summarizing_compaction.without_legacy_summaries': (
+        'PENDING: `summarizing` never reaches it: it runs only when an earlier summary is in the history'
+    ),
+    'pydantic_ai_harness.compaction._summary.without_summaries': (
+        'PENDING: `summarizing` never reaches it: it runs only when an earlier summary is in the history'
+    ),
+    'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._kept_user_messages': (
+        'PENDING: `summarizing` never reaches it: it runs only with `keep_user_messages=True`'
+    ),
+    'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._compact_if_smaller': (
+        'PENDING: `summarizing` never reaches it: it runs from `before_model_request`, not `compact`'
+    ),
 }
 """Each function that returns `list[ModelMessage]` without being a registered transformation, with why.
 

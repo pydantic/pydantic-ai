@@ -15,12 +15,11 @@ from dataclasses import replace
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities.process_history import _run_history_processor  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
-    ModelRequest,
     ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
@@ -103,7 +102,8 @@ async def _compaction_part(native: RouteRun, directory: Path) -> list[ModelMessa
     """What Anthropic is sent when its compaction block comes back before the case's last request.
 
     The block is a `CompactionPart` in a response, so it's no request part to compare: what's checked is the request
-    parts the provider trim keeps around it.
+    parts the provider trim keeps around it. The trim is called directly: a public run renders it into Anthropic's wire
+    format, where the registry's checks, which compare `ModelRequestPart`s, can't read the parts it kept.
     """
     *before, last = native.messages
     block = ModelResponse(
@@ -117,27 +117,36 @@ async def _compaction_part(native: RouteRun, directory: Path) -> list[ModelMessa
 # --- history_processor ---------------------------------------------------------------------------------------------
 
 
-def _without_response_text(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
-    """A user's processor that returns a filtered copy: the model's text is dropped, every request is kept."""
-    return [
-        replace(message, parts=[part for part in message.parts if not isinstance(part, TextPart)])
-        if isinstance(message, ModelResponse)
-        else replace(message, parts=list(message.parts))
-        for message in messages
-        if isinstance(message, ModelRequest | ModelResponse)
-    ]
+PROCESSED: list[int] = []
+"""How many messages each call of the processor was given, so a test can tell it ran."""
+
+
+def _rebuilt(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+    """A user's processor that returns a rebuilt copy, as a filtering one does, with nothing filtered out.
+
+    Sync and taking the context, so the runner takes its executor path. What's checked is that the runner and
+    `ProcessHistory` hand every part on as it was.
+    """
+    PROCESSED.append(len(messages))
+    return [replace(message, parts=list(message.parts)) for message in messages]
 
 
 async def _history_processor(native: RouteRun, directory: Path) -> list[ModelMessage]:
-    """A sync processor that takes the context, so the runner takes its executor path."""
-    return await _run_history_processor(_without_response_text, _context(), list(native.messages))
+    """The case rerun with a `ProcessHistory` processor, which also rewrites the history the run keeps."""
+    assert isinstance(native, NativeRun)
+    script = _Script(native.calls.made)
+    capabilities, observer = await _built(native.calls, directory)
+    processor = ProcessHistory[None](_rebuilt)
+    agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, observer, processor])
+    result = await agent.run('go', event_stream_handler=drain_events)
+    return result.all_messages()
 
 
 _RECEIPT_IN_USER_VOICE: dict[Check, Exempt] = {
     'no_authority_gain': Exempt(
-        "Not filed yet: a compaction receipt is a `UserPromptPart`, so the harness's note about the history it replaced "
-        "reaches the model in the user's voice with 'user' authority, above the tool output it stands in for. Being "
-        'verified by the compaction and voice-authority sessions.'
+        "Not filed yet: a compaction receipt is a `UserPromptPart`, so the harness's note about the history it "
+        "replaced reaches the model in the user's voice with 'user' authority, above the tool output it stands in "
+        'for. Being verified by the compaction and voice-authority sessions.'
     )
 }
 """The receipt finding, on every case and probe: only the no-authority-gain check fails."""
@@ -147,7 +156,6 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
     'model_fallback_switch': Transform(
         'model_fallback_switch',
         _model_fallback_switch,
-        functions=('pydantic_ai.models.fallback._rewind_messages',),
     ),
     'summarizing': Transform(
         'summarizing',
@@ -157,12 +165,8 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
         creates_part=lambda part: isinstance(part, CompactionPart) or is_receipt_part(part),
         known=_RECEIPT_IN_USER_VOICE,
         functions=(
-            'pydantic_ai_harness.compaction._summarizing_compaction.without_legacy_summaries',
             'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction.compact',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._kept_user_messages',
             'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._insert_receipt',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._compact_if_smaller',
-            'pydantic_ai_harness.compaction._summary.without_summaries',
         ),
     ),
     'sliding_window': Transform(
