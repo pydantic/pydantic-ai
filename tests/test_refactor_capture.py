@@ -2611,7 +2611,7 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path, monkey
     """A stream holds what the run iterating it holds, like its dependencies, so the capture holds it only while the
     recording of its iteration lives. The response it builds is recorded once iteration ends, and again when the test
     ends if the stream still lives then, as it is when the test ends, so what the run sets on it in between shows, even
-    once the stream is gone; one that can't be written is recorded as the error, never raised.
+    once the stream is gone; one that can't be built or written then is recorded as the error, never raised.
 
     Garbage collection is off, as in `tests/test_run_reference_cycles.py`, so only reference counting frees them.
     """
@@ -2624,6 +2624,9 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path, monkey
     class Unwritable:
         def __repr__(self) -> str:
             raise RuntimeError('unwritable')
+
+    def unbuildable() -> ModelResponse:
+        raise RuntimeError('unbuildable')
 
     async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
         yield 'hello'
@@ -2660,15 +2663,25 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path, monkey
             unwritable.provider_details = {'unwritable': Unwritable()}
             async for _ in unwritable:
                 pass
+        async with model_request_stream(
+            FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
+        ) as unbuilt:
+            async for _ in unbuilt:
+                pass
+        # Built once iteration ended, its response can't be built when the test ends.
+        monkeypatch.setattr(unbuilt, 'get', unbuildable)
         capture.write('test_streams.py::test_kept')
     finally:
         gc.enable()
         capture.pytest_unconfigure()
     records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
-    *streams, counted, unwritten = [record for record in records if record['kind'] == 'stream']
+    *streams, counted, unwritten, unbuilt = [record for record in records if record['kind'] == 'stream']
     assert counted['response']['usage']['details'] == {'counted_once_iteration_ended': 1}
-    assert unwritten['response'] == snapshot(
-        {'unrecorded': 'PydanticSerializationError: Error serializing to JSON: RuntimeError: unwritable'}
+    assert [unwritten['response'], unbuilt['response']] == snapshot(
+        [
+            {'unrecorded': 'PydanticSerializationError: Error serializing to JSON: RuntimeError: unwritable'},
+            {'unrecorded': 'RuntimeError: unbuildable'},
+        ]
     )
     assert [
         (record['stream'], record['response']['parts'][0]['content'], record['response']['provider_details'])
@@ -2679,38 +2692,6 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path, monkey
             ('pydantic_ai.models.function.FunctionStreamedResponse', 'hello', None),
             ('pydantic_ai.models.function.FunctionStreamedResponse', 'hello', {'set': 'once iteration ended'}),
         ]
-    )
-
-
-async def test_capture_records_a_stream_response_it_cant_build_as_the_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
-    """A stream that still lives when the test ends, but can't build its response then, is recorded with the error
-    building it raised, which the test never sees.
-    """
-    monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
-
-    async def stream_text(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-        yield 'hello'
-
-    def unbuildable(stream: StreamedResponse) -> ModelResponse:
-        raise RuntimeError('unbuildable')
-
-    capture = RefactorCapture(tmp_path)
-    capture.install()
-    try:
-        async with model_request_stream(
-            FunctionModel(stream_function=stream_text), [ModelRequest.user_text_prompt('hi')]
-        ) as stream:
-            async for _ in stream:
-                pass
-        monkeypatch.setattr(type(stream), 'get', unbuildable)
-        capture.write('test_streams.py::test_unbuildable')
-    finally:
-        capture.pytest_unconfigure()
-    records = [json.loads(line) for line in (tmp_path / 'main.jsonl').read_text().splitlines()]
-    assert [record['response'] for record in records if record['kind'] == 'stream'] == snapshot(
-        [{'unrecorded': 'RuntimeError: unbuildable'}]
     )
 
 
