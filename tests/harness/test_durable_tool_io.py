@@ -55,9 +55,9 @@ from ._durable_cases import (
     installed,
     journal_breaks,
     observe_run,
-    one_call_per_response,
     scenario_agent,
     scenario_breaks,
+    streaming_one_call_per_response,
 )
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
@@ -101,7 +101,7 @@ def _case_agent(name: str) -> Agent[None, str]:
     assert calls is not None
     directory = Path(tempfile.mkdtemp(prefix=f'harness_durable_tool_io_{name}_'))
     return Agent(
-        one_call_per_response(calls.made),
+        streaming_one_call_per_response(calls.made),
         name=f'{name}_agent',
         deps_type=type(None),
         capabilities=[*build_case(name, directory), DBOSDurability[None]()],
@@ -139,7 +139,13 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
     assert calls is not None
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
-        assert await _WORKFLOWS[name]() == 'done'
+        try:
+            output = await _WORKFLOWS[name]()
+        except UserError as error:
+            # A capability that refuses the engine raises when the run starts, which its `refused` cell names.
+            assert_cell_holds('dbos', DURABLE_DBOS, name, [f'the workflow fails: {error}'])
+            return
+    assert output == 'done'
     first_run = count_requests()
     assert set(first_run.values()) <= {1}, f'a request was made more than once: {first_run}'
 
@@ -154,7 +160,7 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
     breaks += journal_breaks(
         [step['function_name'] for step in steps],
         prefix=f'{_AGENTS[name].name}__',
-        model_request='model.request',
+        model_requests=('model.request', 'model.request_stream'),
         calls=len(calls.made),
         expected=calls.durable_steps.dbos,
         engine='dbos',

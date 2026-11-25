@@ -21,7 +21,8 @@ The contracts are numbered C0, C1, … in the order they land, and an area with 
 
 - `DECLARES_CALLS` (C0) builds every buildable public case and checks it: `test_a_capability_that_runs_with_tools_declares_calls`. A capability made of others is checked through its parts.
 - `test_pending_calls_backfill` pins how many cases are still pending. A PR that writes a case's `calls` removes its exemption and lowers the count; a new capability doesn't add a pending one.
-- For a capability whose hooks run around other tools' calls, `with_echo` builds it beside an `echo` tool, and `ECHO` calls it.
+- For a capability whose hooks run around other tools' calls, `with_echo` builds it beside an `echo` tool, and `ECHO` calls it. A capability other tools run through, such as `CodeMode` or `ToolBridge`, routes a call to `echo` through its own tools.
+- A case whose calls launch a Python interpreter, such as `IPythonCodeMode`'s kernel, says why in `Calls.launches_python`, which marks the tests that run them `subprocess`.
 
 ## Prompt cache
 
@@ -70,7 +71,7 @@ The engine-side rules (what crosses a durable boundary, workspace routing, workf
 
 **How it's tested**
 
-- D1, durable per case: every case with `calls` runs them, one per response, under each engine, and the units the run records must be the ones its `Calls.durable_steps` lists (`DurableSteps(dbos=..., temporal=...)`, names without the agent prefix, the run's own model requests left out). A case whose tools do no I/O lists nothing for DBOS, which is checked too. When a name changes, the failure prints the new list: update the case, with a compatibility note if a recorded name changed.
+- D1, durable per case: every case with `calls` runs them, one per response, under each engine, and the units the run records must be the ones its `Calls.durable_steps` lists (`DurableSteps(dbos=..., temporal=...)`, names without the agent prefix, the run's own model requests left out, streamed ones included: a case whose capability listens for events streams its requests). A case whose tools do no I/O lists nothing for DBOS, which is checked too. When a name changes, the failure prints the new list: update the case, with a compatibility note if a recorded name changed.
   - `DURABLE_DBOS`: `tests/harness/test_durable_tool_io.py` runs the calls in a DBOS workflow, forks it from after its last step, as recovery does, and checks that no request the stand-ins count is made again.
   - `DURABLE_TEMPORAL`: `tests/harness/test_durable_temporal_replay.py` runs them in a Temporal workflow, on one dev server per module, and replays the recorded history with a `Replayer`, which must succeed without a request. An agent Temporal refuses breaks it, so an id-less toolset is a `refused` cell, with its issue.
 - `ENGINE_SUPPORT` (in `tests/capability_cases.py`) is the engine x case table: what each engine in `ENGINES` does with each case's calls, as a `Support` cell. A cell it doesn't list is `supported` under the engines a suite runs every case under (`SUITE_ENGINES`: DBOS and Temporal) and `untested` under the others. `Support` is shared, so W1 can key the same type by workspace backend.

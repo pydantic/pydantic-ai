@@ -40,9 +40,9 @@ from ._durable_cases import (
     installed,
     journal_breaks,
     observe_run,
-    one_call_per_response,
     scenario_agent,
     scenario_breaks,
+    streaming_one_call_per_response,
 )
 
 pytest.importorskip('temporalio')
@@ -112,7 +112,7 @@ async def temporal(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[_T
         assert case.calls is not None
         try:
             _AGENTS[name] = Agent(
-                one_call_per_response(case.calls.made),
+                streaming_one_call_per_response(case.calls.made),
                 name=f'{name}_agent',
                 deps_type=type(None),
                 capabilities=[
@@ -186,7 +186,7 @@ async def _breaks(name: str, temporal: _Temporal, count_requests: Callable[[], C
     return breaks + journal_breaks(
         activities,
         prefix=f'agent__{_AGENTS[name].name}__',
-        model_request='model_request',
+        model_requests=('model_request', 'model_request_stream'),
         calls=len(calls.made),
         expected=calls.durable_steps.temporal,
         engine='temporal',
