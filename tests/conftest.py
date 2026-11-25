@@ -706,6 +706,9 @@ BLOCKBUSTER_LOCAL_FILES: list[tuple[str, str | tuple[str, ...]]] = [
     # pydantic-ai-pax's commands, menus, and sign-ins check and update its own small files in the user's folders.
     ('pydantic_ai_pax/config/api_keys.py', ('save_key', 'load_keys')),
     ('pydantic_ai_pax/config/project_settings.py', ('_present', 'load_project_settings')),
+    # A session's trust in its folder is looked up as the shell is built: where the folder's repository is, and
+    # the decision saved for it.
+    ('pydantic_ai_pax/runtime/workspace_trust.py', ('saved', 'from_scope', 'trust_scope')),
     ('pydantic_ai_pax/ui/menus/key_menu.py', 'storage'),
     ('pydantic_ai_pax/builtin_plugins/coder_folders.py', ('_directory_problem', '_same_directory', 'path')),
     ('pydantic_ai_pax/builtin_plugins/logfire.py', 'credentials'),
