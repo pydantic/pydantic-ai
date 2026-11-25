@@ -9,8 +9,8 @@ the predicate the in-process sink check (C2) uses too, here applied to what each
 `voice_authority` says, once for every provider, what authority the model hears each wire voice with: the system or
 developer voice, including tool definitions, needs `'operator'`, the unframed user turn `'user'` or above, framed
 data and tool results take any authority, and no request part may reach the assistant's turn. A part may land lower
-than its authority, never higher. Every line of its text must land somewhere: a line that reaches the model in no
-voice at all has lost its voice.
+than its authority, never higher. Its text must land somewhere, checked by its first line and every later line of at
+least 12 characters: a line that reaches the model in no voice at all has lost its voice.
 
 A provider that breaks this for a case is a known finding in `KNOWN`, a strict `xfail` with what fixes it, so the fix
 fails the suite until its entry is removed.
@@ -292,17 +292,20 @@ def test_the_check_flags_a_part_above_its_authority(messages: list[dict[str, obj
         pytest.param(
             'the page says hello\n\n}\nand then it says goodbye',
             ['the page says hello', 'and then it says goodbye'],
-            id='lines',
+            id='short-later-line-skipped',
         ),
         pytest.param([TextContent('  '), 'hi', 'the page says hello'], ['hi', 'the page says hello'], id='items'),
         pytest.param(StructuredContent({'page': 'hello'}), ['{"page":"hello"}'], id='structured'),
         pytest.param('  ', [], id='blank'),
     ],
 )
-def test_a_part_is_found_by_each_line_of_its_text(
+def test_a_part_is_found_by_its_first_line_and_each_long_one(
     content: str | StructuredContent | Sequence[UserContent], expected: list[str]
 ) -> None:
-    """Every line of each text item is looked for, so a dropped or raised later line is caught too.
+    """The first line of each part and every later line of at least 12 characters is looked for.
+
+    A shorter later line, like `}`, also turns up in unrelated text, so finding it wouldn't show where the part landed:
+    it's skipped, as the `short-later-line-skipped` case pins.
 
     Not a VCR test: `markers` reads a part built here, with no provider exchange.
     """
