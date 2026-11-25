@@ -306,6 +306,17 @@ class RunCancellation:
         self._issued.clear()
 
 
+def raise_if_run_cancelled(cancellation: RunCancellation | None) -> None:
+    """Re-raise a cancellation of the run that a hook absorbed, so the run still ends cancelled.
+
+    A first-party request (`cancel()`, a token or the deadline) is read from the run's controller, and an external
+    `Task.cancel()` from the task's cancelling count.
+    """
+    if cancellation is not None and cancellation.cancel_requested:
+        raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
+    _utils.raise_if_cancelling()
+
+
 @dataclasses.dataclass
 class RunBinding:
     """Bridge an `AgentRunEvents` handle to the run it starts.

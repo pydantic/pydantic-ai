@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Self, cast
 from pydantic import ValidationError
 from typing_extensions import TypeIs
 
+from pydantic_ai._cancel import raise_if_run_cancelled
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
@@ -669,6 +670,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> None:
         for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                # A hook that absorbed the run's cancellation doesn't let the next one commit.
+                raise_if_run_cancelled(ctx._cancellation)  # pyright: ignore[reportPrivateUsage]
                 await capability.on_run_success(cap_ctx, result=result)
 
     # --- Node run lifecycle hooks ---

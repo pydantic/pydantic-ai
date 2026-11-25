@@ -836,7 +836,7 @@ Binding hooks establish which capability participates in a run; lifecycle hooks 
 | Run binding | [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] | A complete [`RunContext`][pydantic_ai.tools.RunContext] containing the bootstrap model; may return a run-scoped replacement capability |
 | Each logical model step | Post-`for_run()` model selection/resolution, model settings, tool preparation, and message preparation | The selected model is installed in `RunContext` before its settings, profile-sensitive tools, and model-specific message preparation are evaluated |
 | Model request and response | Model request, tool, output, node, and event-stream [hooks](#hooking-into-the-lifecycle) | The request context and live run state at each hook's position in the lifecycle |
-| Run completion | The `wrap_run` handler completes the run body, applies `on_run_error` recovery when needed, then runs `after_run`; a wrapper can short-circuit the handler. Once the run has released its resources, `on_run_success` runs for a run that returns a result | Final result or error, accumulated messages, and usage |
+| Run completion | The `wrap_run` handler completes the run body, applies `on_run_error` recovery when needed, then runs `after_run`; a wrapper can short-circuit the handler. Once its toolsets and models have exited, `on_run_success` runs for a run that ends with its result | Final result or error, accumulated messages, and usage |
 
 If `for_run()` returns the original capability, the bootstrap model selection is reused for step one. A replacement capability can select a different model for step one. Continuation polling within one logical step remains pinned to that step's selected model.
 

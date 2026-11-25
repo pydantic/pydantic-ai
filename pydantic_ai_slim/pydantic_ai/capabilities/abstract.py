@@ -1148,8 +1148,8 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         conversation. It is also called for a result that `on_run_error` recovered or `wrap_run`
         returned without calling its handler.
 
-        It still runs inside the run's `timeout=` and cancellation, so a run cancelled or timed out
-        while it runs raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] or
+        It still runs inside the run's `timeout=`, cancellation and concurrency limit, so a run
+        cancelled or timed out while it runs raises [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] or
         [`RunTimedOut`][pydantic_ai.exceptions.RunTimedOut]. An exception raised here fails the run,
         and the capabilities after this one in the dispatch order aren't called; what earlier ones
         committed stays committed. An [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] raised

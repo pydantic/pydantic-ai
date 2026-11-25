@@ -2823,6 +2823,40 @@ class TestRunSuccessHooks:
 
         assert log == ['recorder:after_run', 'toolset:absorbed']
 
+    async def test_a_hook_that_absorbs_the_cancellation_does_not_let_the_next_one_commit(self):
+        log: list[str] = []
+
+        async def absorb(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            ctx.cancel()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                log.append('absorbed')
+
+        def commit(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            log.append('committed')  # pragma: no cover
+
+        # Innermost first, so the capability listed last is called first.
+        capabilities = [Hooks[Any](run_success=commit), Hooks[Any](run_success=absorb)]
+        with pytest.raises(RunCancelled) as cancelled:
+            await Agent(TestModel(), capabilities=capabilities).run('hello')
+        assert log == ['absorbed']
+        assert len(cancelled.value.all_messages()) == 2
+
+        # In one `Hooks`, entries are called in the order they were registered.
+        hooks = Hooks[Any]()
+        hooks.on.run_success(absorb)
+        hooks.on.run_success(commit)
+        log.clear()
+        with pytest.raises(RunCancelled):
+            await Agent(TestModel(), capabilities=[hooks]).run('hello')
+        assert log == ['absorbed']
+
+        log.clear()
+        with pytest.raises(RunCancelled):
+            await Agent(TestModel(), capabilities=[Hooks[Any](run_success=absorb)]).run('hello')
+        assert log == ['absorbed']
+
     async def test_an_agent_run_error_carries_the_runs_conversation(self):
         @dataclass
         class FailingCommit(AbstractCapability[Any]):

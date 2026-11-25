@@ -80,6 +80,7 @@ from .._cancel import (
     current_run_clock,
     inherited_run_deadline,
     provide_run_deadline,
+    raise_if_run_cancelled,
     take_run_binding,
 )
 from .._deferred_capabilities import registered_loaded_capability_ids
@@ -490,6 +491,8 @@ class _RunSuccess:
 
     run_capability: AbstractCapability[Any]
     cancellation: RunCancellation
+    refresh_workspace_ref: Callable[[], None]
+    """Also called later on the stack, for a run that fails; called here so the hook sees the ref the caller gets."""
     agent_run: AgentRun[Any, Any] | None = None
     run_ctx: RunContext[Any] | None = None
 
@@ -502,6 +505,7 @@ class _RunSuccess:
             return
         # Bound before the run's body starts, and nothing before that point can exit the stack cleanly.
         assert self.agent_run is not None and self.run_ctx is not None
+        self.refresh_workspace_ref()
         await _dispatch_run_success(
             self.run_capability, self.run_ctx, self.agent_run.result, cancellation=self.cancellation
         )
@@ -521,13 +525,13 @@ async def _dispatch_run_success(
     if result is None:
         return
     # A cancellation requested or delivered as the run finished, even one a toolset's exit absorbed, still ends the
-    # run cancelled, so nothing is committed for it.
-    if cancellation is not None and cancellation.cancel_requested:
-        raise asyncio.CancelledError('pydantic-ai: re-asserting a requested run cancellation')
-    _utils.raise_if_cancelling()
+    # run cancelled, so nothing is committed for it. `CombinedCapability` checks again before each capability's hook.
+    raise_if_run_cancelled(cancellation)
     # The run's own context, so a nested run's durable operations dispatch through its run, not the enclosing one.
     with set_current_run_context(run_ctx):
         await run_capability.on_run_success(run_ctx, result=result)
+    # A hook that absorbed the run's cancellation doesn't let the run return its result.
+    raise_if_run_cancelled(cancellation)
 
 
 def _is_model(value: object) -> TypeIs[models.Model[Any]]:
@@ -5259,7 +5263,7 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 stack.callback(_ACTIVE_AGENT_LIMITERS.reset, limiter_token)
             # Registered before the models, the graph run and the toolset, so it exits after them, and after the run's
             # hooks; but still inside the run's deadline, cancellation and error handling, which exit after it.
-            run_success = _RunSuccess(self.run_capability, graph_deps.cancellation)
+            run_success = _RunSuccess(self.run_capability, graph_deps.cancellation, refresh_workspace_ref)
             stack.push_async_exit(run_success)
             # On a stack of their own, so a model selected later in the run, whose exit is registered then, is still
             # exited after the run's pending response is settled below.
