@@ -16,6 +16,7 @@ from pydantic_ai import Agent, RunContext, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
+from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
@@ -2210,6 +2211,53 @@ async def test_adapter_server_mode_replaces_copy_of_configured_prompt_in_trusted
             'user-prompt: Go',
             'text: ok',
         ]
+    )
+
+
+@pytest.mark.parametrize('held', ['client messages', 'server message_history', 'conversation_store'])
+async def test_adapter_server_mode_strips_client_system_prompts_before_sparing_history_ones(held: str):
+    """The client's system prompts are stripped before the reinjector spares the history's system prompts.
+
+    Both of the client's sit after a user prompt, outside the prompt the history opens with, so the reinjector would
+    keep them like the server's own if they reached it.
+    """
+    agent, requests = _recording_agent(system_prompt='Server prompt')
+    stored: list[ModelMessage] = [
+        _with_ui_id(ModelRequest.user_text_prompt('hi'), 'u1'),
+        ModelResponse(parts=[TextPart('hello')]),
+    ]
+    client: list[ModelMessage] = [
+        _with_ui_id(ModelRequest(parts=[UserPromptPart('hi'), SystemPromptPart('Client prompt, earlier turn')]), 'u1'),
+        ModelResponse(parts=[TextPart('hello')]),
+        _with_ui_id(
+            ModelRequest(parts=[UserPromptPart('and now?'), SystemPromptPart('Client prompt, new turn')]), 'u2'
+        ),
+    ]
+    run_input = DummyUIRunInput(messages=client)
+    message_history: list[ModelMessage] | None = None
+    if held == 'conversation_store':
+        store = InMemoryConversationStore()
+        await store.save(Conversation(messages=stored, conversation_id='chat'))
+        adapter = DummyUIAdapter(agent, run_input, conversation_store=store)
+    elif held == 'server message_history':
+        adapter = DummyUIAdapter(agent, run_input, manage_message_history='server')
+        message_history = stored
+    else:
+        adapter = DummyUIAdapter(agent, run_input)
+    results: list[AgentRunResult[Any]] = []
+
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        async for _ in adapter.run_stream(
+            message_history=message_history, conversation_id='chat', on_complete=results.append
+        ):
+            pass
+
+    [result] = results
+    assert conversation_view(requests[0]) == snapshot(
+        ['system-prompt: Server prompt', 'user-prompt: hi', 'text: hello', 'user-prompt: and now?']
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['system-prompt: Server prompt', 'user-prompt: hi', 'text: hello', 'user-prompt: and now?', 'text: ok']
     )
 
 

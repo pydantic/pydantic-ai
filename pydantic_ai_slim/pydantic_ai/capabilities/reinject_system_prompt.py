@@ -37,9 +37,9 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     or [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue]) are kept.
 
     The UI adapters automatically add this capability in `manage_system_prompt='server'` mode
-    with `replace_existing=True`. They strip the client's system prompts themselves, so theirs
-    replaces only the system prompt the history opens with and the renderings of the agent's
-    dynamic system prompts, and keeps the other system prompts of server-side history. Add it
+    with `replace_existing=True`. They strip the client's system prompts themselves, so their
+    reinjector replaces only the system prompts the history opens with and every rendering of the
+    agent's dynamic system prompts, and keeps server-side history's other system prompts. Add it
     explicitly with `Agent(..., capabilities=[ReinjectSystemPrompt()])` or per-run via the `capabilities=`
     argument on [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] to get the same behavior
     anywhere.
