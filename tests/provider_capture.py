@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, cast
 
+import httpx
 import httpx2
 import pytest
 
@@ -84,6 +85,14 @@ class _Capture:
     def client(self) -> httpx2.AsyncClient:
         return httpx2.AsyncClient(transport=httpx2.MockTransport(self.handle))
 
+    def handle_legacy(self, request: httpx.Request) -> httpx.Response:
+        self.bodies.append(request.content)
+        return httpx.Response(400, json={'error': {'message': 'captured', 'type': 'captured'}}, request=request)
+
+    def legacy_client(self) -> httpx.AsyncClient:
+        """A client on the legacy `httpx`, for a provider whose SDK still takes one."""
+        return httpx.AsyncClient(transport=httpx.MockTransport(self.handle_legacy))
+
 
 def _model(provider: CapturedProvider, capture: _Capture) -> Model:
     client = capture.client()
@@ -97,7 +106,7 @@ def _model(provider: CapturedProvider, capture: _Capture) -> Model:
         return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test', http_client=client))
     if provider == 'mistral':
         return MistralModel('mistral-large-latest', provider=MistralProvider(api_key='test', http_client=client))
-    return CohereModel('command-r', provider=CohereProvider(api_key='test', http_client=client))
+    return CohereModel('command-r', provider=CohereProvider(api_key='test', http_client=capture.legacy_client()))
 
 
 @dataclass
@@ -200,8 +209,9 @@ def _anthropic_voices(body: dict[str, Any]) -> Iterator[tuple[Voice, str]]:
     for message in body['messages']:
         role: Voice = _role_voice(message['role'])
         for block in message['content'] if isinstance(message['content'], list) else [message['content']]:
-            if isinstance(block, dict) and block.get('type') == 'tool_result':
-                for text in _texts(block.get('content', [])):
+            item = cast(dict[str, Any], block) if isinstance(block, dict) else None
+            if item is not None and item.get('type') == 'tool_result':
+                for text in _texts(item.get('content', [])):
                     yield 'tool', text
             else:
                 for text in _texts(block):
