@@ -692,6 +692,8 @@ class _StepRecording:
     """The instruction parts currently sent."""
     effort: ThinkingEffort | None
     """The thinking effort currently recorded, as `_record_model_settings_changes` resolves it."""
+    rewrites_outside_prefix: bool
+    """Whether the instructions were recorded for a model that reads dynamic rewrite-mode blocks outside the prefix."""
 
     def record(
         self,
@@ -705,7 +707,11 @@ class _StepRecording:
         `resolved` is ignored when a hook changed the instruction parts (see `parameters`). Afterwards, `sent` holds the
         instruction parts to send.
         """
-        record_instructions = self.parameters is not None and resolved != self.resolved
+        rewrites_outside_prefix = model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+        record_instructions = self.parameters is not None and (resolved, rewrites_outside_prefix) != (
+            self.resolved,
+            self.rewrites_outside_prefix,
+        )
         effort = model._unified_effort(model_settings)  # pyright: ignore[reportPrivateUsage]
         record_settings = effort != self.effort
         if not record_instructions and not record_settings:
@@ -723,6 +729,7 @@ class _StepRecording:
             for target, instructions in zip([*self.targets, *self.instruction_targets], self.instructions):
                 target.instructions = instructions
             self.resolved = resolved
+            self.rewrites_outside_prefix = rewrites_outside_prefix
             self.sent = self._record_instructions(resolved)
             self.instruction_records = [target.parts[start:] for target, start in zip(self.targets, self.starts)]
         for target, tail in zip(self.targets, tails):
@@ -767,7 +774,9 @@ class _StepRecording:
         prefix_parts, _ = _split_loaded_instruction_parts(
             parameters, self.resolved_loaded_parts, self.loaded_capability_ids
         )
-        sent = update_instruction_history(self.messages, prefix_parts, self.targets)
+        sent = update_instruction_history(
+            self.messages, prefix_parts, self.targets, rewrites_outside_prefix=self.rewrites_outside_prefix
+        )
         for target in self.instruction_targets:
             if sent is None:
                 # As the step left the request when it resolved no instructions.
@@ -3487,7 +3496,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         _display_first_run_banner(ctx)
 
         instructions = _get_history_instructions(ctx.state.message_history)
-        instruction_parts = _resumed_instruction_parts(ctx.state.message_history, instructions)
+        instruction_parts = _resumed_instruction_parts(
+            ctx.state.message_history,
+            instructions,
+            rewrites_outside_prefix=ctx.deps.model._rewrite_instructions_outside_prefix,  # pyright: ignore[reportPrivateUsage]
+        )
 
         self._native_tool_factories = []
         model_request_parameters = await _prepare_request_parameters(
@@ -3711,9 +3724,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         recording_targets = _history_recording_targets(ctx, messages)
         instructions_before = {id(target): target.instructions for target in [*recording_targets, self.request]}
         starts = [len(target.parts) for target in recording_targets]
+        # Compared by value, as a hook may return the parts it was given in a new list.
+        hook_kept_parts = hook_parameters.instruction_parts == self._step_request_instruction_parts
+        # Parts a hook changed can't be recorded again for an attempt at another model, so they keep the window rule
+        # every model can read.
+        rewrites_outside_prefix = (
+            hook_kept_parts and request_context.model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+        )
         request_context.model_request_parameters = replace(
             hook_parameters,
-            instruction_parts=update_instruction_history(messages, prefix_parts, recording_targets),
+            instruction_parts=update_instruction_history(
+                messages, prefix_parts, recording_targets, rewrites_outside_prefix=rewrites_outside_prefix
+            ),
             instruction_visibility=None,
         )
         instruction_records = [target.parts[start:] for target, start in zip(recording_targets, starts)]
@@ -3747,10 +3769,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             instruction_targets=instruction_targets,
             starts=starts,
             instructions=[instructions_before[id(target)] for target in [*recording_targets, *instruction_targets]],
-            # Compared by value, as a hook may return the parts it was given in a new list.
-            parameters=hook_parameters
-            if hook_parameters.instruction_parts == self._step_request_instruction_parts
-            else None,
+            parameters=hook_parameters if hook_kept_parts else None,
             loaded_parts=self._step_loaded_parts,
             resolved_loaded_parts=resolved_loaded_parts,
             loaded_capability_ids=loaded_capability_ids,
@@ -3759,6 +3778,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             resolved=self._step_instruction_parts,
             sent=request_context.model_request_parameters.instruction_parts,
             effort=effort,
+            rewrites_outside_prefix=rewrites_outside_prefix,
         )
 
     async def _prepare_for_attempt_model(
@@ -5384,7 +5404,7 @@ def _with_outgoing_reveal_state(
 
 
 def _resumed_instruction_parts(
-    history: list[_messages.ModelMessage], instructions: str | None
+    history: list[_messages.ModelMessage], instructions: str | None, *, rewrites_outside_prefix: bool
 ) -> list[_messages.InstructionPart] | None:
     """The instruction parts a suspended turn was sent, for its continuation to send again.
 
@@ -5398,7 +5418,7 @@ def _resumed_instruction_parts(
     source = _get_history_instructions_source(history)
     end = next(index for index, message in enumerate(history) if message is source)
     if (baseline := instruction_window(history[: end + 1])) is not None and (
-        prefix := recorded_prefix(baseline, instructions)
+        prefix := recorded_prefix(baseline, instructions, rewrites_outside_prefix=rewrites_outside_prefix)
     ) is not None:
         return prefix
     return [_messages.InstructionPart(content=instructions)]
