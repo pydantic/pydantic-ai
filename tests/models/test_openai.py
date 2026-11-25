@@ -83,7 +83,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, ThinkingLevel
 from pydantic_ai.tools import Tool, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
@@ -6528,6 +6528,25 @@ async def test_openai_chat_thinking_false_on_always_reasoning_model(
     assert result.output == snapshot('Paris')
     body = request_capture.body('/chat/completions')
     assert body['reasoning_effort'] == 'low'
+    assert 'temperature' not in body
+
+
+@pytest.mark.parametrize('thinking', [False, 'low'])
+async def test_openai_chat_search_api_thinking_sends_no_reasoning_effort(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture, thinking: ThinkingLevel
+):
+    """gpt-5-search-api answers any `reasoning_effort` with a 400, so unified `thinking` sends none, and the request
+    keeps dropping sampling parameters, as the model rejects `temperature` too."""
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    agent = Agent(OpenAIChatModel('gpt-5-search-api', provider=provider))
+
+    with pytest.warns(UserWarning, match='Sampling parameters'):
+        await agent.run(
+            'What is the capital of France? Answer in one word.',
+            model_settings=ModelSettings(thinking=thinking, temperature=0.5),
+        )
+    body = request_capture.body('/chat/completions')
+    assert 'reasoning_effort' not in body
     assert 'temperature' not in body
 
 

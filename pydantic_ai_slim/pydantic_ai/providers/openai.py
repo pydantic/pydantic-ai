@@ -210,6 +210,13 @@ class OpenAIProvider(_OpenAISDKProvider):
                 rejects_unpaired_tool_calls=True,
             ),
             special_token_route_profile('openai', model_name),
+            # `gpt-5-search-api` matches the shared `'gpt-5'` reasoning row, but OpenAI's API rejects any
+            # `reasoning_effort` on it with a 400, so unified `thinking` sends none; sampling parameters stay dropped,
+            # as it rejects `temperature` too (verified live, 2026-11). Set here rather than in `openai_model_profile`
+            # because the restriction is unverified on the OpenAI-compatible endpoints that share it.
+            OpenAIModelProfile(openai_reasoning_efforts=frozenset())
+            if model_name.startswith('gpt-5-search-api')
+            else OpenAIModelProfile(),
             # The OpenAI models drop it for an Azure OpenAI client, as Azure retires models on its own schedule.
             OpenAIModelProfile()
             if (deprecation := OPENAI_MODEL_DEPRECATIONS.get(model_name)) is None
