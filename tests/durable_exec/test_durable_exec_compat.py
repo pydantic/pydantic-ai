@@ -960,6 +960,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # The live wrapper a capability's `get_wrapper_model` built around `model`, with the model it wraps; the
         # durable unit re-applies the hook to the model it rebuilds, so it's never carried across.
         '_serving_wrapper',
+        # The live model a `RetryModelRequest`'s string was resolved to, which tells caller-side whether `model_id`
+        # still names `model`; only that string crosses.
+        '_model_id_resolved_to',
         # The request's messages as the hooks left them, set caller-side after every hook has run, for readers of
         # the request (such as `TrajectoryJudge`) in `after_model_request`; a durable hook never sees it.
         '_hooked_messages',
