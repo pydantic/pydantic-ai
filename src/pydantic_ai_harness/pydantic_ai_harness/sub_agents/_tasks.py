@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import os
 import re
 import sys
 import time
@@ -12,11 +13,14 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapp
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, TypeVar
 from uuid import uuid4
 
 import anyio
+from anyio import to_thread
 from pydantic import SerializerFunctionWrapHandler, TypeAdapter, ValidationError, WrapSerializer
 from pydantic_core import PydanticSerializationError
 
@@ -40,6 +44,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._history import STORED_HISTORY_CONTEXT
 from pydantic_ai_harness._task_report import TaskOutputPart, TaskQuestionPart, make_task_output, make_task_question
 from pydantic_ai_harness.step_persistence import StepPersistence, StepStore
+from pydantic_ai_harness.step_persistence.conversations import process_running
 from pydantic_ai_harness.sub_agents._events import DelegationOutcome, bounded_text
 
 if TYPE_CHECKING:
@@ -142,6 +147,9 @@ class DelegationTask:
     delivered: bool = False
     generation: int = 1
     run_id: str = field(default_factory=lambda: uuid4().hex)
+    owner_pid: int | None = None
+    """The process that saved the task while it was running, so an owner opening the same directory in another
+    process leaves it to that process while it runs. `None` once settled, and in a task saved by an older version."""
 
     def report(self) -> TaskOutputPart:
         """The settled task's report: the child's output, as `<task_output>` data on the user channel.
@@ -487,6 +495,11 @@ class DelegationTasks:
             )
         for record in saved.tasks.values():
             if record.status == 'running':
+                if record.owner_pid is not None and await to_thread.run_sync(
+                    partial(process_running, record.owner_pid, since=datetime.fromtimestamp(record.started_at, UTC))
+                ):
+                    # Its process still runs it and saves it, so this owner neither shows nor writes it.
+                    continue
                 await self._settle_interrupted(record)
             else:
                 self._history_on_disk[record.id] = (directory / f'{record.id}.json', _ADAPTER.dump_json(record))
@@ -597,6 +610,7 @@ class DelegationTasks:
                 if (saved := self._saved_history(record)) is not None:
                     record.messages = (await _read(anyio.Path(saved))).messages
                 self._history_on_disk.pop(record.id, None)
+                record.owner_pid = os.getpid() if record.status == 'running' else None
                 await temporary.write_bytes(_ADAPTER.dump_json(record))
                 await temporary.replace(destination)
 

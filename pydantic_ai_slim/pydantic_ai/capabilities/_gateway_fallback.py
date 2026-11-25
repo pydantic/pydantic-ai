@@ -69,7 +69,7 @@ class GatewayFallback(AbstractCapability[Any]):
         if isinstance(model, _FallbackHeadersModel) or not _is_gateway_model(model):
             # A model the gateway handed a request to sends the headers itself.
             return None
-        from pydantic_ai.durable_exec._operation_backend import in_durable_unit
+        from pydantic_ai._run_context import in_durable_unit
 
         if in_durable_unit():
             # A durable unit wraps the model it rebuilds, and the hand-back it gets couldn't be followed on the other
