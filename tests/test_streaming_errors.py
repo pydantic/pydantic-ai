@@ -1214,7 +1214,10 @@ async def test_google_interactions_stream_errors(
     kind: Literal['status', 'connection', 'timeout'],
     expected: type[ModelAPIError],
 ):
-    """Transport failures and provider error events keep their categories before and after output starts."""
+    """Transport failures and provider error events keep their categories before and after output starts.
+
+    Not a VCR test: a live API returns none of these failures on demand, so the test injects them.
+    """
     streams: list[_InteractionsErrorStream] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
