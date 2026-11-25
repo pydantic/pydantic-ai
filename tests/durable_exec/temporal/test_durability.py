@@ -493,11 +493,19 @@ class _OverrideExtra(AbstractCapability[object]):
         return 'extra'
 
 
+class _OverrideOperation(AbstractCapability[object]):
+    id = 'override_operation'
+
+    @durable_operation('fetch')
+    async def fetch(self, ctx: RunContext[object]) -> str:  # pragma: no cover
+        return 'fetched'
+
+
 @workflow.defn
 class StackedOverrideDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str, added: Literal['operation', 'instrumentation']) -> str:
-        extra = _PerRunDurableOperation() if added == 'operation' else Instrumentation(InstrumentationSettings())
+        extra = _OverrideOperation() if added == 'operation' else Instrumentation(InstrumentationSettings())
         with simple_durable_agent.override(capabilities=[*simple_durable_agent.root_capability.capabilities, extra]):
             return (await simple_durable_agent.run(prompt)).output
 
@@ -531,7 +539,7 @@ async def test_durability_override_capabilities_in_workflow(client: Client):
                 task_queue=TASK_QUEUE,
             )
 
-    assert 'Capabilities added per-run inside a Temporal workflow are not supported: _PerRunDurableOperation.' in str(
+    assert 'Capabilities added per-run inside a Temporal workflow are not supported: _OverrideOperation.' in str(
         exc_info.value.cause
     )
 
