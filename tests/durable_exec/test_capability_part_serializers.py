@@ -14,6 +14,7 @@ what the model hears of each capability part across every engine's serializer.
 
 from __future__ import annotations
 
+import importlib.util
 import pickle
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -54,19 +55,6 @@ from pydantic_ai.messages import (
     WorkspaceSource,
 )
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace
-
-from ..conftest import try_import
-
-with try_import() as temporal_installed:
-    from temporalio.converter import DataConverter
-
-    from pydantic_ai.durable_exec.temporal import PydanticAIPayloadConverter
-
-with try_import() as dbos_installed:
-    from dbos._serialization import DefaultSerializer
-
-with try_import() as prefect_installed:
-    from prefect.results import get_default_result_serializer
 
 
 @dataclass(kw_only=True)
@@ -129,6 +117,10 @@ async def _history(directory: Path) -> list[ModelMessage]:
 
 async def _temporal(tp: Any, value: Any) -> Any:
     """What Temporal's payload converter hands back, decoded with the hint a workflow or activity declares."""
+    from temporalio.converter import DataConverter
+
+    from pydantic_ai.durable_exec.temporal import PydanticAIPayloadConverter
+
     converter = DataConverter(payload_converter_class=PydanticAIPayloadConverter)
     [loaded] = await converter.decode(await converter.encode([value]), [tp])
     return loaded
@@ -139,11 +131,15 @@ async def _json_codec(tp: Any, value: Any) -> Any:
 
 
 async def _dbos(tp: Any, value: Any) -> Any:
+    from dbos._serialization import DefaultSerializer
+
     serializer = DefaultSerializer()
     return serializer.deserialize(serializer.serialize(value))
 
 
 async def _prefect(tp: Any, value: Any) -> Any:
+    from prefect.results import get_default_result_serializer
+
     serializer = get_default_result_serializer()
     return serializer.loads(serializer.dumps(value))
 
@@ -161,16 +157,14 @@ SERIALIZERS: dict[str, Callable[[Any, Any], Awaitable[Any]]] = {
 }
 """Each engine's own serializer, given the type hint the boundary declares and the value it carries."""
 
-_INSTALLED: dict[str, Callable[[], bool]] = {
-    'temporal': temporal_installed,
-    'dbos': dbos_installed,
-    'prefect': prefect_installed,
-}
+_ENGINE_PACKAGES = {'temporal': 'temporalio', 'dbos': 'dbos', 'prefect': 'prefect'}
+"""The package each engine's serializer needs, imported only by the test that uses it."""
 
 
 def _serializer_marks(serializer: str) -> list[pytest.MarkDecorator]:
-    installed = _INSTALLED.get(serializer, lambda: True)
-    return [pytest.mark.skipif(not installed(), reason=f'{serializer} is not installed')]
+    package = _ENGINE_PACKAGES.get(serializer)
+    installed = package is None or importlib.util.find_spec(package) is not None
+    return [pytest.mark.skipif(not installed, reason=f'{package} is not installed')]
 
 
 SERIALIZER_PARAMS = [pytest.param(serializer, marks=_serializer_marks(serializer)) for serializer in SERIALIZERS]
@@ -229,10 +223,9 @@ async def test_the_history_holds_every_kind_and_source(tmp_path: Path) -> None:
 
 
 _INSTRUCTION_ID_UNTYPED = (
-    'PLACEHOLDER (issue drafted, not filed yet): Temporal encodes a payload with `to_json` and no type, so an '
-    '`InstructionId` is written as its dataclass fields rather than the string `SerializedInstructionId` renders, and '
-    'on load the untagged `InstructionSource` union takes the first member that fits: a capability source becomes a '
-    'toolset source, and a run source the agent source'
+    'https://github.com/pydantic/pydantic-ai/issues/14492: Temporal encodes a payload without its type, so an '
+    "`InstructionId`'s untagged `InstructionSource` decodes as the first union member that fits: a capability source "
+    'becomes a toolset source, and a run source the agent source'
 )
 
 
