@@ -5226,7 +5226,12 @@ def _tool_returns_as_json_strings(messages: list[ModelMessage], profile: ModelPr
 
 
 def _as_json_string_tool_return(part: ModelRequestPart) -> ModelRequestPart:
-    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful string return of a tool's text."""
+    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful string return of a tool's text.
+
+    Status text is recognised by its content, because history from an earlier run can hold it for an output tool that
+    isn't in this request and `ToolReturnPart` carries no marker for it. So a tool that returns exactly one of
+    `TOOL_STATUS_TEXTS` is sent as it is, without the JSON field.
+    """
     if (
         not isinstance(part, ToolReturnPart)
         or part.outcome != 'success'
