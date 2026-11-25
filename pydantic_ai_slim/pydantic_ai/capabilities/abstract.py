@@ -406,9 +406,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         reaches the provider.
 
         Only reached *within* one layer: a capability supplied for a run overrides its agent-level
-        namesake outright rather than composing with it. Never reached between a deferred capability (or
-        one inside a deferred group) and an always-on one: the combined capability is built with the agent,
-        so it can't take the deferred one's configuration only once that loads, and the agent raises instead.
+        namesake outright rather than composing with it. Only reached between capabilities that load
+        together: all always on, or all part of one deferred capability. The combined capability is built
+        with the agent, so it can't take one's configuration only once its deferred capability loads, and the
+        agent raises instead.
 
         Args:
             capabilities: The two or more capabilities sharing an `id`, in application order.
@@ -2077,32 +2078,38 @@ def _reject_combining_across_deferred_loading(
     layer_index: int,
     deferred_owner: Mapping[int, AbstractCapability[Any]],
 ) -> None:
-    """Refuse to combine a capability that loads on demand with one that is always on.
+    """Refuse to combine capabilities that load at different times.
 
     `duplicates` are the occurrences sharing `capability_id`; those in `layer_index` are the ones to combine, and
-    `deferred_owner` maps a position to the deferred capability it is part of. The combined capability is built
-    once, when the agent is, so it can't take the deferred one's configuration only once that loads: it would apply
-    it from the start, or never.
+    `deferred_owner` maps a position to the deferred capability it is part of. Capabilities combine only when they
+    share that owner: none (always on), or one deferred capability. The combined capability is built once, when the
+    agent is, so it can't take one's configuration only once its deferred capability loads: it would apply it from
+    the start, or never.
     """
-    occurrences = [
-        (duplicate.capability, deferred_owner.get(duplicate.position))
-        for duplicate in duplicates
-        if duplicate.layer_index == layer_index
-    ]
-    deferred = [(capability, owner) for capability, owner in occurrences if owner is not None]
-    always_on = [capability for capability, owner in occurrences if owner is None]
-    if not deferred or not always_on:
+    by_owner: dict[int, tuple[AbstractCapability[Any], AbstractCapability[Any] | None]] = {}
+    for duplicate in duplicates:
+        if duplicate.layer_index == layer_index:
+            owner = deferred_owner.get(duplicate.position)
+            by_owner.setdefault(id(owner), (duplicate.capability, owner))
+    if len(by_owner) < 2:
         return
-    capability, owner = deferred[0]
-    inside = f'`{type(capability).__name__}`' + (
-        '' if owner is capability else f' inside deferred capability {owner.id!r}'
-    )
+    first, second = (_loading_description(capability, owner) for capability, owner in list(by_owner.values())[:2])
     raise UserError(
-        f'{inside} and `{type(always_on[0]).__name__}` outside it share the id {capability_id!r}, so they would be '
-        "combined into one, but a capability can't be reconfigured when a deferred capability loads during a run. "
-        f'To keep both, give one of them its own `id` so they are not combined, or move `{type(always_on[0]).__name__}` '
-        'into the deferred capability (or the deferred one out of it).'
+        f'{first} and {second} share the id {capability_id!r}, so they would be combined into one, but they load at '
+        "different times, and a capability can't be reconfigured when a deferred capability loads during a run. "
+        'To keep both, give one of them its own `id` so they are not combined, or put them on the same side: in '
+        'the same deferred capability, or both outside any.'
     )
+
+
+def _loading_description(capability: AbstractCapability[Any], owner: AbstractCapability[Any] | None) -> str:
+    """`capability` as an error names it, with when it loads."""
+    name = f'`{type(capability).__name__}`'
+    if owner is None:
+        return f'{name} (always on)'
+    if owner is capability:
+        return f'{name} (deferred itself)'
+    return f'{name} inside deferred capability {owner.id!r}'
 
 
 def _repeated_id_message(capability_id: str, capabilities: Sequence[AbstractCapability[Any]]) -> str:

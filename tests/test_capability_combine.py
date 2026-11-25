@@ -147,7 +147,27 @@ def test_a_deferred_capability_does_not_combine_with_an_always_on_one(
     with pytest.raises(UserError, match="share the id 'thinking'") as raised:
         Agent(TestModel(), capabilities=[deferred, always_on] if deferred_first else [always_on, deferred])
     assert ('inside deferred capability' in str(raised.value)) is not deferred_alone
+    assert '(always on)' in str(raised.value)
     assert 'give one of them its own `id`' in str(raised.value)
+
+
+def test_capabilities_in_two_deferred_groups_do_not_combine() -> None:
+    """A regression test: combined, the later group's `Thinking` replaced the earlier's, so its setting never applied."""
+    first = CombinedCapability[Any]([Thinking(effort='high')], id='careful', defer_loading=True)
+    second = CombinedCapability[Any]([Thinking(effort='low')], id='quick', defer_loading=True)
+    with pytest.raises(
+        UserError, match="inside deferred capability 'careful' and `Thinking` inside deferred capability 'quick'"
+    ):
+        Agent(TestModel(), capabilities=[first, second])
+    deferred_itself = Thinking(effort='low', defer_loading=True, id='thinking')
+    with pytest.raises(UserError, match=r'\(deferred itself\)'):
+        Agent(TestModel(), capabilities=[first, deferred_itself])
+
+
+def test_capabilities_in_one_deferred_group_still_combine() -> None:
+    group = CombinedCapability[Any]([Thinking(effort='high'), Thinking(effort='low')], id='careful', defer_loading=True)
+    agent = Agent(TestModel(), capabilities=[group])
+    assert [leaf.id for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Thinking)] == ['thinking']
 
 
 async def test_one_instance_registered_twice_survives_once() -> None:

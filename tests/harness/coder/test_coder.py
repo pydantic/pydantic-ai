@@ -249,8 +249,18 @@ def test_a_shell_beside_a_deferred_coder_raises_naming_both_and_the_remedies() -
     with pytest.raises(UserError) as raised:
         Agent(TestModel(), deps_type=type(None), capabilities=[_deferred_coder(), Shell(allowed_commands=['pytest'])])
     message = str(raised.value)
-    assert "`Shell` inside deferred capability 'coding' and `Shell` outside it share the id 'shell'" in message
-    assert 'give one of them its own `id`' in message and 'move `Shell` into the deferred capability' in message
+    assert "`Shell` inside deferred capability 'coding' and `Shell` (always on) share the id 'shell'" in message
+    assert 'give one of them its own `id`' in message and 'in the same deferred capability' in message
+
+
+def test_shells_in_two_deferred_groups_raise_before_comparing_their_lists() -> None:
+    """The lists overlap, so only loading at different times stops the combination, and it's what the error says."""
+    first = CombinedCapability[None]([Shell(allowed_commands=['pytest', 'ls'])], id='tests', defer_loading=True)
+    second = CombinedCapability[None]([Shell(allowed_commands=['ls', 'git'])], id='vcs', defer_loading=True)
+    with pytest.raises(
+        UserError, match="inside deferred capability 'tests' and `Shell` inside deferred capability 'vcs'"
+    ):
+        Agent(TestModel(), deps_type=type(None), capabilities=[first, second])
 
 
 def test_a_shell_with_its_own_id_leaves_a_deferred_coders_shell_alone() -> None:
