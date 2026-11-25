@@ -1059,7 +1059,7 @@ def run(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> RunCaptur
     ) -> pytest.RunResult:
         pytester.makeconftest(CONFTEST)
         if durable:
-            pytester.makepyfile(test_durable=DURABLE.format(text=text))
+            pytester.makepyfile(test_capture_durable=DURABLE.format(text=text))
         elif ui:
             pytester.makepyfile(test_ui=UI.format(text=text))
         elif realtime:
@@ -2409,33 +2409,49 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
         if record['kind'] == 'durable_name'
     ] == snapshot(
         [
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_cancel_suspended_response', {}),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_compact_messages', {}),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_count_tokens', {}),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_request', {}),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__model_request_stream', {}),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__toolset__<agent>__call_tool', {}),
-            ('test_durable.py', 'temporalio.activity.defn', 'agent__collected__toolset__<agent>__validate_args', {}),
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__external_event_ask', {}),
             (
-                'test_durable.py',
+                'test_capture_durable.py',
+                'temporalio.activity.defn',
+                'agent__collected__model_cancel_suspended_response',
+                {},
+            ),
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__model_compact_messages', {}),
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__model_count_tokens', {}),
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__model_request', {}),
+            ('test_capture_durable.py', 'temporalio.activity.defn', 'agent__collected__model_request_stream', {}),
+            (
+                'test_capture_durable.py',
+                'temporalio.activity.defn',
+                'agent__collected__toolset__<agent>__call_tool',
+                {},
+            ),
+            (
+                'test_capture_durable.py',
+                'temporalio.activity.defn',
+                'agent__collected__toolset__<agent>__validate_args',
+                {},
+            ),
+            (
+                'test_capture_durable.py',
                 'temporalio.workflow.defn',
                 'agent__collected__toolset__<agent>__call_tool__child_workflow',
                 {},
             ),
             (
-                'test_durable.py::test_durable_names',
+                'test_capture_durable.py::test_durable_names',
                 'dbos.DBOS.step',
                 'dbos_agent__model.cancel_suspended_response',
                 {},
             ),
-            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.compact_messages', {}),
-            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.count_tokens', {}),
-            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request', {}),
-            ('test_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request_stream', {}),
-            ('test_durable.py::test_durable_names', 'prefect.task', 'call_tool_task', {}),
-            ('test_durable.py::test_durable_names', 'prefect.task', 'cancel_suspended_response_task', {}),
-            ('test_durable.py::test_durable_names', 'prefect.task', 'request_stream_task', {}),
-            ('test_durable.py::test_durable_names', 'prefect.task', 'wrapped_request', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.compact_messages', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.count_tokens', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request', {}),
+            ('test_capture_durable.py::test_durable_names', 'dbos.DBOS.step', 'dbos_agent__model.request_stream', {}),
+            ('test_capture_durable.py::test_durable_names', 'prefect.task', 'call_tool_task', {}),
+            ('test_capture_durable.py::test_durable_names', 'prefect.task', 'cancel_suspended_response_task', {}),
+            ('test_capture_durable.py::test_durable_names', 'prefect.task', 'request_stream_task', {}),
+            ('test_capture_durable.py::test_durable_names', 'prefect.task', 'wrapped_request', {}),
         ]
     )
     assert [
@@ -2445,7 +2461,7 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
     ] == snapshot(
         [
             {
-                'node': 'test_durable.py::test_temporal_commands',
+                'node': 'test_capture_durable.py::test_temporal_commands',
                 'target': 'First',
                 'workflow_id': 'first-UUID',
                 'commands': [
@@ -2497,13 +2513,13 @@ def test_capture_records_durable_names_workflows_and_cache_keys(run: RunCapture,
                 ],
             },
             {
-                'node': 'test_durable.py::test_temporal_commands',
+                'node': 'test_capture_durable.py::test_temporal_commands',
                 'target': 'Second',
                 'workflow_id': 'second',
                 'commands': [{'failed': {'failure': {'message': 'boom'}}}],
             },
             {
-                'node': 'test_durable.py::test_dbos_workflow',
+                'node': 'test_capture_durable.py::test_dbos_workflow',
                 'target': 'test_dbos_workflow.<locals>.quadruple',
                 'workflow_id': 'UUID',
                 'class_name': None,
@@ -2566,7 +2582,7 @@ To resolve this, you can:
                 'key': 'b4e74d9d48bc91343a5a0b0553ebf41e',
             },
             {
-                'target': 'test_durable.test_cache_keys.<locals>.Inherited.compute_key',
+                'target': 'test_capture_durable.test_cache_keys.<locals>.Inherited.compute_key',
                 'inputs': {'n': 1},
                 'key': 'ca4f55a38abb6a072c674e3ffedc365a',
             },
@@ -2574,7 +2590,7 @@ To resolve this, you can:
     )
 
 
-async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
+async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A stream holds what the run iterating it holds, like its dependencies, so the capture holds it only while the
     recording of its iteration lives. The response it builds is recorded once iteration ends, and again when the test
     ends if the stream still lives then, as it is when the test ends, so what the run sets on it in between shows, even
@@ -2582,6 +2598,8 @@ async def test_capture_holds_a_stream_only_while_it_lives(tmp_path: Path):
 
     Garbage collection is off, as in `tests/test_run_reference_cycles.py`, so only reference counting frees them.
     """
+    # The capture names its records file after the xdist worker it runs on.
+    monkeypatch.delenv('PYTEST_XDIST_WORKER', raising=False)
 
     class Deps:
         pass
