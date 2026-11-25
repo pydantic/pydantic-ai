@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     CapabilityInstructionSource,
     CapabilityPart,
     CapabilitySource,
+    InstructionDeltaPart,
     RunInstructionSource,
     ToolsetInstructionSource,
 )
@@ -198,6 +199,9 @@ _INSTRUCTION_SOURCE_TYPES = (
     RunInstructionSource,
 )
 
+_OPERATOR_AUTHORITY_EXCLUDED_FIELDS = frozenset({'authority'})
+"""An instruction change's `authority` at its default, left out so the keys of changes recorded before it was added hold."""
+
 _SYNTHETIC_CAPABILITY_ID = re.compile(r'<[a-z0-9_]+:[0-9a-f]{6}>')
 """The key a run gives a capability with no `id`, which differs every run (`_synthetic_capability_id`)."""
 
@@ -226,6 +230,9 @@ def _excluded_fields(obj: object, *, is_framework: bool) -> frozenset[str]:
         excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
     elif isinstance(obj, _INSTRUCTION_SOURCE_TYPES):
         excluded_fields |= _INSTRUCTION_SOURCE_EXCLUDED_FIELDS
+    elif isinstance(obj, InstructionDeltaPart) and obj.authority == 'operator':
+        # A lowered authority changes how the block is rendered, so it stays in the key.
+        excluded_fields |= _OPERATOR_AUTHORITY_EXCLUDED_FIELDS
     return excluded_fields
 
 

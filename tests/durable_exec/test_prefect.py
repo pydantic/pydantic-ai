@@ -47,6 +47,7 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     FunctionToolset,
     InstructionBaselinePart,
+    InstructionDeltaPart,
     InstructionId,
     InstructionPart,
     ModelMessage,
@@ -2426,6 +2427,29 @@ def test_cache_policy_keys_for_instruction_ids_are_pinned():
             'd080d54547ecfe63be80e0edb1942c8c',
         ]
     )
+
+
+def test_cache_policy_key_for_an_operator_instruction_change_is_pinned():
+    """An instruction change's default `authority` stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digest was computed before the field existed. A lowered authority changes how the block is rendered, so it
+    still forks the key.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+
+    def key_for(**kwargs: Any) -> str | None:
+        change = InstructionDeltaPart(
+            id=InstructionId(CapabilityInstructionSource('notes')), content='Keep notes short.', **kwargs
+        )
+        return cache_policy.compute_key(
+            task_ctx=mock_task_ctx, inputs={'messages': [ModelRequest(parts=[change])]}, flow_parameters={}
+        )
+
+    assert key_for() == snapshot('b490880dd502839ab7a05e30c97de020')
+    assert key_for(authority='operator') == key_for()
+    assert key_for(authority='none') != key_for()
+    assert key_for(authority='user') not in {key_for(), key_for(authority='none')}
 
 
 def test_cache_policy_normalizes_only_framework_tool_call_ids():

@@ -4343,6 +4343,28 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
       ]
     },
+    "InstructionDeltaPart": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
+      ]
+    },
+    "InstructionDeltaPart.authority": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_excluded_fields"
+      ]
+    },
     "InstructionPart": {
       "engines": [
         "durable_exec",
