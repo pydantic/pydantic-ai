@@ -12,7 +12,7 @@ import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from hatchet_sdk import (
     ConcurrencyStrategy,
@@ -26,22 +26,19 @@ from hatchet_sdk import (
     TaskRunError,
 )
 from hatchet_sdk.types.priority import Priority
-from pydantic import BaseModel, JsonValue
-from pydantic_core import PydanticSerializationError
+from pydantic import BaseModel, JsonValue, TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai.durable_exec._model_error_codec import decode_model_error, encode_model_error
 from pydantic_ai.durable_exec._operation import (
     CapabilityOperationId,
     DurableOperation,
-    DurableOperationConfig,
     DurableOperationId,
     EventStreamHandlerId,
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
     ModelCountTokensId,
     ModelRequestId,
-    OperationConfigRole,
     ParameterTransports,
     ToolsetCallToolId,
     ToolsetGetInstructionsId,
@@ -51,6 +48,7 @@ from pydantic_ai.durable_exec._operation import (
 from pydantic_ai.durable_exec._operation_backend import (
     BoundDurableOperation,
     RegisteredOperationBackend,
+    RoleBasedOperationConfig,
     durable_unit_scope,
 )
 from pydantic_ai.durable_exec._operation_names import (
@@ -59,6 +57,7 @@ from pydantic_ai.durable_exec._operation_names import (
     JournalOperationNamer,
 )
 from pydantic_ai.durable_exec._retry_after import model_error_retry_after
+from pydantic_ai.durable_exec._utils import mark_streamed_before_failing, streamed_before_failing
 from pydantic_ai.exceptions import (
     FallbackExceptionGroup,
     ModelAPIError,
@@ -66,6 +65,7 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
+from pydantic_ai.messages import ModelResponse
 
 from ._clock import advance_durable_clock
 from ._transports import TaskInput
@@ -138,6 +138,8 @@ _RETRY_AFTER_MAXIMUM = 60.0
 _ERROR_PREFIX = 'pydantic_ai_error:'
 """Marks a task failure message that holds an encoded error, which the durable task rebuilds."""
 
+_response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
+
 
 class TaskOutput(BaseModel):
     """The JSON output of every Hatchet task that runs a durable operation."""
@@ -160,6 +162,20 @@ def _encoded_error_message(kind: str, payload: JsonValue, message: str) -> str:
     return f'{_ERROR_PREFIX}{json.dumps({"kind": kind, "payload": payload, "message": message})}'
 
 
+def _model_error_message(error: ModelAPIError) -> str:
+    """The failure message for a model error, encoded so the durable task can rebuild it, if it can be encoded."""
+    encoded = encode_model_error(error)
+    if encoded is None:
+        return str(error)
+    # What the stream produced before failing, which tells the run its events already went out.
+    streamed = streamed_before_failing(error)
+    model_error: JsonValue = {
+        'error': encoded,
+        'streamed': _response_adapter.dump_python(streamed, mode='json') if streamed is not None else None,
+    }
+    return _encoded_error_message('model_error', model_error, str(error))
+
+
 def _rebuild_error(error: TaskRunError) -> BaseException | None:
     """The error a task encoded in its failure message, rebuilt with its original type, if it encoded one."""
     message = error.exc
@@ -172,7 +188,11 @@ def _rebuild_error(error: TaskRunError) -> BaseException | None:
     kind = encoded.get('kind')
     payload = encoded.get('payload')
     if kind == 'model_error' and isinstance(payload, dict):
-        return decode_model_error(cast(dict[str, Any], payload))
+        model_error = cast(dict[str, Any], payload)
+        rebuilt = decode_model_error(model_error['error'])
+        if rebuilt is not None and (streamed := model_error.get('streamed')) is not None:
+            mark_streamed_before_failing(rebuilt, _response_adapter.validate_python(streamed))
+        return rebuilt
     if kind == 'retry_model_request':
         model = cast(dict[str, Any], payload).get('model') if isinstance(payload, dict) else None
         return RetryModelRequest(model if isinstance(model, str) else None)
@@ -207,8 +227,7 @@ async def run_operation_in_task(
             _encoded_error_message('retry_model_request', {'model': retry.model}, str(retry))
         ) from retry
     except ModelAPIError as error:
-        encoded = encode_model_error(error)
-        message = _encoded_error_message('model_error', encoded, str(error)) if encoded is not None else str(error)
+        message = _model_error_message(error)
         if isinstance(error, non_retryable_model_errors):
             raise NonRetryableError(message) from error
         if (retry_after := model_error_retry_after(error, maximum=_RETRY_AFTER_MAXIMUM)) is not None:
@@ -220,8 +239,9 @@ async def run_operation_in_task(
         raise NonRetryableError(payload) from error
     try:
         return TaskOutput(payload=cast(JsonValue, operation.result_codec.dump(value)), completed_at=datetime.now(UTC))
-    except (PydanticSerializationError, TypeError) as error:
-        # A result that can't be encoded fails the same way on every attempt, so it isn't retried.
+    except UserError as error:
+        # The result codec reports a result it can't encode as a `UserError`. It fails the same way on every
+        # attempt, so it isn't retried.
         raise NonRetryableError(_encoded_error_message('user_error', None, str(error))) from error
 
 
@@ -253,42 +273,6 @@ class HatchetOperationNamer(DurableOperationNamer):
 
     def invocation_name(self, operation_id: DurableOperationId, *, label: str | None) -> DurableInvocationName:
         return DurableInvocationName(self.operation_name(operation_id))
-
-
-class HatchetOperationConfig(DurableOperationConfig[HatchetTaskConfig]):
-    def __init__(
-        self,
-        *,
-        model: HatchetTaskConfig,
-        event: HatchetTaskConfig,
-        capability: HatchetTaskConfig,
-        tool: HatchetTaskConfig,
-        toolset: Callable[[str], HatchetTaskConfig],
-        resolve_tool: Callable[[DurableOperationId, object | None, str], HatchetTaskConfig | Literal[False]],
-    ) -> None:
-        self._configs: dict[OperationConfigRole, HatchetTaskConfig] = {
-            'model': model,
-            'event': event,
-            'capability': capability,
-            'tool': tool,
-        }
-        self._toolset = toolset
-        self._resolve_tool = resolve_tool
-
-    def base(self, role: OperationConfigRole, *, operation_id: DurableOperationId) -> HatchetTaskConfig:
-        if role == 'tool' and (toolset_id := getattr(operation_id, 'toolset_id', None)) is not None:
-            return self._toolset(toolset_id)
-        return self._configs[role]
-
-    def for_tool(
-        self,
-        role: OperationConfigRole,
-        *,
-        operation_id: DurableOperationId,
-        tool: object | None,
-        tool_name: str,
-    ) -> HatchetTaskConfig | Literal[False]:
-        return self._resolve_tool(operation_id, tool, tool_name)
 
 
 def _summary_metadata(operation_id: DurableOperationId, params: object) -> dict[str, str]:
@@ -374,7 +358,7 @@ class HatchetOperationBackend(RegisteredOperationBackend[HatchetTaskConfig]):
         *,
         runtime: HatchetDurability[Any],
         agent_name: str,
-        config: HatchetOperationConfig,
+        config: RoleBasedOperationConfig[HatchetTaskConfig],
         parameter_transports: ParameterTransports,
         non_retryable_model_errors: tuple[type[ModelAPIError], ...],
     ) -> None:

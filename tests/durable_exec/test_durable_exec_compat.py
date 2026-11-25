@@ -290,6 +290,29 @@ TEMPORAL_CHILD_WORKFLOW_NAMES = {
     'agent__compat__toolset__functions__call_tool__child_workflow',
 }
 
+HATCHET_OPERATION_NAMES = {
+    'compat__model.request',
+    'compat__model.request.registered',
+    'compat__model.request_stream',
+    'compat__model.request_stream.registered',
+    'compat__model.cancel_suspended_response',
+    'compat__model.cancel_suspended_response.registered',
+    'compat__model.compact_messages',
+    'compat__model.compact_messages.registered',
+    'compat__model.count_tokens',
+    'compat__model.count_tokens.registered',
+    'compat__event_stream_handler',
+    'compat__function_toolset__functions.call_tool',
+    'compat__function_toolset__functions.validate_args',
+    'compat__mcp_server__mcp.get_tools',
+    'compat__mcp_server__mcp.get_instructions',
+    'compat__mcp_server__mcp.call_tool',
+    'compat__dynamic_toolset__dynamic.get_tools',
+    'compat__dynamic_toolset__dynamic.call_tool',
+    'compat__dynamic_toolset__dynamic.validate_args',
+    'compat__capability__compat.operation',
+}
+
 DBOS_OPERATION_NAMES = {
     'compat__model.request',
     'compat__model.request_stream',
@@ -525,6 +548,20 @@ def test_prefect_operation_name_assembly_completeness() -> None:
         for operation_id in _operation_ids()
     }
     assert assembled_names == PREFECT_OPERATION_NAMES
+
+
+def test_hatchet_task_name_matrix() -> None:
+    """Hatchet registers each operation as a task under this name, so a renamed task strands the runs in flight."""
+    pytest.importorskip('hatchet_sdk')
+    from pydantic_ai.durable_exec.hatchet._operation_backend import HatchetOperationNamer
+
+    namer = HatchetOperationNamer('compat')
+    names = {
+        namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
+        for operation_id in _operation_ids()
+    }
+    assert names == HATCHET_OPERATION_NAMES
+    assert {namer.operation_name(WORKSPACE_OPERATION_ID)} == JOURNAL_WORKSPACE_NAMES
 
 
 def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:

@@ -19,8 +19,6 @@ from pydantic_ai._utils import aclose_if_supported, await_maybe
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering, WrapRunHandler
-from pydantic_ai.capabilities.retry_on_model_errors import RetryOnModelErrors
-from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
     BaseDurabilityCapability,
@@ -35,7 +33,7 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.durable_exec._toolset import DurableToolsetBase
-from pydantic_ai.durable_exec._utils import disable_threads, managed_model_scope
+from pydantic_ai.durable_exec._utils import disable_threads, has_retry_on_model_errors, managed_model_scope
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelQuotaExceededError,
@@ -376,7 +374,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self._child_workflow_metadata_capability = False
         agent.root_capability.apply(self._detect_child_workflow_metadata)
         non_retryable_model_errors = self._non_retryable_model_errors
-        self._retry_on_model_errors = _has_retry_on_model_errors(agent.root_capability)
+        self._retry_on_model_errors = has_retry_on_model_errors(agent.root_capability)
         if self._retry_on_model_errors:
             # `RetryOnModelErrors` retries model errors in the workflow, waiting on a durable timer, so the activity
             # doesn't retry them too: its retry policy is left to crashes and timeouts, which never reach a hook.
@@ -638,7 +636,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if (
             not self._retry_on_model_errors
             and ctx.root_capability is not None
-            and _has_retry_on_model_errors(ctx.root_capability)
+            and has_retry_on_model_errors(ctx.root_capability)
         ):
             # The model activity's retry policy is set when the agent is bound, so it would retry model errors too.
             raise UserError(
@@ -860,21 +858,3 @@ def worker_registrations(
             workflows.append(registration)
             registered_child_workflow_names.add(workflow_name)
     return activities, workflows
-
-
-def _has_retry_on_model_errors(capability: AbstractCapability[Any]) -> bool:
-    """Whether the agent's capabilities include `RetryOnModelErrors`, including one a wrapper capability wraps.
-
-    `apply` doesn't visit what a wrapper wraps, like the capability a `DynamicCapability` returned for the run, whose
-    hooks still run, so wrappers are unwrapped here.
-    """
-    found = False
-
-    def visit(cap: AbstractCapability[Any]) -> None:
-        nonlocal found
-        if isinstance(cap, WrapperCapability):
-            found = found or _has_retry_on_model_errors(cap.wrapped)
-        found = found or isinstance(cap, RetryOnModelErrors)
-
-    capability.apply(visit)
-    return found

@@ -10,7 +10,7 @@ import asyncio
 import signal
 import threading
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
+    AgentStreamEvent,
     ModelMessage,
     ModelResponse,
     PartDeltaEvent,
@@ -29,16 +30,21 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
 )
+from pydantic_ai.capabilities import ModelFallback, RetryOnModelErrors
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.exceptions import ModelHTTPError, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelServerError, UserError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.usage import RunUsage
 
+from .._timeouts import READINESS_WAIT_TIMEOUT
 from ..conftest import try_import
 
 with try_import() as imports_successful:
     from hatchet_sdk import ClientConfig, DurableContext, Hatchet, Standalone, Worker, embedded
+    from hatchet_sdk.clients.rest.api.durable_tasks_api import DurableTasksApi
+    from hatchet_sdk.clients.rest.models.v1_durable_event_log_entry import V1DurableEventLogEntry
     from hatchet_sdk.config import EmbeddedHatchetConfig
 
     from pydantic_ai.durable_exec.hatchet import HatchetDurability, HatchetEventStream
@@ -80,12 +86,15 @@ class Calls:
     tools: list[str] = field(default_factory=list[str])
 
 
-def _weather_model(calls: Calls) -> FunctionModel:
-    """Call `get_weather` once, then answer with what it returned."""
+def _weather_model(calls: Calls, *, tool_rounds: int = 1) -> FunctionModel:
+    """Call `get_weather` in `tool_rounds` rounds, then answer with what it last returned."""
+
+    def tool_returns(messages: list[ModelMessage]) -> int:
+        return sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         calls.model_requests += 1
-        if len(messages) == 1:
+        if tool_returns(messages) < tool_rounds:
             return ModelResponse(parts=[ToolCallPart('get_weather', {'city': 'Paris'})])
         tool_return = messages[-1].parts[0]
         assert isinstance(tool_return, ToolReturnPart)
@@ -93,13 +102,22 @@ def _weather_model(calls: Calls) -> FunctionModel:
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         calls.model_requests += 1
-        if len(messages) == 1:
+        if tool_returns(messages) < tool_rounds:
             yield {0: DeltaToolCall(name='get_weather', json_args='{"city": "Paris"}')}
             return
         for chunk in ['It is ', 'sunny.']:
             yield chunk
 
     return FunctionModel(respond, stream_function=stream)
+
+
+@dataclass
+class Scenario:
+    """A durable task running an agent, what its model or tools saw, and the tasks a worker needs to serve it."""
+
+    run: Standalone[Prompt, dict[str, Any]]
+    calls: list[str]
+    workflows: list[Any]
 
 
 @dataclass
@@ -116,6 +134,9 @@ class App:
     inline_tool_contexts: list[str]
     after_run_durability: HatchetDurability[Any]
     run_after_run_failing: Standalone[Prompt, dict[str, str]]
+    unserializable: Scenario
+    late_stream_failure: Scenario
+    retrying: Scenario
 
 
 def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
@@ -131,11 +152,13 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
 
     @hatchet.durable_task(name='pydantic_ai_test_weather', input_validator=Prompt)
     async def run_weather(input: Prompt, ctx: DurableContext) -> RunOutput:
-        result = await weather_agent.run(input.prompt, deps=Deps(city_prefix='downtown '))
+        result = await weather_agent.run(input.prompt, deps=Deps(city_prefix='downtown '), timeout=60)
         return RunOutput(output=result.output, run_id=result.run_id)
 
     streaming_durability = HatchetDurability[Any](hatchet, event_stream=HatchetEventStream())
-    streaming_agent = Agent(_weather_model(Calls()), name='streaming', capabilities=[streaming_durability])
+    streaming_agent = Agent(
+        _weather_model(Calls(), tool_rounds=2), name='streaming', capabilities=[streaming_durability]
+    )
 
     @streaming_agent.tool_plain(name='get_weather')
     async def get_weather_plain(city: str) -> str:
@@ -212,6 +235,9 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         inline_tool_contexts=inline_tool_contexts,
         after_run_durability=after_run_durability,
         run_after_run_failing=run_after_run_failing,
+        unserializable=_build_unserializable(hatchet),
+        late_stream_failure=_build_late_stream_failure(hatchet),
+        retrying=_build_retrying(hatchet),
     )
     workflows: list[Any] = [
         run_weather,
@@ -224,8 +250,98 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         *inline_durability.workflows,
         run_after_run_failing,
         *after_run_durability.workflows,
+        *app.unserializable.workflows,
+        *app.late_stream_failure.workflows,
+        *app.retrying.workflows,
     ]
     return app, workflows
+
+
+def _build_unserializable(hatchet: Hatchet) -> Scenario:
+    """A tool whose result can't be serialized, in tasks Hatchet would retry."""
+    tool_calls: list[str] = []
+    durability = HatchetDurability[Any](hatchet, task_config={'retries': 1})
+    agent = Agent(TestModel(), name='unserializable', capabilities=[durability])
+
+    @agent.tool_plain
+    async def make_object() -> Any:
+        tool_calls.append('make_object')
+        return object()
+
+    @hatchet.durable_task(name='pydantic_ai_test_unserializable', input_validator=Prompt)
+    async def run(input: Prompt, ctx: DurableContext) -> dict[str, Any]:
+        try:
+            await agent.run(input.prompt)
+        except UserError as error:
+            return {'error': str(error)}
+        raise AssertionError('the serialization error was not raised')  # pragma: no cover
+
+    return Scenario(run=run, calls=tool_calls, workflows=[run, *durability.workflows])
+
+
+def _build_late_stream_failure(hatchet: Hatchet) -> Scenario:
+    """A model whose stream fails after it produced output, with a `ModelFallback` to a backup model."""
+    backup_streamed: list[str] = []
+
+    async def fail_partway(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'partial'
+        raise ModelAPIError('primary', 'stream broke')
+
+    async def backup(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:  # pragma: no cover
+        backup_streamed.append('backup')
+        yield 'from backup'
+
+    async def consume_events(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _event in stream:
+            pass
+
+    durability = HatchetDurability[Any](
+        hatchet,
+        models={'backup': FunctionModel(stream_function=backup, model_name='backup')},
+        event_stream_handler=consume_events,
+    )
+    agent = Agent(
+        FunctionModel(stream_function=fail_partway, model_name='primary'),
+        name='late_stream_failure',
+        capabilities=[ModelFallback('backup'), durability],
+    )
+
+    @hatchet.durable_task(name='pydantic_ai_test_late_stream_failure', input_validator=Prompt)
+    async def run(input: Prompt, ctx: DurableContext) -> dict[str, Any]:
+        usage = RunUsage()
+        try:
+            output = (await agent.run(input.prompt, usage=usage)).output
+        except ModelAPIError as error:
+            output = f'raised: {error.message}'
+        return {'output': output, 'requests': usage.requests, 'output_tokens': usage.output_tokens}
+
+    return Scenario(run=run, calls=backup_streamed, workflows=[run, *durability.workflows])
+
+
+def _build_retrying(hatchet: Hatchet) -> Scenario:
+    """A model that always fails with a transient error, with `RetryOnModelErrors` and a model task Hatchet retries."""
+    model_calls: list[str] = []
+
+    def server_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        model_calls.append('call')
+        raise ModelServerError('flaky', 'overloaded')
+
+    durability = HatchetDurability[Any](hatchet, model_task_config={'retries': 1})
+    agent = Agent(
+        FunctionModel(server_error),
+        name='retrying',
+        capabilities=[RetryOnModelErrors(max_attempts=2, initial_delay=0), durability],
+    )
+
+    @hatchet.durable_task(name='pydantic_ai_test_retrying', input_validator=Prompt)
+    async def run(input: Prompt, ctx: DurableContext) -> dict[str, Any]:
+        try:
+            await agent.run(input.prompt)
+        except ModelServerError as error:
+            return {'type': type(error).__name__}
+        raise AssertionError('the model error was not raised')  # pragma: no cover
+
+    return Scenario(run=run, calls=model_calls, workflows=[run, *durability.workflows])
 
 
 @pytest.fixture(scope='module')
@@ -312,17 +428,35 @@ async def test_child_tasks_are_registered(app: App):
     ]
 
 
+async def _durable_event_log(hatchet: Hatchet, task_external_id: str) -> list[V1DurableEventLogEntry]:
+    """The entries of a durable task's event log, which the SDK doesn't expose outside its REST client."""
+
+    def list_entries() -> list[V1DurableEventLogEntry]:
+        with hatchet.runs.client() as client:
+            return DurableTasksApi(client).v1_durable_task_event_log_list(
+                tenant=hatchet.runs.client_config.tenant_id, durable_task=task_external_id
+            )
+
+    return await anyio.to_thread.run_sync(list_entries)
+
+
 async def test_replayed_durable_task_reuses_child_results(app: App):
-    """A durable task reset to after its child tasks replays their results instead of running them again."""
+    """A durable task reset to after its child tasks replays their results instead of running them again.
+
+    The run has a `timeout=`, so its deadline crosses into every child task's input, which Hatchet checks on replay.
+    """
     ref = await app.run_weather.aio_run(Prompt(prompt='What is the weather?'), wait_for_result=False)
     first = await ref.aio_result()
     requests, tools = app.calls.model_requests, list(app.calls.tools)
 
     details = await app.hatchet.runs.aio_get_details(ref.workflow_run_id)
     (task_run,) = details.task_runs.values()
-    # The run's start time is node 1 of the durable event log, and its two model requests and tool call are
-    # nodes 2-4: branch from after them, so the durable task runs again and replays every one.
-    await app.hatchet.runs.aio_reset_durable_task(task_run.external_id, node_id=5, branch_id=1)
+    log = await _durable_event_log(app.hatchet, task_run.external_id)
+    # The run's start time, then its two model requests and tool call.
+    assert [entry.kind.value for entry in sorted(log, key=lambda entry: entry.node_id)] == ['MEMO', 'RUN', 'RUN', 'RUN']
+    # Branch from after the last of them, so the durable task runs again and replays every one.
+    after_last = max(entry.node_id for entry in log) + 1
+    await app.hatchet.runs.aio_reset_durable_task(task_run.external_id, node_id=after_last, branch_id=1)
     # A workflow run's result maps each of its tasks to that task's output.
     outputs = await app.hatchet.runs.get_run_ref(ref.workflow_run_id).aio_result()
     replayed = RunOutput.model_validate(outputs['pydantic_ai_test_weather'])
@@ -350,6 +484,10 @@ async def test_event_stream(app: App):
         events = [event async for event in app.streaming_durability.stream_agent_events(ref.workflow_run_id)]
 
     assert [type(event).__name__ for event in events if not isinstance(event, PartDeltaEvent)] == [
+        'PartStartEvent',
+        'PartEndEvent',
+        'FunctionToolCallEvent',
+        'FunctionToolResultEvent',
         'PartStartEvent',
         'PartEndEvent',
         'FunctionToolCallEvent',
@@ -388,6 +526,34 @@ async def test_event_stream_ends_when_after_run_fails(app: App):
         published = [type(event).__name__ async for event in events]
     assert 'AgentRunResultEvent' not in published
     assert events.error == 'RuntimeError'
+
+
+async def test_unserializable_tool_result_is_not_retried(app: App):
+    """A tool result that can't be serialized fails the run with a `UserError`, without running the tool again."""
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        output = await app.unserializable.run.aio_run(Prompt(prompt='hi'))
+    assert 'failed to be serialized' in output['error']
+    assert app.unserializable.calls == ['make_object']
+
+
+async def test_stream_failing_after_output_does_not_fall_back(app: App):
+    """A stream that fails after producing output in its task is raised, not fallen back from, and its usage counts.
+
+    The model request task delivers the output to the event handler before the durable task sees the stream, so the
+    error crosses with what the stream produced, as outside durable execution, where only a stream that fails before
+    its first event falls back.
+    """
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        output = await app.late_stream_failure.run.aio_run(Prompt(prompt='hello'))
+    assert output == {'output': 'raised: stream broke', 'requests': 1, 'output_tokens': 1}
+    assert app.late_stream_failure.calls == []
+
+
+async def test_retry_on_model_errors_replaces_task_retries(app: App):
+    """With `RetryOnModelErrors`, a failing model is retried as often as the capability says, not times the task's `retries`."""
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        assert await app.retrying.run.aio_run(Prompt(prompt='hi')) == {'type': 'ModelServerError'}
+    assert app.retrying.calls == ['call', 'call']
 
 
 async def test_non_durable_tool_runs_in_the_durable_task(app: App):

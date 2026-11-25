@@ -252,7 +252,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
 
-- **Durable execution.** [Durable execution](durable_execution/overview.md) on nine engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Airflow, Absurd, pgtask, and Azure Durable Task, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** [Durable execution](durable_execution/overview.md) on ten engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Hatchet, Airflow, Absurd, pgtask, and Azure Durable Task, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
 
 - **Coming from another framework?** The [comparisons](comparisons/index.md) show where Pydantic AI differs from LangChain, Google ADK, Microsoft Agent Framework, the Claude Agent SDK and the other frameworks people ask us about, and the [migration skills](framework-migration.md) let your coding agent port an existing application over.
 

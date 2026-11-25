@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, overload
 
+from opentelemetry.trace import NoOpTracer
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar
 
@@ -19,6 +20,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceRef
 from pydantic_ai.workspaces.unavailable import NO_WORKSPACE, UnavailableWorkspace
 
 from ._toolset import DispatchSnapshots, validation_context_from_agent
+from ._utils import agent_instrumentation_settings
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.abstract import AbstractAgent
@@ -404,3 +406,19 @@ def _tool_names_by_kind(ctx: RunContext[Any]) -> dict[str, str]:
         if tool_def.tool_kind is not None:
             names.setdefault(tool_def.tool_kind, name)
     return names
+
+
+def restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any] | None) -> None:
+    """Give `ctx.tracer` the tracer the worker's agent would trace a run with.
+
+    A run always has a tracer, a no-op one when it isn't instrumented, so tools open spans without checking
+    for one. The live tracer can't cross the durable unit boundary, so it's resolved here the way model units
+    resolve their instrumentation: from the worker's agent, which can't see an `Instrumentation` passed to a
+    single `run()`. A tracer the subclass already restored is left alone.
+    """
+    if 'tracer' in ctx.__dict__:
+        return
+    settings = agent_instrumentation_settings(agent) if agent is not None else None
+    ctx.__dict__['tracer'] = settings.tracer if settings is not None else NoOpTracer()
+    assert isinstance(ctx, DurableRunContext)
+    ctx._expose_field('tracer')  # pyright: ignore[reportPrivateUsage]

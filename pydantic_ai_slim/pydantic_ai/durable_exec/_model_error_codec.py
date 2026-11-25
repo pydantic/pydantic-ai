@@ -27,9 +27,9 @@ def encode_model_error(error: ModelAPIError) -> dict[str, Any] | None:
     """The JSON-compatible form of `error`, or `None` if it can't be rebuilt where it's received."""
     error_type = type(error)
     if not error_type.__module__.startswith('pydantic_ai.'):
-        # Only Pydantic AI's own error classes are rebuilt. `pydantic_ai` is passed through the workflow
-        # sandbox, so each of its classes is one class on both sides; an application module is re-imported
-        # per sandbox, so its classes can't be relied on to resolve to the one the activity raised.
+        # Only Pydantic AI's own error classes are rebuilt: each is one class wherever the error is received. An
+        # application's classes can't be relied on to be, e.g. in a Temporal workflow sandbox, which re-imports
+        # application modules.
         return None
     # An HTTP error with a category is named after its category, so it's marked to be rebuilt as the HTTP class with
     # that name rather than the category itself, from the arguments it takes as a `ModelHTTPError`.
@@ -40,7 +40,8 @@ def encode_model_error(error: ModelAPIError) -> dict[str, Any] | None:
     args = reduced[1]
     state = reduced[2] if len(reduced) > 2 else None
     if isinstance(state, dict):
-        # What Pydantic AI attached to the error isn't JSON: what has to cross is carried separately below.
+        # What Pydantic AI attached to the error isn't JSON. An engine carries what has to cross, like the response
+        # a stream produced before failing, next to the encoded error.
         state = {
             key: value for key, value in cast(dict[str, Any], state).items() if not key.startswith('_pydantic_ai_')
         }

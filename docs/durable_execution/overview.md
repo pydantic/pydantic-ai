@@ -1,17 +1,17 @@
 ---
-description: "Add durable execution to Pydantic AI agents so runs survive crashes, restarts and API failures, using Temporal, DBOS, Prefect, Restate or another engine."
+description: "Add durable execution to Pydantic AI agents so runs survive crashes, restarts and API failures, using Temporal, DBOS, Prefect, Restate, Hatchet or another engine."
 ---
 
 # Durable Execution
 
-Pydantic AI agents run durably, surviving crashes and restarts, on Temporal, DBOS, Prefect, Restate, AWS Lambda, Absurd, pgtask, Azure Durable Task and Apache Airflow.
+Pydantic AI agents run durably, surviving crashes and restarts, on Temporal, DBOS, Prefect, Restate, Hatchet, AWS Lambda, Absurd, pgtask, Azure Durable Task and Apache Airflow.
 
 Use durable execution in production when a run in flight has to survive its process stopping, through a deploy, a crash or a transient API failure, or when a workflow waits hours or days for a person or another system. A durable engine journals the agent's model requests and the tool calls it wraps, and a restarted run replays the completed ones from the journal and retries the one in flight. Which tool calls (function tools, [MCP](../mcp/client.md) servers) an engine wraps for you and how it delivers [streaming](../agent.md#streaming-all-events) differ per engine; each page below says.
 
 !!! note "Durability is not storage"
     A durable engine keeps one run alive when it crashes partway through a step, with retries and journaled model and tool calls. Saving a run, resuming it later and forking it from an earlier step need no engine: [`StepPersistence`](../harness/step-persistence.md) from Pydantic AI Harness snapshots every settled step to a store you choose, the way a checkpointer does, and [Persistence](../persistence.md) lays out the options.
 
-Pydantic AI supports nine durable execution engines, plus a [builder](./backends.md) for any other engine. Each page below has a complete example:
+Pydantic AI supports ten durable execution engines, plus a [builder](./backends.md) for any other engine. Each page below has a complete example:
 
 | Engine | Install | Make an agent durable with |
 |---|---|---|
@@ -19,6 +19,7 @@ Pydantic AI supports nine durable execution engines, plus a [builder](./backends
 | [DBOS](./dbos.md) | `pydantic-ai-slim[dbos]` | `DBOSDurability` from `pydantic_ai.durable_exec.dbos` |
 | [Prefect](./prefect.md) | `pydantic-ai-slim[prefect]` | `PrefectDurability` from `pydantic_ai.durable_exec.prefect` |
 | [Restate](./restate.md) | `restate_sdk[serde]` | `RestateAgent` from `restate.ext.pydantic` |
+| [Hatchet](./hatchet.md) | `pydantic-ai-slim[hatchet]` | `HatchetDurability` from `pydantic_ai.durable_exec.hatchet` |
 | [AWS Lambda](../harness/aws-lambda.md) | `pydantic-ai-harness[aws-lambda]` | `AWSLambdaDurability` from `pydantic_ai_harness.aws_lambda` |
 | [Absurd](../harness/absurd.md) | `pydantic-ai-harness[absurd]` | `AbsurdDurability` from `pydantic_ai_harness.absurd` |
 | [pgtask](../harness/pgtask.md) | `pydantic-ai-harness[pgtask]` | `PGTaskDurability` from `pydantic_ai_harness.pgtask` |
@@ -103,6 +104,7 @@ An engine's own metadata key wins when a tool sets it, so a tool with `durable=F
 | [Temporal](./temporal.md#per-tool-activity-config) | workflow code | `'temporal'` |
 | [DBOS](./dbos.md) | workflow code, where DBOS already runs function tools, so it doesn't check the field on them | none; `{'dbos': {'child_workflow': ...}}` selects a [child workflow](./dbos.md#child-workflows) |
 | [Prefect](./prefect.md) | flow code | `'prefect'` |
+| [Hatchet](./hatchet.md#running-a-tool-in-the-durable-task) | durable task code | `'hatchet'` |
 | [AWS Lambda](../harness/aws-lambda.md) | handler code, outside any step | `'aws_lambda'` |
 | [Azure Durable Task](../harness/azure-durable-task.md) | orchestrator code | `'azure_durable_task'` |
 | [Absurd](../harness/absurd.md) | task handler code, outside any step | none |

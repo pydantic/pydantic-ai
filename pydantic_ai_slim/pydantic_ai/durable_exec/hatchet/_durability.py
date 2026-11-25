@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import AsyncIterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any, Literal, cast
 from weakref import WeakKeyDictionary
 
@@ -25,6 +26,8 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
 )
+from pydantic_ai.durable_exec._operation_backend import RoleBasedOperationConfig
+from pydantic_ai.durable_exec._utils import has_retry_on_model_errors
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelQuotaExceededError,
@@ -44,7 +47,6 @@ from ._clock import durable_clock
 from ._event_stream import HatchetAgentRunEvents, HatchetEventStream, publish_event, task_event_stream_handler
 from ._operation_backend import (
     HatchetOperationBackend,
-    HatchetOperationConfig,
     HatchetTaskConfig,
     TaskOutput,
     validate_task_config,
@@ -64,6 +66,12 @@ _DEFAULT_TASK_CONFIG = HatchetTaskConfig(execution_timeout=timedelta(seconds=60)
 
 _runs_by_context: WeakKeyDictionary[DurableContext, int] = WeakKeyDictionary()
 """How many agent runs each durable task has started, which tells its runs' default IDs apart."""
+
+_published_event_counts: WeakKeyDictionary[DurableContext, dict[str | None, int]] = WeakKeyDictionary()
+"""How many events each run has published from the durable task, across all of its nodes' event streams."""
+
+_run_start_times: WeakKeyDictionary[DurableContext, dict[str | None, datetime]] = WeakKeyDictionary()
+"""The start time `get_run_start_time` recorded for each run, which `wrap_run` starts the run's durable clock at."""
 
 
 @dataclass(init=False, kw_only=True)
@@ -224,20 +232,33 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         if self._deps_type is None:
             self._deps_type = cast('type[AgentDepsT]', agent.deps_type)
         self._deps_adapter = TypeAdapter(self._deps_type)
+        non_retryable_model_errors = self._non_retryable_model_errors
+        if has_retry_on_model_errors(agent.root_capability):
+            # `RetryOnModelErrors` retries model errors in the durable task, so the model task doesn't retry them too:
+            # its `retries` are left to crashes and timeouts, which never reach a hook.
+            if non_retryable_model_errors != _DEFAULT_NON_RETRYABLE_MODEL_ERRORS:
+                warnings.warn(
+                    '`non_retryable_model_errors` is ignored because the agent has `RetryOnModelErrors`: that '
+                    'capability does the retrying of model errors, so the model request task treats every model '
+                    'error as non-retryable. Configure which errors are retried with `RetryOnModelErrors(retry_on=...)` '
+                    'instead.',
+                    UserWarning,
+                    stacklevel=2,
+                )
+            non_retryable_model_errors = (ModelAPIError,)
         backend = HatchetOperationBackend(
             self.hatchet,
             runtime=self,
             agent_name=self.name,
-            config=HatchetOperationConfig(
+            config=RoleBasedOperationConfig[HatchetTaskConfig](
                 model=self._model_task_config,
                 event=self._event_task_config,
                 capability=self._task_config,
                 tool=self._task_config,
-                toolset=self._toolset_config,
                 resolve_tool=self._resolve_tool_config,
             ),
             parameter_transports=HatchetParameterTransports(self),
-            non_retryable_model_errors=self._non_retryable_model_errors,
+            non_retryable_model_errors=non_retryable_model_errors,
         )
         self._operation_backend = backend
         # Bind events first, as the durable model and toolset wrappers capture this operation.
@@ -333,6 +354,14 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
+    async def get_run_start_time(self, run_id: str) -> datetime | None:
+        if not self.in_durable_context:
+            return None
+        durable_ctx = self._durable_context()
+        start = await durable_ctx.aio_now()
+        _run_start_times.setdefault(durable_ctx, {})[run_id] = start
+        return start
+
     async def wrap_run(
         self,
         ctx: RunContext[AgentDepsT],
@@ -349,10 +378,14 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         durable_ctx = self._durable_context()
 
         async def durable_sleep(seconds: float) -> None:
+            # Hatchet takes seconds to wake a durable task even from a zero-length sleep, which waits for nothing.
+            if seconds <= 0:
+                return
             await durable_ctx.aio_sleep_for(timedelta(seconds=seconds))
 
-        # Recorded before the run spawns anything, so a replay starts its clock at the same time.
-        start = await durable_ctx.aio_now()
+        # Recorded before the run spawns anything, so a replay starts its clock at the same time. A run with a
+        # `timeout=` recorded it already, to count the deadline from.
+        start = _run_start_times.get(durable_ctx, {}).pop(ctx.run_id, None) or await durable_ctx.aio_now()
         with set_agent_graph_sleep(durable_sleep), durable_clock(start):
             return await super().wrap_run(ctx, handler=handler)
 
@@ -393,14 +426,16 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
 
         # Model events were published by the task that produced them; these are their copies. A replayed durable
         # task publishes the rest again, in the same order, so their IDs say which ones a consumer already has.
-        index = 0
+        # Each node of the run streams its events through here, so the count is kept per run, not per stream.
+        counts = _published_event_counts.setdefault(self._durable_context(), {})
         try:
             async for event in events:
                 if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and (
                     config.events is None or config.events(event)
                 ):
+                    index = counts.get(ctx.run_id, 0)
+                    counts[ctx.run_id] = index + 1
                     await publish_event(self.hatchet, config, topic, message_id=f'{ctx.run_id}:{index}', event=event)
-                    index += 1
                 yield event
         finally:
             await aclose_if_supported(events)

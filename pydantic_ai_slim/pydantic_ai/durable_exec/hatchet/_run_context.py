@@ -3,11 +3,9 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, cast
 
-from opentelemetry.trace import NoOpTracer
 from typing_extensions import TypeVar
 
-from pydantic_ai.durable_exec._run_context import DurableRunContext
-from pydantic_ai.durable_exec._utils import agent_instrumentation_settings
+from pydantic_ai.durable_exec._run_context import DurableRunContext, restore_tracer
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 
@@ -96,9 +94,5 @@ def deserialize_run_context(
 ) -> RunContext[Any]:
     """Rebuild a task's run context, resolving `tracer` from the worker's agent unless the subclass set it."""
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=HATCHET_ENGINE_SPEC)
-    if 'tracer' not in ctx.__dict__:
-        settings = agent_instrumentation_settings(agent) if agent is not None else None
-        ctx.__dict__['tracer'] = settings.tracer if settings is not None else NoOpTracer()
-        assert isinstance(ctx, DurableRunContext)
-        ctx._expose_field('tracer')  # pyright: ignore[reportPrivateUsage]
+    restore_tracer(ctx, agent)
     return ctx

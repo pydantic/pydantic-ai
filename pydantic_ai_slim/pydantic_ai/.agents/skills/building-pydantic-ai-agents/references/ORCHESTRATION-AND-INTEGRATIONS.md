@@ -86,6 +86,8 @@ Reach for this when there is no need for tools, retries, or agent loop state.
 
 Use the durable execution integrations when the run must survive crashes, retries, or long-lived workflows.
 
+Hatchet: attach `HatchetDurability(hatchet)` from `pydantic_ai.durable_exec.hatchet` to the agent at module level, call the agent from a `@hatchet.durable_task`, and pass `durability.workflows` to `hatchet.worker(workflows=[...])` alongside that task. Each model request, MCP call and tool call is a child task; configure them with `task_config`, `model_task_config` and `toolset_task_config`, or a tool's `'hatchet'` metadata for run options. `event_stream=True` publishes the run's events to a durable stream that `durability.stream_agent_events(workflow_run_id)` reads. See [Hatchet](https://pydantic.dev/docs/ai/capabilities/durable_execution/hatchet/).
+
 Temporal entry points:
 
 - `Agent(..., capabilities=[TemporalDurability(...)])`
