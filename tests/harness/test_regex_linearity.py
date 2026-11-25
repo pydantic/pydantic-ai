@@ -34,6 +34,7 @@ from inline_snapshot import snapshot
 import pydantic_ai_harness
 from pydantic_ai_harness.artifact_scanning import DEFAULT_ARTIFACT_PATTERNS
 from pydantic_ai_harness.guardrails.detectors import DEFAULT_PII_PATTERNS, DEFAULT_SECRET_PATTERNS
+from pydantic_ai_harness.require_verification import DEFAULT_EDIT_COMMANDS, DEFAULT_VERIFICATION_COMMANDS
 
 from ._regex_steps import Shape, StepCounter, linearity_failure, shape
 
@@ -59,8 +60,13 @@ PATTERN_TABLES: dict[str, dict[str, tuple[str, int]]] = {
     'DEFAULT_ARTIFACT_PATTERNS': {
         name: (pattern, re.IGNORECASE) for name, (_, pattern) in DEFAULT_ARTIFACT_PATTERNS.items()
     },
+    'DEFAULT_VERIFICATION_COMMANDS': {
+        str(index): (pattern, 0) for index, pattern in enumerate(DEFAULT_VERIFICATION_COMMANDS)
+    },
+    'DEFAULT_EDIT_COMMANDS': {str(index): (pattern, 0) for index, pattern in enumerate(DEFAULT_EDIT_COMMANDS)},
 }
-"""Every `DEFAULT_*_PATTERNS` table the package defines, with the flags the package compiles it with."""
+"""Every `DEFAULT_*_PATTERNS` table the package defines, and the default command patterns `RequireVerification`
+compiles, with the flags the package compiles them with."""
 
 RUNTIME_PATTERNS: dict[str, tuple[str, ...]] = {
     'artifact_scanning/_scanner.py::ArtifactScanner.__post_init__': (
@@ -73,6 +79,13 @@ RUNTIME_PATTERNS: dict[str, tuple[str, ...]] = {
         "a `DEFAULT_SECRET_PATTERNS` or `DEFAULT_PII_PATTERNS` entry, or the user's `extra`",
     ),
     'permissions/_capability.py::Permissions.__post_init__': ("the user's `ask_commands`",),
+    'playwright/_toolset.py::_without_endpoint_credentials': (
+        'an alternation of the escaped `cdp_url` credential values',
+    ),
+    'require_verification/_capability.py::RequireVerification.__post_init__': (
+        "a `DEFAULT_VERIFICATION_COMMANDS` entry, or the user's `verification_commands`",
+        "a `DEFAULT_EDIT_COMMANDS` entry, or the user's `edit_commands`",
+    ),
 }
 """Calls whose pattern only exists at runtime, keyed by `<file>::<function>`: where each call's pattern comes from, in
 source order. A built-in table they compile is checked through `PATTERN_TABLES`; a caller's own pattern can't be."""
@@ -372,7 +385,7 @@ def test_every_pattern_table_is_checked():
     """A new table reaches `re` through a call `RUNTIME_PATTERNS` already lists, so it has to be listed by name."""
     tables = {name for source in _SOURCES.values() for name in re.findall(r'^(DEFAULT_\w+_PATTERNS)\b', source, re.M)}
 
-    assert sorted(tables) == sorted(PATTERN_TABLES)
+    assert sorted(tables) == sorted(name for name in PATTERN_TABLES if name.endswith('_PATTERNS'))
 
 
 def test_re_functions_are_only_called_directly():

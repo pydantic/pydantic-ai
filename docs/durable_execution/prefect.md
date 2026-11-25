@@ -158,6 +158,8 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 
 Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
 
+[`agent.override(capabilities=...)`][pydantic_ai.agent.AbstractAgent.override] replaces the agent's capabilities, so build its list from `agent.root_capability.capabilities` to keep the bound [`PrefectDurability`][pydantic_ai.durable_exec.prefect.PrefectDurability]: a list without it raises a [`UserError`][pydantic_ai.exceptions.UserError]. Inside a flow, the capabilities the list adds are treated like those passed to `agent.run(capabilities=[...])`.
+
 ### Durable Capability Operations
 
 Capability tasks include the agent's name in their cache key, so two agents in one flow never
@@ -226,7 +228,7 @@ Agent tools are automatically wrapped as Prefect tasks, which means they benefit
 
 Because a tool's recorded result can be replayed without re-running it, a tool running as a task can't load an [on-demand capability](../capabilities/on-demand.md) with [`ctx.load_capability()`][pydantic_ai.tools.RunContext.load_capability]; see [Loading a capability from code](../capabilities/on-demand.md#loading-from-code-durable) for where to load it instead.
 
-For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], tool discovery and each tool call run as Prefect tasks, and flow retries replay recorded discovery and tool results. When the factory is built with `per_run_step=False`, the run resolves the toolset once and each task reuses it, entering it the first time a task needs it and leaving it entered for the rest of the run. Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is entered — so connecting happens inside a task, where it is retried like any other task failure. The factory itself runs in flow code and re-runs whenever that replays, so like the capability factory below it must be deterministic given the run's `deps`: build the toolset in the factory and leave its I/O to the tasks. This is the lifecycle a non-durable run gives the toolset, so a toolset's own caching — such as [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] on an `MCPToolset` the factory returns — works as it does outside a flow, instead of being discarded between tasks. A `per_run_step=True` factory is re-resolved inside each task, as it asks to be.
+For a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset], including one contributed by a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability], tool discovery and each tool call run as Prefect tasks, and flow retries replay recorded discovery and tool results. When the factory is built with `per_run_step=False`, the run resolves the toolset once and each task reuses it, entering it the first time a task needs it and leaving it entered for the rest of the run. Building a toolset is not the same as connecting it — an `MCPToolset` opens nothing until it is entered — so connecting happens inside a task, where it is retried like any other task failure. The factory itself, and the `for_run` of the toolset it returns (for an [`MCPToolset`][pydantic_ai.mcp.MCPToolset], its `auth` or `headers` function), run in flow code and re-run whenever that replays, so like the capability factory below they must be deterministic given the run's `deps`: build the toolset in the factory and leave its I/O to the tasks. This is the lifecycle a non-durable run gives the toolset, so a toolset's own caching — such as [`cache_tools`][pydantic_ai.mcp.MCPToolset.cache_tools] on an `MCPToolset` the factory returns — works as it does outside a flow, instead of being discarded between tasks. A `per_run_step=True` factory is re-resolved inside each task, as it asks to be.
 
 For an [`MCPToolset`][pydantic_ai.mcp.MCPToolset], tool discovery and each tool call run as Prefect
 tasks, and the server is connected inside the first task that needs it rather than in flow code, so a
@@ -278,6 +280,8 @@ agent = Agent(
 
 This opt-out applies to function and dynamic tools only. MCP tools perform I/O and always run in
 their Prefect task, so `metadata={'prefect': False}` on an MCP tool raises a `UserError`.
+
+A tool that [submits the run's output](../output.md#submit-output) with `ctx.submit_output()` needs this opt-out, as it can't submit from its own task.
 
 To keep an async function tool out of its task on any engine, set the engine-neutral
 [`durable=False`](overview.md#running-a-tool-outside-the-durable-unit) instead. A `'prefect'`

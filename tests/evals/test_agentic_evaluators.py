@@ -10,6 +10,7 @@ go through the public evaluator API.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -831,8 +832,12 @@ def test_argument_correctness_include_content_false(span_builder: Any):
     assert 'include_content' in result.reason
 
 
-def test_argument_correctness_invalid_json():
-    tree = _build_tree([_v3_tool_span(name='search', span_id=1, args='not-json', start_offset=0.0)])
+@pytest.mark.parametrize(
+    'args',
+    [pytest.param('not-json', id='invalid-json'), pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer')],
+)
+def test_argument_correctness_invalid_json(args: str):
+    tree = _build_tree([_v3_tool_span(name='search', span_id=1, args=args, start_offset=0.0)])
     evaluator = ArgumentCorrectness(
         tool_name='search',
         expected_arguments={'q': 'cats'},
@@ -841,6 +846,40 @@ def test_argument_correctness_invalid_json():
     assert result.value is False
     assert result.reason is not None
     assert 'could not be parsed as JSON' in result.reason
+
+
+def test_argument_correctness_deeply_nested_json():
+    """Arguments `json.loads` can't parse for their nesting fail the check instead of raising.
+
+    From Python 3.14, whether `json.loads` raises `RecursionError` at this depth depends on the stack size.
+    On a stack large enough to parse and print them, the arguments fail as a non-object instead.
+    """
+    tree = _build_tree([_v3_tool_span(name='search', span_id=1, args='[' * 100_000 + ']' * 100_000, start_offset=0.0)])
+    result = ArgumentCorrectness(tool_name='search', expected_arguments={'q': 'cats'}).evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason is not None
+    assert 'could not be parsed as JSON' in result.reason or 'are not a JSON object' in result.reason
+
+
+def test_argument_correctness_non_object_json_too_deep_to_print(monkeypatch: pytest.MonkeyPatch):
+    """Arguments that parse but nest too deeply to print fail the check instead of raising.
+
+    From Python 3.14, `json.loads` parses arrays nested deeper than `repr` can print only within a band of stack sizes.
+    The parse is replaced with one whose result raises `RecursionError` when printed, to reach that case on any stack.
+    """
+
+    class TooDeepToPrint:
+        def __repr__(self) -> str:
+            raise RecursionError('Stack overflow while getting the repr of an object')
+
+    def parse_too_deep_to_print(s: str) -> list[TooDeepToPrint]:
+        return [TooDeepToPrint()]
+
+    tree = _build_tree([_v3_tool_span(name='search', span_id=1, args='[[]]', start_offset=0.0)])
+    monkeypatch.setattr(json, 'loads', parse_too_deep_to_print)
+    result = ArgumentCorrectness(tool_name='search', expected_arguments={'q': 'cats'}).evaluate(_ctx(tree=tree))
+    assert result.value is False
+    assert result.reason == "Tool 'search' arguments are not a JSON object: a JSON array nested too deeply to display"
 
 
 def test_argument_correctness_non_object_json():

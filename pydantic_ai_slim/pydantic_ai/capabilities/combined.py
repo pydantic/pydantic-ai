@@ -328,6 +328,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self._dispatch:
             capability._validate_runtime_capabilities(ctx, capabilities)
 
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        for capability in self._dispatch:
+            capability._validate_override_capabilities(capabilities)
+
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         # The children's contributions, not `_collect_instructions`: that asks whether a subclass
         # took this method over, and answering it by calling this method is a loop.

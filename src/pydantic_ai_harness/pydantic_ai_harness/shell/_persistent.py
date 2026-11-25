@@ -11,7 +11,7 @@ itself.
 from __future__ import annotations
 
 import codecs
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Generic, Literal
 
 import anyio
@@ -21,7 +21,7 @@ from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._events import event_ctx
 from pydantic_ai_harness.shell._events import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job
+from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT, POLL_MAX, POLL_MIN, Job, past_secrets
 
 MAX_FOREGROUND_WAIT: float = 270.0
 """Longest a foreground `shell` call waits before returning handles to the still-running command.
@@ -49,18 +49,28 @@ async def _count_lines(job: Job) -> int | None:
     return data.count(b'\n') + int(bool(data) and not data.endswith(b'\n'))
 
 
-async def _output_tail(job: Job) -> str:
+async def _output_tail(job: Job, secrets: Sequence[bytes]) -> str:
     """The last `_OUTPUT_TAIL_BYTES` of the log, from a line start and marked when earlier output is left out."""
-    size = await job.size(job.output_path)
-    start = max(0, size - _OUTPUT_TAIL_BYTES)
-    data = await job.read(job.output_path, start, size - start)
+    start, data = await job.read_tail(job.output_path, _OUTPUT_TAIL_BYTES, secrets=secrets)
     if not start:
         return data.decode('utf-8', errors='replace')
     # Drop the cut first line, unless it is the only one.
     if 0 <= (newline := data.find(b'\n')) < len(data) - 1:
-        start += newline + 1
-        data = data[newline + 1 :]
+        # The newline can be inside a multi-line secret, so the moved cut is checked again.
+        cut = past_secrets(data, newline + 1, secrets)
+        start += cut
+        data = data[cut:]
     return f'[... output truncated, {start} earlier bytes omitted]\n' + data.decode('utf-8', errors='replace')
+
+
+def _handles_start(pid: int) -> str:
+    return f'PID: {pid} ('
+
+
+def command_output(result: str, *, pid: int) -> str:
+    """The command output in a `shell` tool result for job `pid`, without the handles that follow it."""
+    output, handles, _ = result.rpartition(_handles_start(pid))
+    return output if handles else result
 
 
 class _CommandOutput(Generic[AgentDepsT]):
@@ -151,6 +161,7 @@ async def run_persistent_command(
     mode: CommandMode,
     timeout: float,
     log_limit: int | None = None,
+    secrets: Sequence[bytes] = (),
 ) -> str:
     """Start `command` as a detached job and return its PID, output log, and status file.
 
@@ -189,11 +200,11 @@ async def run_persistent_command(
         # result, and the PID and paths are what the model must not lose.
         result = ''
         if mode == 'foreground':
-            result = await _output_tail(job)
+            result = await _output_tail(job, secrets)
             if result and not result.endswith('\n'):
                 result += '\n'
         result += (
-            f'PID: {job.pid} (supervisor; use `{job.stop_command}` to stop the whole process tree)\n'
+            f'{_handles_start(job.pid)}supervisor; use `{job.stop_command}` to stop the whole process tree)\n'
             f'Output: {job.output_path}\nStatus: {job.status_path}'
         )
         if (status := await job.status_text()) is not None:

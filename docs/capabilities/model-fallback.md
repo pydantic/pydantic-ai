@@ -29,7 +29,7 @@ Falling back is not retrying: the next model usually can't use the prompt cache 
 
 ## When to fall back
 
-By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response, when the model [refuses](#refusals), and when the [output is cut off](#token-limit) by the token limit: `fallback_on` defaults to `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`.
+By default, `ModelFallback` moves on when a request raises [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], the error a model raises when the provider's API fails, such as a 4xx or 5xx response, or sends a response the model can't use, such as an empty stream (see [Handling Model API Errors](../models/overview.md#handling-model-api-errors)), when the model [refuses](#refusals), and when the [output is cut off](#token-limit) by the token limit: `fallback_on` defaults to `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`.
 
 The `fallback_on` parameter takes the same forms as [`FallbackModel`'s](../models/overview.md#fallback-model), whose default is `(ModelAPIError,)`:
 
@@ -357,6 +357,8 @@ With [`BatchModelRequests`](../batch.md), every attempt is batched with the mode
 Under a [durability capability](../durable_execution/overview.md), each attempt is a durable model operation of its own: on [Temporal](../durable_execution/temporal.md), an activity per model tried. The activity's retry policy retries a failed request before the error reaches `ModelFallback`'s `fallback_on`, and Temporal's default retry policy retries without limit: set `maximum_attempts` in the retry policy of `TemporalDurability`'s [`model_activity_config`](../durable_execution/temporal.md#activity-configuration) so that a failing model doesn't hold up the fallback. Each model's `request_timeout` deadline runs as a durable timer around its own activity. Its `first_event_timeout` deadline runs inside the activity, which is what sees the stream's events, so the `ModelRequestTimeout` it raises fails the activity there. `ModelRequestTimeout` is in [`non_retryable_model_errors`](../durable_execution/temporal.md#activity-retries) by default, so the activity isn't retried and `ModelFallback` moves on to the next model straight away. So are a rejected request and an exhausted quota.
 
 A streamed request is consumed inside its durable unit, where its events reach a durability capability's `event_stream_handler`, so a stream that fails after producing output there is raised rather than fallen back from, as outside durable execution, and what it produced counts towards the run's usage.
+
+The exception and response handlers in `fallback_on` run in workflow code, not in the model's durable operation, as they decide which model is tried next. When Temporal replays a workflow, they run again over the recorded errors and responses, so keep them deterministic and free of I/O. To log from one on Temporal, use `workflow.logger`, which skips records while the workflow is replaying; move other I/O into a [durable capability operation](custom.md#durable-capability-operations).
 
 A model `ModelFallback` moves to is rebuilt for its activity like any model a run uses: a model name string is built on the worker, and a model instance must be registered with the durability capability's `models`, then given to `ModelFallback` by that name:
 

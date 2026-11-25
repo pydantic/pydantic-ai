@@ -412,6 +412,14 @@ def _google_retry_info_body(retry_delay: object) -> dict[str, Any]:
     }
 
 
+_UPSTREAM_OVERFLOW = "Input length (100000) exceeds the model's maximum context length (8192)."
+
+
+def _openrouter_metadata_raw_error(raw: str) -> dict[str, object]:
+    """An OpenRouter 400 that forwards the upstream provider's error in `metadata.raw`."""
+    return {'error': {'code': 400, 'message': 'Provider returned error', 'metadata': {'raw': raw}}}
+
+
 CASES = [
     Case(
         id='openai-rate-limit',
@@ -445,6 +453,13 @@ CASES = [
         handler=_json(503, {'error': {'message': 'The engine is currently overloaded', 'type': 'server_error'}}),
         categories=_OVERLOADED,
         attrs={'status_code': 503, 'provider_error_code': None, 'provider_error_type': 'server_error'},
+    ),
+    Case(
+        id='openai-provider-timeout',
+        model=_openai,
+        handler=_json(408, {'error': {'message': 'Request timed out', 'type': 'timeout'}}),
+        categories={ModelHTTPError, ModelConnectionError, ModelTimeoutError},
+        attrs={'status_code': 408, 'provider_error_type': 'timeout', 'phase': None},
     ),
     Case(
         id='openai-context-window',
@@ -599,6 +614,38 @@ CASES = [
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
     ),
+    # OpenRouter forwards the upstream provider's overflow in `metadata.raw`, as JSON or plain text, behind a generic
+    # message.
+    Case(
+        id='openrouter-http-metadata-raw-context-window-json',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-json-stream',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        stream=True,
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-plain',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW)),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+    ),
+    Case(
+        id='openrouter-http-metadata-raw-context-window-plain-stream',
+        model=_openrouter,
+        handler=_json(400, _openrouter_metadata_raw_error(_UPSTREAM_OVERFLOW)),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        stream=True,
+    ),
     Case(
         id='openrouter-body-rate-limit',
         model=_openrouter,
@@ -614,6 +661,14 @@ CASES = [
             200,
             {'error': {'code': 400, 'message': "This endpoint's maximum context length is 128000 tokens."}},
         ),
+        categories=_CONTEXT_WINDOW,
+        attrs={'status_code': 400, 'provider_error_code': '400'},
+        has_cause=False,
+    ),
+    Case(
+        id='openrouter-body-metadata-raw-context-window',
+        model=_openrouter,
+        handler=_json(200, _openrouter_metadata_raw_error(json.dumps({'error': {'message': _UPSTREAM_OVERFLOW}}))),
         categories=_CONTEXT_WINDOW,
         attrs={'status_code': 400, 'provider_error_code': '400'},
         has_cause=False,
@@ -2751,8 +2806,8 @@ def _bedrock_error(
         ),
         pytest.param(
             lambda: _bedrock_error('modelTimeoutException', 'The model took too long.', None),
-            {ModelHTTPError},
-            {'status_code': 408, 'in_stream': True, 'provider_error_code': 'modelTimeoutException'},
+            {ModelHTTPError, ModelConnectionError, ModelTimeoutError},
+            {'status_code': 408, 'in_stream': True, 'provider_error_code': 'modelTimeoutException', 'phase': None},
             id='stream-model-timeout',
         ),
         pytest.param(

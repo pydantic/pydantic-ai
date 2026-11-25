@@ -1,0 +1,85 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-4-neon:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "224"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is 2+2? Reply with just the number.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+          thinkingConfig:
+            include_thoughts: true
+            thinking_level: XHIGH
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=4094
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: |+
+                Okay, here's my breakdown of this simple task. As an expert, I can recognize the underlying process at play.
+
+                **An Expert's Breakdown: 2 + 2**
+
+                Alright, I see the query. First thing's first: **identify the core request**: it's a straightforward arithmetic problem - the user wants the sum of 2 and 2. No ambiguity there. Next, I need to recognize any constraints. Ah, here we go, this is important. The instructions explicitly state that the response needs to be *just* the number itself, no extra text, no fluff. Clean and concise is the name of the game.
+
+                So, now it's calculation time: 2 plus 2, of course, equals 4. Elementary, but we have to execute it precisely. Finally, I must ensure that the output is formatted correctly to satisfy the prompt's condition. The response must be a string consisting solely of the numeral "4". Got it. No punctuation, no additional characters, just "4". All set.
+
+
+              thought: true
+            - text: "4"
+              thoughtSignature: >-
+                EoIDCv8CAWkUfROdlQW6OWFOaOWP18aKtyfGz2/pToR9Lc9URkwztt/ZH0QXTmkbcEhd/0ojDAcCv1m6RJh1bM0MX5v0OpkA9Dk+za58jn0VIa6nVx13MZdFER8tt6FIdZ7HaZl1tUSM+tH1xMSMDdy7tYzLragm3fWh4P/e/eJV7XY6XHKJHYzLz3mvAr8DdvT+qLPbuW6m6s/ydMCdYnnQsX9j/D4QyBnqAFJ41j2m0wH4VEEBl414VxXwip+sOKXYQJ//8fn7j8Rmn/Zw/t3YIvmkUcYpeTY2IQolb3XsoBB70UL9VbKwi1HSCwKua23vxdNoaI6+61JOEFHkSqrz2WAWtBUmGT5To8710K8T9wi5dHmU1rQnw42jeCbv9JsItpsgDIVie0hLOoqRngbUY+L6mo4n9kXGO2T/EEVPGCf0/Dio9KuseiTdCvLI9pNFc0FnfaXX6oTr1q6oGH6aAmpk3ocr6bieF1VQxlqk1LnimRK66NqykXzXXpOOV0OGAvc=
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 44
+          candidatesTokenCount: 5
+          totalTokenCount: 126
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 44
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 5
+          thoughtsTokenCount: 77
+          serviceTier: standard
+        modelVersion: gemini-4-neon
+        responseId: MRr-arHhD_OinsEP9ZSW8Q0
+  recorded_at: 2026-11-18T21:35:49.263754+00:00

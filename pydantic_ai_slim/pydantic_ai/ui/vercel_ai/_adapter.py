@@ -26,6 +26,7 @@ from ...messages import (
     CompactionPart,
     DocumentUrl,
     FilePart,
+    FileUrl,
     ForceDownloadMode,
     ImageUrl,
     InstructionBaselinePart,
@@ -54,6 +55,7 @@ from ...messages import (
     UserContent,
     UserPromptPart,
     VideoUrl,
+    _multi_modal_content_identifier,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
     narrow_message_parts,
@@ -575,7 +577,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                 parsed = json.loads(args)
                 if _is_str_dict(parsed):
                     args = parsed
-            except json.JSONDecodeError:
+            except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
                 pass
         elif isinstance(args, dict) or args is None:
             pass
@@ -1344,7 +1346,10 @@ def _convert_user_prompt_part(
                             media_type=item.media_type,
                             # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
                             # Google `video_metadata`); see `BinaryContent.vendor_metadata`.
-                            provider_metadata=dump_provider_metadata(vendor_metadata=item.vendor_metadata),
+                            provider_metadata=dump_provider_metadata(
+                                vendor_metadata=item.vendor_metadata,
+                                identifier=_custom_file_identifier(item),
+                            ),
                         )
                     )
                 case ImageUrl() | AudioUrl() | VideoUrl() | DocumentUrl():
@@ -1364,6 +1369,7 @@ def _convert_user_prompt_part(
                                 force_download=item.force_download or None,
                                 vendor_metadata=item.vendor_metadata,
                                 kind=None if media_type else item.kind,
+                                identifier=_custom_file_identifier(item),
                             ),
                         )
                     )
@@ -1393,6 +1399,18 @@ def _convert_user_prompt_part(
         }
 
     return ui_parts
+
+
+def _custom_file_identifier(item: BinaryContent | FileUrl) -> str | None:
+    """The identifier `load_messages` could not compute again from the file's content, if any.
+
+    `_identifier` alone doesn't say: `BinaryContent.narrow_type` and a reload from JSON store the computed hash there.
+    """
+    identifier = item._identifier  # pyright: ignore[reportPrivateUsage]
+    if not identifier:
+        return None
+    content = item.data if isinstance(item, BinaryContent) else item.url
+    return None if identifier == _multi_modal_content_identifier(content) else identifier
 
 
 def _user_prompt_part(content: list[UserContent]) -> UserPromptPart:
@@ -1473,6 +1491,9 @@ def _load_user_file(part: FileUIPart) -> MultiModalContent:
     # request params and is dict-validated by the constructors below.
     vendor_metadata = provider_meta.get('vendor_metadata')
     force_download = provider_meta.get('force_download', False)
+    # `provider_metadata` is the client's to send: anything but a string counts as no identifier.
+    restored_identifier = provider_meta.get('identifier')
+    identifier = restored_identifier if isinstance(restored_identifier, str) else None
     try:
         file = BinaryContent.from_data_uri(part.url)
     except ValueError:
@@ -1502,20 +1523,21 @@ def _load_user_file(part: FileUIPart) -> MultiModalContent:
                 media_type=part.media_type,
                 force_download=force_download,
                 vendor_metadata=vendor_metadata,
+                identifier=identifier,
             )
     else:
-        # `from_data_uri` succeeded: restore vendor_metadata onto the BinaryContent.
-        # Reconstruct through the constructor so a malformed client value is rejected
-        # here (matching the URL constructor path) instead of being stored unvalidated
-        # and crashing a provider model later. Re-narrow afterwards so an image
-        # round-trips back to `BinaryImage` (as `from_data_uri` returned it), not
+        # `from_data_uri` succeeded: restore vendor_metadata and the identifier onto the
+        # BinaryContent. Reconstruct through the constructor so a malformed client value
+        # is rejected here (matching the URL constructor path) instead of being stored
+        # unvalidated and crashing a provider model later. Re-narrow afterwards so an
+        # image round-trips back to `BinaryImage` (as `from_data_uri` returned it), not
         # plain `BinaryContent`.
-        if vendor_metadata is not None:
+        if vendor_metadata is not None or identifier:
             file = BinaryContent.narrow_type(
                 BinaryContent(
                     data=file.data,
                     media_type=file.media_type,
-                    identifier=file.identifier,
+                    identifier=identifier or file.identifier,
                     vendor_metadata=vendor_metadata,
                 )
             )
@@ -1612,7 +1634,7 @@ def _parse_json(value: object) -> object:
         return None
     try:
         return json.loads(value)
-    except (json.JSONDecodeError, RecursionError):  # `RecursionError` on deeply nested JSON
+    except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
         return None
 
 
