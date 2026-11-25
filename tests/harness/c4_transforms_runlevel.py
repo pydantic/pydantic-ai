@@ -15,7 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import ProcessHistory
+from pydantic_ai.capabilities import HistoryProcessor, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     CompactionPart,
@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
+    UserPromptPart,
 )
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
@@ -31,7 +32,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
-from pydantic_ai_harness.compaction._receipts import is_receipt_part
 
 from ..append_only import drain_events
 from .test_capability_routes import RouteRun, _built, _Script  # pyright: ignore[reportPrivateUsage]
@@ -42,9 +42,17 @@ def _context() -> RunContext[None]:
     return RunContext(deps=None, model=FunctionModel(_summarize), usage=RunUsage(), run_step=1)
 
 
-def _standing(part: ModelRequestPart) -> bool:
-    """Everything but the standing system prompt, which a compaction keeps ahead of what it replaced."""
+def _not_standing_prompt(part: ModelRequestPart) -> bool:
+    """What a compaction may drop: everything but the standing system prompt, which it keeps ahead of the rest."""
     return not isinstance(part, SystemPromptPart)
+
+
+def is_receipt(part: ModelRequestPart) -> bool:
+    """A compaction receipt, by its documented shape: a `UserPromptPart` with structured content.
+
+    The runs here only ever prompt with a string, so no kept prompt matches.
+    """
+    return isinstance(part, UserPromptPart) and not isinstance(part.content, str)
 
 
 # --- model_fallback_switch -----------------------------------------------------------------------------------------
@@ -117,29 +125,30 @@ async def _compaction_part(native: RouteRun, directory: Path) -> list[ModelMessa
 # --- history_processor ---------------------------------------------------------------------------------------------
 
 
-PROCESSED: list[int] = []
-"""How many messages each call of the processor was given, so a test can tell it ran."""
-
-
-def _rebuilt(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+def rebuilt(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
     """A user's processor that returns a rebuilt copy, as a filtering one does, with nothing filtered out.
 
     Sync and taking the context, so the runner takes its executor path. What's checked is that the runner and
     `ProcessHistory` hand every part on as it was.
     """
-    PROCESSED.append(len(messages))
     return [replace(message, parts=list(message.parts)) for message in messages]
 
 
-async def _history_processor(native: RouteRun, directory: Path) -> list[ModelMessage]:
-    """The case rerun with a `ProcessHistory` processor, which also rewrites the history the run keeps."""
-    assert isinstance(native, NativeRun)
+async def run_with_processor(
+    native: NativeRun, directory: Path, processor: HistoryProcessor[None]
+) -> list[ModelMessage]:
+    """The case rerun with a `ProcessHistory` capability, which also rewrites the history the run keeps."""
     script = _Script(native.calls.made)
     capabilities, observer = await _built(native.calls, directory)
-    processor = ProcessHistory[None](_rebuilt)
-    agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, observer, processor])
+    capability = ProcessHistory[None](processor)
+    agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, observer, capability])
     result = await agent.run('go', event_stream_handler=drain_events)
     return result.all_messages()
+
+
+async def _history_processor(native: RouteRun, directory: Path) -> list[ModelMessage]:
+    assert isinstance(native, NativeRun)
+    return await run_with_processor(native, directory, rebuilt)
 
 
 _RECEIPT_IN_USER_VOICE: dict[Check, Exempt] = {
@@ -160,9 +169,9 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
     'summarizing': Transform(
         'summarizing',
         _summarizing,
-        drops=_standing,
+        drops=_not_standing_prompt,
         # The summary, and the receipt naming what it replaced: a `UserPromptPart` told apart from kept prompts.
-        creates_part=lambda part: isinstance(part, CompactionPart) or is_receipt_part(part),
+        creates_part=lambda part: isinstance(part, CompactionPart) or is_receipt(part),
         known=_RECEIPT_IN_USER_VOICE,
         functions=(
             'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction.compact',
@@ -172,8 +181,8 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
     'sliding_window': Transform(
         'sliding_window',
         _sliding_window,
-        drops=_standing,
-        creates_part=is_receipt_part,
+        drops=_not_standing_prompt,
+        creates_part=is_receipt,
         known=_RECEIPT_IN_USER_VOICE,
         functions=(
             'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction.compact',
@@ -185,7 +194,7 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
     'compaction_part': Transform(
         'compaction_part',
         _compaction_part,
-        drops=_standing,
+        drops=_not_standing_prompt,
         functions=(
             'pydantic_ai.models.Model._trim_before_compaction',
             'pydantic_ai.models._trim_messages_before_compaction',

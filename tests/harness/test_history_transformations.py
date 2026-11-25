@@ -74,9 +74,9 @@ with try_import():
 Transformation = Literal[
     'model_fallback_switch',  # run-level: fallback at request k, history compared with the native run
     'summarizing',  # SummarizingCompaction (harness)
-    'sliding_window',  # SlidingWindow history processor
-    'compaction_part',  # provider compaction kept as CompactionPart (OpenAI/Anthropic shapes, offline)
-    'history_processor',  # a user `history_processors=[...]` that returns a filtered copy
+    'sliding_window',  # SlidingWindowCompaction (harness)
+    'compaction_part',  # Anthropic's compaction block kept as a CompactionPart, and the trim around it (offline)
+    'history_processor',  # a `ProcessHistory` processor that returns a rebuilt copy
     'type_adapter',  # ModelMessagesTypeAdapter dump/load (also in C1; kept here for the registry)
     'sanitize',  # sanitize_messages(strip_system_prompts=True)
     'vercel_ai',  # dump_messages/load_messages round trip
@@ -628,7 +628,7 @@ TRANSFORM_EXEMPT: dict[str, str] = {
 }
 """Each function that returns `list[ModelMessage]` without being a registered transformation, with why.
 
-A run-level entry goes when `c4_transforms_runlevel.py` registers it; a `PENDING` one when it becomes a `Transform`."""
+A `PENDING` entry goes when a `Transform`, here or in `c4_transforms_runlevel.py`, reaches the function and registers it."""
 
 
 def test_every_history_function_is_registered() -> None:

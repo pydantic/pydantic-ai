@@ -11,10 +11,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from pydantic_ai.messages import CompactionPart, ModelRequest, ModelResponse, SystemPromptPart
-from pydantic_ai_harness.compaction._receipts import is_receipt_message
+from pydantic_ai import RunContext
+from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, ModelResponse, SystemPromptPart
 
-from .c4_transforms_runlevel import PROCESSED
+from .c4_transforms_runlevel import is_receipt, rebuilt, run_with_processor
 from .test_capability_routes import PROBES, _native  # pyright: ignore[reportPrivateUsage]
 from .test_history_transformations import TRANSFORMS, NativeRun, Signature, signature
 
@@ -46,7 +46,7 @@ async def test_the_fallback_switch_finishes_on_the_backup(tmp_path: Path) -> Non
 async def test_summarizing_replaces_history_with_a_summary(tmp_path: Path) -> None:
     native, output = await _transformed('summarizing', tmp_path)
     assert native.messages[2] not in output  # the tool call's result
-    assert any(is_receipt_message(message) for message in output)  # pyright: ignore[reportArgumentType]
+    assert any(is_receipt(part) for message in output if isinstance(message, ModelRequest) for part in message.parts)
     summaries = [
         part
         for message in output
@@ -62,7 +62,7 @@ async def test_the_sliding_window_keeps_the_newest_messages(tmp_path: Path) -> N
     native, output = await _transformed('sliding_window', tmp_path)
     assert native.messages[0] in output and output[-1] == native.messages[-1]
     assert native.messages[1] not in output and native.messages[2] not in output
-    assert any(is_receipt_message(message) for message in output)  # pyright: ignore[reportArgumentType]
+    assert any(is_receipt(part) for message in output if isinstance(message, ModelRequest) for part in message.parts)
 
 
 async def test_the_provider_trim_cuts_at_the_compaction_block(tmp_path: Path) -> None:
@@ -79,7 +79,15 @@ async def test_the_provider_trim_cuts_at_the_compaction_block(tmp_path: Path) ->
 
 
 async def test_the_processor_runs_before_every_request(tmp_path: Path) -> None:
-    PROCESSED.clear()
-    native, output = await _transformed('history_processor', tmp_path)
-    assert len(PROCESSED) == sum(isinstance(message, ModelResponse) for message in native.messages)
+    calls = PROBES[_PROBE]
+    run = await _native(calls, tmp_path / 'native')
+    native = NativeRun(run.messages, run.ran, _PROBE, calls)
+    given: list[int] = []
+
+    def counted(ctx: RunContext[None], messages: list[ModelMessage]) -> list[ModelMessage]:
+        given.append(len(messages))
+        return rebuilt(ctx, messages)
+
+    output = await run_with_processor(native, tmp_path / 'processed', counted)
+    assert len(given) == sum(isinstance(message, ModelResponse) for message in native.messages)
     assert _signatures(output) == _signatures(native.messages)
