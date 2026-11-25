@@ -640,7 +640,7 @@ send. In the interactive shell these records go to `telemetry.log` next to
 and Pax names that file on exit when the session wrote to it. A logger your own
 application already handles, when embedding `chat()`, is left alone, but on a macOS
 or Linux terminal what its handler writes to stderr during the session goes to
-`telemetry.log` too, as everything written to stderr then does. Headless
+`telemetry.log` too; see [Startup](docs/reference.md#startup). Headless
 `pax -p` still writes them to stderr, separate from the answer on stdout.
 
 Previously named `logfire`, this plugin keeps existing enabled/disabled choices,

@@ -216,9 +216,10 @@ warnings are hidden so they do not break up the display; pass `-W default` to
 Python or set `PYTHONWARNINGS=default` to see them. During an interactive
 session on a macOS or Linux terminal, everything written to standard error goes to
 `telemetry.log` next to `config.db` instead of over the display: those warnings,
-library log messages, and the error output of programs Pax starts. Pax names the
-file on exit when the session wrote to it. `!` commands, `/update now`, and the
-editor `$EDITOR` opens still write to the terminal. Log messages from Logfire and
+library log messages, and the error output of programs that inherit it. Pax names
+the file on exit when the session wrote to it. `!` commands, `/update now`, and the
+`$VISUAL` or `$EDITOR` editor still write to the terminal, and the agent's commands
+still capture theirs. Log messages from Logfire and
 OpenTelemetry, such as export retries and timeouts, never print to the terminal
 either; logging handlers that a plugin configures still receive them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
