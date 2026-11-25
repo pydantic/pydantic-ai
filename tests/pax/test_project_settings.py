@@ -873,6 +873,13 @@ def test_the_banner_prints_a_project_path_as_written(tmp_path: Path) -> None:
     assert f'Project settings: {path}\n' in output.getvalue()
 
 
+def test_the_welcome_ends_with_a_blank_line(tmp_path: Path) -> None:
+    """The first prompt is set off from the welcome, the project report included."""
+    output = io.StringIO()
+    print_welcome(ProjectSettings(path=tmp_path / PROJECT_FILE), Console(file=output, width=300))
+    assert output.getvalue().endswith(f'Project settings: {tmp_path / PROJECT_FILE}\n\n')
+
+
 @pytest.mark.parametrize('flag', [True, False], ids=['with-launch-flags', 'without'])
 def test_project_command_keeps_the_launch_flags(tmp_path: Path, flag: bool) -> None:
     """A flag outranks the project file at startup, so approving or revoking does not replace its value."""
