@@ -715,7 +715,10 @@ RENAMED = Contract(
         ),
         **dict.fromkeys(
             ('CodeMode', 'IPythonCodeMode', 'ToolBridge'),
-            Exempt('its tools come from its wrapper toolset, which `PrefixTools` leaves unprefixed'),
+            Exempt(
+                'its tools come from its wrapper toolset, which `PrefixTools` leaves unprefixed: '
+                'https://github.com/pydantic/pydantic-ai/issues/14537'
+            ),
         ),
         'Skills': Exempt("the model loads a skill with core's `load_capability` tool, which a prefix doesn't rename"),
     },
