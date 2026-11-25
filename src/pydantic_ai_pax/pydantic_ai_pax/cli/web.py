@@ -135,7 +135,6 @@ def _web_session(
         status=shell.status,
         settings=settings_for,
         busy=shell.background_running,
-        trust_for=shell.process.trust_for,
     ).attach(sessions=shell.sessions, commands=shell.commands)
     return shell
 

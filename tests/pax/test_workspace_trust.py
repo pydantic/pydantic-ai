@@ -118,9 +118,10 @@ async def test_trust_shows_what_it_covers(repository: Path) -> None:
         assert await shell.commands.execute_async('/trust') == (
             f'This folder is untrusted, as every folder is until you decide.\n'
             f'{repository}: this repository and its worktrees.\n'
-            'Trusted, these reach the model as your own instructions: ../AGENTS.md, skills.\n'
-            "Untrusted, the agent can still read, edit and run code here, but Pax treats the folder's files as the "
-            "repository's, not yours.\n"
+            'Found here: ../AGENTS.md, skills '
+            '(walk-up instruction files, skills and agent folders still load as before until they check workspace authority).\n'
+            'Untrusted, the agent can still read, edit and run code here; capabilities that check workspace '
+            "authority treat the folder's files as the repository's, not yours.\n"
             'Either way, these still wait for their own approval: ../.clai/settings.json (/project approve, /plugins enable).\n'
             '/trust yes trusts it; /trust no keeps it untrusted.'
         )
@@ -526,7 +527,6 @@ async def test_trust_changes_reach_other_live_sessions_in_the_same_process(repos
             loader=mover.loader,
             status=mover.status,
             settings=lambda _: Settings(model=None),
-            trust_for=process.trust_for,
         )
         await workspace.move(str(sub))
         assert mover.session.trust is process.trusts[repository]
@@ -567,3 +567,45 @@ async def test_trust_changes_reach_other_live_sessions_in_the_same_process(repos
     finally:
         await home_b.close('exit')
         await home_a.close('exit')
+
+
+async def test_concurrent_trust_lookups_and_updates_share_one_instance(tmp_path: Path) -> None:
+    """Concurrent `resolve_trust` misses return the same `WorkspaceTrust`, and concurrent updates stay consistent."""
+    store = SettingsStore(tmp_path / 'config.db')
+    process: ClaiProcess[None] = ClaiProcess.open(store)
+    parent = tmp_path / 'shared'
+    child = parent / 'nested'
+    child.mkdir(parents=True)
+    found: list[WorkspaceTrust] = []
+
+    async def lookup(directory: Path) -> None:
+        found.append(await process.resolve_trust(directory))
+
+    async with anyio.create_task_group() as group:
+        for _ in range(4):
+            group.start_soon(lookup, parent)
+
+    assert len(found) == 4 and all(item is found[0] for item in found)
+    # A subsequent fast-path lookup returns the cached instance.
+    assert await process.resolve_trust(parent) is found[0]
+
+    # Updating `parent` while another coroutine looks up `child` and inserts new scopes never raises or loses updates.
+    child_resolved: list[WorkspaceTrust] = []
+
+    async def lookup_child() -> None:
+        child_resolved.append(await process.resolve_trust(child))
+
+    async def trust_parent() -> None:
+        await process.decide_trust(found[0], trusted=True)
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(trust_parent)
+        group.start_soon(lookup_child)
+        for i in range(4):
+            sibling = tmp_path / f'sibling-{i}'
+            sibling.mkdir()
+            group.start_soon(lookup, sibling)
+
+    assert child_resolved[0].trusted is True
+    await process.decide_trust(found[0], trusted=False)
+    assert child_resolved[0].trusted is False

@@ -99,7 +99,7 @@ from pydantic_ai_pax.runtime.sessions import Sessions
 from pydantic_ai_pax.runtime.speculation import Speculation
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.tasks import Tasks, question_row, resume_prompt
-from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust, trust_command
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 from pydantic_ai_pax.ui import telemetry
 from pydantic_ai_pax.ui.menus.dialogs import run_settings_menu
 from pydantic_ai_pax.ui.menus.key_menu import keys_command, keys_menu
@@ -220,6 +220,7 @@ def _attach_trust(
 ) -> None:
     """Give `session` its folder's shared trust on `process`, with its footer indicator and `/trust`."""
     session.trust = process.trust_for(Path(session.workspace), initial=trust)
+    session.resolve_trust = process.resolve_trust
     status.trust = lambda: None if session.trust is None else session.trust.level
     commands.register(
         Command(
@@ -234,15 +235,7 @@ def _attach_trust(
 async def _trust_command(session: Session[DepsT, OutputT], process: ClaiProcess[DepsT], args: list[str]) -> str:
     """`/trust` for `session`, whose folder `create_shell` always gave a trust decision; it reads the folder's names."""
     assert session.trust is not None, 'create_shell sets the trust of every session it builds'
-    trust = session.trust
-
-    def run() -> str:
-        reply = trust_command(trust, process.store, Path(session.workspace), args)
-        if args:
-            process.refresh_trust(trust)
-        return reply
-
-    return await to_thread.run_sync(run)
+    return await process.run_trust_command(session.trust, Path(session.workspace), args)
 
 
 def create_shell(

@@ -19,7 +19,6 @@ from pydantic_ai_pax.config.project_settings import ProjectSettings, load_projec
 from pydantic_ai_pax.plugins.loader import SessionPlugins
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.sessions import Sessions
-from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 from pydantic_ai_pax.ui.rendering.status import Status
 
 
@@ -49,8 +48,6 @@ class SessionWorkspace:
     """The settings Pax starts with beside a project file: saved ones, then the project's, then launch flags."""
     busy: Callable[[], bool] = lambda: False
     """Whether a background fork or a delegated task runs."""
-    trust_for: Callable[[Path], WorkspaceTrust] | None = None
-    """Looks up the process-shared `WorkspaceTrust` for the target directory; defaults to reading the store."""
 
     def attach(self, *, sessions: Sessions[None, str], commands: Commands) -> None:
         """Make `/resume ID` move into the session's directory, and add `/workspace`."""
@@ -76,11 +73,8 @@ class SessionWorkspace:
         if self.session.running or self.busy():
             raise RuntimeError('Something is running. Switch directories once it ends.')
         project = await to_thread.run_sync(lambda: load_project_settings(directory, store=self.context.store))
-        trust = (
-            await to_thread.run_sync(self.trust_for, directory)
-            if self.trust_for is not None
-            else await to_thread.run_sync(WorkspaceTrust.saved, self.context.store, directory)
-        )
+        assert self.session.resolve_trust is not None, 'create_shell attaches process trust resolution to every session'
+        trust = await self.session.resolve_trust(directory)
         settings = self.settings(project)
         self.session.workspace = self.status.workspace = str(directory)
         # The new directory gets its own decision, as if Pax had started there; it is never asked here.

@@ -687,6 +687,8 @@ class Session(Generic[DepsT, OutputT]):
 
         `None` gives the folder's files `'operator'` authority, for a host that decides that itself.
         """
+        self.resolve_trust: Callable[[Path], Awaitable[WorkspaceTrust]] | None = None
+        """Looks up the process-shared `WorkspaceTrust` when the session moves to another directory."""
         self.project_instructions: Callable[[], ProjectInstructions[DepsT] | None] = lambda: None
         """The project file's `instructions` you have not approved, added to each run as marked user-channel data."""
         self.resolve_model: ModelNameResolver = lambda name: name

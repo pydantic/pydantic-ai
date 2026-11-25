@@ -178,7 +178,10 @@ class WorkspaceTrust:
 
     def refresh(self, store: SettingsStore) -> None:
         """Reload this scope's saved decision from `store`, if one exists for it or an ancestor."""
-        saved = saved_trust(store, self.scope)
+        self.apply_saved(saved_trust(store, self.scope))
+
+    def apply_saved(self, saved: tuple[bool, Path] | None) -> None:
+        """Apply a `saved_trust` lookup result to this instance."""
         if saved is None:
             self.trusted = False
             self.decided_for = None
@@ -251,10 +254,13 @@ def describe(trust: WorkspaceTrust, directory: Path) -> str:
         lines.append('This is your home folder or the filesystem root, so the answer holds for this session only.')
     files = repository_files(directory)
     if files.trusted:
-        lines.append(f'Trusted, these reach the model as your own instructions: {_names(files.trusted)}.')
+        lines.append(
+            f'Found here: {_names(files.trusted)} '
+            '(walk-up instruction files, skills and agent folders still load as before until they check workspace authority).'
+        )
     lines.append(
-        'Untrusted, the agent can still read, edit and run code here, '
-        "but Pax treats the folder's files as the repository's, not yours."
+        'Untrusted, the agent can still read, edit and run code here; '
+        "capabilities that check workspace authority treat the folder's files as the repository's, not yours."
     )
     if files.approved_separately:
         waiting = ', '.join(f'{_names((name,))} ({how})' for name, how in files.approved_separately)

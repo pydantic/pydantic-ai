@@ -407,16 +407,18 @@ async def _decide_trust(
     trusted = await ask(await to_thread.run_sync(describe, trust, Path(shell.session.workspace)))
     if trusted is None:
         console.print(
-            "Untrusted for this session: the agent can still work here, with its files as the repository's. "
-            '/trust changes it.',
+            "Untrusted for this session: capabilities that check workspace authority treat this folder's files "
+            "as the repository's. /trust changes it.",
             style=theme.color(theme.INFO),
             markup=False,
         )
         return
-    await to_thread.run_sync(
-        lambda: (trust.decide(shell.context.store, trusted=trusted), shell.process.refresh_trust(trust))
+    await shell.process.decide_trust(trust, trusted=trusted)
+    level = (
+        'Trusted'
+        if trusted
+        else "Untrusted: capabilities that check workspace authority treat this folder's files as the repository's"
     )
-    level = 'Trusted' if trusted else "Untrusted: the agent can still work here, with its files as the repository's"
     held = '' if trust.scope.remembered else ' for this session'
     console.print(f'{level}{held}. /trust changes it.', style=theme.color(theme.INFO), markup=False)
 
