@@ -179,7 +179,7 @@ only from an author with write access; any other author asks a maintainer to add
 uv sync --locked --all-packages --all-extras --group lint
 ```
 
-Harness and `pydantic-clai2` share the root `uv.lock`, `.venv`, and Pyright
+Harness and `pydantic-ai-pax` share the root `uv.lock`, `.venv`, and Pyright
 configuration. Every workspace package requires Python 3.11 or newer.
 
 ## File structure

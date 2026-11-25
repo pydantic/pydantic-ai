@@ -16,7 +16,7 @@ from .._instructions import (
     resolve_instruction_function,
     validate_instruction_name,
 )
-from .._run_context import AgentDepsT, RunContext
+from .._run_context import AgentDepsT, RunContext, ToolNamePath
 from ..exceptions import ModelRetry, UserError
 from ..messages import InstructionChangePolicy, InstructionPart, ToolKind, ToolKindLike, ToolPartKind
 from ..tools import (
@@ -107,11 +107,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
             docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added to the toolset, unless overridden when adding a function.
+                A [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was built with.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added to the toolset, unless overridden when adding a function.
+                A [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was built with.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
-                Applies to all tools, unless overridden when adding a tool.
+                Applies to functions added to the toolset, unless overridden when adding a function.
+                A [`Tool`][pydantic_ai.tools.Tool] instance keeps the schema it was built with.
             strict: Whether to enforce (vendor-specific) strict schema adherence for tool calls (supported by OpenAI, Anthropic, Google, and Bedrock).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 Applies to all tools, including [`Tool`][pydantic_ai.tools.Tool] instances that leave it unset, unless overridden when adding a tool or function.
@@ -827,9 +830,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             # or when a wrapper other than `PrefixedToolset` and `RenamedToolset` renames tools,
             # nested inside or around them, whether or not it calls `super().get_tools()`. If it
             # then names an unrelated tool, `prepare` reads that tool's count.
-            exposed = original_name
-            for layer in reversed(ctx._tool_name_path):  # pyright: ignore[reportPrivateUsage]
-                exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
+            exposed = _exposed_tool_name(original_name, ctx._tool_name_path)  # pyright: ignore[reportPrivateUsage]
             run_context = replace(
                 ctx,
                 tool_name=original_name,
@@ -913,3 +914,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 raise ModelRetry(f'Timed out after {timeout} seconds.') from None
         else:
             return await tool.call_func(tool_args, ctx)
+
+
+def _exposed_tool_name(original_name: str, tool_name_path: ToolNamePath) -> str:
+    """The name the model calls a tool by, applying the `PrefixedToolset` and `RenamedToolset` layers innermost first."""
+    exposed = original_name
+    for layer in reversed(tool_name_path):
+        exposed = f'{layer}_{exposed}' if isinstance(layer, str) else layer.get(exposed) or exposed
+    return exposed

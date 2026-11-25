@@ -173,6 +173,13 @@ def current_model_request_span() -> Span | None:
     return policy.span
 
 
+def add_input_transformations_event(provider: str, reported: Sequence[Mapping[str, object]]) -> None:
+    """Record the replayed items a provider withheld as an event on the model request span."""
+    if (span := current_model_request_span()) is not None:
+        key = f'{provider}.input_transformations'
+        span.add_event(key, attributes={key: to_json(reported).decode()})
+
+
 @contextmanager
 def request_policy_scope(policy: ContentPolicy | None) -> Generator[None]:
     """Install `policy` for the scope, for a durable unit that runs outside the context that opened the request."""

@@ -146,7 +146,7 @@ env:
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
 engine:
-  model: anthropic/${{ vars.GH_AW_MODEL }}
+  model: anthropic/${{ vars.GH_AW_ZAI_MODEL }}
 # Keep in this file, not an import: see `daily-aic-guardrail` in `.github/workflows/AGENTS.md`.
 max-daily-ai-credits: -1
 imports:
@@ -549,6 +549,8 @@ jobs:
       - name: Check out the prompt resolver action and default prompt
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          # Without `ref:`, a pull request event checks out the PR's merge commit.
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: |
             .github/actions/fetch-dynamic-prompt

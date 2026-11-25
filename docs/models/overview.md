@@ -44,6 +44,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
 | [OpenAI Decisions API](openai.md#decisions-api) | [Decision model](decision.md) | `openai-decisions:` |
 | [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
+| [Oracle Cloud Infrastructure (OCI) Generative AI](compatible-apis.md#oci-generative-ai) | Cloud platform | explicit [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] |
 | [Otari](compatible-apis.md#otari) | Gateway | `otari:` |
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
@@ -54,6 +55,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [TypeSafe (Jev)](typesafe.md) | [Decision model](decision.md) | `typesafe:` |
 | [Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway) | Gateway | `vercel:` |
 | [vLLM](compatible-apis.md#vllm) | Self-hosted inference | `vllm:` |
+| [WaveSpeed AI](compatible-apis.md#wavespeed-ai) | Gateway | explicit [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] |
 | [xAI](xai.md) | Model developer | `xai:` |
 | [Z.AI](zai.md) | Model developer | `zai:` |
 
@@ -126,6 +128,25 @@ The profile also says which files the model accepts: [`supports_image_input`][py
 Individual model adapters expose their resolved profile the same way, so the same check works whether the model was selected automatically from a `<provider>:<model>` name or instantiated directly. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] is different: it has no single profile because its candidate models may have different capabilities. Inspect the profile of each model in `fallback_model.models` instead. With the [`ModelFallback`](../capabilities/model-fallback.md) capability, each attempt is made with a model of its own, so a capability hook reads the profile of the model serving the attempt from `request_context.model`. Don't confuse profiles with [Capabilities](../capabilities/overview.md), which are reusable bundles of tools, hooks, and settings you add to an agent — the profile describes what the underlying model itself supports.
 
 The profile also carries the model's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]: the maximum number of tokens it can handle in a single request, or `None` when unknown. Every model, including a `FallbackModel` and wrappers like [`InstrumentedModel`][pydantic_ai.models.instrumented.InstrumentedModel], exposes it as [`model.context_window`][pydantic_ai.models.AbstractModel.context_window]; a fallback model reports the smallest window among its candidates, so history that fits it fits whichever candidate answers. Inside a run, [`ctx.context_window_used`][pydantic_ai.tools.RunContext.context_window_used] reports the fraction in use, or `None` when it cannot be calculated. See [Compact when the context window fills](../message-history.md#compact-when-the-context-window-fills) for an example that handles this case.
+
+## Deprecated models {#deprecated-models}
+
+When a provider has deprecated or retired a model, each request to it emits a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning] naming the model, its retirement date and the replacement the provider recommends, with a link to the provider's announcement. Creating the model doesn't warn. Python's [warning filters](https://docs.python.org/3/library/warnings.html#the-warnings-filter) decide how often it's shown: with the default filters, `run_sync` and other code that enters `warnings.catch_warnings()` reset the record of warnings already shown, so a model can warn again on a later request. The warning is a `UserWarning`, so Python shows it by default.
+
+The deprecation comes from the model's profile, whose [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation] holds a [`ModelDeprecation`][pydantic_ai.profiles.ModelDeprecation]. Pydantic AI sets it for models on the [Anthropic](anthropic.md) and [OpenAI](openai.md) APIs, from those providers' deprecation pages, including when you reach them through the [Pydantic AI Gateway](../gateway.md). Anthropic's dates also apply to the platforms it operates: Microsoft Foundry, Claude Platform on AWS and Claude Models on Google Cloud (Anthropic managed). The deprecation isn't set where another platform serves the same model on a schedule of its own: Amazon Bedrock, Google Cloud's Vertex AI, Azure, OpenRouter and the Codex backend. A Gateway [endpoint](../gateway.md#gateway-endpoints) that fails over to one of those platforms still gets the Anthropic or OpenAI date.
+
+To turn the warning into an error, use a [warnings filter](https://docs.python.org/3/library/warnings.html#the-warnings-filter). To stop it for one model, set the profile's `deprecation` to `None`; to warn about a model you serve elsewhere, set it to a `ModelDeprecation` of your own:
+
+```python {test="skip"}
+import warnings
+
+from pydantic_ai import DeprecatedModelWarning
+from pydantic_ai.models.anthropic import AnthropicModel
+
+warnings.filterwarnings('error', category=DeprecatedModelWarning)
+
+model = AnthropicModel('{{ anthropic:medium.name }}', profile={'deprecation': None})
+```
 
 ## HTTP Client Lifecycle
 
@@ -294,8 +315,8 @@ these categories, whichever provider it came from:
 | [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] | The provider or model is temporarily unavailable, e.g. an HTTP 503 or a gRPC `UNAVAILABLE` sent by the provider. |
 | [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError] | The provider said it's unavailable because it's overloaded, e.g. an HTTP 529 or Anthropic's `overloaded_error`. A subclass of `ModelUnavailableError`. |
 | [`ModelServerError`][pydantic_ai.exceptions.ModelServerError] | The provider failed with another server error, e.g. an HTTP 500, 502, or 504. |
-| [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
-| [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer. A subclass of `ModelConnectionError`. A [`request_timeout`](../timeouts.md#model-request-deadlines) deadline over all attempts raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead. |
+| [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, its response could not be read, or the provider timed out the attempt (see `ModelTimeoutError`). Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
+| [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer, or the provider reported that it timed out the attempt, e.g. an HTTP 408 or Bedrock's `ModelTimeoutException`. A subclass of `ModelConnectionError`; a timeout the provider reports has no `phase`. A [`request_timeout`](../timeouts.md#model-request-deadlines) deadline over all attempts raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead. |
 | [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] | The provider rejected the request itself, e.g. an HTTP 400, 413 or 422, so sending it again unchanged won't succeed. |
 | [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] | The input exceeds the model's context window. A subclass of `ModelRequestRejectedError`. |
 | [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError] | The provider rejected the credentials, or doesn't allow them to make the request, e.g. an HTTP 401 or 403. A subclass of `ModelRequestRejectedError`. |
@@ -309,6 +330,27 @@ overloaded. Anthropic's tier spend cap is a 429 too, but its `enforced_spend_lim
 why: a `ModelContextWindowExceededError`, a `ModelNotFoundError`, or a `ModelAuthenticationError` (the Gemini API
 sends `API_KEY_INVALID` as a 400). Exhausted credits, a reached spend limit, or disabled billing are a
 `ModelQuotaExceededError` instead, even when the provider sends them as a 400, as Anthropic and the Gemini API do.
+
+A request can also succeed while the response the provider sent in reply can't be used. The chat model adapters
+raise that as a model error too, before the agent sees the response, so it's handled like a failed request:
+
+| Exception | Raised when |
+|---|---|
+| [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] | The provider sent no response, e.g. a stream that ended before its first event, or a completion without choices. Often a transient glitch, so sending the request again may help. [`RetryOnModelErrors`](../capabilities/retry-on-model-errors.md) doesn't retry it by default; pass `retry_on=(*TRANSIENT_MODEL_ERRORS, ModelEmptyResponseError)` to include it. |
+| [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError] | The response couldn't be read, e.g. a completion that doesn't match the API's schema. Sending the same request again often gets the same response. |
+
+Both are also an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which these responses used
+to raise, so existing `except UnexpectedModelBehavior` blocks keep catching them. As model errors, though, they're now
+also what a [`FallbackModel`](#fallback-model) or [`ModelFallback`](../capabilities/model-fallback.md) falls back on by
+default, so when every model in the chain fails, the run raises a
+[`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup], which only `except*` or `except
+FallbackExceptionGroup` catches. A response the agent can't use once the model has returned it, like one with no output
+or one cut off at the token limit, is judged in the [agent loop](../agent.md) instead, and raises a plain
+`UnexpectedModelBehavior` or is re-prompted.
+
+Some adapters still raise a plain [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] for the same kind of
+response, like OpenRouter's `null` `choices`, or a body that isn't JSON on most providers, so to handle all of them,
+catch `ModelAPIError`.
 
 Other errors are raised as a plain `ModelAPIError` or [`ModelHTTPError`](#handling-http-errors), as they always were.
 Categories are assigned from the provider's error code or type where it sends one, and from the error message
@@ -467,7 +509,9 @@ common use case. That includes every [error category](#handling-model-api-errors
 unavailable or overloaded providers, server errors, connection failures and timeouts,
 and rejected requests, including [context window overflows](#context-window-overflow): another model or provider may
 accept a request, credentials or model name the first one rejected, and a model with a larger context window may
-accept an input that overflowed another model's. To fall back only on some of them, pass those categories
+accept an input that overflowed another model's. It also includes a response the model couldn't use, a
+[`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] or
+[`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError]. To fall back only on some of them, pass those categories
 as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`.
 
 This behavior is controlled by the `fallback_on` parameter (see

@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 from weakref import WeakKeyDictionary
 
+import anyio
 from dbos import DBOS, SetWorkflowID, SetWorkflowTimeout
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 from pydantic import TypeAdapter, ValidationError
@@ -67,7 +68,7 @@ _recorded_children_by_execution: WeakKeyDictionary[DBOSContext, dict[int, str | 
 _children_taken: WeakKeyDictionary[DBOSContext, set[str]] = WeakKeyDictionary()
 """The child workflows that took a step position, per workflow execution, so no call waits for one to take another."""
 
-_position_events: WeakKeyDictionary[DBOSContext, asyncio.Event] = WeakKeyDictionary()
+_position_events: WeakKeyDictionary[DBOSContext, anyio.Event] = WeakKeyDictionary()
 """Set when a child workflow call takes a step position, per workflow execution, to wake the calls waiting for theirs."""
 
 _default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
@@ -275,6 +276,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return in_workflow_code()
+
+    @property
+    def in_durable_unit(self) -> bool:
+        return DBOS.step_id is not None or super().in_durable_unit
 
     def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
@@ -593,11 +598,11 @@ async def _call_child_workflow(
         and sibling.startswith(siblings_prefix)
         and sibling not in taken
     ):
-        await _position_events.setdefault(context, asyncio.Event()).wait()
+        await _position_events.setdefault(context, anyio.Event()).wait()
     # The child takes the next position when `workflow` is called, with no wait before it, so wake the waiting
     # calls now: they run once this call waits for its child, after it took the position.
     taken.add(child_id)
-    _position_events.pop(context, asyncio.Event()).set()
+    _position_events.pop(context, anyio.Event()).set()
     with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
         return await workflow(*args)
 

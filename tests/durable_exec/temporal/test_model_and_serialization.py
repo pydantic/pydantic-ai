@@ -23,10 +23,12 @@ from pydantic_ai import (
     BinaryContent,
     BinaryImage,
     CodeExecutionTool,
+    DeprecatedModelWarning,
     DocumentUrl,
     FilePart,
     FunctionToolset,
     ImageUrl,
+    ModelDeprecation,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -62,7 +64,9 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelRateLimitError,
     ModelRequestRejectedError,
@@ -975,6 +979,55 @@ async def test_oversized_model_response_payload(client: Client):
             )
 
 
+async def _answer_ok(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('ok')])
+
+
+deprecated_model_agent = Agent(
+    FunctionModel(
+        _answer_ok,
+        model_name='retiring-model',
+        profile={'deprecation': ModelDeprecation(source_url='https://example.com/retiring-model')},
+    ),
+    name='deprecated_model_agent',
+    deps_type=type(None),
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DeprecatedModelWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await deprecated_model_agent.run(prompt)
+        return result.output
+
+
+async def test_deprecated_model_warns_once_from_its_activity(client: Client):
+    """A deprecated model warns once per request, from the activity that sends it.
+
+    The workflow prepares the request too, to resolve the output mode and describe it on the span, and a warning
+    there would repeat on every replay.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DeprecatedModelWorkflow],
+        plugins=[AgentPlugin(deprecated_model_agent)],
+    ):
+        with pytest.warns(DeprecatedModelWarning) as record:
+            output = await client.execute_workflow(
+                DeprecatedModelWorkflow.run,
+                args=['hello'],
+                id=DeprecatedModelWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    assert output == 'ok'
+    assert [str(w.message) for w in record if w.category is DeprecatedModelWarning] == snapshot(
+        ["Model 'function:retiring-model' is deprecated by its provider. See https://example.com/retiring-model"]
+    )
+
+
 # ============================================================================
 # DocumentUrl Serialization Test - Verifies that DocumentUrl with custom
 # media_type is properly serialized through Temporal activities
@@ -1145,6 +1198,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
+        '_output_submitter',  # live view of the workflow's graph state; output can only be submitted from workflow code
         'workspace',  # live facade cannot cross the activity boundary; only a concrete ref is optionally carried
         # Live toolsets the run holds entered; an activity may run in another process, so it enters its own
         '_run_held_toolsets',
@@ -3881,6 +3935,11 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             id='http-request-rejected',
         ),
         pytest.param(
+            ModelHTTPError.for_category(ModelTimeoutError, status_code=408, model_name='gpt-test'),
+            'ModelHTTPError',
+            id='http-timeout',
+        ),
+        pytest.param(
             ModelNotFoundError('gpt-test', 'The model does not exist.', in_stream=True),
             'ModelAPIError',
             id='not-found',
@@ -3895,6 +3954,16 @@ def test_the_application_error_keeps_the_type_temporal_retries_on():
             ModelServerError('gpt-test', 'server_error: failed', in_stream=True), 'ModelAPIError', id='server'
         ),
         pytest.param(ModelAPIError('gpt-test', 'boom'), 'ModelAPIError', id='base'),
+        pytest.param(
+            ModelEmptyResponseError('gpt-test', 'Streamed response ended without content or tool calls'),
+            'UnexpectedModelBehavior',
+            id='empty-response',
+        ),
+        pytest.param(
+            ModelInvalidResponseError('gpt-test', 'Invalid response', body='<html>Bad gateway</html>'),
+            'UnexpectedModelBehavior',
+            id='invalid-response',
+        ),
         pytest.param(DecisionHandOff('decider', 'search', 0.4, 'handed off'), 'DecisionHandOff', id='other-subclass'),
     ],
 )
@@ -3907,6 +3976,7 @@ def test_a_categorized_error_keeps_the_type_temporal_retries_on(error: ModelAPIE
     assert raised.value.type == type_name
     rebuilt = _crossed(error)
     assert type(rebuilt) is type(error)
+    assert str(rebuilt) == str(error)
 
 
 def test_a_categorized_http_error_is_rebuilt_as_itself_not_its_category():

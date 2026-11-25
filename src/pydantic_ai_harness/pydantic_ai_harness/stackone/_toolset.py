@@ -101,7 +101,8 @@ def resolve_api_key(api_key: str | None) -> str:
     resolved = api_key or os.environ.get(STACKONE_API_KEY_ENV)
     if not resolved:
         raise UserError(
-            f'A StackOne API key is required: pass `api_key` or set the `{STACKONE_API_KEY_ENV}` environment variable.'
+            'A StackOne API key is required: pass `auth` to `StackOne` or `api_key` to `StackOneToolset`, '
+            f'or set the `{STACKONE_API_KEY_ENV}` environment variable.'
         )
     return resolved
 

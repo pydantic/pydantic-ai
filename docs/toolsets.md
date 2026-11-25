@@ -122,6 +122,15 @@ _(This example is complete, it can be run "as is")_
 
 A tool that joins the run after its first model request, however it got there, is recorded in the message history as a [`ToolAvailabilityDeltaPart`][pydantic_ai.messages.ToolAvailabilityDeltaPart], unless no plainly visible tool from before is still present to keep stable. A new tool with `defer_loading=True` joins the [tool search](tools-advanced.md#tool-search) corpus instead. See [Tools that appear mid-run](tools-advanced.md#mid-run-tool-additions) for how each provider delivers it.
 
+!!! note "Sharing a `Tool` between toolsets and agents"
+    A toolset currently writes its defaults onto each [`Tool`][pydantic_ai.tools.Tool] instance it adds, so every other toolset or agent holding the same `Tool` lists it with them too ([#12617](https://github.com/pydantic/pydantic-ai/issues/12617)):
+
+    - `strict`, `include_return_schema`, `max_retries` and `durable`, when the `Tool` leaves them unset.
+    - `sequential`, `defer_loading` and `requires_approval`, when the toolset sets them to `True`.
+    - `metadata`, merged into the `Tool`'s own, whose keys take precedence.
+
+    To keep a toolset's defaults off other holders, give each toolset or agent its own `Tool`.
+
 ### Toolset Instructions
 
 A [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] can provide instructions that are automatically included in the model request. This lets each toolset carry its own usage guidance alongside its tools, so you don't need to duplicate instructions on every agent that uses the toolset.
@@ -447,6 +456,8 @@ _(This example is complete, it can be run "as is")_
 This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) capability hook that prepares all tool definitions registered on an agent across toolsets.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
+
+A prepare function can't change which capability a tool belongs to either: a definition it returns keeps the [`capability_id`][pydantic_ai.tools.ToolDefinition.capability_id] of the one it replaces, even if the function built a new `ToolDefinition`. The tool's content stays [held to that capability's authority](capabilities/custom.md#where-the-content-came-from).
 
 To chain transformations, call [`prepared()`][pydantic_ai.toolsets.AbstractToolset.prepared] on any toolset.
 
@@ -882,7 +893,7 @@ Toolsets can be built dynamically ahead of each agent run or run step using a fu
 
 To register a dynamic toolset, you can pass a function that takes [`RunContext`][pydantic_ai.tools.RunContext] to the `toolsets` argument of the `Agent` constructor, or you can wrap a compliant function in the [`@agent.toolset`][pydantic_ai.agent.Agent.toolset] decorator.
 
-By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run.
+By default, the function will be called again ahead of each agent run step. If you are using the decorator, you can optionally provide a `per_run_step=False` argument to indicate that the toolset only needs to be built once for the entire run. Either way, the toolset it returns gets the [per-run and per-step lifecycle](#per-run-and-per-step-lifecycle) hooks: `for_run` before it is entered, and `for_run_step` on every step.
 
 Instructions from the toolset the function returns are attributed to the dynamic toolset, so for them to use `on_change='append'`, give the decorator an `id`: `@agent.toolset(id='orders')`.
 

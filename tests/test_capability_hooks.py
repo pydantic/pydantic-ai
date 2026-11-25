@@ -74,6 +74,7 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, ExternalToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -91,7 +92,6 @@ from .continuation_utils import ScriptedContinuationModel, StreamSegment, script
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-READINESS_WAIT_TIMEOUT = 10
 
 pytestmark = []
 
@@ -1269,35 +1269,108 @@ class TestCompositionOrder:
 
 class TestCombinedBeforeWrapAfter:
     async def test_all_hook_types_on_same_capability(self):
-        """Test before + wrap + after all fire correctly on a single capability."""
-        cap = LoggingCapability()
-        agent = Agent(FunctionModel(tool_calling_model), capabilities=[cap])
+        """Every hook on a single capability fires in one order across a validation retry, a tool retry and a recovery.
 
-        @agent.tool_plain
-        def my_tool() -> str:
-            return 'result'
+        The model calls the tool with invalid arguments, then with arguments the tool answers with
+        `ModelRetry`, then with arguments the tool fails on and `on_tool_execute_error` recovers from.
+        """
 
-        await agent.run('call tool')
+        @dataclass
+        class RecoveringLoggingCapability(LoggingCapability):
+            async def on_tool_execute_error(
+                self,
+                ctx: RunContext[Any],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: dict[str, Any],
+                error: Exception,
+            ) -> Any:
+                self.log.append(f'on_tool_execute_error:{call.tool_name}')
+                return f'recovered from {error}'
 
-        # Check run hooks
-        assert 'before_run' in cap.log
-        assert 'wrap_run:before' in cap.log
-        assert 'wrap_run:after' in cap.log
-        assert 'after_run' in cap.log
+        tool_args: list[str | dict[str, Any]] = ['{"wrong": 1}', {'x': 'retry'}, {'x': 'fail'}]
 
-        # Check model request hooks (should fire twice: once for tool call, once for final)
-        model_request_before_count = cap.log.count('before_model_request')
-        assert model_request_before_count == 2
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            step = sum(isinstance(message, ModelResponse) for message in messages)
+            if step < len(tool_args):
+                return ModelResponse(parts=[ToolCallPart('my_tool', tool_args[step], tool_call_id=f'call-{step}')])
+            tool_return = messages[-1].parts[0]
+            assert isinstance(tool_return, ToolReturnPart)
+            return make_text_response(f'got: {tool_return.content}')
 
-        # Check tool hooks
-        assert 'before_tool_validate:my_tool' in cap.log
-        assert 'wrap_tool_validate:my_tool:before' in cap.log
-        assert 'wrap_tool_validate:my_tool:after' in cap.log
-        assert 'after_tool_validate:my_tool' in cap.log
-        assert 'before_tool_execute:my_tool' in cap.log
-        assert 'wrap_tool_execute:my_tool:before' in cap.log
-        assert 'wrap_tool_execute:my_tool:after' in cap.log
-        assert 'after_tool_execute:my_tool' in cap.log
+        cap = RecoveringLoggingCapability()
+        agent = Agent(FunctionModel(model_fn), capabilities=[cap])
+
+        @agent.tool_plain(retries=2)
+        def my_tool(x: str) -> str:
+            if x == 'retry':
+                raise ModelRetry('try again')
+            raise ValueError('tool failed')
+
+        result = await agent.run('call tool')
+
+        assert result.output == snapshot('got: recovered from tool failed')
+        assert cap.log == snapshot(
+            [
+                'wrap_run:before',
+                'before_run',
+                'before_node_run:UserPromptNode',
+                'after_node_run:UserPromptNode',
+                'before_node_run:ModelRequestNode',
+                'wrap_model_request:before',
+                'before_model_request',
+                'after_model_request',
+                'wrap_model_request:after',
+                'after_node_run:ModelRequestNode',
+                'before_node_run:CallToolsNode',
+                'wrap_tool_validate:my_tool:before',
+                'before_tool_validate:my_tool',
+                'on_tool_validate_error:my_tool',
+                'after_node_run:CallToolsNode',
+                'before_node_run:ModelRequestNode',
+                'wrap_model_request:before',
+                'before_model_request',
+                'after_model_request',
+                'wrap_model_request:after',
+                'after_node_run:ModelRequestNode',
+                'before_node_run:CallToolsNode',
+                'wrap_tool_validate:my_tool:before',
+                'before_tool_validate:my_tool',
+                'after_tool_validate:my_tool',
+                'wrap_tool_validate:my_tool:after',
+                'wrap_tool_execute:my_tool:before',
+                'before_tool_execute:my_tool',
+                'after_node_run:CallToolsNode',
+                'before_node_run:ModelRequestNode',
+                'wrap_model_request:before',
+                'before_model_request',
+                'after_model_request',
+                'wrap_model_request:after',
+                'after_node_run:ModelRequestNode',
+                'before_node_run:CallToolsNode',
+                'wrap_tool_validate:my_tool:before',
+                'before_tool_validate:my_tool',
+                'after_tool_validate:my_tool',
+                'wrap_tool_validate:my_tool:after',
+                'wrap_tool_execute:my_tool:before',
+                'before_tool_execute:my_tool',
+                'on_tool_execute_error:my_tool',
+                'after_tool_execute:my_tool',
+                'wrap_tool_execute:my_tool:after',
+                'after_node_run:CallToolsNode',
+                'before_node_run:ModelRequestNode',
+                'wrap_model_request:before',
+                'before_model_request',
+                'after_model_request',
+                'wrap_model_request:after',
+                'after_node_run:ModelRequestNode',
+                'before_node_run:CallToolsNode',
+                'after_node_run:CallToolsNode',
+                'after_run',
+                'wrap_run:after',
+            ]
+        )
 
 
 class TestRunHooksRunStream:

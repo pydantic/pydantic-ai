@@ -15,7 +15,7 @@ from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
-from types import ModuleType, SimpleNamespace
+from types import AsyncGeneratorType, ModuleType, SimpleNamespace
 from typing import Any, Literal, cast
 
 import anyio
@@ -33,6 +33,7 @@ from pydantic_ai._utils import (
     format_inlined_text_file,
     get_first_param_type,
     group_by_temporal,
+    has_yaml_structured_suffix,
     is_async_callable,
     is_google_files_api_url,
     is_str_dict,
@@ -43,13 +44,12 @@ from pydantic_ai._utils import (
     using_thread_executor,
 )
 from pydantic_ai.models.test import TestModel
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import no_leaked_tasks, undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 from .realtime.simulation._loop import SimulatedLoop
-
-READINESS_WAIT_TIMEOUT = 5
 
 
 @pytest.mark.parametrize(
@@ -172,6 +172,27 @@ def test_group_by_temporal_first_window_starts_on_first_item(monkeypatch: pytest
         loop.advance_clock(interval / 5)
         loop.run_until_idle()
         assert groups.result() == [[1, 2]]
+
+
+@pytest.mark.parametrize('interval', [None, 0.1])
+async def test_group_by_temporal_closes_groups_on_early_exit(interval: float | None):
+    """Leaving `group_by_temporal` closes the groups iterator it handed out, even when the consumer broke out early.
+
+    Left open, that iterator is closed by the garbage collector instead, in a detached `aclose()` task that can still be
+    pending when the caller expects its tasks to be done. Through `stream_text()` or `stream_response()` that depends on
+    when the collector happens to run, so the contract is pinned here: the iterator is held, so only `group_by_temporal`
+    can close it.
+    """
+
+    async def items() -> AsyncIterator[int]:
+        yield 1
+        yield 2
+
+    async with group_by_temporal(items(), soft_max_interval=interval) as groups_iter:
+        async for _ in groups_iter:  # pragma: no branch
+            break
+    assert isinstance(groups_iter, AsyncGeneratorType)
+    assert groups_iter.ag_frame is None
 
 
 def test_check_object_json_schema():
@@ -1501,6 +1522,18 @@ def test_format_inlined_text_file() -> None:
     )
     assert 'text/plain' in result
     assert 'abc123' in result
+
+
+def test_has_yaml_structured_suffix() -> None:
+    """`+yaml` types match with or without parameters (RFC 2045); bare YAML and other suffixes don't.
+
+    This is a plain unit test rather than a public-API/VCR test because it exercises the pure media-type
+    predicate directly.
+    """
+    assert has_yaml_structured_suffix('application/openapi+yaml') is True
+    assert has_yaml_structured_suffix('application/openapi+yaml; charset=utf-8') is True
+    assert has_yaml_structured_suffix('application/yaml') is False
+    assert has_yaml_structured_suffix('application/ld+json') is False
 
 
 def test_replace_no_init() -> None:
