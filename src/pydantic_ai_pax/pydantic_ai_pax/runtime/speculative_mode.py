@@ -29,11 +29,11 @@ the guidance says so only to runs whose state is kept.
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, TypeAlias, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard
 
 from pydantic_monty import MountDir, OSAccess
 
-from pydantic_ai import RunContext
+from pydantic_ai import RunContext, ToolReturn
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
@@ -42,6 +42,7 @@ from pydantic_ai.capabilities import (
     ValidatedToolArgs,
     WrapToolExecuteHandler,
 )
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import AgentStreamEvent, ToolCallPart, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, WrapperToolset
@@ -479,6 +480,12 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     snippet claims it; an evicted launch is dropped unseen. The result is always held by then:
     harness `SpeculationCoordinator.adopt` awaits the launch, which runs this hook to completion,
     before it emits `SpeculativeCallClaimedEvent`, even when the launch was not ready at the claim.
+
+    A call that raises `CallDeferred` or `ApprovalRequired` is paused, not failed: a
+    `HandleDeferredToolCalls` handler resolves it inline. An answered question passes
+    `after_tool_execute` and an approved call runs again through `wrap_tool_execute`, so either
+    reports its result then. Any other resolution, such as a denial, reaches no hook, so the call
+    stays open until its `run_code` settles and is closed from the nested results `run_code` returns.
     """
 
     _launched: dict[str, tuple[ToolCallPart, ToolReturnPart]] = field(
@@ -486,6 +493,8 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     )
     _evicted: set[str] = field(default_factory=set[str], init=False, repr=False)
     """Launches evicted while still running, whose late result must not be held."""
+    _deferred: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart], init=False, repr=False)
+    """Calls paused by a deferral whose result is not reported yet, by nested or launch id."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> 'ShowSandboxCalls[AgentDepsT]':
         """Keep held launches per run."""
@@ -503,9 +512,11 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         """Report cold sandbox calls as they run; hold speculative results for the claim."""
         nested = NESTED_CALL.fullmatch(call.tool_call_id)
         if nested is None:
-            return await handler(args)
+            return await self._settle(ctx, call, args, handler)
         speculative = nested['speculative'] is not None
-        if not speculative:
+        # An approved call runs again under the same id, and its start was already reported.
+        resumed = self._deferred.pop(call.tool_call_id, None) is not None
+        if not speculative and not resumed:
             event_type = (
                 DelegationCallStartedEvent
                 if DelegationTasks.current() is not None and is_delegate_tool(ctx, tool_def)
@@ -514,6 +525,9 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
             await ctx.emit(event_type(tool_call_id=call.tool_call_id, call=call))
         try:
             value = await handler(args)
+        except (CallDeferred, ApprovalRequired):
+            self._deferred[call.tool_call_id] = call
+            raise
         except Exception as exc:
             failure = ToolReturnPart(
                 tool_name=call.tool_name, content=str(exc), tool_call_id=call.tool_call_id, outcome='retried'
@@ -523,6 +537,50 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         returned = ToolReturnPart(tool_name=call.tool_name, content=value, tool_call_id=call.tool_call_id)
         await self._finish(ctx, call, returned, speculative=speculative)
         return value
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: object,
+    ) -> object:
+        """Report the answer to a question a paused call asked, which core passes through this hook."""
+        if (paused := self._deferred.pop(call.tool_call_id, None)) is not None:
+            answered = ToolReturnPart(tool_name=call.tool_name, content=result, tool_call_id=call.tool_call_id)
+            await self._finish(ctx, paused, answered, speculative=_speculative(call.tool_call_id))
+        return result
+
+    async def _settle(
+        self,
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        args: ValidatedToolArgs,
+        handler: WrapToolExecuteHandler,
+    ) -> object:
+        """Run a direct call, then close the paused calls it made whose result no hook reported."""
+        try:
+            value = await handler(args)
+        except Exception as exc:
+            await self._close_paused(ctx, call.tool_call_id, None, str(exc))
+            raise
+        await self._close_paused(ctx, call.tool_call_id, value, 'The call did not return a result.')
+        return value
+
+    async def _close_paused(self, ctx: RunContext[AgentDepsT], parent: str, value: object, error: str) -> None:
+        for call_id in list(self._deferred):
+            # A paused launch is shown only once claimed, under a nested id.
+            if call_id.rpartition('__')[0] != parent or _speculative(call_id):
+                continue
+            call = self._deferred.pop(call_id)
+            result = _nested_return(value, call_id)
+            if result is None:
+                result = ToolReturnPart(
+                    tool_name=call.tool_name, content=error, tool_call_id=call_id, outcome='retried'
+                )
+            await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call_id, result=result))
 
     async def _finish(
         self,
@@ -542,15 +600,43 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
         """Report a claimed launch as the claiming call; forget an evicted one."""
         if isinstance(event, SpeculativeCallEvictedEvent):
+            self._deferred.pop(event.launch_id, None)
             if event.state == 'pending':
                 self._evicted.add(event.launch_id)
             else:
                 self._launched.pop(event.launch_id, None)
-        elif isinstance(event, SpeculativeCallClaimedEvent) and event.launch_id in self._launched:
-            call, result = self._launched.pop(event.launch_id)
+        elif isinstance(event, SpeculativeCallClaimedEvent):
             call_id = event.nested_tool_call_id
-            await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=replace(call, tool_call_id=call_id)))
-            await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id)))
+            if event.launch_id in self._launched:
+                call, result = self._launched.pop(event.launch_id)
+                await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=replace(call, tool_call_id=call_id)))
+                await ctx.emit(
+                    SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id))
+                )
+            elif (paused := self._deferred.pop(event.launch_id, None)) is not None:
+                # Resolved in a way no hook saw: shown now, and closed when its `run_code` settles.
+                claimed = replace(paused, tool_call_id=call_id)
+                await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=claimed))
+                self._deferred[call_id] = claimed
+
+
+def _speculative(call_id: str) -> bool:
+    nested = NESTED_CALL.fullmatch(call_id)
+    return nested is not None and nested['speculative'] is not None
+
+
+def _nested_return(value: object, call_id: str) -> ToolReturnPart | None:
+    """The result of the call `call_id` a `run_code` made, from the `ToolReturn` it returned."""
+    if not isinstance(value, ToolReturn):
+        return None
+    metadata: object = value.metadata
+    returns = metadata.get('tool_returns') if _is_mapping(metadata) else None
+    return returns.get(call_id) if _is_mapping(returns) else None
+
+
+def _is_mapping(value: object) -> TypeGuard[Mapping[str, Any]]:
+    """Harness `CodeMode` returns its metadata as a dict, with `tool_returns` mapping nested ids to `ToolReturnPart`s."""
+    return isinstance(value, dict)
 
 
 def speculative_capabilities(
