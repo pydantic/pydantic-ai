@@ -644,6 +644,27 @@ def test_dragging_highlights_cells_and_releasing_copies_them() -> None:
     assert screen.lines()[:3] == ['first line here', 'second line', 'third'], 'selection never changes text'
 
 
+def test_double_clicking_a_word_selects_and_copies_it() -> None:
+    screen = Screen(width=40, height=10)
+    screen.surface.paint(ROWS)
+    screen.write('alpha beta gamma\n')
+    for report in (press(9, 1), release(9, 1), press(9, 1)):
+        assert screen.surface.transcript_key('mouse', report) is None
+    assert highlighted(screen.surface) == ['beta']
+    assert screen.surface.transcript_key('mouse', release(9, 1)) == 'beta'
+
+
+def test_triple_clicking_selects_and_copies_the_whole_wrapped_line() -> None:
+    screen = Screen(width=20, height=12)
+    screen.surface.paint(ROWS)
+    line = 'one two three four five six seven'
+    screen.write(f'{line}\nnext\n')
+    assert screen.lines()[:3] == [line[:20], line[20:], 'next']
+    for report in (press(3, 2), release(3, 2), press(3, 2), release(3, 2), press(3, 2)):
+        screen.surface.transcript_key('mouse', report)
+    assert screen.surface.transcript_key('mouse', release(3, 2)) == line
+
+
 def test_question_selection_opt_in_does_not_leak_into_editor_rows() -> None:
     screen = Screen(width=40, height=10)
     screen.surface.paint(ROWS, select_pinned=True)
