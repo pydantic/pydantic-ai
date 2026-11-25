@@ -132,7 +132,7 @@ agent = Agent('openai:gpt-5.2', name='hooks_agent', capabilities=[hooks])
 
 Important hook families:
 
-- run-level hooks (`before_run`, `after_run`, `wrap_run`, `on_run_error`)
+- run-level hooks (`before_run`, `after_run`, `wrap_run`, `on_run_error`, `on_run_success`)
 - node-level hooks (`before_node_run`, `after_node_run`, `wrap_node_run`, `on_node_run_error`)
 - model-request hooks (`before_model_request`, `prepare_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
 - tool-validation and tool-execution hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants

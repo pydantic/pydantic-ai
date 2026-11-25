@@ -135,6 +135,52 @@ Each stored message is a [`ConversationEntry`][pydantic_ai.conversation_store.Co
 
 To have a [UI adapter](ui/overview.md#saving-to-a-conversation-store) load and save each chat request's conversation through a store, pass it as `conversation_store`. The client is sent a [`UserError`][pydantic_ai.exceptions.UserError] your store raises as is, so keep queries, hostnames and credentials out of it: for any other exception, the adapter warns on the server and sends a generic message.
 
+### Saving from a capability
+
+To save every run of an agent without repeating the `save` call around each one, save it from a capability's [`on_run_success`][pydantic_ai.capabilities.AbstractCapability.on_run_success] hook. It runs once the run has returned its result and released its toolsets and models, and isn't called for a run that raises or is cancelled, so the store never holds a turn the caller didn't get:
+
+```python {title="save_on_success.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, Conversation, RunContext
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.conversation_store import ConversationStore, InMemoryConversationStore
+from pydantic_ai.run import AgentRunResult
+
+
+@dataclass
+class SaveConversation(AbstractCapability[Any]):
+    """Save each run's conversation to `store`, once the run has succeeded.
+
+    Example:
+        agent = Agent(model, capabilities=[SaveConversation(store)])
+    """
+
+    store: ConversationStore
+
+    async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+        await self.store.save(result)
+
+
+store = InMemoryConversationStore()
+agent = Agent('{{ openai:medium }}', capabilities=[SaveConversation(store)])
+
+
+async def chat(conversation_id: str, prompt: str) -> str:
+    conversation = await store.load(conversation_id) or Conversation(conversation_id=conversation_id)
+    result = await agent.run(prompt, conversation=conversation)
+    return result.output
+
+
+async def main():
+    await chat('support-42', 'Tell me a joke.')
+    print(await chat('support-42', 'Explain?'))
+    #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
+```
+
+A save that raises, like a [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict], fails the run. Saving a failed turn from [`error.conversation`][pydantic_ai.exceptions.AgentRunError.conversation], as above, stays with the code that catches the error.
+
 ## Recording what each run did
 
 To store sessions, use a [`ConversationStore`](#using-a-conversation-store), or [store the `Conversation`](#storing-a-conversation-yourself) yourself. [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) from Pydantic AI Harness remains supported, but it is for recovering runs rather than storing sessions: its snapshots hold the messages only, not the usage and pending deferred tool requests a `Conversation` carries. If you stored sessions with it, [Moving sessions to a `ConversationStore`](https://pydantic.dev/docs/ai/harness/step-persistence/#moving-sessions-to-a-conversationstore) copies each conversation into a store.

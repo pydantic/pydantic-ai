@@ -1132,6 +1132,28 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         """
         raise error
 
+    async def on_run_success(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> None:
+        """Called once the run has succeeded, after it has released its toolsets, models and other resources.
+
+        `result` is the result the run returns. Unlike
+        [`after_run`][pydantic_ai.capabilities.AbstractCapability.after_run], which runs inside
+        `wrap_run` before the run's resources are released, this is called only when nothing left
+        can fail the run: not when the run raises, is cancelled, or is left before it produced a
+        result, and not when a toolset's exit raises. That makes it the place to commit what a run
+        produced, such as saving its conversation, that must not be committed for a run that fails.
+
+        It is called for every run that returns a result, including one that `on_run_error` recovered
+        or `wrap_run` returned without calling its handler. An exception raised here fails the run.
+
+        The run's tools can no longer be called, and ContextVars set in `wrap_run` or `before_run`
+        have been reset. For a realtime session, it is called after the session closes.
+        """
+
     # --- Node run lifecycle hooks ---
 
     async def before_node_run(

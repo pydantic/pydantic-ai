@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
     CombinedCapability,
     ToolSearch,
     UseThreadExecutor,
+    WrapperCapability,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, AgentNode, NodeResult, WrapNodeRunHandler
 from pydantic_ai.capabilities.hooks import Hooks
@@ -34,6 +35,7 @@ from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
     ModelRetry,
+    RunCancelled,
     SkipModelRequest,
     SkipToolExecution,
     SkipToolValidation,
@@ -2575,6 +2577,220 @@ class TestRunErrorHooks:
         assert cap.called
         assert agent_run.result is not None
         assert agent_run.result.output == 'recovered via iter'
+
+
+class TestRunSuccessHooks:
+    """`on_run_success` runs once a run has returned its result and released everything it entered."""
+
+    @dataclass
+    class Recorder(AbstractCapability[Any]):
+        log: list[str]
+        name: str = 'recorder'
+        results: list[AgentRunResult[Any]] = field(default_factory=lambda: [])
+
+        async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+            self.log.append(f'{self.name}:after_run')
+            return result
+
+        async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            self.log.append(f'{self.name}:on_run_success')
+            self.results.append(result)
+
+    class ClosingToolset(FunctionToolset[Any]):
+        def __init__(self, log: list[str], *, fail: bool = False) -> None:
+            super().__init__(tools=[])
+            self.log = log
+            self.fail = fail
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            await super().__aexit__(*args)
+            self.log.append('toolset:exit')
+            if self.fail:
+                raise RuntimeError('toolset exit failed')
+            return None
+
+    async def test_runs_after_toolset_exit_with_the_returned_result(self):
+        log: list[str] = []
+        recorder = self.Recorder(log)
+        agent = Agent(TestModel(), capabilities=[recorder], toolsets=[self.ClosingToolset(log)])
+
+        result = await agent.run('hello')
+
+        assert log == ['recorder:after_run', 'toolset:exit', 'recorder:on_run_success']
+        assert recorder.results == [result]
+        assert recorder.results[0] is result
+
+    async def test_not_called_when_toolset_exit_fails(self):
+        log: list[str] = []
+        agent = Agent(TestModel(), capabilities=[self.Recorder(log)], toolsets=[self.ClosingToolset(log, fail=True)])
+
+        with pytest.raises(RuntimeError, match='toolset exit failed'):
+            await agent.run('hello')
+
+        assert log == ['recorder:after_run', 'toolset:exit']
+
+    async def test_not_called_when_run_fails(self):
+        log: list[str] = []
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        agent = Agent(FunctionModel(failing_model), capabilities=[self.Recorder(log)])
+        with pytest.raises(RuntimeError, match='model exploded'):
+            await agent.run('hello')
+
+        assert log == []
+
+    async def test_not_called_when_cancelled_after_the_result(self):
+        """A cancellation requested in `after_run` still ends the run cancelled, so it doesn't succeed."""
+        log: list[str] = []
+
+        @dataclass
+        class CancelAfterRun(AbstractCapability[Any]):
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                ctx.cancel()
+                return result
+
+        agent = Agent(TestModel(), capabilities=[self.Recorder(log), CancelAfterRun()])
+        with pytest.raises(RunCancelled):
+            await agent.run('hello')
+
+        assert 'recorder:on_run_success' not in log
+
+    async def test_not_called_when_iter_is_left_before_the_result(self):
+        log: list[str] = []
+        agent = Agent(TestModel(), capabilities=[self.Recorder(log)])
+
+        async with agent.iter('hello') as agent_run:
+            async for _ in agent_run:
+                break
+
+        assert log == []
+
+    async def test_not_called_when_the_callers_block_raises(self):
+        log: list[str] = []
+        agent = Agent(TestModel(), capabilities=[self.Recorder(log)])
+
+        with pytest.raises(ValueError, match='caller failed'):
+            async with agent.iter('hello') as agent_run:
+                async for _ in agent_run:
+                    pass
+                raise ValueError('caller failed')
+
+        assert log == []
+
+    async def test_called_for_a_recovered_or_short_circuited_run(self):
+        log: list[str] = []
+
+        @dataclass
+        class Recover(AbstractCapability[Any]):
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                return AgentRunResult(output='recovered')
+
+        @dataclass
+        class ShortCircuit(AbstractCapability[Any]):
+            async def wrap_run(self, ctx: RunContext[Any], *, handler: Any) -> AgentRunResult[Any]:
+                return AgentRunResult(output='short-circuited')
+
+        def failing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model exploded')
+
+        recovering = self.Recorder(log, name='recovering')
+        result = await Agent(FunctionModel(failing_model), capabilities=[recovering, Recover()]).run('hello')
+        assert result.output == 'recovered'
+
+        short_circuiting = self.Recorder(log, name='short_circuiting')
+        result = await Agent(TestModel(), capabilities=[ShortCircuit(), short_circuiting]).run('hello')
+        assert result.output == 'short-circuited'
+
+        assert log == ['recovering:after_run', 'recovering:on_run_success', 'short_circuiting:on_run_success']
+        assert [r.output for r in recovering.results + short_circuiting.results] == ['recovered', 'short-circuited']
+
+    async def test_capabilities_are_called_innermost_first(self):
+        log: list[str] = []
+        hooks = Hooks[Any]()
+
+        @hooks.on.run_success
+        def sync_hook(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            log.append('hooks:on_run_success')
+
+        def kwarg_hook(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            log.append('kwarg:on_run_success')
+
+        agent = Agent(
+            TestModel(),
+            capabilities=[
+                self.Recorder(log, name='outer'),
+                hooks,
+                Hooks[Any](run_success=kwarg_hook),
+                WrapperCapability(self.Recorder(log, name='inner')),
+            ],
+        )
+        await agent.run('hello')
+
+        assert [entry for entry in log if entry.endswith('on_run_success')] == [
+            'inner:on_run_success',
+            'kwarg:on_run_success',
+            'hooks:on_run_success',
+            'outer:on_run_success',
+        ]
+
+    async def test_an_exception_fails_the_run(self):
+        log: list[str] = []
+
+        @dataclass
+        class FailingCommit(AbstractCapability[Any]):
+            async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+                raise RuntimeError('commit failed')
+
+        agent = Agent(TestModel(), capabilities=[self.Recorder(log), FailingCommit()])
+        with pytest.raises(RuntimeError, match='commit failed'):
+            await agent.run('hello')
+
+        # The capability listed first is called last, so it's not reached.
+        assert log == ['recorder:after_run']
+
+    async def test_every_entry_point_reaches_it(self):
+        log: list[str] = []
+        agent = Agent(TestModel(), capabilities=[self.Recorder(log)])
+
+        async with agent.run_stream('hello') as stream:
+            await stream.get_output()
+        assert log.count('recorder:on_run_success') == 1
+
+        async with agent.run_stream_events('hello') as events:
+            async for _ in events:
+                pass
+        assert log.count('recorder:on_run_success') == 2
+
+        async with agent.iter('hello') as agent_run:
+            async for _ in agent_run:
+                pass
+        assert log.count('recorder:on_run_success') == 3
+
+        def run_sync() -> None:
+            agent.run_sync('hello')
+
+        await anyio.to_thread.run_sync(run_sync)
+        assert log.count('recorder:on_run_success') == 4
+
+    async def test_unloaded_deferred_capability_is_skipped(self):
+        log: list[str] = []
+
+        def deferred_hook(ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+            log.append('deferred:on_run_success')  # pragma: no cover
+
+        deferred = Hooks[Any](
+            run_success=deferred_hook,
+            id='deferred',
+            description='Loaded on demand.',
+            defer_loading=True,
+        )
+        agent = Agent(TestModel(call_tools=[]), capabilities=[self.Recorder(log), deferred])
+
+        await agent.run('hello')
+
+        assert log == ['recorder:after_run', 'recorder:on_run_success']
 
 
 # --- Node run error hook tests ---

@@ -661,6 +661,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 error = new_error
         raise error
 
+    async def on_run_success(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> None:
+        for capability in reversed(self._dispatch):
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                await capability.on_run_success(cap_ctx, result=result)
+
     # --- Node run lifecycle hooks ---
 
     async def before_node_run(

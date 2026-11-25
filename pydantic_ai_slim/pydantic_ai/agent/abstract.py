@@ -2308,8 +2308,16 @@ class _RealtimeSessionLifecycle:
     mutable holder once `_open_realtime_session` has built them.
     """
 
+    succeed: Callable[[AgentRunResult[Any]], Awaitable[None]]
+    """Dispatches `on_run_success`, called once the session has closed and released what it entered."""
     session: RealtimeSession | None = None
     short_result: AgentRunResult[Any] | None = None
+
+    async def dispatch_success(self) -> None:
+        result = self.session._result if self.session is not None else self.short_result  # pyright: ignore[reportPrivateUsage]
+        # The run hooks set it on every path that ends the session cleanly.
+        assert result is not None
+        await self.succeed(result)
 
 
 @dataclass

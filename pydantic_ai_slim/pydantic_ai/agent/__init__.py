@@ -467,6 +467,37 @@ async def _run_lifecycle_hooks(  # noqa: C901
             _restore_context_vars()
 
 
+@dataclasses.dataclass
+class _SessionSuccess:
+    """Dispatches a realtime session's `on_run_success` once the session it yielded has closed cleanly."""
+
+    lifecycle: _RealtimeSessionLifecycle | None = None
+    """Set once a session is yielded to the caller. A session yielded only after the resolution has exited dispatches
+    its own, after the caller's block."""
+
+    @classmethod
+    @asynccontextmanager
+    async def dispatch_on_clean_exit(cls) -> AsyncGenerator[_SessionSuccess]:
+        success = cls()
+        yield success
+        if success.lifecycle is not None:
+            await success.lifecycle.dispatch_success()
+
+
+async def _dispatch_run_success(
+    run_capability: AbstractCapability[Any], run_ctx: RunContext[Any], result: AgentRunResult[Any] | None
+) -> None:
+    """Call `on_run_success` for a run that returned `result` and has released everything it entered.
+
+    `None` is a run the caller left before it produced a result, which didn't succeed.
+    """
+    if result is None:
+        return
+    # A cancellation that arrived as the run finished still ends it cancelled, so nothing is committed for it.
+    _utils.raise_if_cancelling()
+    await run_capability.on_run_success(run_ctx, result=result)
+
+
 def _is_model(value: object) -> TypeIs[models.Model[Any]]:
     """Narrow a value to a concrete model without losing its client type to `Unknown`."""
     return isinstance(value, models.Model)
@@ -4341,7 +4372,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.
-        lifecycle_state = _RealtimeSessionLifecycle() if run_lifecycle else None
+        lifecycle_state = (
+            _RealtimeSessionLifecycle(succeed=functools.partial(_dispatch_run_success, run_capability, run_context))
+            if run_lifecycle
+            else None
+        )
 
         def _build_session_result() -> AgentRunResult[Any]:
             assert lifecycle_state is not None and lifecycle_state.session is not None
@@ -4659,21 +4694,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             )
 
         yielded = False
-        async with self._resolve_realtime_session(
-            model,
-            deps=deps,
-            model_settings=model_settings,
-            instructions=instructions,
-            toolsets=toolsets,
-            capabilities=capabilities,
-            usage=usage,
-            usage_limits=usage_limits,
-            metadata=metadata,
-            conversation_id=conversation_id,
-            run_id=run_id,
-            message_history=message_history,
-            run_lifecycle=True,
-        ) as resolved:
+        async with (
+            # Entered first, so it exits once the session, its toolset and its run hooks have all closed.
+            _SessionSuccess.dispatch_on_clean_exit() as success,
+            self._resolve_realtime_session(
+                model,
+                deps=deps,
+                model_settings=model_settings,
+                instructions=instructions,
+                toolsets=toolsets,
+                capabilities=capabilities,
+                usage=usage,
+                usage_limits=usage_limits,
+                metadata=metadata,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                message_history=message_history,
+                run_lifecycle=True,
+            ) as resolved,
+        ):
             lifecycle = resolved.lifecycle
             assert lifecycle is not None
 
@@ -4717,6 +4756,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     yield _closed_session(lifecycle.short_result)
                 finally:
                     yielded = True
+                    success.lifecycle = lifecycle
                 return
 
             if message_history and not resolved.model_profile.get('supports_session_seeding', False):
@@ -4812,6 +4852,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         yield session
                     finally:
                         yielded = True
+                        success.lifecycle = lifecycle
 
         if yielded:
             # Reached on the normal path, and when the run-lifecycle hooks suppressed a session error
@@ -4820,9 +4861,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Opening the connection or building the session failed and `wrap_run`/`on_run_error`
         # recovered with a result: the resolver's lifecycle hooks suppressed the error with nothing
         # yielded yet, which `asynccontextmanager` would report as `RuntimeError: generator didn't
-        # yield`. Yield the short-circuit path's closed placeholder carrying the recovery result.
+        # yield`. Yield the short-circuit path's closed placeholder carrying the recovery result, and dispatch
+        # `on_run_success` after the caller's block.
         assert lifecycle.short_result is not None
         yield _closed_session(lifecycle.short_result)
+        await lifecycle.dispatch_success()
 
     async def __aenter__(self) -> Self:
         """Enter the agent context.
@@ -5273,6 +5316,9 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 finally:
                     if agent_run.result is not None:
                         self.resolve_metadata(agent_run.ctx)
+
+        # Only now has every resource the run entered been released, so nothing left can fail the run.
+        await _dispatch_run_success(self.run_capability, run_ctx, agent_run.result)
 
 
 @contextmanager

@@ -38,7 +38,7 @@ hooks it registers. Built-ins whose behavior the session provides another way, s
 
 ## Run hooks
 
-`before_run`, `after_run`, `wrap_run`, and `on_run_error` [run hooks](../hooks.md#run-hooks) run
+`before_run`, `after_run`, `wrap_run`, `on_run_error`, and `on_run_success` [run hooks](../hooks.md#run-hooks) run
 once around the session — a realtime session is a run — with the same close-boundary recovery and
 result-transformation semantics as [`iter()`][pydantic_ai.agent.AbstractAgent.iter].
 

@@ -1048,6 +1048,22 @@ class WrapRunOperation(AbstractCapability[Any]):
         return ctx.run_step
 
 
+class CommitOnSuccess(AbstractCapability[Any]):
+    """Commits a run's output through a durable operation, from `on_run_success`."""
+
+    id = 'commit_on_success'
+
+    def __init__(self) -> None:
+        self.committed: list[str] = []
+
+    async def on_run_success(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> None:
+        await self.commit(ctx, output=str(result.output))
+
+    @durable_operation('commit')
+    async def commit(self, ctx: RunContext[Any], *, output: str) -> None:
+        self.committed.append(output)
+
+
 class HoldsSetupContext(AbstractCapability[Any]):
     """Keeps the context `for_run` was handed and dispatches with it from a later hook."""
 
@@ -1336,6 +1352,25 @@ async def test_wrap_run_operation_dispatches_before_the_handler_is_awaited() -> 
     assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
         ['wrap_run_operation__capability__wrap_run_operation.reserve']
     )
+
+
+async def test_on_run_success_operation_dispatches_through_the_durable_engine() -> None:
+    """`on_run_success` runs after the run has released its resources, and its durable operations still dispatch."""
+    capability = CommitOnSuccess()
+    agent = Agent(
+        TestModel(custom_output_text='done'),
+        name='commit_on_success',
+        capabilities=[capability, RecordingDurability()],
+    )
+
+    await agent.run('test')
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == snapshot(
+        ['commit_on_success__capability__commit_on_success.commit']
+    )
+    assert capability.committed == ['done']
 
 
 async def test_operation_dispatches_with_the_context_for_run_was_handed() -> None:

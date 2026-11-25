@@ -416,6 +416,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         return await self.wrapped.on_run_error(ctx, error=error)
 
+    async def on_run_success(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        result: AgentRunResult[Any],
+    ) -> None:
+        await self.wrapped.on_run_success(ctx, result=result)
+
     # --- Node run lifecycle hooks ---
 
     async def before_node_run(

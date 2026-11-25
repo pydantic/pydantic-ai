@@ -130,10 +130,13 @@ Use on-demand hooks for optional behavior that only applies after the capability
 | `after_run` | `after_run=` | `after_run` |
 | `run` | `run=` | `wrap_run` |
 | `run_error` | `run_error=` | `on_run_error` |
+| `run_success` | `run_success=` | `on_run_success` |
 
 The run lifecycle is dispatched once per agent run. `wrap_run` (registered via `hooks.on.run`) runs once and encloses `before_run`, graph iteration with `on_run_error` recovery, and `after_run`; a wrapper that does not call its handler skips those inner hooks.
 
-A [realtime session](realtime/capabilities.md) is a run: the same four hooks fire once around the session, with `wrap_run` recovery and `after_run` result transformation applied when the session closes.
+`on_run_success` runs after all of them, once the run has returned its result and released its toolsets, models and other resources. It isn't called for a run that raises, is cancelled, or is left before it produces a result, so it's the place to commit what a successful run produced, like [saving its conversation](persistence.md#saving-from-a-capability).
+
+A [realtime session](realtime/capabilities.md) is a run: the same hooks fire once around the session, with `wrap_run` recovery and `after_run` result transformation applied when the session closes, and `on_run_success` once it has closed.
 
 ### Node hooks
 
