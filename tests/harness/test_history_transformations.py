@@ -20,6 +20,7 @@ than transform its native history, live in `c4_transforms_runlevel.py`, which me
 from __future__ import annotations
 
 import ast
+import functools
 import importlib
 import re
 import warnings
@@ -49,6 +50,7 @@ from pydantic_ai.messages import (
     SpeechPart,
     SystemPromptPart,
     ToolAvailabilityDeltaPart,
+    ToolReturnPart,
     UserPromptPart,
     sanitize_messages,
 )
@@ -94,7 +96,13 @@ class Transform:
     drops: Callable[[ModelRequestPart], bool] = lambda _: False
     """Parts the transformation may legitimately leave out (e.g. everything before a compaction boundary)."""
     creates: tuple[type[ModelRequestPart], ...] = ()
-    """Part kinds it may add (a summary, a CompactionPart, a `<system>`-tag note)."""
+    """Part kinds it may add (a summary, a CompactionPart, a `<system>`-tag note).
+
+    Every output part of one of these kinds counts as created, unless `creates_part` is set."""
+    creates_part: Callable[[ModelRequestPart], bool] | None = None
+    """Which output parts it created, when a created part can be of the same kind as a kept one: a compaction receipt
+    is a `UserPromptPart`, like the prompts it keeps. When set, it replaces `creates` in telling a created part from a
+    kept one, for the authority check and the nothing-new check."""
     exempt: Mapping[str, Exempt] = field(default_factory=dict[str, Exempt])
     """Case name -> reason with issue link, as C1: the case's checks are a strict `xfail`."""
     functions: tuple[str, ...] = ()
@@ -236,7 +244,20 @@ def _run_level_transforms() -> dict[Transformation, Transform]:
         return {}
 
 
-TRANSFORMS: dict[Transformation, Transform] = {**_TRANSFORMS, **_run_level_transforms()}
+@functools.cache
+def transforms() -> dict[Transformation, Transform]:
+    """Every registered transform: the ones here and the run-level ones.
+
+    Built on first use rather than at import, so `c4_transforms_runlevel.py` can import this module first.
+    """
+    return {**_TRANSFORMS, **_run_level_transforms()}
+
+
+def __getattr__(name: str) -> dict[Transformation, Transform]:
+    """`TRANSFORMS`, built on first use: see `transforms`."""
+    if name == 'TRANSFORMS':
+        return transforms()
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
 
 
 # --- The checks ----------------------------------------------------------------------------------------------------
@@ -251,7 +272,7 @@ def _matrix() -> Iterator[ParameterSet]:
     for name in _subjects():
         calls = PROBES.get(name) or CASES[name].calls
         assert calls is not None
-        for transformation, transform in TRANSFORMS.items():
+        for transformation, transform in transforms().items():
             marks: list[pytest.MarkDecorator] = []
             if (exempt := transform.exempt.get(name)) is not None:
                 marks.append(pytest.mark.xfail(strict=True, raises=AssertionError, reason=exempt.reason))
@@ -272,13 +293,42 @@ class _Compared:
     def kept(self) -> Counter[Signature]:
         return Counter(signature(part) for part in self.native if not self.transform.drops(part))
 
+    def is_created(self, part: ModelRequestPart) -> bool:
+        if self.transform.creates_part is not None:
+            return self.transform.creates_part(part)
+        return isinstance(part, self.transform.creates)
+
     @property
     def created(self) -> list[ModelRequestPart]:
-        return [part for part in self.output if isinstance(part, self.transform.creates)]
+        return [part for part in self.output if self.is_created(part)]
 
     @property
     def carried(self) -> Counter[Signature]:
-        return Counter(signature(part) for part in self.output if not isinstance(part, self.transform.creates))
+        return Counter(signature(part) for part in self.output if not self.is_created(part))
+
+    def lost(self) -> Counter[Signature]:
+        """The kept parts missing from the output, or changed."""
+        return self.kept - Counter(signature(part) for part in self.output)
+
+    def gained(self) -> list[ModelRequestPart]:
+        """The created parts with more authority than the lowest of the parts they replace.
+
+        The parts they replace are the native ones the output no longer carries; when none is gone, the whole history.
+        """
+        native = Counter(signature(part) for part in self.native)
+        replaced = native - self.carried or native
+        ceiling = min((authority for _, _, authority, _ in replaced), key=_RANK.index)
+        return [part for part in self.created if _RANK.index(_authority(part)) > _RANK.index(ceiling)]
+
+    def new(self) -> Counter[Signature]:
+        """The output parts that aren't created and have no native counterpart."""
+        return self.carried - Counter(signature(part) for part in self.native)
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Parametrize the checks at collection, once `c4_transforms_runlevel.py` and this module are both imported."""
+    if {'name', 'transformation'} <= set(metafunc.fixturenames):
+        metafunc.parametrize(('name', 'transformation'), list(_matrix()))
 
 
 async def _compare(name: str, transformation: Transformation, directory: Path) -> _Compared:
@@ -286,38 +336,29 @@ async def _compare(name: str, transformation: Transformation, directory: Path) -
     run = await _native(calls, directory / 'native')
     assert run.ran, 'the calls ran no tool'
     native = NativeRun(run.messages, run.ran, name, calls)
-    transform = TRANSFORMS[transformation]
+    transform = transforms()[transformation]
     output = await transform.apply(native, directory / transformation)
     return _Compared(_request_parts(native.messages), _request_parts(output), transform)
 
 
-@pytest.mark.parametrize(('name', 'transformation'), list(_matrix()))
 async def test_kept_parts_are_unchanged(name: str, transformation: Transformation, tmp_path: Path) -> None:
     """Every part the transformation doesn't drop is still there, with the same signature."""
     compared = await _compare(name, transformation, tmp_path)
-    lost = compared.kept - Counter(signature(part) for part in compared.output)
+    lost = compared.lost()
     assert not lost, f'{transformation} lost or changed {sorted(lost.elements(), key=repr)}'
 
 
-@pytest.mark.parametrize(('name', 'transformation'), list(_matrix()))
 async def test_no_part_gains_authority(name: str, transformation: Transformation, tmp_path: Path) -> None:
-    """A created part has no more authority than the lowest of the parts it replaces.
-
-    The parts it replaces are those whose signature no longer appears; when none is gone, it's the whole history.
-    """
+    """A created part has no more authority than the lowest of the parts it replaces."""
     compared = await _compare(name, transformation, tmp_path)
-    native = Counter(signature(part) for part in compared.native)
-    replaced = native - Counter(signature(part) for part in compared.output) or native
-    ceiling = min((authority for _, _, authority, _ in replaced), key=_RANK.index)
-    gained = [part for part in compared.created if _RANK.index(_authority(part)) > _RANK.index(ceiling)]
-    assert not gained, f'{transformation} created {gained} above {ceiling!r}'
+    gained = compared.gained()
+    assert not gained, f'{transformation} created {gained} above the authority of what they replace'
 
 
-@pytest.mark.parametrize(('name', 'transformation'), list(_matrix()))
 async def test_nothing_new_appears(name: str, transformation: Transformation, tmp_path: Path) -> None:
     """Every part outside the kinds the transformation may create has a native counterpart."""
     compared = await _compare(name, transformation, tmp_path)
-    new = compared.carried - Counter(signature(part) for part in compared.native)
+    new = compared.new()
     assert not new, f'{transformation} added {sorted(new.elements(), key=repr)}'
 
 
@@ -536,7 +577,7 @@ A run-level entry goes when `c4_transforms_runlevel.py` registers it; a `PENDING
 
 def test_every_history_function_is_registered() -> None:
     """A new function that returns history must be registered on a `Transform`, or exempt with its reason."""
-    registered = {function: transform.name for transform in TRANSFORMS.values() for function in transform.functions}
+    registered = {function: transform.name for transform in transforms().values() for function in transform.functions}
     assert not (both := sorted(registered.keys() & TRANSFORM_EXEMPT.keys())), (
         f'registered and still exempt in `TRANSFORM_EXEMPT`, so remove the exemption: {both}'
     )
@@ -550,4 +591,28 @@ def test_every_history_function_is_registered() -> None:
 def test_every_exemption_names_a_subject() -> None:
     """An exemption for a case that no longer has calls would hide the next finding there."""
     subjects = set(_subjects())
-    assert [(t.name, case) for t in TRANSFORMS.values() for case in t.exempt if case not in subjects] == []
+    assert [(t.name, case) for t in transforms().values() for case in t.exempt if case not in subjects] == []
+
+
+def _receipt(part: ModelRequestPart) -> bool:
+    return isinstance(part, UserPromptPart) and part.content == 'receipt'
+
+
+@pytest.mark.parametrize(
+    ('dropped', 'gains'),
+    [
+        pytest.param(UserPromptPart('old'), False, id='replaces-a-prompt'),
+        pytest.param(ToolReturnPart('fetch', 'data', tool_call_id='call_0'), True, id='replaces-data'),
+    ],
+)
+def test_a_created_part_of_a_kept_kind(dropped: ModelRequestPart, gains: bool) -> None:
+    """`creates_part` tells a receipt from the prompt kept beside it, though both are `UserPromptPart`s.
+
+    The receipt isn't new, the kept prompt isn't created, and the receipt has the user's authority: no more than a
+    prompt it replaces, but more than data.
+    """
+    receipt = UserPromptPart('receipt')
+    transform = Transform('summarizing', _type_adapter, drops=lambda part: part is dropped, creates_part=_receipt)
+    compared = _Compared([UserPromptPart('go'), dropped], [UserPromptPart('go'), receipt], transform)
+    assert (compared.lost(), compared.new(), compared.created) == (Counter(), Counter(), [receipt])
+    assert compared.gained() == ([receipt] if gains else [])
