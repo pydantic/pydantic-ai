@@ -165,8 +165,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
                 body=body,
                 code=code,
                 error_type=error_type,
-                # `openai`'s own message holds the whole body.
-                message=text,
+                message=_model_errors.openai_error_message(error, text),
                 headers=dict(e.response.headers),
             ) from e
 

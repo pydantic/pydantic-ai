@@ -1000,6 +1000,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The first known use of "hello, world" was in a 1974 textbook about the C programming language.'
     ),
     'What is my balance?': ToolCallPart(tool_name='customer_balance', args={'include_pending': True}),
+    'Draft the invoice for order ord_8Kq2Zp.': ToolCallPart(tool_name='build_invoice', args={'order_id': 'ord_8Kq2Zp'}),
     'Was I refunded for the duplicate charge on my last statement?': ToolCallPart(
         tool_name='load_capability', args={'id': 'refunds'}
     ),
@@ -1034,6 +1035,21 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'square size 10, circle size 20, triangle size 30': ToolCallPart(
         tool_name='final_result_list_2',
         args={'response': [10, 20, 30]},
+    ),
+    '<contract>\nInvoices are payable within 30 days of receipt. Late payments accrue\ninterest at 1.5% per month.\n</contract>': ToolCallPart(
+        tool_name='final_result',
+        args={
+            'facts': [
+                {
+                    'statement': 'Invoices are due 30 days after receipt.',
+                    'quote': 'Invoices are payable within 30 days of receipt.',
+                },
+                {
+                    'statement': 'Late payments accrue 1.5% interest per month.',
+                    'quote': 'Late payments accrue 1.5% monthly interest.',
+                },
+            ]
+        },
     ),
     'get me users who were last active yesterday.': ToolCallPart(
         tool_name='final_result_Success',
@@ -1878,6 +1894,27 @@ async def model_logic(  # noqa: C901
         return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_order_status':
         return ModelResponse(parts=[TextPart('Order 1234 shipped on 2032-01-02.')])
+    elif (
+        isinstance(m, RetryPromptPart)  # pyright: ignore[reportDeprecated]
+        and isinstance(m.content, str)
+        and m.content.startswith('These quotes do not appear in the contract:')
+    ):
+        # docs/output.md grounding validator: the retry quotes the contract verbatim, across its line break
+        args = {
+            'facts': [
+                {
+                    'statement': 'Invoices are due 30 days after receipt.',
+                    'quote': 'Invoices are payable within 30 days of receipt.',
+                },
+                {
+                    'statement': 'Late payments accrue 1.5% interest per month.',
+                    'quote': 'Late payments accrue interest at 1.5% per month.',
+                },
+            ]
+        }
+        return ModelResponse(
+            parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
+        )
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':  # pyright: ignore[reportDeprecated]
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]
