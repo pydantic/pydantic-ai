@@ -50,6 +50,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
 | [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
 | [Stav](compatible-apis.md#stav) | Gateway | `stav:` |
+| [Straitly](compatible-apis.md#straitly) | Gateway | explicit [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] |
 | [System One API](system-one.md) | [Decision models](decision.md) such as CLM, Laya, and Ollama's | `system-one:` |
 | [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
 | [TypeSafe (Jev)](typesafe.md) | [Decision model](decision.md) | `typesafe:` |

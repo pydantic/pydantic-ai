@@ -506,6 +506,27 @@ The [API key documentation](https://docs.oracle.com/en-us/iaas/Content/generativ
 !!! note "Allow API keys in an IAM policy"
     An API key works only once an IAM policy lets API keys use Generative AI. To authorize every key in a compartment, create the policy before the key. To limit the policy to one key, create the key first and use its OCID. See [Adding Key Permissions](https://docs.oracle.com/en-us/iaas/Content/generative-ai/add-api-permission.htm) for the policy statements.
 
+### Straitly {#straitly}
+
+[Straitly](https://straitly.ai) serves 150+ models from multiple providers through an [OpenAI-compatible Chat Completions API](https://straitly.ai/docs/quickstart) at `https://api.straitly.ai/v1`. Pass your Straitly API key as `api_key`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+provider = OpenAICompatibleProvider(
+    'straitly',
+    base_url='https://api.straitly.ai/v1',
+    api_key='your-straitly-api-key',
+)
+model = OpenAIChatModel('deepseek/deepseek-v4-1-flash-1017', provider=provider)
+agent = Agent(model)
+...
+```
+
+Straitly names models `<vendor>/<model>`, so each model gets the profile of its family, as [Other endpoints](#other-endpoints) explains. `GET https://api.straitly.ai/v1/models` lists the current model IDs without an API key, and the full catalog is on the [Straitly models page](https://straitly.ai/models).
+
 ### WaveSpeed AI {#wavespeed-ai}
 
 [WaveSpeed AI](https://wavespeed.ai/llm) serves models from many vendors through an [OpenAI-compatible Chat Completions API](https://wavespeed.ai/docs/llm-service-quick-start) at `https://llm.wavespeed.ai/v1`. Pass your WaveSpeed API key as `api_key`:
