@@ -174,6 +174,8 @@ async def resolve_capability_block_instructions(
     block_id: str,
     toolset: AbstractToolset[AgentDepsT],
     ctx: RunContext[AgentDepsT],
+    *,
+    own: bool = True,
 ) -> list[InstructionPart]:
     """Resolve everything `capability` tells the model as one block, each part addressed beneath `capability:<block_id>`.
 
@@ -181,7 +183,8 @@ async def resolve_capability_block_instructions(
     toolsets it owns in `toolset`, keeping each part's `name`. A loaded capability's block and that of a capability
     below operator authority are both delivered through history this way.
     """
-    sourced = capability._collect_instructions()  # pyright: ignore[reportPrivateUsage]
+    # Without `own`, an overriding wrapper or container replaced the capability's own instructions: only its toolsets'.
+    sourced = capability._collect_instructions() if own else []  # pyright: ignore[reportPrivateUsage]
     parts = await resolve_sourced_instructions(sourced, ctx)
 
     owned: list[CapabilityOwnedToolset[AgentDepsT]] = []

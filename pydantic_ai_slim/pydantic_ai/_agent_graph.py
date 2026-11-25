@@ -1753,11 +1753,12 @@ async def _get_lowered_instructions(
     """
     parts: dict[str, list[_messages.InstructionPart]] = {}
     authorities: dict[str, _messages.Authority] = {}
-    for capability in ctx.deps.root_capability._lowered_instruction_sources():  # pyright: ignore[reportPrivateUsage]
+    for source in ctx.deps.root_capability._lowered_instruction_sources():  # pyright: ignore[reportPrivateUsage]
+        capability = source.capability
         block_id = lowered_block_id(capability)
         parts.setdefault(block_id, []).extend(
             await resolve_capability_block_instructions(
-                capability, block_id, ctx.deps.tool_manager.toolset, run_context
+                capability, block_id, ctx.deps.tool_manager.toolset, run_context, own=source.own
             )
         )
         authority = capability._effective_authority  # pyright: ignore[reportPrivateUsage]

@@ -5713,7 +5713,7 @@ def _session_loaded_capability_ids(
     ]
     _warn_lowered_instructions_not_sent(
         [
-            *(lowered_block_id(source) for source in run_capability._lowered_instruction_sources()),  # pyright: ignore[reportPrivateUsage]
+            *(lowered_block_id(source.capability) for source in run_capability._lowered_instruction_sources()),  # pyright: ignore[reportPrivateUsage]
             *(capability_id for capability_id, _ in loaded if capability_id not in ids),
         ]
     )

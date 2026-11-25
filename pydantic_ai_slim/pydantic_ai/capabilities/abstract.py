@@ -221,6 +221,17 @@ class CapabilityOrdering:
 
 _AUTHORITIES: Final[tuple[object, ...]] = get_args(Authority)
 
+
+@dataclass(frozen=True)
+class LoweredInstructionSource(Generic[AgentDepsT]):
+    """A capability whose instructions are below `'operator'` authority, stated in history as one block."""
+
+    capability: AbstractCapability[AgentDepsT]
+    own: bool = True
+    """Whether the block includes the capability's own `get_instructions()`, which an overriding wrapper or container
+    replaces; its toolsets' instructions are always included."""
+
+
 _warned_replaced_instructions: set[str] = set()
 """The overriding capabilities and lowered capabilities whose replaced instructions were warned about, as their ids."""
 
@@ -622,7 +633,7 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         ceiling = self._authority_ceiling
         return authority if ceiling is None else _lower_authority(authority, ceiling)
 
-    def _lowered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
+    def _lowered_instruction_sources(self) -> list[LoweredInstructionSource[AgentDepsT]]:
         """The capabilities in this tree whose instructions are below `'operator'` authority, in dispatch order.
 
         Their instructions, their own and their toolsets', never enter the instruction prefix: each is stated in
@@ -631,17 +642,20 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         """
         if self.defer_loading is True or self._effective_authority == 'operator':
             return []
-        return [self]
+        return [LoweredInstructionSource(self)]
 
-    def _warn_replaced_lowered_instructions(self, replaced: Sequence[AbstractCapability[AgentDepsT]]) -> None:
-        """Warn, once for each, that this capability's `get_instructions()` override replaces lowered instructions.
+    def _replace_lowered_instructions(
+        self, sources: Sequence[LoweredInstructionSource[AgentDepsT]]
+    ) -> list[LoweredInstructionSource[AgentDepsT]]:
+        """`sources` within this capability, whose own `get_instructions()` its override replaces.
 
-        Lowered text never rides in a capability's own instructions at a higher authority, so the instructions of
-        `replaced`, capabilities below `'operator'` within this one, aren't sent at all.
+        Lowered text never rides in a capability's own instructions at a higher authority, so their own instructions
+        aren't sent at all, which a warning says once for each; their toolsets' are still stated as their blocks.
         """
-        for capability in replaced:
+        for source in sources:
+            capability = source.capability
             key = f'{lowered_block_id(self)} > {lowered_block_id(capability)}'
-            if key in _warned_replaced_instructions or not capability._collect_instructions():
+            if key in _warned_replaced_instructions or not source.own or not capability._collect_instructions():
                 continue
             _warned_replaced_instructions.add(key)
             warnings.warn(
@@ -652,6 +666,7 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
                 UserWarning,
                 stacklevel=2,
             )
+        return [replace(source, own=False) for source in sources]
 
     def _keep_authority(self, resolved: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Carry this instance's authority to what its `for_run` or `for_agent` returned.

@@ -508,7 +508,7 @@ print(delta.content, delta.authority)
 #> Prefer the cheapest option. none
 ```
 
-A container or [wrapper](#wrapping-capabilities) whose subclass overrides `get_instructions()` decides what the model gets: below `'operator'` its text is one lowered block, and at `'operator'` its override replaces a lowered child's instructions, which then aren't sent at all (Pydantic AI warns once), since lowered text never goes out in a higher-authority override. To send them as data, leave the child's instructions to the framework rather than merging them into the override.
+A container or [wrapper](#wrapping-capabilities) whose subclass overrides `get_instructions()` decides what the model gets: below `'operator'` its text is one lowered block, and at `'operator'` its override replaces a lowered child's own `get_instructions()`, which then aren't sent at all (Pydantic AI warns once), since lowered text never goes out in a higher-authority override. The instructions of the child's toolsets, such as an MCP server's, are still sent as data. To send them as data, leave the child's instructions to the framework rather than merging them into the override.
 
 A realtime session has no channel for such a block, so a lowered capability's instructions aren't sent to one.
 

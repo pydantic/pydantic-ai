@@ -12,6 +12,7 @@ from __future__ import annotations as _annotations
 
 import json
 import typing
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, get_args, get_origin
 
@@ -53,6 +54,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
 
 from ._inline_snapshot import snapshot
@@ -673,14 +675,16 @@ async def test_a_lowered_container_that_writes_its_own_instructions_is_one_block
         received.instructions.append(info.instructions)
         return ModelResponse(parts=[TextPart('Done.')])
 
-    container = _AuthoringCombined([Capability[None](instructions='Child note.')]).with_authority('none')
-    agent = Agent(
-        FunctionModel(model_fn, profile=INLINE),
-        deps_type=type(None),
-        instructions='Be brief.',
-        capabilities=[container],
-    )
-    result = await agent.run('Hi')
+    child = Capability[None](id='lowered_container_child', instructions='Child note.')
+    container = _AuthoringCombined([child]).with_authority('none')
+    with pytest.warns(UserWarning, match="'lowered_container_child' are below operator authority"):
+        agent = Agent(
+            FunctionModel(model_fn, profile=INLINE),
+            deps_type=type(None),
+            instructions='Be brief.',
+            capabilities=[container],
+        )
+        result = await agent.run('Hi')
 
     assert received.instructions == ['Be brief.']
     assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [
@@ -757,3 +761,48 @@ async def test_a_loaded_capability_whose_authority_alone_changed_is_stated_again
         ('Plugin note.', 'user'),
         ('Plugin note.', 'none'),
     ]
+
+
+@pytest.mark.parametrize('overriding', ['wrapper', 'container'])
+async def test_an_override_keeps_a_lowered_childs_toolset_instructions(overriding: str):
+    """An override replaces a lowered child's own `get_instructions()`, never its toolsets', such as an MCP server's."""
+    pytest.importorskip('fastmcp.server')
+    from fastmcp import FastMCP
+
+    from pydantic_ai.capabilities import MCP
+
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.instructions.append(info.instructions)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    server = FastMCP('docs-server', instructions='Always search the docs first.')
+    child = MCP(local=server, id=f'docs_{overriding}').with_authority('none')
+    capability = (
+        _ReplacingWrapper(wrapped=CombinedCapability[None]([child]), prefix='n')
+        if overriding == 'wrapper'
+        else _AuthoringCombined([child])
+    )
+    agent = Agent(FunctionModel(model_fn, profile=INLINE), deps_type=type(None), capabilities=[capability])
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        result = await agent.run('Hi')
+
+    assert received.instructions == [{'wrapper': 'Replaced.', 'container': 'Combined note.'}[overriding]]
+    assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [
+        ('Always search the docs first.', 'none')
+    ]
+
+
+def test_otel_gives_a_lowered_statement_the_user_role():
+    settings = InstrumentationSettings(include_content=True)
+    operator = InstructionDeltaPart(id=NOTES_ID, content='Note.')
+    lowered = InstructionDeltaPart(id=NOTES_ID, content='Note.', authority='none')
+    roles = [
+        message['role']
+        for message in settings.messages_to_otel_messages(
+            [ModelRequest(parts=[operator]), ModelRequest(parts=[lowered])]
+        )
+    ]
+    assert roles == ['system', 'user']

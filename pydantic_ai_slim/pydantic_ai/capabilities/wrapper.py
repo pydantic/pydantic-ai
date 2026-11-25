@@ -34,6 +34,7 @@ from .abstract import (
     AgentModel,
     AgentNode,
     CapabilityDescription,
+    LoweredInstructionSource,
     NodeResult,
     RawOutput,
     RawToolArgs,
@@ -290,17 +291,16 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # otherwise flatten every leaf's contribution into one unaddressable part.
         return self.wrapped._collect_instructions()
 
-    def _lowered_instruction_sources(self) -> list[AbstractCapability[AgentDepsT]]:
+    def _lowered_instruction_sources(self) -> list[LoweredInstructionSource[AgentDepsT]]:
         # A wrapper at operator authority passes its wrapped capability's instructions along, so any below it are the
-        # wrapped tree's.
-        # A wrapper that took `get_instructions` over decides what it says instead.
+        # wrapped tree's. One that took `get_instructions` over decides what they say instead, but not what their
+        # toolsets say, which is still stated.
         if self.defer_loading is True or self._effective_authority != 'operator':
             return super()._lowered_instruction_sources()
-        replaced = self.wrapped._lowered_instruction_sources()
+        sources = self.wrapped._lowered_instruction_sources()
         if type(self).get_instructions is WrapperCapability.get_instructions:
-            return replaced
-        self._warn_replaced_lowered_instructions(replaced)
-        return []
+            return sources
+        return self._replace_lowered_instructions(sources)
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         return self.wrapped.get_model_settings()
