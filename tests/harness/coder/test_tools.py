@@ -596,8 +596,10 @@ class TestCoder:
         coder = Coder(autonomy='max', repo_context=False)
         await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert model.last_model_request_parameters is not None
-        parts = model.last_model_request_parameters.instruction_parts or []
-        assert [part.content for part in parts] == snapshot(
+        contents = [part.content for part in model.last_model_request_parameters.instruction_parts or []]
+        # `AnnounceWorkingDirectory`'s line names the run's own directory, so it's checked on its own.
+        contents.remove(f'The working directory is `{tmp_path.resolve()}`.')
+        assert contents == snapshot(
             [
                 """\
 You are a software engineering agent. Match the surrounding code's style, structure, and imports.
