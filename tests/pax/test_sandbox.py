@@ -1421,6 +1421,16 @@ class TestBoxd:
         assert all(client.closed for client in account.clients)
 
 
+def test_a_github_copy_is_cloned_without_file_contents() -> None:
+    """The fake GitHub is a local repository, which ignores `--filter`, so only the script shows the clone is blobless."""
+    [line] = [
+        line
+        for line in clone_script(Snapshot(clone_url='https://github.com/o/r.git')).splitlines()
+        if ' clone ' in line
+    ]
+    assert '--filter=blob:none' in shlex.split(line)
+
+
 @pytest.mark.parametrize('gh_token', [None, 'stand-in'])
 def test_the_credential_helper(tmp_path: Path, gh_token: str | None) -> None:
     """A proxy provider's stand-in in `GH_TOKEN` wins; without one, git reads the token saved in the sandbox."""
