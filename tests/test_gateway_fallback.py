@@ -8,6 +8,7 @@ specifies (a `424` naming the next `gateway/` model and a state token), and serv
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -54,8 +55,11 @@ with try_import() as imports_successful:
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.gateway import (
         _accepts_http_client,  # pyright: ignore[reportPrivateUsage]
+        _fallback_headers,  # pyright: ignore[reportPrivateUsage]
+        _fallback_headers_scope,  # pyright: ignore[reportPrivateUsage]
         _fallback_provider,  # pyright: ignore[reportPrivateUsage]
         _fallback_target,  # pyright: ignore[reportPrivateUsage]
+        _gateway_providers,  # pyright: ignore[reportPrivateUsage]
         gateway_provider,
         normalize_gateway_provider,
     )
@@ -157,7 +161,9 @@ class FakeGateway:
         return OpenAIResponsesModel('gpt-5', provider=provider, profile=merged)
 
 
-ADVERTISED = {'x-pydantic-ai-fallback': '1; formats=openai,anthropic,gemini,bedrock-converse'}
+ADVERTISED_WITHOUT_CLIENT = {'x-pydantic-ai-fallback': '1; formats=openai,anthropic,gemini,bedrock-converse'}
+# The fake gateway's models get the caller's `httpx2.AsyncClient`, which the Bedrock route can't use.
+ADVERTISED = {'x-pydantic-ai-fallback': '1; formats=openai,anthropic,gemini'}
 
 
 @pytest.mark.parametrize('stream', [False, True])
@@ -575,17 +581,52 @@ def test_the_next_provider_is_created_once_per_format():
     assert _fallback_provider(original, 'bedrock') is not fallback
 
 
-async def test_the_next_provider_gets_its_own_client_when_its_route_rejects_the_callers():
-    """A caller's legacy `httpx.AsyncClient` works on the OpenAI route but not the Anthropic one, so a hand-back from
-    the first to the second builds the Anthropic provider with a client of its own instead of failing.
+@pytest.mark.parametrize(
+    'client_type, formats',
+    [
+        pytest.param(httpx2.AsyncClient, 'openai,anthropic,gemini', id='httpx2'),
+        pytest.param(httpx.AsyncClient, 'openai,gemini', id='legacy-httpx'),
+    ],
+)
+async def test_only_formats_whose_route_takes_the_callers_client_are_advertised(
+    client_type: type[httpx.AsyncClient] | type[httpx2.AsyncClient], formats: str
+):
+    """The gateway skips members in a format whose route would have to resend the request without the caller's
+    HTTP client, and its proxy, TLS and other settings.
     """
-    async with httpx.AsyncClient() as client:
-        with pytest.warns(PydanticAIDeprecationWarning, match='`httpx.AsyncClient` support'):
-            original = gateway_provider('openai', api_key=API_KEY, base_url=BASE_URL, http_client=client)
+    async with client_type() as client:
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
+            provider = gateway_provider('openai', api_key=API_KEY, base_url=BASE_URL, http_client=client)
+
+        with _fallback_headers_scope(provider, None):
+            assert _fallback_headers.get() == {'x-pydantic-ai-fallback': f'1; formats={formats}'}
+
+
+async def test_a_hand_back_to_a_route_that_cant_take_the_callers_client_is_the_error(allow_model_requests: None):
+    """If the gateway names a format the client didn't advertise, the request isn't resent without the caller's
+    client: the hand-back is the error.
+    """
+    gateway = FakeGateway([('/responses', lambda _: hand_back('gateway/bedrock:amazon.nova-micro-v1:0', 'state-1'))])
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await Agent(gateway.openai_model()).run('Hello')
+
+    assert exc_info.value.status_code == 424
+    assert isinstance(exc_info.value.__cause__, UserError)
+    assert len(gateway.seen) == 1
+
+
+async def test_the_next_provider_keeps_the_callers_client():
+    """A provider the gateway handed a request to uses the caller's client too, as does any later hop from it."""
+    async with httpx2.AsyncClient() as client:
+        original = gateway_provider('openai', api_key=API_KEY, base_url=BASE_URL, http_client=client)
 
         fallback = _fallback_provider(original, 'anthropic')
+        back = _fallback_provider(fallback, 'openai-chat')
 
-    assert fallback.base_url == f'{BASE_URL}/openai/'
+    assert _gateway_providers[fallback].http_client is client
+    assert _gateway_providers[back].http_client is client
 
 
 @contextmanager
@@ -647,7 +688,7 @@ async def test_converse_requests_advertise_too(allow_model_requests: None):
         await model.request([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
 
     assert result.output == 'Hello from Converse'
-    assert seen == [ADVERTISED, {}]
+    assert seen == [ADVERTISED_WITHOUT_CLIENT, {}]
 
 
 async def test_converse_stream_requests_advertise_too(allow_model_requests: None):
@@ -663,7 +704,7 @@ async def test_converse_stream_requests_advertise_too(allow_model_requests: None
             async with Agent(model).run_stream('Hello') as result:
                 await result.get_output()  # pragma: no cover
 
-    assert seen == [ADVERTISED]
+    assert seen == [ADVERTISED_WITHOUT_CLIENT]
 
 
 def test_the_capability_is_not_in_agent_specs():

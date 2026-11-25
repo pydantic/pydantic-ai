@@ -141,6 +141,9 @@ class _FallbackHeadersModel(WrapperModel):
 
     def __init__(self, wrapped: Model, *, state: str | None = None, hand_backs: int = 0):
         super().__init__(wrapped)
+        provider = wrapped.provider
+        assert provider is not None  # only gateway models are wrapped
+        self._provider = provider
         self._state = state
         self.hand_backs = hand_backs
 
@@ -153,7 +156,7 @@ class _FallbackHeadersModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        with _fallback_headers_scope(self._state):
+        with _fallback_headers_scope(self._provider, self._state):
             return await self.wrapped.request(messages, model_settings, model_request_parameters)
 
     @asynccontextmanager
@@ -166,7 +169,7 @@ class _FallbackHeadersModel(WrapperModel):
     ) -> AsyncGenerator[StreamedResponse]:
         async with AsyncExitStack() as stack:
             # The request goes out when the stream is opened; the events that follow arrive on that response.
-            with _fallback_headers_scope(self._state):
+            with _fallback_headers_scope(self._provider, self._state):
                 response_stream = await stack.enter_async_context(
                     self.wrapped.request_stream(messages, model_settings, model_request_parameters, run_context)
                 )

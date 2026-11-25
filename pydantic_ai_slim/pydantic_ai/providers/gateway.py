@@ -485,29 +485,49 @@ _FALLBACK_PROTOCOL_VERSION = 1
 _fallback_headers: ContextVar[Mapping[str, str] | None] = ContextVar('_gateway_fallback_headers', default=None)
 
 
+# The gateway's own API format IDs, with the SDK a model for each needs and the gateway route that serves it.
+_FALLBACK_FORMATS: dict[str, tuple[str, str]] = {
+    'openai': ('openai', 'openai'),
+    'anthropic': ('anthropic', 'anthropic'),
+    'gemini': ('google.genai', 'google-cloud'),
+    'bedrock-converse': ('boto3', 'bedrock'),
+}
+
+
 @cache
-def _accepted_fallback_formats() -> str:
+def _installed_fallback_formats() -> tuple[str, ...]:
     """The API formats this install can build a model for: those whose SDK is installed."""
-    # The gateway's own API format IDs, and the SDK that a provider for each format needs.
-    sdks = {'openai': 'openai', 'anthropic': 'anthropic', 'gemini': 'google.genai', 'bedrock-converse': 'boto3'}
     formats: list[str] = []
-    for name, module in sdks.items():
+    for name, (module, _) in _FALLBACK_FORMATS.items():
         try:
             if importlib.util.find_spec(module) is not None:
                 formats.append(name)
         except ModuleNotFoundError:  # pragma: lax no cover
             # The parent package of a dotted name, like `google` for `google.genai`, isn't installed.
             pass
-    return ','.join(formats)
+    return tuple(formats)
+
+
+def _accepted_fallback_formats(http_client: AsyncHTTPClient | None) -> str:
+    """The API formats a request can be handed back in, from a provider created with `http_client`.
+
+    A format whose route can't use the caller's HTTP client is left out, so the gateway skips its members rather than
+    have the request resent without the client's proxy, TLS and other settings.
+    """
+    return ','.join(
+        name for name in _installed_fallback_formats() if _accepts_http_client(_FALLBACK_FORMATS[name][1], http_client)
+    )
 
 
 @contextmanager
-def _fallback_headers_scope(state: str | None) -> Generator[None]:
+def _fallback_headers_scope(provider: Provider[Any], state: str | None) -> Generator[None]:
     """Tell the gateway, on the requests sent in this scope, that the client handles a fallback across API formats.
 
-    `state` is the token of the hand-back that sent the request here, if any.
+    `provider` is the gateway provider sending the requests, and `state` is the token of the hand-back that sent the
+    request here, if any.
     """
-    headers = {_FALLBACK_HEADER: f'{_FALLBACK_PROTOCOL_VERSION}; formats={_accepted_fallback_formats()}'}
+    formats = _accepted_fallback_formats(_gateway_providers[provider].http_client)
+    headers = {_FALLBACK_HEADER: f'{_FALLBACK_PROTOCOL_VERSION}; formats={formats}'}
     if state is not None:
         headers[_FALLBACK_STATE_HEADER] = state
     token = _fallback_headers.set(headers)
@@ -538,19 +558,26 @@ def _fallback_target(headers: Mapping[str, str] | None) -> tuple[str, str | None
 def _fallback_provider(provider: Provider[Any], upstream_provider: str) -> Provider[Any]:  # pyright: ignore[reportUnusedFunction]
     """A gateway provider for `upstream_provider` with the credentials, base URL and route gateway `provider` has.
 
-    The caller's HTTP client is shared when the new provider's SDK accepts it. Each is created once per `provider` and
-    API format, so the requests the gateway hands back from it reuse one client, as those to `provider` itself do.
+    The new provider uses the caller's HTTP client, if any, so the resent request keeps its proxy, TLS and other
+    settings; a route that can't use it raises `UserError` instead of falling back to a default client. Each is
+    created once per `provider` and API format, so the requests the gateway hands back from it reuse one client, as
+    those to `provider` itself do.
     """
     canonical = normalize_gateway_provider(upstream_provider)
     created = _fallback_providers.setdefault(provider, {})
     if (fallback := created.get(canonical)) is None:
         config = _gateway_providers[provider]
+        if not _accepts_http_client(canonical, config.http_client):
+            raise UserError(
+                f'The Gateway handed the request back to the {canonical!r} route, which cannot use the HTTP client the '
+                'original provider was created with.'
+            )
         fallback = created[canonical] = _create_gateway_provider(
             canonical,
             route=config.route,
             api_key=config.api_key,
             base_url=config.base_url,
-            http_client=config.http_client if _accepts_http_client(canonical, config.http_client) else None,
+            http_client=config.http_client,
         )
     return fallback
 
