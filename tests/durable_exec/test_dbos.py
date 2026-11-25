@@ -4340,10 +4340,9 @@ async def test_dbos_dynamic_get_tools_rejects_enqueue_in_workflow(dbos: DBOS) ->
     )
 
 
-async def test_dbos_allows_in_flight_in_workflow_code_and_rejects_it_in_steps(dbos: DBOS) -> None:
-    """`ctx.in_flight` works in workflow code, such as a function tool, and raises in a step."""
+async def test_dbos_rejects_in_flight_in_workflow_code_and_steps(dbos: DBOS) -> None:
+    """`ctx.in_flight` raises in workflow code, such as a function tool, as DBOS identifies steps by start order, and in a step."""
     errors: list[str] = []
-    live: list[int] = []
 
     def record(ctx: RunContext[object]) -> None:
         with pytest.raises(UserError) as exc_info:
@@ -4365,7 +4364,7 @@ async def test_dbos_allows_in_flight_in_workflow_code_and_rejects_it_in_steps(db
 
     @agent.tool
     async def in_workflow_code(ctx: RunContext[object]) -> str:
-        live.append(len(ctx.in_flight.live()))
+        record(ctx)
         return 'checked'
 
     @DBOS.workflow()
@@ -4373,9 +4372,9 @@ async def test_dbos_allows_in_flight_in_workflow_code_and_rejects_it_in_steps(db
         await agent.run('run')
 
     await run_workflow()
-    assert live == [0]
     assert sorted(set(errors)) == snapshot(
         [
+            '`ctx.in_flight` is not supported in a DBOS run yet: DBOS identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
             "`ctx.in_flight` is not supported inside a durable step: the durable runtime replays the step's recorded result without re-running your code, so work it started or registered would be lost.",
         ]
     )

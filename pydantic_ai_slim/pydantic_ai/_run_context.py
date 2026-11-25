@@ -1402,8 +1402,9 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 execution unit, where work it starts would be lost on replay, or the run is durable and executes
                 tool calls sequentially, as AWS Lambda durable functions always do, Absurd and pgtask do by default,
                 and DBOS does with a workspace attached: work running alongside the run could start durable units in
-                an order a replay doesn't reproduce. Or the run is durable on an engine that suspends a run by ending
-                it, as Absurd and pgtask do in `parallel_ordered_events` mode, which would stop the work.
+                an order a replay doesn't reproduce. Or the run is durable on an engine that identifies each
+                recorded unit by the order it starts in: DBOS, AWS Lambda, Absurd and pgtask, until
+                https://github.com/pydantic/pydantic-ai/issues/14500 lands.
         """
         queue = self.pending_messages
         if isinstance(queue, EnqueueGuard):
@@ -1417,11 +1418,13 @@ class RunContext(Generic[RunContextAgentDepsT]):
                     f'sequentially: work running alongside the run could start {durability.durable_unit_plural} in an '
                     'order a replay does not reproduce. Run the work in the tool call itself instead.'
                 )
-            if durability.engine_spec._suspend_ends_run:  # pyright: ignore[reportPrivateUsage]
+            if durability.engine_spec._steps_identified_by_start_order:  # pyright: ignore[reportPrivateUsage]
+                engine, unit = durability.engine_name, durability.durable_unit_noun
                 raise UserError(
-                    f'`ctx.in_flight` is not supported in this {durability.engine_name} run: {durability.engine_name} '
-                    'suspends a run, at a durable sleep or a wait for an external event, by ending it, which would '
-                    'stop work running alongside the run without restarting it. Run the work in the tool call '
+                    f'`ctx.in_flight` is not supported in a {engine} run yet: {engine} identifies each recorded {unit} '
+                    f'by the order it starts in, so on recovery work running alongside the run could start its '
+                    f'{durability.durable_unit_plural} in a different order and read the recorded result of another '
+                    f'{unit} (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call '
                     'itself instead.'
                 )
         # Read via `__dict__`, like `_cancellation` in `cancel`: the registry never crosses a durable boundary.

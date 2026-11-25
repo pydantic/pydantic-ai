@@ -6,6 +6,7 @@ See [Work that outlives a step](../capabilities/custom.md#in-flight-work).
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
@@ -328,6 +329,8 @@ class InFlightRegistry:
         self._failures: list[BaseException] = []
         self._changed = asyncio.Event()  # noqa: TID251  (set from loop callbacks, see `_done`)
         self._closed = False
+        self._in_wait: Counter[InFlightWork[Any]] = Counter()
+        """The work inside a durable wait, its own or one it waits for, counted once per wait it's in."""
         self._waited: dict[InFlightWork[Any], None] | None = None
         """While the run waits to end, the draining work it waited for, including work started during the wait."""
 
@@ -614,22 +617,27 @@ class InFlightRegistry:
         # Work that reaches the wait itself, from its own task or one it started, like a call it makes that needs
         # approval, is neither cancelled nor waited for: it would wait for itself.
         # That includes the work that started it and waits for it in turn.
-        own = {work for started in _current_work.get() for work in started}
-        cancelling = [work for work in self._live.values() if work.on_end == 'cancel' and work not in own]
-        # As at teardown, a failing `cancel` callback mustn't keep the rest of the work running.
-        errors: list[Exception] = []
-        for work in cancelling:
-            try:
-                work.cancel()
-            except Exception as error:
-                errors.append(error)
-        for work in cancelling:
-            await work.wait()
-        if errors:
-            raise errors[0]
-        yield
-        while any(work not in own for work in self._draining()):
-            await self._changed.wait()
+        own = Counter(work for started in _current_work.get() for work in started)
+        # Nor is other work that is in such a wait itself: two pieces would each wait for the other.
+        self._in_wait += own
+        try:
+            cancelling = [work for work in self._live.values() if work.on_end == 'cancel' and work not in self._in_wait]
+            # As at teardown, a failing `cancel` callback mustn't keep the rest of the work running.
+            errors: list[Exception] = []
+            for work in cancelling:
+                try:
+                    work.cancel()
+                except Exception as error:
+                    errors.append(error)
+            for work in cancelling:
+                await work.wait()
+            if errors:
+                raise errors[0]
+            yield
+            while any(work not in self._in_wait for work in self._draining()):
+                await self._changed.wait()
+        finally:
+            self._in_wait -= own
 
     async def _close_on_exit(self, exc_type: type[BaseException] | None, *_: object) -> None:
         """Close the registry as the run exits, raising a `cancel` callback's error only if the run itself didn't fail.

@@ -921,6 +921,62 @@ async def test_work_that_reaches_a_durable_wait_doesnt_wait_for_itself():
     ]
 
 
+@dataclass
+class _WaiterAnsweringTogether(ExternalEventWaiter):
+    """Stands in for a durable engine that answers its waits only once `expected` of them have asked."""
+
+    expected: int
+    asked: int = 0
+    all_asked: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def wait(
+        self, name: str, *, ask: Callable[[str], Awaitable[JsonValue]], timeout: timedelta | None
+    ) -> JsonValue:
+        answer = await ask('token')
+        self.asked += 1
+        if self.asked == self.expected:
+            self.all_asked.set()
+        await self.all_asked.wait()
+        return answer
+
+
+async def test_sibling_work_in_durable_waits_doesnt_wait_for_each_other():
+    """Two pieces of `'drain'` work in durable waits at once: each wait goes on without waiting for the other piece."""
+    handles: dict[str, InFlightWork[DeferredToolResults | None]] = {}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        capabilities=[HandleDeferredToolCalls(_approve_all, timeout=timedelta(minutes=1))],
+    )
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        tool_manager = ctx.tool_manager
+        assert tool_manager is not None
+        for call_id in ('a', 'b'):
+            requests = DeferredToolRequests(approvals=[ToolCallPart(tool_name='delete', args={}, tool_call_id=call_id)])
+
+            async def ask_for_approval(requests: DeferredToolRequests = requests) -> DeferredToolResults | None:
+                return await tool_manager.resolve_deferred_tool_calls(requests)
+
+            handles[call_id] = ctx.in_flight.start(ask_for_approval, kind='test', name=call_id, id=call_id)
+        return 'started'
+
+    with no_leaked_tasks(), external_event_scope(_WaiterAnsweringTogether(expected=2)):
+        await agent.run('go')
+
+    results = {call_id: await handle.result() for call_id, handle in handles.items()}
+    assert {call_id: list(result.approvals) if result else None for call_id, result in results.items()} == {
+        'a': ['a'],
+        'b': ['b'],
+    }
+
+
 async def test_work_waiting_for_work_that_reaches_a_durable_wait_isnt_waited_for_either():
     """Work that started the work that asks for an approval, and waits for it in turn, doesn't hold the wait either."""
     handles: dict[str, InFlightWork[DeferredToolResults | None]] = {}

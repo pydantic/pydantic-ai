@@ -969,7 +969,7 @@ class TestRetryAfter:
 async def test_in_flight_is_refused(
     pgtask_db: PGTaskDatabase, mode: Literal['sequential', 'parallel_ordered_events']
 ) -> None:
-    """pgtask suspends a task by ending the run, which would stop work running alongside it, so either mode refuses."""
+    """pgtask identifies each step by the order it starts in, so either mode refuses."""
     errors: list[str] = []
 
     class StartsWork(AbstractCapability[Any]):
@@ -997,5 +997,5 @@ async def test_in_flight_is_refused(
 
 IN_FLIGHT_REFUSALS = {
     'sequential': '`ctx.in_flight` is not supported in this pgtask run, which executes tool calls sequentially: work running alongside the run could start steps in an order a replay does not reproduce. Run the work in the tool call itself instead.',
-    'parallel_ordered_events': '`ctx.in_flight` is not supported in this pgtask run: pgtask suspends a run, at a durable sleep or a wait for an external event, by ending it, which would stop work running alongside the run without restarting it. Run the work in the tool call itself instead.',
+    'parallel_ordered_events': '`ctx.in_flight` is not supported in a pgtask run yet: pgtask identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
 }
