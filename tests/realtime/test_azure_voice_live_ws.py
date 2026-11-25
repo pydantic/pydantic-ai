@@ -403,7 +403,8 @@ async def test_deferred_capability_tools_are_revealed_mid_session(
     async with agent.realtime(model).session() as session:
         await session.send('What will the weather be in Paris tomorrow?')
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+            # Breaks on the recorded terminal event.
+            async for event in session:  # pragma: no branch
                 if isinstance(event, FunctionToolResultEvent):
                     results.append(event.part)
                 elif isinstance(event, RealtimeTurnCompleteEvent) and len(results) == 2:

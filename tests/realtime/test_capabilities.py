@@ -1646,7 +1646,7 @@ async def test_a_revealed_tool_outside_the_tool_choice_stays_hidden() -> None:
 
 
 async def test_revealing_an_unloaded_capabilitys_tool_is_refused() -> None:
-    """A tool another capability owns is revealed by loading that capability, as in a standard run."""
+    """`ToolReturn.tools` naming a tool that a still-unloaded capability owns is refused with a `UserError`, as in a standard run: that tool only appears by loading its capability."""
     connection = _ScriptedConnection()
     agent: Agent[None, str] = Agent(deps_type=type(None), capabilities=[_forecast_capability()])
 
