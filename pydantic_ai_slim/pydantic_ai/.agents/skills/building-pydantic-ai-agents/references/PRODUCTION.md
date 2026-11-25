@@ -29,14 +29,14 @@ Reach for more only when one of these is true:
 Then there are two levels, and they are not the same:
 
 - **`StepPersistence`** (Harness) continues from the last tool-call snapshot, with no engine to run. A tool call in the ledger that never finished has an unknown outcome, so check the external system before re-running it.
-- **Durable execution** replays completed model requests and journaled tool calls after a crash, and **re-runs the one that was in flight from its start**. So a tool with side effects has to be safe to repeat, for instance by passing an idempotency key to the API it calls. This is the point to get right: a crash mid-call is *not* covered for you. Runs on an engine the user operates, via `pydantic-ai-slim` with one engine's extra such as `[dbos]` or `[temporal]`. See [Orchestration and Integrations](./ORCHESTRATION-AND-INTEGRATIONS.md).
+- **Durable execution** replays completed model requests and journaled tool calls after a crash, and **re-runs the one that was in flight from its start**. So a tool with side effects has to be safe to repeat, for instance by passing an idempotency key to the API it calls. This is the point to get right: a crash mid-call is *not* covered for you. Runs on an engine the user operates, via `pydantic-ai-slim` with one engine's extra such as `[dbos]` or `[temporal]`. See [Use Durable Execution](./ORCHESTRATION-AND-INTEGRATIONS.md#use-durable-execution).
 
 ## Bound cost and runaway loops
 
 Both, and they answer different questions:
 
 - `UsageLimits` per run: this run cannot exceed N requests or tokens.
-- `SpendLimits` (Harness) per day, tenant or month: this tenant cannot exceed a budget. Two caveats that only matter in production: its default store is in memory, so a budget resets on every restart and is not shared between worker processes, and it is a brake rather than a reservation, so concurrent runs can overshoot. See the Harness spend docs.
+- `SpendLimits` (Harness) per day, tenant or month: this tenant cannot exceed a budget. Two caveats that only matter in production: its default store is in memory, so a budget resets on every restart and is not shared between worker processes, and it is a brake rather than a reservation, so concurrent runs can overshoot. See [Spend](https://pydantic.dev/docs/ai/harness/spend/). Where neither caveat is acceptable, the Gateway enforces daily, weekly and monthly caps per project, user and key before the request reaches the provider.
 
 A loop that never terminates is a cost incident, so set the per-run limit on every agent that runs
 unattended, not just the expensive ones.
@@ -55,7 +55,7 @@ source, never in a prompt, and never echoed into telemetry (see **Telemetry safe
 
 ## Keep conversation state
 
-Store the run's `Conversation` in the user's database; a `ConversationStore` does it for them. This
+Store the run's `Conversation` in the user's database; a `ConversationStore` does it for them. **A conversation ID is a key, not a credential**: check that the caller may access a conversation before loading it, and serialize concurrent updates to one conversation, with a version column or a per-conversation lock, so two instances do not continue the same stored version. This
 is the piece most often got wrong by re-sending a prompt instead of resuming, which repeats the tool
 calls. See [Input and History](./INPUT-AND-HISTORY.md) and **A failed run's work isn't lost** in
 `SKILL.md`.
@@ -82,7 +82,9 @@ and the credential handling.
 
 Unit tests with `TestModel` first, then evals on datasets and on live traffic. The second half is
 the one teams skip: a prompt change that passes unit tests can still regress quality, and only an
-eval catches it. See [Testing and Debugging](./TESTING-AND-DEBUGGING.md).
+eval catches it. The two halves live in different references: [Testing and Debugging](./TESTING-AND-DEBUGGING.md) for the unit tests, and
+[Systematically Verify Agent Behavior with Evals](./ORCHESTRATION-AND-INTEGRATIONS.md#systematically-verify-agent-behavior-with-evals) for the
+evals, which is also where to start for [online evaluation](https://pydantic.dev/docs/ai/evals/online-evaluation/) of live traffic.
 
 ## Serve it to a frontend
 
