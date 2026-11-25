@@ -15318,3 +15318,45 @@ async def test_replaced_response_answers_its_tool_calls_and_streams_its_replacem
             {'type': 'finish'},
         ]
     )
+
+
+async def test_output_retry_streams_each_response_as_its_own_step():
+    """A response an output validator rejects and the one that follows are separate steps, not one shared step.
+
+    Before response start events, both responses streamed inside a single `start-step`/`finish-step` pair, as no
+    tool turn separated them. https://github.com/pydantic/pydantic-ai/issues/12829
+    """
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'first' if len(messages) == 1 else 'second'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.output_validator
+    def check(output: str) -> str:
+        if output == 'first':
+            raise ModelRetry('try again')
+        return output
+
+    event_stream = VercelAIEventStream()
+    async with agent.run_stream_events('Hello') as events:
+        chunk_types = [chunk.type async for chunk in event_stream.transform_stream(events)]
+
+    assert chunk_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'text-start',
+            'text-delta',
+            'text-end',
+            'finish-step',
+            'start-step',
+            'text-start',
+            'text-delta',
+            'text-end',
+            'message-metadata',
+            'finish-step',
+            'finish',
+            'done',
+        ]
+    )

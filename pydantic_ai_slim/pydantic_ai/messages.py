@@ -8309,8 +8309,9 @@ class ModelResponseEndEvent:
 
     - `'complete'`: the model stream finished. The agent can still reject the response afterwards, for
       example when a hook raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
-    - `'failed'`: the model stream raised [`error`][pydantic_ai.messages.ModelResponseEndEvent.error].
-      This is best effort: a process that crashes or times out can't send it.
+    - `'failed'`: an [`error`][pydantic_ai.messages.ModelResponseEndEvent.error] cut the stream short, like the
+      model's stream failing or an exceeded usage limit. This is best effort: a process that crashes or times out
+      can't send it.
     - `'interrupted'`: the stream was stopped before it finished, by
       [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel] or by a `wrap_model_request` hook
       that stopped it to stream a response of its own.

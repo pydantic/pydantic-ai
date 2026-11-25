@@ -31,10 +31,11 @@ from pydantic_ai import (
     TextPart,
 )
 from pydantic_ai.capabilities import ModelFallback
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.usage import UsageLimits
 
 
 def _boundaries(events: list[AgentStreamEvent]) -> list[ModelResponseStartEvent | ModelResponseEndEvent]:
@@ -195,3 +196,29 @@ async def test_a_stream_that_fails_after_output_ends_failed():
             error='RuntimeError: connection lost',
         )
     )
+
+
+async def test_a_usage_limit_cutting_the_stream_short_ends_failed():
+    """A token limit exceeded mid-stream ends the response as `'failed'` with what it streamed, before the error."""
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        for word in ('one ', 'two ', 'three ', 'four '):
+            yield word
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+    events: list[AgentStreamEvent] = []
+    with pytest.raises(UsageLimitExceeded):
+        async with agent.run_stream_events('x', usage_limits=UsageLimits(output_tokens_limit=2)) as stream:
+            async for event in stream:
+                events.append(event)
+
+    start, end = _boundaries(events)
+    assert end.origin == start.origin
+    assert isinstance(end, ModelResponseEndEvent)
+    assert end.status == 'failed'
+    assert end.error == snapshot(
+        'UsageLimitExceeded: Exceeded the output_tokens_limit of 2 (output_tokens=3). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+    )
+    assert end.response is not None
+    assert end.response.state == 'interrupted'
+    assert end.response.parts == snapshot([TextPart(content='one two three ')])

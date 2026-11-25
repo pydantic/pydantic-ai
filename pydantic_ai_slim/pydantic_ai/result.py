@@ -76,6 +76,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _attempt: int = field(default=1, repr=False)
     """The attempt at the request step that the stream came from, which its events' `origin` records."""
     _origin: _messages.ModelResponseOrigin | None = field(default=None, init=False, repr=False)
+    _response_started: bool = field(default=False, init=False, repr=False)
+    """Whether a `ModelResponseStartEvent` was yielded whose `ModelResponseEndEvent` wasn't yet."""
     """The origin the events of the current attempt are stamped with, built on its first event."""
 
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
@@ -705,10 +707,24 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     event = await anext(base_iter)
                 except StopAsyncIteration:
                     return
+                except Exception as error:
+                    # Raised around the model stream, like an exceeded usage limit, after the response started and
+                    # before its own end: close the response it cut short.
+                    if self._response_started:
+                        self._response_started = False
+                        yield self._response_end_event('failed', error=error)
+                    raise
 
+                self._track_open_response(event)
                 yield event
         finally:
             await _utils.aclose_if_supported(base_iter)
+
+    def _track_open_response(self, event: ModelResponseStreamEvent) -> None:
+        if isinstance(event, _messages.ModelResponseStartEvent):
+            self._response_started = True
+        elif isinstance(event, _messages.ModelResponseEndEvent):
+            self._response_started = False
 
 
 @dataclass(init=False)

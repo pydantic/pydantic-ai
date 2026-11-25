@@ -339,13 +339,13 @@ Check every event, not only the first of each origin: a superseded execution's e
 Each streamed model response is opened by a [`ModelResponseStartEvent`][pydantic_ai.messages.ModelResponseStartEvent], which says which model and provider produce it, and closed by a [`ModelResponseEndEvent`][pydantic_ai.messages.ModelResponseEndEvent] with the same `origin`, which carries the response as streamed. A consumer can render or store each response when its end arrives, without assembling it from part events, and tell a response that completed from one that didn't by the end's [`status`][pydantic_ai.messages.ModelResponseEndEvent.status]:
 
 - `'complete'`: the model finished the response. The agent can still reject it afterwards, as when an output validator raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
-- `'failed'`: the model stream raised the end's `error` partway through. The run fails with that error, unless a capability recovers from it.
+- `'failed'`: an error, the end's `error`, cut the stream short, like the model's stream failing or an exceeded usage limit. The run fails with that error, unless a capability recovers from it.
 - `'interrupted'`: the stream was stopped before the model finished. [`AgentStream.cancel()`][pydantic_ai.result.AgentStream.cancel] stopped it, or a `wrap_model_request` hook stopped it to stream a response of its own.
 - `'superseded'`: under durable execution, the engine ran the same attempt again, and the new execution closes the previous one's response before streaming it again. The end has no `response`.
 
 A response that replaces an earlier attempt at the same request step, like the one a fallback moved on to or a hook streamed instead, has that attempt's `response_id` as its start's [`replaces`][pydantic_ai.messages.ModelResponseStartEvent.replaces].
 
-Every start is closed by one end, unless the run itself stops partway through a response: a [cancelled run](#cancelling-a-run), or an exception raised outside the model stream, like an exceeded [usage limit](#usage-limits), ends the run instead. An earlier durable execution that ends after its successor closed it as `'superseded'` sends a second end for the same origin, so apply the first end of each origin:
+Every start is closed by one end. An error raised partway through a response, by the model or around its stream like an exceeded [usage limit](#usage-limits), first ends it as `'failed'`. The only exception is a consumer that stops reading the stream, or a [cancelled run](#cancelling-a-run), which closes the stream where no event can be sent anymore. An earlier durable execution that ends after its successor closed it as `'superseded'` sends a second end for the same origin, so apply the first end of each origin:
 
 ```python {title="response_boundaries.py"}
 from pydantic_ai import ModelResponseEndEvent, ModelResponseOrigin
