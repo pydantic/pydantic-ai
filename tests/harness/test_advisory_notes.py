@@ -62,9 +62,9 @@ def _registered_kinds() -> dict[str, type[CapabilityPart]]:
             for module_info in pkgutil.walk_packages(package.__path__, f'{package_name}.'):
                 try:
                     importlib.import_module(module_info.name)
-                except Exception as exc:  # pragma: no cover - depends on the installed extras
-                    if not caused_by_missing_dependency(exc):
-                        raise
+                except Exception as exc:  # A module whose optional dependency isn't installed is skipped.
+                    if not caused_by_missing_dependency(exc):  # pragma: no branch
+                        raise  # pragma: no cover - only a real import error gets here
     return dict(sorted(CAPABILITY_PART_TYPES.items()))
 
 
