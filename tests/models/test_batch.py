@@ -565,13 +565,17 @@ async def test_event_stream_handlers_and_run_stream_events_get_a_batched_runs_ev
     for events in (handled, streamed):
         assert [type(event).__name__ for event in events if not isinstance(event, AgentRunResultEvent)] == snapshot(
             [
+                'ModelResponseStartEvent',
                 'PartStartEvent',
                 'PartEndEvent',
+                'ModelResponseEndEvent',
                 'FunctionToolCallEvent',
                 'FunctionToolResultEvent',
+                'ModelResponseStartEvent',
                 'PartStartEvent',
                 'FinalResultEvent',
                 'PartEndEvent',
+                'ModelResponseEndEvent',
             ]
         )
     assert len(wrapped.created) == 4

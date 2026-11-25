@@ -779,7 +779,7 @@ async def test_run_stream_error_closes_open_native_tool_call() -> None:
 
 
 async def test_run_stream_error_closes_open_tool_call() -> None:
-    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must emit `TOOL_CALL_END` before `RUN_ERROR`.
+    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must end and answer it before `RUN_ERROR`.
 
     A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
     open text/thinking slot nor `_pending_tool_calls` (which only holds already-dispatched calls), so without
@@ -809,7 +809,10 @@ async def test_run_stream_error_closes_open_tool_call() -> None:
     ]
 
     event_types = [e['type'] for e in events]
-    assert event_types[event_types.index('RUN_ERROR') - 1] == 'TOOL_CALL_END'
+    # The response ends as failed, so its streamed call gets the same synthetic result the error path gives a
+    # pending one, and both land before `RUN_ERROR`.
+    error_at = event_types.index('RUN_ERROR')
+    assert event_types[error_at - 3 : error_at] == ['TOOL_CALL_END', 'TOOL_CALL_RESULT', 'REASONING_ENCRYPTED_VALUE']
     # The `TOOL_CALL_END` must carry the same `toolCallId` as its `TOOL_CALL_START`, or the client can't close the call.
     tool_start = next(e for e in events if e['type'] == 'TOOL_CALL_START')
     tool_end = next(e for e in events if e['type'] == 'TOOL_CALL_END')
@@ -822,6 +825,8 @@ async def test_run_stream_error_closes_open_tool_call() -> None:
             'TOOL_CALL_START',
             'TOOL_CALL_ARGS',
             'TOOL_CALL_END',
+            'TOOL_CALL_RESULT',
+            'REASONING_ENCRYPTED_VALUE',
             'RUN_ERROR',
         ]
     )

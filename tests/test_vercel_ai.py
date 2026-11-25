@@ -3864,7 +3864,7 @@ async def test_run_stream_error_closes_open_native_tool_call():
 
 
 async def test_run_stream_error_closes_open_tool_call():
-    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must emit `tool-input-available` before `error`.
+    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must close and answer it before `error`.
 
     A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
     open text/thinking slot nor `_pending_tool_calls` (which only holds already-dispatched calls), so without
@@ -3899,8 +3899,10 @@ async def test_run_stream_error_closes_open_tool_call():
     ]
 
     event_types = [e if isinstance(e, str) else e['type'] for e in events]
-    # `tool-input-available` must land immediately before `error`; anything after `error` is dropped by the client.
-    assert event_types[event_types.index('error') - 1] == 'tool-input-available'
+    # The call must be closed and answered before `error`; anything after `error` is dropped by the client. The
+    # response ends as failed, so its streamed call gets the same synthetic result the error path gives a pending one.
+    error_at = event_types.index('error')
+    assert event_types[error_at - 2 : error_at] == ['tool-input-available', 'tool-output-error']
     # ...and it must carry the same `toolCallId` as its `tool-input-start`, or the client can't mark the call done.
     tool_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-start')
     tool_available = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-available')
@@ -3912,6 +3914,7 @@ async def test_run_stream_error_closes_open_tool_call():
             'tool-input-start',
             'tool-input-delta',
             'tool-input-available',
+            'tool-output-error',
             'error',
             'finish-step',
             'finish',
@@ -15340,7 +15343,7 @@ async def test_output_retry_streams_each_response_as_its_own_step():
 
     event_stream = VercelAIEventStream()
     async with agent.run_stream_events('Hello') as events:
-        chunk_types = [chunk.type async for chunk in event_stream.transform_stream(events)]
+        chunk_types = [chunk.model_dump()['type'] async for chunk in event_stream.transform_stream(events)]
 
     assert chunk_types == snapshot(
         [

@@ -12,6 +12,7 @@ from typing import Annotated, Any, ForwardRef, Optional
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -28,6 +29,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     PartEndEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -1572,6 +1575,10 @@ def _text_events(events: Sequence[AgentStreamEvent | AgentRunResultEvent[str]]) 
             seen.append(('end', event.part.content))
         elif isinstance(event, FinalResultEvent):
             seen.append('final result')
+        elif isinstance(event, ModelResponseStartEvent):
+            seen.append('response start' if event.replaces is None else 'replacement start')
+        elif isinstance(event, ModelResponseEndEvent):
+            seen.append(('response end', event.status))
         else:
             assert isinstance(event, AgentRunResultEvent)
             seen.append(('output', event.result.output))
@@ -1595,14 +1602,20 @@ class TestInputGuardrailParallelStreaming:
                     events = [event async for event in stream]
 
             # Chunks sent before the verdict still reach the caller; the block message then replaces them.
-            assert _text_events(events) == [
-                ('start', 'leaked '),
-                'final result',
-                ('start', 'nope'),
-                'final result',
-                ('end', 'nope'),
-                ('output', 'nope'),
-            ]
+            assert _text_events(events) == snapshot(
+                [
+                    'response start',
+                    ('start', 'leaked '),
+                    'final result',
+                    ('response end', 'interrupted'),
+                    'replacement start',
+                    ('start', 'nope'),
+                    'final result',
+                    ('end', 'nope'),
+                    ('response end', 'complete'),
+                    ('output', 'nope'),
+                ]
+            )
             assert model.closed.is_set()
             assert stream.result is not None
             assert stream.result.all_messages()[-1].parts == [TextPart(content='nope')]
@@ -1634,13 +1647,19 @@ class TestInputGuardrailParallelStreaming:
                         async with node.stream(run.ctx) as stream:
                             events.extend([event async for event in stream])
 
-        assert _text_events(events) == [
-            ('start', 'leaked '),
-            'final result',
-            ('start', 'nope'),
-            'final result',
-            ('end', 'nope'),
-        ]
+        assert _text_events(events) == snapshot(
+            [
+                'response start',
+                ('start', 'leaked '),
+                'final result',
+                ('response end', 'interrupted'),
+                'replacement start',
+                ('start', 'nope'),
+                'final result',
+                ('end', 'nope'),
+                ('response end', 'complete'),
+            ]
+        )
         assert model.closed.is_set()
         assert run.result is not None
         assert run.result.output == 'nope'
@@ -1667,7 +1686,9 @@ class TestInputGuardrailParallelStreaming:
                             await observer.blocked.wait()
                             events.extend([event async for event in stream])
 
-        assert _text_events(events) == [('start', 'nope'), 'final result', ('end', 'nope')]
+        assert _text_events(events) == snapshot(
+            ['replacement start', ('start', 'nope'), 'final result', ('end', 'nope'), ('response end', 'complete')]
+        )
         assert not model.first_chunk_sent.is_set()
         assert run.result is not None
         assert run.result.output == 'nope'
