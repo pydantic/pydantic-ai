@@ -817,6 +817,33 @@ SCENARIOS = [
     Scenario(id='thinking', script=_thinking_script),
     Scenario(id='interleaved_thinking', script=_interleaved_thinking_script, setup=_get_weather),
     Scenario(
+        id='part_provider_details',
+        script=_tool_call_script,
+        setup=_get_weather,
+        # Gemini's thought signatures, which only provider models put on text and tool calls.
+        seed=[
+            ModelRequest(parts=[UserPromptPart('Question 0')]),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        'Let me check.', provider_name='google', provider_details={'thought_signature': 'dGV4dA=='}
+                    ),
+                    ToolCallPart(
+                        'get_weather',
+                        {'city': 'Paris'},
+                        tool_call_id='call-0',
+                        provider_name='google',
+                        provider_details={'thought_signature': 'Y2FsbA=='},
+                    ),
+                ],
+                provider_name='google',
+                canonical_system='google',
+            ),
+            ModelRequest(parts=[ToolReturnPart('get_weather', 'Sunny in Paris', tool_call_id='call-0')]),
+            ModelResponse(parts=[TextPart('It is sunny in Paris.')]),
+        ],
+    ),
+    Scenario(
         id='canonical_system',
         script=_interleaved_thinking_script,
         setup=_get_weather,

@@ -16,7 +16,9 @@ from ..._utils import is_str_dict
 from ...messages import (
     RetryFeedbackPart,
     RetryInfo,
+    TextPart,
     ThinkingPart,
+    ToolCallPart,
     ToolPartKind,
     ToolRetryCause,
     _tool_return_text,  # pyright: ignore[reportPrivateUsage]
@@ -194,10 +196,56 @@ def _namespaced_encrypted_value(payload: Mapping[str, object]) -> str:
     return json.dumps({_ENCRYPTED_VALUE_NAMESPACE: payload})
 
 
+class PartProviderMetadata(TypedDict, total=False):
+    """A `TextPart`'s or `ToolCallPart`'s provider fields, as an AG-UI `encrypted_value` carries them.
+
+    `canonical_system` is the response's, when it applies to the part (see `part_canonical_system`).
+    """
+
+    provider_name: str
+    provider_details: dict[str, Any]
+    canonical_system: str
+
+
+def part_provider_metadata(part: TextPart | ToolCallPart, *, canonical_system: str | None) -> PartProviderMetadata:
+    """Collect the provider fields of `part` that are set, for its `encrypted_value` carrier.
+
+    They're what `GoogleModel` needs to send a Gemini thought signature back: the signature in
+    `provider_details`, and the `provider_name` and `canonical_system` that say it goes back to the system
+    that issued it.
+    """
+    metadata: PartProviderMetadata = {}
+    if part.provider_name is not None:
+        metadata['provider_name'] = part.provider_name
+    if part.provider_details is not None:
+        metadata['provider_details'] = part.provider_details
+    if canonical_system is not None:
+        metadata['canonical_system'] = canonical_system
+    return metadata
+
+
+def parse_part_provider_metadata(payload: object) -> PartProviderMetadata:
+    """Read a part's provider fields from client-supplied `encrypted_value` data.
+
+    A field of the wrong type reads as absent, so malformed data degrades to a part without provider fields.
+    """
+    metadata: PartProviderMetadata = {}
+    if not is_str_dict(payload):
+        return metadata
+    if isinstance(provider_name := payload.get('provider_name'), str):
+        metadata['provider_name'] = provider_name
+    if is_str_dict(provider_details := payload.get('provider_details')):
+        metadata['provider_details'] = provider_details
+    if isinstance(canonical_system := payload.get('canonical_system'), str):
+        metadata['canonical_system'] = canonical_system
+    return metadata
+
+
 def tool_kind_encrypted_value(
     tool_kind: ToolPartKind | None,
     outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
     retry: RetryInfo[ToolRetryCause] | None = None,
+    provider: PartProviderMetadata | None = None,
 ) -> str | None:
     """Pack a part's `tool_kind` into an AG-UI `encrypted_value` blob, namespaced under `pydantic_ai`.
 
@@ -215,7 +263,8 @@ def tool_kind_encrypted_value(
     `'success'` — and since `outcome` can affect how a return is serialized to a provider (e.g. a
     native error channel), that would silently change the request bytes and break the prompt-cache
     prefix stability the repaired history is designed to keep. A retried return's `retry` rides along
-    too, so an application auditing rejected calls still sees it after a round-trip.
+    too, so an application auditing rejected calls still sees it after a round-trip. A tool call's
+    `provider` fields ride along as well (see `part_provider_metadata`).
     """
     payload: dict[str, object] = {}
     if tool_kind is not None:
@@ -224,6 +273,8 @@ def tool_kind_encrypted_value(
         payload['outcome'] = outcome
     if retry is not None:
         payload['retry'] = tool_retry_payload(retry)
+    if provider:
+        payload.update(provider)
     if not payload:
         return None
     return _namespaced_encrypted_value(payload)
@@ -241,15 +292,17 @@ def tool_kind_encrypted_value_kwargs(
     supported: bool,
     outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] | None = None,
     retry: RetryInfo[ToolRetryCause] | None = None,
+    provider: PartProviderMetadata | None = None,
 ) -> _EncryptedValueKwargs:
     """`ToolCall`/`ToolMessage` kwargs carrying claims as an `encrypted_value`, or empty to omit it.
 
-    Carries `tool_kind` and an `'interrupted'` result outcome (see `tool_kind_encrypted_value`).
+    Carries `tool_kind`, an `'interrupted'` result outcome and a tool call's provider fields (see
+    `tool_kind_encrypted_value`).
     Empty when the target version predates the `encrypted_value` field (`supported=False`) or the part
     has nothing to carry, so — like the streaming carrier — the field is only ever set when there's a
     claim to carry, never written as a bare `null` a pre-0.1.11 client wouldn't expect.
     """
-    value = tool_kind_encrypted_value(tool_kind, outcome, retry) if supported else None
+    value = tool_kind_encrypted_value(tool_kind, outcome, retry, provider) if supported else None
     return {'encrypted_value': value} if value is not None else {}
 
 
@@ -274,16 +327,18 @@ def warn_encrypted_value_not_persisted(ag_ui_version: str) -> None:
     """Warn that the claims riding on `encrypted_value` are lost when dumping below `ENCRYPTED_VALUE_VERSION`.
 
     The carrier only exists from 0.1.11, so on older versions features like lazy capabilities and tool
-    search silently forget their state across a round-trip, and harness retry feedback reloads as an
-    operator-authored system prompt or a user prompt, depending on the voice it was dumped in;
-    upgrading the client fixes both.
+    search silently forget their state across a round-trip, harness retry feedback reloads as an
+    operator-authored system prompt or a user prompt, depending on the voice it was dumped in, and
+    text and tool calls lose their provider data, such as Gemini's thought signatures; upgrading the
+    client fixes all three.
     """
     warnings.warn(
         f'ag-ui-protocol {ag_ui_version} predates the `encrypted_value` field (added in 0.1.11), so '
         'the claims Pydantic AI carries there cannot survive a dump/load round-trip: the `tool_kind` '
         'of typed tool parts (e.g. lazy capabilities, tool search) is dropped and those parts reload '
-        'as their base classes, and a `RetryFeedbackPart` reloads as a plain `SystemPromptPart` or '
-        '`UserPromptPart`. '
+        'as their base classes, a `RetryFeedbackPart` reloads as a plain `SystemPromptPart` or '
+        '`UserPromptPart`, and the `provider_details` of a `TextPart` or `ToolCallPart` (e.g. Gemini '
+        'thought signatures) is dropped. '
         'Upgrade the client to ag-ui-protocol >= 0.1.11 to preserve them.',
         UserWarning,
         stacklevel=3,
@@ -323,6 +378,28 @@ def structured_content_encrypted_value_kwargs(payloads: dict[int, dict[str, Any]
     return {'encrypted_value': _namespaced_encrypted_value({'structured_content': entries})}
 
 
+def text_provider_encrypted_value_kwargs(provider: PartProviderMetadata, *, supported: bool) -> _EncryptedValueKwargs:
+    """`AssistantMessage` kwargs carrying the provider fields of its text, or empty to omit it.
+
+    Keyed by the text's position in the message content, as `structured_content_encrypted_value_kwargs` keys a
+    `UserMessage`'s text items: an `AssistantMessage`'s content is one string, so that's position 0. Empty when
+    the target version predates the `encrypted_value` field (`supported=False`) or there's nothing to carry.
+    """
+    if not supported or not provider:
+        return {}
+    return {'encrypted_value': _namespaced_encrypted_value({'text': {'0': provider}})}
+
+
+def parse_encrypted_text_provider_metadata(encrypted_value: str | None) -> PartProviderMetadata:
+    """Read the provider fields of an `AssistantMessage`'s text from its `encrypted_value`.
+
+    Client-supplied and untrusted: a forged or malformed namespace reads as no fields.
+    """
+    namespaced = _parse_encrypted_namespace(encrypted_value)
+    entries = namespaced.get('text') if namespaced is not None else None
+    return parse_part_provider_metadata(entries.get('0') if is_str_dict(entries) else None)
+
+
 def parse_encrypted_structured_content(encrypted_value: str | None) -> dict[str, Any]:
     """Read the structured content payloads, keyed by content position, from a `UserMessage`'s `encrypted_value`.
 
@@ -344,6 +421,14 @@ def parse_encrypted_tool_kind(encrypted_value: str | None) -> ToolPartKind | Non
         return None
     tool_kind = namespaced.get('tool_kind')
     return parse_tool_kind(tool_kind) if isinstance(tool_kind, str) else None
+
+
+def parse_encrypted_provider_metadata(encrypted_value: str | None) -> PartProviderMetadata:
+    """Read a tool call's provider fields from the `pydantic_ai` namespace of an AG-UI `encrypted_value` blob.
+
+    Client-supplied and untrusted: a forged or malformed namespace reads as no fields.
+    """
+    return parse_part_provider_metadata(_parse_encrypted_namespace(encrypted_value))
 
 
 def parse_encrypted_outcome(
