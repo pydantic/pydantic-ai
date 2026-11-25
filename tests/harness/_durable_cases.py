@@ -149,10 +149,8 @@ class BuiltInEngineSuite(DurableEngineSuite):
 
     def model_request_unit(self, name: str) -> str | None:
         calls = CASES[name].calls if name in CASES else None
-        if calls is None:
-            return None
         requested, streamed = self.model_request_units
-        return streamed if calls.durable_steps.streams else requested
+        return None if calls is None else streamed if calls.durable_steps.streams else requested
 
     def marks(self, name: str) -> Collection[pytest.MarkDecorator]:
         calls = CASES[name].calls if name in CASES else None
