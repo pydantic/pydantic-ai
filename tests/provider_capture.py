@@ -1,7 +1,8 @@
 """What each provider model sends for a history, captured offline, and which voice each piece of text lands in.
 
-`capture` runs a history through a real provider model the way `Agent` does (`prepare_messages`, then `request`),
-answers the HTTP request with a 400 so nothing leaves the process, and returns the request body as the model built it.
+`capture` runs a history through a real provider model's `prepare_messages`, then its `request`, answers the HTTP
+request with a 400 so nothing leaves the process, and returns the request body as the model built it. It doesn't
+normalize the history first the way the agent graph does, so pass it a history an agent run ended with.
 `voices` reads that body back as `(voice, text)` pairs in order, so a test can ask which voice a marker string reached
 the model in without knowing each provider's wire format.
 """
@@ -164,7 +165,7 @@ async def capture(
     messages: Sequence[ModelMessage],
     params: ModelRequestParameters | None = None,
 ) -> CapturedRequest:
-    """The request body `provider`'s model builds for `messages`, as `Agent` would send it."""
+    """The request body `provider`'s model builds for `messages`, through its `prepare_messages` and `request`."""
     if not _INSTALLED[provider]():
         pytest.skip(f'the {provider} extra is not installed')
     recorder = _Capture()
