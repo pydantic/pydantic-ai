@@ -2611,15 +2611,17 @@ def _record_carried_attempts(
 def _record_lazily_opened_attempts(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
     request_context: ModelRequestContext,
-    error: BaseException,
+    stream: models.StreamedResponse,
 ) -> None:
-    """Count the usage of the attempts a model made opening a stream the consumer was iterating, which `error` ended.
+    """Count the usage of the attempts a model made opening `stream` while the consumer was iterating it.
 
     A model like a `FallbackModel` opens the stream only once the consumer iterates it when no error hook primes it, so
-    its attempts are on the error rather than counted by the attempt loop: on its group when every model failed, or
-    carried (see `carry_attempts`) when another error ended the request.
+    the attempt loop never saw its attempts. Only those that came out of `stream` count: an error the consumer raised
+    through it, like another run's `FallbackExceptionGroup`, carries attempts this run wasn't billed for.
     """
-    attempts = error.attempts if isinstance(error, exceptions.FallbackExceptionGroup) else carried_attempts(error)
+    if not isinstance(stream, _ContinuationStreamedResponse):
+        return
+    attempts = stream.open_failure_attempts
     _record_attempts_usage(ctx.state.usage, attempts)
     request_context._usage_response_ledger.attempts.extend(attempts)  # pyright: ignore[reportPrivateUsage]
 
@@ -2932,7 +2934,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         )
                     )
                     capture_model_response_span_context(req_ctx, _interrupted_response, time_to_first_chunk)
-                    _record_lazily_opened_attempts(ctx, req_ctx, stream_error)
+                    _record_lazily_opened_attempts(
+                        ctx,
+                        req_ctx,
+                        agent_stream_holder[0]._raw_stream_response,  # pyright: ignore[reportPrivateUsage]
+                    )
                 raise
             # Streaming core errors surface in the consumer task, which cancels this wrap task;
             # `on_model_request_error` cannot recover an error after streaming has begun.

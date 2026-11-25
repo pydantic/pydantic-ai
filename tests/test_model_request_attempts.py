@@ -1127,3 +1127,44 @@ async def test_a_billed_attempt_before_a_stream_that_then_fails_is_counted_once(
         output_tokens=_BILLED.output_tokens + response.usage.output_tokens,
         requests=1,
     )
+
+
+async def test_a_failed_stream_whose_get_raises_still_falls_back_on_its_own_error():
+    """Carrying a failed stream's usage is best-effort: a `get()` that raises doesn't replace the error fallback sees.
+
+    Not a VCR test: see `_BILLED`.
+    """
+    agent = Agent(FallbackModel(BilledThenFailsModel(_answer(), get_raises=True), _answer()))
+    result = await agent.run('x', event_stream_handler=_consume)
+    assert [(attempt.error, attempt.usage) for attempt in result.response.failed_attempts or []] == [
+        ('ModelOverloadedError: overloaded', None)
+    ]
+
+
+async def test_attempts_on_an_error_the_consumer_raises_through_the_stream_are_not_counted():
+    """Only attempts that came out of the model's stream count, not those on an error the consumer raised through it.
+
+    Like another agent's `FallbackExceptionGroup`, whose rejected responses that run counted itself.
+    """
+    group = FallbackExceptionGroup('All models from FallbackModel failed', [ModelAPIError(model_name='m', message='x')])
+    group.attempts = [
+        ModelRequestAttempt(
+            model_name='other',
+            outcome='rejected',
+            timestamp=datetime.now(UTC),
+            duration=timedelta(seconds=1),
+            usage=_BILLED,
+        )
+    ]
+    usages: list[RunUsage] = []
+    for error in (ValueError('consumer failed'), group):
+
+        async def raise_from_consumer(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+            async for _ in events:
+                raise error
+
+        usage = RunUsage()
+        with pytest.raises(type(error)):
+            await Agent(_answer()).run('x', usage=usage, event_stream_handler=raise_from_consumer)
+        usages.append(usage)
+    assert usages[0] == usages[1]

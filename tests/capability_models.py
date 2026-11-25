@@ -297,6 +297,13 @@ class MyOutput(BaseModel):
 class _BilledThenFailingStream(StreamedResponse):
     """Reports usage, as Anthropic does on `message_start`, then fails before any output, as on `overloaded_error`."""
 
+    _get_raises: bool = False
+
+    def get(self) -> ModelResponse:
+        if self._get_raises:
+            raise RuntimeError('a custom `get()` that fails on a failed stream')
+        return super().get()
+
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         self._usage = RequestUsage(input_tokens=100, output_tokens=5)
         raise ModelOverloadedError(model_name='billed', message='overloaded')
@@ -322,13 +329,14 @@ class _BilledThenFailingStream(StreamedResponse):
 class BilledThenFailsModel(Model):
     """A model whose first `fail_times` streams are billed 100 input and 5 output tokens and fail before their first event.
 
-    Later streams are `answer`'s.
+    Later streams are `answer`'s. With `get_raises`, the failing stream's `get()` raises too.
     """
 
-    def __init__(self, answer: Model, *, fail_times: int = 1) -> None:
+    def __init__(self, answer: Model, *, fail_times: int = 1, get_raises: bool = False) -> None:
         super().__init__()
         self.answer = answer
         self.fail_times = fail_times
+        self.get_raises = get_raises
 
     async def request(
         self,
@@ -348,7 +356,9 @@ class BilledThenFailsModel(Model):
     ) -> AsyncGenerator[StreamedResponse]:
         if self.fail_times:
             self.fail_times -= 1
-            yield _BilledThenFailingStream(model_request_parameters=model_request_parameters)
+            yield _BilledThenFailingStream(
+                model_request_parameters=model_request_parameters, _get_raises=self.get_raises
+            )
         else:
             async with self.answer.request_stream(
                 messages, model_settings, model_request_parameters, run_context

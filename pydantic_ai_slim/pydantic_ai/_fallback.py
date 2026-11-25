@@ -18,7 +18,7 @@ from __future__ import annotations as _annotations
 
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypeGuard, assert_never, cast, get_args
 
@@ -462,8 +462,11 @@ async def request_stream_until_first_event(
         except Exception as error:
             # The provider may have billed for the stream before it failed, like the input tokens it reported on
             # opening it. The stream is discarded, so its usage goes on the error, for the attempt record.
-            if (partial := response.get()).usage.has_values():
-                carry_partial_response(error, partial)
+            # Best-effort: a custom `get()` that raises on a failed stream mustn't replace the error that fallback and
+            # retry decide on.
+            with suppress(Exception):
+                if (partial := response.get()).usage.has_values():
+                    carry_partial_response(error, partial)
             raise
         # `StreamedResponse.__aiter__` hands out the iterator stored here, so the consumer gets the peeked event too.
         response._event_iterator = events  # pyright: ignore[reportPrivateUsage]
