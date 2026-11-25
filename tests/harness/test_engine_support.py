@@ -67,8 +67,13 @@ def test_every_cell_is_a_case_with_calls() -> None:
         assert CASES[name].calls is not None, f'`ENGINE_SUPPORT` names {name}, which has no `calls` to run'
 
 
-def test_untested_cells_only_go_down() -> None:
-    """How many cases each engine runs no suite for: test a cell to lower its engine's count, never raise it. It reads test tables or source, with no provider exchange to record, so it isn't a VCR test."""
+def test_untested_cells_are_pinned() -> None:
+    """How many cases with `calls` each engine runs no suite for.
+
+    Testing a cell lowers its engine's count. A case that gains `calls` raises the count of every engine without a suite,
+    and the PR that adds them updates the pin. It reads test tables, with no provider exchange to record, so it isn't a
+    VCR test.
+    """
     untested = Counter(
         engine
         for name, case in CASES.items()
