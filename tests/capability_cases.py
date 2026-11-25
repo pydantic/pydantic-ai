@@ -966,6 +966,66 @@ def engine_support(name: str, engine: Engine) -> Support:
     return Support('untested', f'no suite runs the cases under {engine} yet', issue=UNTESTED_ENGINES_ISSUE)
 
 
+Scenario = Literal['BackgroundTools.runs_in_background', 'BackgroundTools.survives_approval_wait']
+"""A scenario a capability must handle under every engine, named `<capability>.<scenario>`.
+
+A cell of `ENGINE_SUPPORT` is D1's bar on a case's `calls`, run one per response; a scenario is a run of its own,
+such as a background call kept running across a mid-run approval, which its capability's tests script.
+"""
+
+SCENARIOS: tuple[Scenario, ...] = get_args(Scenario)
+
+_FOREGROUND = (
+    'the engine runs tool calls sequentially, so the tool runs in the foreground and returns its result inline'
+)
+_SEQUENTIAL_DEFAULT = f"{_FOREGROUND}; `parallel_execution_mode='sequential'` is the default"
+_NO_WAIT = (
+    'a mid-run approval wait raises `UserError` under the engine, so no background task can keep running across it'
+)
+_NO_DURABLE_WAIT = 'the engine has no durable wait for an outside answer, so a mid-run approval wait raises `UserError`'
+_WAIT_REFUSED = 'does not support waiting for external events yet'
+
+SCENARIO_SUPPORT: Mapping[Scenario, Mapping[Engine, Support]] = {
+    'BackgroundTools.runs_in_background': {
+        'temporal': Support('supported'),
+        'dbos': Support('supported'),
+        'prefect': Support('supported'),
+        'aws_lambda': Support('limited', _FOREGROUND),
+        'absurd': Support('limited', _SEQUENTIAL_DEFAULT),
+        'pgtask': Support('limited', _SEQUENTIAL_DEFAULT),
+        'azure_durable_task': Support('supported'),
+        'render': Support('supported'),
+    },
+    'BackgroundTools.survives_approval_wait': {
+        'temporal': Support('broken', _NO_WAIT, issue=14443),
+        'dbos': Support('broken', _NO_WAIT, issue=14443),
+        'prefect': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
+        'aws_lambda': Support('limited', f'{_FOREGROUND}, so no call is in flight across the wait'),
+        'absurd': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
+        'pgtask': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
+        'azure_durable_task': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
+        'render': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
+    },
+}
+"""What each engine does in each scenario: a cell for every engine, which the scenario's tests check.
+
+- `BackgroundTools.runs_in_background`: a tool marked `background` replies that it is running in the background,
+  and its result arrives later as a follow-up message.
+- `BackgroundTools.survives_approval_wait`: while that call is still running, the model calls a tool that needs
+  approval, which a `HandleDeferredToolCalls` handler that takes a resume token answers mid-run. The call keeps
+  running across the wait, without the run suspending, and its result arrives.
+
+These never feed D1's exemptions, which come from `ENGINE_SUPPORT` alone.
+"""
+
+BROKEN_SIGNATURES: Mapping[int, str] = {14443: _WAIT_REFUSED}
+"""How the bug behind each `broken` scenario cell's issue shows today, as a regex the observed outcome must match.
+
+`Support` only lets a `refused` cell name what the engine raises, so a broken cell's signature lives here: once the
+issue is fixed the outcome changes, and the cell fails.
+"""
+
+
 def _not_run_right(engine: Engine) -> dict[str, Exempt]:
     """The cases `engine` refuses or gets wrong, which its suite's contract exempts."""
     return {

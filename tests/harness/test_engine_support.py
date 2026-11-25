@@ -17,7 +17,16 @@ import pytest
 
 from .._inline_snapshot import snapshot
 from ..append_only import discover_capabilities
-from ..capability_cases import ENGINE_CAPABILITIES, ENGINE_SUPPORT, ENGINES, Support, engine_support
+from ..capability_cases import (
+    BROKEN_SIGNATURES,
+    ENGINE_CAPABILITIES,
+    ENGINE_SUPPORT,
+    ENGINES,
+    SCENARIO_SUPPORT,
+    SCENARIOS,
+    Support,
+    engine_support,
+)
 from ._contracts import CASES, PUBLIC
 from .capability_cases import HARNESS_CAPABILITY_PACKAGES
 
@@ -98,3 +107,23 @@ def test_an_exempt_cell_links_its_issue() -> None:
     assert Support('broken', 'wrong order', issue=1).exempt.reason == (
         'wrong order: https://github.com/pydantic/pydantic-ai/issues/1'
     )
+
+
+def test_every_scenario_has_a_cell_for_every_engine() -> None:
+    assert set(SCENARIO_SUPPORT) == set(SCENARIOS)
+    for scenario, cells in SCENARIO_SUPPORT.items():
+        assert set(cells) == set(ENGINES), scenario
+
+
+def test_every_scenario_names_a_public_capability() -> None:
+    """A scenario is `<capability>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it."""
+    for scenario in SCENARIOS:
+        capability, _, name = scenario.partition('.')
+        assert capability in PUBLIC and name, scenario
+        assert scenario not in CASES and scenario not in ENGINE_SUPPORT, scenario
+
+
+def test_every_broken_scenario_cell_has_a_signature() -> None:
+    """A `broken` cell's bug must show as its signature, and a signature no cell uses is stale."""
+    broken = {cell.issue for cells in SCENARIO_SUPPORT.values() for cell in cells.values() if cell.level == 'broken'}
+    assert broken == set(BROKEN_SIGNATURES)
