@@ -12,8 +12,10 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceUnavailableError
 from pydantic_ai_harness import AnnounceWorkingDirectory, FileSystem, Shell
 
 
@@ -65,3 +67,35 @@ class TestAnnounceWorkingDirectory:
             'go', workspace=LocalWorkspaceBackend(tmp_path)
         )
         assert _lines(model) == []
+
+    async def test_the_line_stays_when_the_workspace_goes_away_mid_run(self, tmp_path: Path) -> None:
+        """The workspace is asked once per run, so a later request keeps the line and the prompt's prefix."""
+
+        class GoneAfterFirst(LocalWorkspaceBackend):
+            asked = 0
+
+            async def working_dir(self) -> str:
+                self.asked += 1
+                if self.asked > 1:
+                    raise WorkspaceUnavailableError('gone')
+                return await super().working_dir()
+
+        lines: list[list[str]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            parts = info.model_request_parameters.instruction_parts or []
+            lines.append([part.content for part in parts if 'working directory is' in part.content])
+            if len(lines) == 1:
+                return ModelResponse(parts=[ToolCallPart('probe', {})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[AnnounceWorkingDirectory[None]()])
+
+        @agent.tool_plain
+        def probe() -> str:
+            return 'ok'
+
+        await agent.run('go', workspace=GoneAfterFirst(tmp_path))
+        await agent.run('again', workspace=GoneAfterFirst(tmp_path))
+        line = f'The working directory is `{tmp_path.resolve()}`.'
+        assert lines == [[line], [line], [line]]

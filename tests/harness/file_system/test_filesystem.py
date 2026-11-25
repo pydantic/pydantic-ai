@@ -527,8 +527,8 @@ class TestRootDir:
         workspace = CountingWorkspace(tmp_path)
         read: tuple[str, dict[str, object]] = ('read_file', {'path': 'a.txt'})
         await call_tools([FileSystem[None]()], [read, read], workspace=workspace)
-        # One ask for the boundary; the other three are the instructions naming the directory on each request.
-        assert workspace.working_dir_calls == 4
+        # One ask for the boundary and one for the instructions naming the directory, however many requests follow.
+        assert workspace.working_dir_calls == 2
 
     async def test_each_run_resolves_the_boundary_in_its_own_workspace(self, tmp_path: Path) -> None:
         # One toolset serves every run, so durable execution sees the toolset it registered.
