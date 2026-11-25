@@ -753,7 +753,7 @@ async def test_unknown_event_kinds_are_skipped(client: Client) -> None:
             'AgentRunResultEvent',
         ]
     )
-    terminal = received[-1]
+    terminal = cast(AgentRunResultEvent[str], received[-1])
     assert isinstance(terminal, AgentRunResultEvent)
     assert terminal.result.output == 'Streamed response'
 
