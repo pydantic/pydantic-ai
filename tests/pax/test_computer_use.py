@@ -306,6 +306,12 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert [segment() for segment in plugin.get_status_segments()] == ['computer-use', '']
     plugin.host.conversation = Transcript(conversation_id='c-2')
     assert [segment() for segment in plugin.get_status_segments()] == ['', '']
+    # A conversation that has run here can never get a sandbox, so arming it is refused.
+    plugin.host.conversation = Transcript(conversation_id='c-3', messages=[ModelRequest.user_text_prompt('ran a turn')])
+    with pytest.raises(ValueError, match=r'already run on this machine\. Run /new, then /computer-use'):
+        await plugin.computer_use_command(['on'])
+    assert [segment() for segment in plugin.get_status_segments()] == ['', '']
+    plugin.host.conversation = Transcript(conversation_id='c-2')
 
     # Retroactive attach (`desktop_at_create=False`): works immediately even after user turns have run, and survives resume.
     await plugin.command(['fake'])
@@ -499,9 +505,12 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(
     loaded = load(checkout)
     plugin = plugin_of(loaded)
     await plugin.command(['fake'])
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin) == ['fake sandbox', '']
 
     await plugin.computer_use_command(['on'])
+
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin) == ['fake sandbox', watch(0)]
     # A turn does not ask for another while the link is fresh.
     await loaded.dispatch(TurnStart(text='go'))
@@ -547,7 +556,9 @@ async def test_an_expiring_link_is_renewed_before_it_stops_opening(
     loaded = load(checkout)
     plugin = plugin_of(loaded)
     await plugin.computer_use_command(['on'])
+    await anyio.wait_all_tasks_blocked()
     await plugin.command(['fake'])
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin) == ['fake sandbox', watch(0)]
 
     now[0] += 49 * 60
@@ -574,7 +585,9 @@ async def test_no_link_is_got_outside_full_permissions(checkout: Path, linked: L
     # Getting a link starts the desktop, which the model can't use outside `/permissions full`.
     plugin = plugin_of(load(checkout, settings={PERMISSIONS_SETTING: 'auto'}))
     await plugin.computer_use_command(['on'])
+    await anyio.wait_all_tasks_blocked()
     await plugin.command(['fake'])
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin) == ['fake sandbox (computer-use)', ''] and linked.links == []
     await plugin.on_session_end(SessionEnd(reason='exit'))
 
@@ -589,7 +602,9 @@ async def test_a_link_that_never_expires_is_got_once(
     loaded = load(checkout)
     plugin = plugin_of(loaded)
     await plugin.computer_use_command(['on'])
+    await anyio.wait_all_tasks_blocked()
     await plugin.command(['fake'])
+    await anyio.wait_all_tasks_blocked()
     now[0] += 24 * 3600
     await loaded.dispatch(TurnStart(text='go'))
     await anyio.wait_all_tasks_blocked()
@@ -604,7 +619,9 @@ async def test_a_link_that_cannot_be_got_leaves_the_row_without_one(
     linked.fail = True
     plugin = plugin_of(load(checkout))
     await plugin.computer_use_command(['on'])
+    await anyio.wait_all_tasks_blocked()
     assert 'Computer use is on' in await plugin.command(['fake'])
+    await anyio.wait_all_tasks_blocked()
     assert row(plugin) == ['fake sandbox (computer-use)', '']
     assert 'Could not get the link to watch the Fake desktop: the provider is down' in caplog.text
     await plugin.on_session_end(SessionEnd(reason='exit'))
@@ -628,7 +645,9 @@ async def test_a_turn_cut_off_mid_stream_keeps_computer_use_on(
 
     session = on_screen(loaded, checkout, model=FunctionModel(stream_function=respond))
     await plugin.computer_use_command(['on'])
+    await anyio.wait_all_tasks_blocked()
     await plugin.command(['fake'])
+    await anyio.wait_all_tasks_blocked()
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(session.prompt, 'click it')
         await streaming.wait()

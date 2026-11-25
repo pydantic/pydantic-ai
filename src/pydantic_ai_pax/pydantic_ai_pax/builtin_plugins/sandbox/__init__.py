@@ -473,6 +473,11 @@ class SandboxPlugin(Plugin):
     async def _computer_use(self, *, on: bool) -> str:
         sandbox = self.current()
         if sandbox is None:
+            if on and self.host.conversation.messages:
+                # `/sandbox PROVIDER` refuses a conversation that has run here, so arming it would promise nothing.
+                raise ValueError(
+                    'This conversation has already run on this machine. Run /new, then /computer-use and /sandbox PROVIDER.'
+                )
             self._armed_for = self.host.conversation.conversation_id if on else None
             if on:
                 return 'Computer use is on: /sandbox PROVIDER now makes a sandbox with a desktop.' + self._needs_full()
@@ -494,7 +499,7 @@ class SandboxPlugin(Plugin):
             )
         sandbox.add_desktop()
         await self._record_computer_use(sandbox, on=True)
-        await self._mint_watch_link()
+        self._mint_in_background(reached_only=False)
         return 'Computer use is on: the model can see and control the desktop.' + self._needs_full()
 
     async def _record_computer_use(self, sandbox: _Sandbox, *, on: bool) -> None:
@@ -560,7 +565,7 @@ class SandboxPlugin(Plugin):
             raise
         self._armed_for = None
         self._sandboxes[ref] = _Sandbox(provider=provider, ref=ref, desktop=desktop, backend=backend)
-        await self._mint_watch_link()
+        self._mint_in_background()
         return _started(provider, ref, checkout, github=github, desktop=desktop, needs_full=self._needs_full())
 
     async def _delete(self) -> str:
