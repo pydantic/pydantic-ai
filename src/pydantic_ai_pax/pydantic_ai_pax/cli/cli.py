@@ -293,7 +293,9 @@ def _run_command(args: argparse.Namespace, store: 'SettingsStore') -> str:
     from pydantic_ai_pax.commands import config_command, plugins_command, refuse_widening
 
     if args.command == 'plugins':
-        return plugins_command(store, args.arguments)
+        from pydantic_ai_pax.config.builtins import STOCK_PLUGINS
+
+        return plugins_command(store, args.arguments, builtin=STOCK_PLUGINS)
     refuse_widening(store, args.arguments)
     return config_command(store, args.arguments)
 

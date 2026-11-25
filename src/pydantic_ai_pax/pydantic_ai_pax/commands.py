@@ -3,7 +3,7 @@
 import json
 import re
 import shlex
-from collections.abc import Awaitable, Callable, Iterable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,7 +28,11 @@ from pydantic_ai_pax.config import (
     resolve_settings,
 )
 from pydantic_ai_pax.config.project_settings import SAFE_PROJECT_KEYS, widens
-from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.config.settings_store import (
+    SettingsStore,
+    canonical_plugin_declarations,
+    canonical_plugin_id,
+)
 from pydantic_ai_pax.ui import telemetry
 from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_ai_pax.ui.rendering.theme import names as theme_names
@@ -388,14 +392,59 @@ def added_plugin(args: list[str]) -> PluginSettings:
     return PluginSettings(id=args[1], factory=args[2], settings=settings)
 
 
-def plugins_command(store: SettingsStore, args: list[str]) -> str:
-    """`pax plugins`: list plugin declarations without importing plugins; only `/plugins` changes them."""
+def _discover_dropins(folder: Path) -> dict[str, Path]:
+    """Return drop-in plugin files in `folder` by canonical plugin id, without importing them."""
+    if not folder.is_dir():
+        return {}
+    found: dict[str, Path] = {}
+    try:
+        children = sorted(folder.iterdir())
+    except OSError:
+        return {}
+    for child in children:
+        name = child.stem if child.suffix == '.py' else child.name
+        if not name.isidentifier() or name.startswith('_'):
+            continue
+        name = canonical_plugin_id(name)
+        if child.is_file() and child.suffix == '.py':
+            found[name] = child
+        elif (child / '__init__.py').is_file():
+            found[name] = child / '__init__.py'
+    return found
+
+
+def _list_plugins(store: SettingsStore, *, builtin: Sequence[PluginSettings] = ()) -> str:
+    """Format every plugin a launch would see (saved, drop-in, built-in) without importing them."""
+    builtins = canonical_plugin_declarations(builtin)
+    declared: dict[str, PluginSettings] = {p.id: p for p in store.plugins()}
+    for name, path in _discover_dropins(store.plugins_dir).items():
+        if name not in declared:
+            declared[name] = PluginSettings(id=name, factory=name, path=str(path))
+    for name, declaration in builtins.items():
+        if name not in declared:
+            declared[name] = declaration
+    if not declared:
+        return f'No plugins. Use /plugins add, or drop a file in {store.plugins_dir}'
+    lines: list[str] = []
+    for name in sorted(declared):
+        p = declared[name]
+        state = 'enabled' if p.enabled else 'disabled'
+        if p.path is not None:
+            path = Path(p.path)
+            label = path.parent.name if path.name == '__init__.py' else path.name
+            lines.append(f'{p.id}: {label} (drop-in) ({state})')
+        else:
+            shipped = builtins.get(name)
+            source = f'{p.factory} (built-in)' if shipped is not None and p.factory == shipped.factory else p.factory
+            lines.append(f'{p.id}: {source} ({state})')
+    return '\n'.join(lines)
+
+
+def plugins_command(store: SettingsStore, args: list[str], *, builtin: Sequence[PluginSettings] = ()) -> str:
+    """`pax plugins`: list built-ins, drop-ins, and saved declarations without importing plugins."""
     match args:
         case [] | ['list']:
-            return (
-                '\n'.join(f'{p.id}: {p.factory} ({"enabled" if p.enabled else "disabled"})' for p in store.plugins())
-                or 'No plugins.'
-            )
+            return _list_plugins(store, builtin=builtin)
         case ['add' | 'enable' | 'disable' | 'remove', *_]:
             # Disabling can widen too: a plugin such as `hooks` may be what blocks a tool call.
             raise _session_only('plugins', args)

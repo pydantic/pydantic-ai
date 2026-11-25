@@ -70,7 +70,7 @@ def test_command_boundaries(tmp_path: Path) -> None:
     config_command(store, ['set', 'display.thinking', 'false'])
     config_command(store, ['reset', 'display.thinking'])
     assert store.load().thinking
-    assert plugins_command(store, []) == 'No plugins.'
+    assert plugins_command(store, []) == f'No plugins. Use /plugins add, or drop a file in {store.plugins_dir}'
     store.save_plugin(PluginSettings(id='one', factory='module:Factory', enabled=False))
     assert plugins_command(store, ['list']) == 'one: module:Factory (disabled)'
     with pytest.raises(ValueError, match='with /plugins inside a Pax session'):
@@ -235,3 +235,47 @@ def test_clai2_from_a_shell_can_still_narrow_what_the_agent_may_do(
     store.set('run.permissions', 'full')
     _clai2(monkeypatch, store, 'config', 'reset', 'run.permissions')
     assert store.overrides() == {}
+
+
+def test_plugins_command_lists_builtins_dropins_and_saved_without_importing(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.plugins_dir.mkdir(parents=True)
+    # A drop-in that would crash if imported proves listing does not import plugin files.
+    (store.plugins_dir / 'my_dropin.py').write_text('raise RuntimeError("must not import")\n', encoding='utf-8')
+    pkg = store.plugins_dir / 'my_pkg'
+    pkg.mkdir()
+    (pkg / '__init__.py').write_text('raise RuntimeError("must not import")\n', encoding='utf-8')
+    (store.plugins_dir / '_ignored.py').write_text('x = 1\n', encoding='utf-8')
+
+    builtins = (
+        PluginSettings(id='coder', factory='pydantic_ai_pax.builtin_plugins.coder'),
+        PluginSettings(id='github', factory='pydantic_ai_pax.builtin_plugins.github', enabled=False),
+        PluginSettings(id='sandbox', factory='pydantic_ai_pax.builtin_plugins.sandbox'),
+    )
+    store.save_plugin(PluginSettings(id='coder', factory='pydantic_ai_pax.builtin_plugins.coder', enabled=False))
+    store.save_plugin(PluginSettings(id='custom', factory='custom.mod:Plugin'))
+
+    output = plugins_command(store, ['list'], builtin=builtins)
+    assert output.splitlines() == [
+        'coder: pydantic_ai_pax.builtin_plugins.coder (built-in) (disabled)',
+        'custom: custom.mod:Plugin (enabled)',
+        'github: pydantic_ai_pax.builtin_plugins.github (built-in) (disabled)',
+        'my_dropin: my_dropin.py (drop-in) (enabled)',
+        'my_pkg: my_pkg (drop-in) (enabled)',
+        'sandbox: pydantic_ai_pax.builtin_plugins.sandbox (built-in) (enabled)',
+    ]
+
+
+def test_cli_plugins_list_shows_stock_builtins_and_dropins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.plugins_dir.mkdir(parents=True)
+    (store.plugins_dir / 'local_tool.py').write_text('raise RuntimeError("must not import")\n', encoding='utf-8')
+
+    _clai2(monkeypatch, store, 'plugins', 'list')
+    out = capsys.readouterr().out
+    assert 'coder: pydantic_ai_pax.builtin_plugins.coder (built-in) (enabled)' in out
+    assert 'github: pydantic_ai_pax.builtin_plugins.github (built-in) (disabled)' in out
+    assert 'local_tool: local_tool.py (drop-in) (enabled)' in out
+    assert 'No plugins.' not in out
