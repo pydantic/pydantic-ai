@@ -107,9 +107,9 @@ class LivePrompt:
         self.queue_changed = queue_changed
         self.queue_in_toolbar = queue_in_toolbar
         self.ctrl_enter_steers = ctrl_enter_steers()
-        """Whether Ctrl+Enter (and Ctrl-J, which older terminals send for it) steers, as Alt+Enter does.
+        """Whether Ctrl+Enter (and Ctrl+J, which older terminals send for it) steers, as Alt+Enter does.
 
-        Otherwise Ctrl+Enter is Enter and Ctrl-J inserts a newline.
+        Otherwise Ctrl+Enter is Enter and Ctrl+J inserts a newline.
         """
         self.notice = ''
         self._chord_prefix = ''
@@ -621,7 +621,7 @@ class LivePrompt:
         The first of the candidate rows that fits wins; a draft's own keys outrank the Esc hint and the time.
         """
         head, glyph, reset = '─ Working ', self.spinner().frame(self.clock()), '\x1b[0m'
-        # Esc, unlike Ctrl-C, never counts toward the double press that quits.
+        # Esc, unlike Ctrl+C, never counts toward the double press that quits.
         candidates = [[format_duration(self.interrupts.elapsed), 'Esc to interrupt']]
         # Queue and steer hints only matter once there is something to send.
         if self.queued_messages or self.buffer.text.strip():

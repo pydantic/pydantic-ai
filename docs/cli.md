@@ -6,6 +6,8 @@ description: "Chat with LLMs from your terminal using clai, the Pydantic AI comm
 
 **Pydantic AI** comes with a CLI, `clai` (pronounced "clay"). You can use it to chat with various LLMs and quickly get answers, right from the command line, or spin up a uvicorn server to chat with your Pydantic AI agents from your browser.
 
+For a coding agent in your terminal rather than a chat, use [Pax](harness/clai2.md), the coding-agent TUI built on the Harness. It runs `Coder` by default, and `pax --agent mymodule:agent` runs an agent of your own.
+
 ## Installation
 
 You can run the `clai` using [`uvx`](https://docs.astral.sh/uv/guides/tools/):

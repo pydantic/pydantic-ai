@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from openai.types import chat, responses
 from openai.types.chat import ChatCompletionChunk, chat_completion_token_logprob
+from openai.types.completion_usage import CompletionUsage
 from openai.types.responses import ResponseCompactionItem
 from openai.types.responses.response import InputTransformation
 from openai.types.responses.response_status import ResponseStatus
@@ -199,6 +200,30 @@ def map_usage(
         if isinstance(cache_write_tokens, int):
             request_usage.cache_write_tokens = cache_write_tokens
     return request_usage
+
+
+def add_reasoning_tokens_omitted_from_completion_tokens(
+    request_usage: usage.RequestUsage, response_usage: CompletionUsage | None
+) -> None:
+    """Count the reasoning tokens a Chat Completions `usage` reports only in `total_tokens` as output.
+
+    For a model whose profile sets `openai_chat_completion_tokens_omit_reasoning`. The gap between `total_tokens` and
+    `prompt_tokens + completion_tokens` becomes output and reasoning tokens, as `completion_tokens_details` would
+    report them. Usage that carries `completion_tokens_details`, or has no positive gap, is left as reported.
+    """
+    match response_usage:
+        case CompletionUsage(
+            prompt_tokens=int() as prompt_tokens,
+            completion_tokens=int() as completion_tokens,
+            total_tokens=int() as total_tokens,
+            completion_tokens_details=None,
+        ) if total_tokens > prompt_tokens + completion_tokens:
+            reasoning_tokens = total_tokens - prompt_tokens - completion_tokens
+        case _:
+            return
+    request_usage.output_tokens += reasoning_tokens
+    request_usage.output_reasoning_tokens += reasoning_tokens
+    request_usage.details['reasoning_tokens'] = reasoning_tokens
 
 
 def responses_usage_details(response_usage: responses.ResponseUsage, web_search_requests: int) -> dict[str, int]:

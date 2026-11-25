@@ -373,6 +373,35 @@ def test_every_dependency_resolution_runs_on_a_pull_request():
     assert _expand('test-lowest-versions', 'pull_request')
 
 
+@pytest.mark.parametrize('event_name', ('pull_request', 'merge_group'))
+def test_durable_exec_runs_each_suite_in_its_own_leg(event_name: str):
+    def suites(route: str) -> dict[tuple[str, str], set[str]]:
+        legs: dict[tuple[str, str], set[str]] = {}
+        for leg in _expand('test-durable-exec', event_name, route):
+            legs.setdefault((_text(leg['python-version']), _text(leg['resolution'])), set()).add(_text(leg['suite']))
+        return legs
+
+    full = suites('full')
+    assert all(legs == {'durable-exec', 'harness-temporal'} for legs in full.values())
+    # A `pydantic-ai-harness`-only change keeps every harness leg, and of `tests/durable_exec` only the
+    # 3.15 leg that runs the contract manifest freshness test.
+    assert suites('harness_only') == {
+        key: {'durable-exec', 'harness-temporal'} if key == ('3.15', 'locked') else {'harness-temporal'} for key in full
+    }
+
+
+def test_durable_exec_suite_selects_its_tests():
+    """Each `suite` leg runs its own pytest selection, so neither leg passes without running its tests."""
+    (step,) = [
+        step for step in map(_mapping, _list(_job('test-durable-exec')['steps'])) if step.get('name') == 'run tests'
+    ]
+    assert _mapping(step['env'])['SUITE'] == '${{ matrix.suite }}'
+    script = '\n'.join(line for line in str(step['run']).splitlines() if not line.lstrip().startswith('#'))
+    harness, durable = script.split('if [[ "$SUITE" == "harness-temporal" ]]; then\n', 1)[1].split('\nelif ', 1)
+    assert '-m temporal' in harness and 'tests/durable_exec' not in harness
+    assert 'tests/durable_exec' in durable and '-m temporal' not in durable
+
+
 # Steps that add coverage, or report to the author of the pull request.
 PULL_REQUEST_STEP_COMMANDS = ('coverage run', 'shard_durations.py report')
 

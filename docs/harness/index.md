@@ -13,17 +13,18 @@ description: "Pydantic AI Harness is the official capability library for Pydanti
 
 Everything here is one primitive: a [capability](../capabilities/overview.md), a self-contained unit of agent behavior you add to `capabilities=[...]` on any agent. There are [100+ of them](#capabilities), and complete agents like [Coder](coder.md) and [Researcher](researcher.md) are themselves combinations of capabilities. Use a single capability, compose your own set, or start from the whole coding agent and swap parts out.
 
-## Pydantic AI, the Harness, and Pax
+## Pydantic AI, the harness SDK, `Coder`, and Pax
 
-Three packages, each built on the one before it. Start with the one that matches what you are doing:
+An agent on its own is a loop calling a model and tools. A **harness** is everything around that loop that makes it hold up on real work: the workspace it acts in, the tools, context management, recovery, guardrails, and the interface you steer it through. Four layers carry that idea; start with the one that matches what you are doing:
 
-| Package | What it is | Start here when |
+| Layer | What it is | Start here when |
 |---|---|---|
 | [Pydantic AI](../index.md) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
-| [Pydantic AI Harness](#capabilities) (`pydantic-ai-harness`) | Capabilities for a Pydantic AI agent: workspaces, file and shell tools, memory, sub-agents, context management, and complete agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
-| [Pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax) (`pydantic-ai-pax`) | A coding agent for your terminal, run as `pax`, built on the Harness's `Coder` and extended with plugins | You want to use a coding agent rather than build one, or chat with your own agent in a terminal |
+| [Pydantic AI Harness](#capabilities) (`pydantic-ai-harness`) | The SDK you build a harness of your own from: workspaces, file and shell tools, memory, sub-agents, context management, and ready-made agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
+| [`Coder`](coder.md) | A ready-made coding agent in one capability: file and shell tools, task delegation, repo instructions and context management. You supply the workspace it runs in, and any guardrails | You want a coding agent in your own code, to run, extend or swap parts of |
+| [Pax](clai2.md) (`pydantic-ai-pax`) | The TUI in front of `Coder`, and a terminal interface for any Pydantic AI agent; everything in it is a plugin, the coding agent included | You want to use a coding agent rather than build one, or run your own agent in a terminal |
 
-Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. Pax is not the [`clai` chat CLI](../cli.md) that ships with Pydantic AI.
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. `Coder` supplies the tools, context management and recovery; you choose the workspace it runs in and any guardrails, and Pax is the interface in front of it. That is why either works without the other: build on `Coder` and never open Pax, or point Pax at an agent that is entirely your own. Neither is the [`clai` chat CLI](../cli.md) that ships with Pydantic AI.
 
 ## Quick start
 
@@ -59,10 +60,11 @@ agent = Agent('{{ anthropic:large }}', capabilities=[ModalSandbox(), Coder()])
 Coder provides six tools: `read_file`, `write_file`, `edit_file`, `list_files`, `grep`, and `shell`, plus `delegate_task` to hand a sub-task to a fresh run of the same agent, repository context, and context controls. Shell commands are unrestricted and can persist beyond individual runs. Default instructions guide autonomous investigation, editing, and verification; pass `instructions=` to add your own guidance.
 
 ```bash
-uvx --with "pydantic-ai-harness[coder]" clai -a pydantic_ai_harness.coder:coder_agent -m {{ anthropic:large }}
+uv tool install pydantic-ai-pax
+pax
 ```
 
-The bundled `coder_agent` is the example above without a model.
+Point it at your own agent with `pax --agent mymodule:agent`, or at the bundled export with `pax --agent pydantic_ai_harness.coder:coder_agent -m {{ anthropic:large }}`, which is the example above without a model.
 
 Every model works: swap the string for [any provider's](../models/overview.md). Need more? Add capabilities to the list; here's the same coder on `{{ openai:medium.name }}`, with web search and cross-session memory:
 
@@ -295,7 +297,7 @@ Bounding what the agent may do, and keeping it on-instructions.
 | [Tool Call Judge](tool-call-judge.md) | Harness | A second model answers one risk question per tool call and blocks the call before the tool function runs |
 | [Approval Reviewer](approval-reviewer.md) | Harness | A second model answers one risk question per call waiting for approval, approves the low-risk ones, and leaves the rest to a person |
 | [Permissions](permissions.md) | Harness | Ask a person before file writes and commands, by permission mode: full access, auto (asks before risky commands), or read-only; allow, ask about, or deny tool calls and shell commands by rule |
-| [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on AWS Lambda |
+| [Handle Deferred Tool Calls](../capabilities/handle-deferred-tool-calls.md) | Core | Resolve approvals, answers and external results on deferred tool calls inside the run, in place or by waiting for them, durably on Temporal and AWS Lambda |
 | [System Reminders](system-reminders.md) | Harness | Cache-safe re-injection of guidance mid-run to counter instruction fade |
 | [Detect Loops](detect-loops.md) | Harness | Notice repeated tool calls, results, alternations, or responses, or a response repeating itself as it streams, and nudge the model, stop the run, or call your handler |
 | [Report Tool Errors](report-tool-errors.md) | Harness | Send an exception a tool raises to the model as a failed tool result, so the run continues |
