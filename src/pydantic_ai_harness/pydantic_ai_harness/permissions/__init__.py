@@ -1,4 +1,4 @@
-"""Permission modes: ask before tool calls that write files or run commands."""
+"""Permission modes and rules: allow, ask before, or deny tool calls and shell commands."""
 
 from pydantic_ai_harness.permissions._capability import (
     DEFAULT_ASK_COMMANDS,
@@ -9,10 +9,12 @@ from pydantic_ai_harness.permissions._capability import (
     PermissionRequest,
     Permissions,
     RememberedApproval,
+    approval_ask,
     ask_permissions,
     denial_message,
     permission_requests,
 )
+from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, PermissionVerdict
 
 __all__ = (
     'DEFAULT_ASK_COMMANDS',
@@ -21,8 +23,12 @@ __all__ = (
     'PermissionDecision',
     'PermissionMode',
     'PermissionRequest',
+    'PermissionRule',
+    'PermissionRuleSpec',
+    'PermissionVerdict',
     'Permissions',
     'RememberedApproval',
+    'approval_ask',
     'ask_permissions',
     'denial_message',
     'permission_requests',

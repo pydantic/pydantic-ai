@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
+import logging
 import os
 import re
 import sys
@@ -19,6 +21,7 @@ from unittest.mock import patch
 import anyio
 import httpx
 import pytest
+from opentelemetry.trace import NoOpTracer
 from pydantic import TypeAdapter
 
 from pydantic_ai import (
@@ -61,6 +64,7 @@ from pydantic_ai.capabilities import (
     Capability,
     Hooks,
     ImageGeneration,
+    Instrumentation,
     ProcessHistory,
     durable_operation,
 )
@@ -82,6 +86,7 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import ImageGenerationTool
 from pydantic_ai.profiles import ModelProfile
@@ -115,6 +120,7 @@ from ...workspace_fakes import (
     RecordingWorkspaceBackend,
 )
 from ...wrapped_retry_toolsets import call_probe_once, snapshot_probe_toolset
+from ..span_utils import drop_fastmcp_client_spans
 
 try:
     from temporalio import activity, workflow
@@ -407,6 +413,59 @@ async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Cli
         )
 
     assert result == 'clean-timeout'
+
+
+@workflow.defn
+class CancelledActivityErrorRetrievedWorkflow:
+    def __init__(self) -> None:
+        self.timed_out = False
+        self.finish = False
+
+    @workflow.run
+    async def run(self) -> None:
+        try:
+            # real-wait: the issue's shape, a workflow timer that cancels the in-flight model request activity
+            await asyncio.wait_for(_wait_for_nonstreaming_agent.run('say hi'), timeout=0.5)
+        except TimeoutError:
+            self.timed_out = True
+        # Stay open: once the workflow ends, Temporal discards anything its event loop would still log.
+        await workflow.wait_condition(lambda: self.finish)
+
+    @workflow.update
+    async def wait_for_timeout(self) -> None:
+        await workflow.wait_condition(lambda: self.timed_out)
+
+    @workflow.signal
+    def finish_run(self) -> None:
+        self.finish = True
+
+
+async def test_cancelled_activity_error_is_not_logged(client: Client, caplog: pytest.LogCaptureFixture) -> None:
+    """Cancelling a model request activity must not leave its `ActivityError` for asyncio to log (#13459).
+
+    asyncio logs an unread handle error when the handle is garbage collected, so the test collects
+    while the workflow is still open.
+    """
+    caplog.set_level(logging.ERROR)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CancelledActivityErrorRetrievedWorkflow],
+        plugins=[AgentPlugin(_wait_for_nonstreaming_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            CancelledActivityErrorRetrievedWorkflow.run,
+            id=f'{CancelledActivityErrorRetrievedWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        await handle.execute_update(CancelledActivityErrorRetrievedWorkflow.wait_for_timeout)  # pyright: ignore[reportUnknownMemberType]
+        gc.collect()
+        await handle.signal(CancelledActivityErrorRetrievedWorkflow.finish_run)
+        await handle.result()
+
+    logged = [record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR]
+    assert [m for m in logged if 'never retrieved' in m or 'shielded future' in m] == []
 
 
 async def _wait_for_timeout_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
@@ -1025,6 +1084,7 @@ async def test_complex_agent_run_in_workflow(
                 _strip_volatile_fields(cast(dict[str, Any], v))
 
     assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
     _normalize_json_spans(root_span)
 
     assert root_span == snapshot(
@@ -2283,6 +2343,16 @@ class SimpleAgentWorkflowWithOverrideModel:
             pass
 
 
+async def test_temporal_agent_override_capabilities_in_workflow() -> None:
+    """The guard raises before any model request, so there is nothing to record: `in_workflow` is patched instead."""
+    with patch.object(workflow, 'in_workflow', return_value=True):
+        with pytest.raises(
+            UserError, match='Capabilities cannot be contextually overridden inside a Temporal workflow'
+        ):
+            with simple_temporal_agent.override(capabilities=[]):
+                pass
+
+
 async def test_temporal_agent_override_model_in_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,
@@ -2391,7 +2461,7 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
         with workflow_raises(
             UserError,
             snapshot(
-                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
+                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled by `durable=False`, its Temporal metadata or `tool_activity_config`), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
             ),
         ):
             await client.execute_workflow(
@@ -3397,7 +3467,7 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
     assert str(exc_info.value) == snapshot(
         "'model_settings' is not available on 'TemporalRunContext' inside a Temporal activity. To make the attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it as the `run_context_type` argument to `TemporalDurability`."
     )
-    for name in ('prompt', 'messages', 'validation_context', 'model', 'tracer', 'capabilities'):
+    for name in ('prompt', 'messages', 'validation_context', 'model', 'capabilities'):
         with pytest.raises(UserError, match=f'{name!r} is not available'):
             getattr(reconstructed, name)
 
@@ -3411,6 +3481,45 @@ async def test_temporal_run_context_omitted_field_raises_instead_of_defaulting()
     # An attribute that isn't a `RunContext` field at all keeps raising plain `AttributeError`.
     with pytest.raises(AttributeError, match='has no attribute'):
         getattr(reconstructed, 'not_a_field')
+
+
+async def test_temporal_run_context_resolves_tracer_from_worker_agent():
+    """`tracer` is resolved from the worker's agent rather than raising, so tools can open spans unconditionally.
+
+    The live tracer can't cross the activity boundary, so the activity resolves it the way model units resolve their
+    instrumentation: an `Instrumentation` capability on the agent wins over `instrument=`, and an uninstrumented
+    agent gets the no-op tracer an uninstrumented run uses.
+    """
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
+    serialized = await _serialized_run_context_across_the_wire(ctx)
+    assert 'tracer' not in serialized
+
+    for agent in (None, Agent(TestModel())):
+        reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
+        assert isinstance(reconstructed.tracer, NoOpTracer)
+
+    settings = InstrumentationSettings()
+    agent = Agent(TestModel())
+    agent.instrument = settings
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
+    assert reconstructed.tracer is settings.tracer
+
+    capability_settings = InstrumentationSettings()
+    agent = Agent(TestModel(), capabilities=[Instrumentation(settings=capability_settings)])
+    agent.instrument = settings
+    reconstructed = deserialize_run_context(TemporalRunContext, serialized, deps=None, agent=agent)
+    assert reconstructed.tracer is capability_settings.tracer
+
+    # A subclass that restores a tracer of its own keeps it.
+    own_tracer = NoOpTracer()
+
+    class TracerRestoringRunContext(TemporalRunContext[Any]):
+        @classmethod
+        def deserialize_run_context(cls, ctx: dict[str, Any], deps: Any) -> TemporalRunContext[Any]:
+            return cls(**ctx, deps=deps, tracer=own_tracer)
+
+    reconstructed = deserialize_run_context(TracerRestoringRunContext, serialized, deps=None, agent=agent)
+    assert reconstructed.tracer is own_tracer
 
 
 async def test_is_tool_available_answers_for_a_capability_owned_tool_inside_an_activity():

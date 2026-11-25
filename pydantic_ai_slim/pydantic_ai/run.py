@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from copy import copy, deepcopy
+from copy import deepcopy
 from datetime import datetime
 from functools import cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, NotRequired, Required, cast, overload
@@ -24,13 +24,13 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
-from ._conversation_marks import mark_stored
 from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
     no_workspace,
 )
+from ._run_conversation import conversation_from_state, full_history, keep_full_history
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
 from .output import OutputDataT
@@ -38,6 +38,7 @@ from .tools import AgentDepsT, DeferredToolRequests
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
+    from .agent.abstract import EventStreamHandler
     from .result import FinalResult
     from .workspaces import Workspace
 
@@ -121,203 +122,6 @@ def _output_field_schema(schema: CoreSchema) -> CoreSchema:
     while schema['type'] != 'dataclass-args':
         schema = cast('CoreSchema', schema['schema'])  # pyright: ignore[reportGeneralTypeIssues,reportTypedDictNotRequiredAccess]
     return next(field['schema'] for field in schema['fields'] if field['name'] == 'output')
-
-
-_STAMPED_FIELDS = ('timestamp', 'instructions', 'run_id', 'conversation_id')
-"""The fields a run fills in on a message it sends, when the message has them but they aren't set yet."""
-
-
-def _rewritten(message: _messages.ModelMessage, original: _messages.ModelMessage) -> bool:
-    """Whether `message` differs from `original` other than by what a run adds to a request it sends.
-
-    A run fills in the fields the request lacks, and adds parts to it, like the system prompt it reinjects
-    when the request opens the history it sends, or a `ModelSettingsDeltaPart` recording a settings change.
-    Any part added around the request's own parts, by the run or a capability, is saved with the request as
-    it was sent. Changing or dropping one of the request's own parts rewrites it.
-    """
-    filled = {name: getattr(message, name, None) for name in _STAMPED_FIELDS if getattr(original, name, False) is None}
-    if (
-        isinstance(message, _messages.ModelRequest)
-        and isinstance(original, _messages.ModelRequest)
-        and _keeps_in_order(message.parts, original.parts)
-    ):
-        filled['parts'] = message.parts
-    return message != dataclasses.replace(original, **filled)
-
-
-def _keeps_in_order(parts: Sequence[object], kept: Sequence[object]) -> bool:
-    """Whether `parts` holds each of `kept`, in the same order, with only other parts added around them."""
-    remaining = iter(parts)
-    return all(part in remaining for part in kept)
-
-
-def _split_merged_tail(
-    state: _agent_graph.GraphAgentState, messages: list[_messages.ModelMessage], new_message_index: int
-) -> tuple[list[_messages.ModelMessage], int]:
-    """Put the stored request the run merged the unsaved ones after it into, and those, back in place of the merged request.
-
-    The unsaved requests get the fields the run filled in on the merged request it sent, and the last one any part
-    it added. See `GraphAgentState.conversation_merged_tail`.
-    """
-    tail, unsaved = state.conversation_merged_tail, state.conversation_unsaved or []
-    appended = _agent_graph.leading_requests(unsaved)
-    if tail is None or not appended:
-        return messages, new_message_index
-    start = new_message_index - (len(unsaved) - len(appended) + 1)
-    merged = messages[start] if 0 <= start < len(messages) else None
-    if not isinstance(merged, _messages.ModelRequest):
-        # A history shorter than its index says, as a payload dumped without some of its messages has.
-        return messages, new_message_index
-    added: list[Any] = list(merged.parts)
-    for part in [part for request in (tail, *appended) for part in request.parts]:
-        if part not in added:
-            # Something edited the merged request in place, so which of its parts are stored isn't known.
-            return messages, new_message_index
-        added.remove(part)
-    # The merged request has the latest timestamp of the ones it merged, unless the run stamped its own.
-    given_timestamps = [request.timestamp for request in (tail, *appended)]
-    split = [
-        dataclasses.replace(
-            request,
-            parts=[*request.parts, *(added if request is appended[-1] else ())],
-            **{
-                name: value
-                for name in _STAMPED_FIELDS
-                if getattr(request, name) is None
-                and (value := getattr(merged, name)) is not None
-                and (name != 'timestamp' or value not in given_timestamps)
-            },
-        )
-        for request in appended
-    ]
-    return [*messages[:start], tail, *split, *messages[start + 1 :]], new_message_index + len(appended)
-
-
-def _full_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
-    """The full history `_keep_full_history` kept when the run ended, and where the messages the run added start in it."""
-    appended = state.appended_messages
-    if not appended.full or appended.messages is None:
-        return None
-    return appended.messages, appended.new_message_index
-
-
-def _keep_full_history(state: _agent_graph.GraphAgentState) -> None:
-    """Keep the full history of a run that just ended, if its history lost any of it, and nothing otherwise.
-
-    Called once the run's last node and its hooks ran, so the result's `conversation` neither looks at the history
-    again nor holds on to the record: an edit to the history after the run then reaches the conversation, as it
-    would without a capability, unless one dropped or rewrote messages during the run.
-    """
-    appended = state.appended_messages
-    full = _merged_history(state)
-    if full is None:
-        appended.messages = None
-    else:
-        appended.messages, appended.new_message_index = full
-        appended.full = True
-
-
-def _merged_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
-    """The history the run was given and every message it added, and where those start, if its history lost any of them.
-
-    A capability can drop messages from the history or replace them with rewritten copies, say to keep what the
-    model sees short. The full history then has the messages as the run was given or added them, and every other
-    message the history holds, like a summary a capability put in place of the ones it dropped, right before the
-    message it comes before in the history. A message a capability only adds, and filling in or adding to a message
-    as `_rewritten` allows, keeps the history whole, so this is `None`.
-    """
-    recorded = state.appended_messages.messages
-    if recorded is None:
-        return None
-    merge = _HistoryMerge(recorded, given=state.appended_messages.new_message_index, history=state.message_history)
-    for message in state.message_history:
-        merge.place(message)
-    merge.finish()
-    return (merge.merged, merge.given_end) if merge.changed else None
-
-
-@dataclasses.dataclass
-class _HistoryMerge:
-    """Merges a run's message history into the messages it was given and added, for `_merged_history`."""
-
-    recorded: list[_messages.ModelMessage]
-    given: int
-    """How many of `recorded` the run was given."""
-    history: dataclasses.InitVar[list[_messages.ModelMessage]]
-    merged: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
-    given_end: int = 0
-    """Where the messages the run was given end in `merged`."""
-    changed: bool = False
-    """Whether the history dropped or rewrote any of `recorded`."""
-    _added: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
-    """Messages of the history not in `recorded`, waiting for the recorded message they come before."""
-    _start: int = 0
-    _positions: dict[int, int] = dataclasses.field(default_factory=dict[int, int])
-    _held: set[int] = dataclasses.field(default_factory=set[int])
-
-    def __post_init__(self, history: list[_messages.ModelMessage]) -> None:
-        self._positions = {id(message): index for index, message in enumerate(self.recorded)}
-        self._held = {id(message) for message in history}
-
-    def place(self, message: _messages.ModelMessage) -> None:
-        """Merge in `message`, the next one of the history."""
-        index = self._positions.get(id(message))
-        if index is not None and index < self._start:
-            # Already merged: the history moved it.
-            self.changed = True
-            return
-        copied = False
-        if index is None:
-            index, copied = self._find_original(message)
-        if index is None:
-            self._added.append(message)
-            return
-        self.changed = self.changed or copied or index != self._start
-        self.take(index)
-        if id(message) not in self._positions and not copied:
-            # A copy that only fills in or adds to the message stands for it as the history holds it.
-            self.merged[-1] = message
-
-    def finish(self) -> None:
-        """Merge the recorded messages after the last one the history holds, then the added ones after it."""
-        self.changed = self.changed or self._start < len(self.recorded)
-        self.take(len(self.recorded))
-
-    def take(self, index: int) -> None:
-        """Merge the recorded messages the history dropped before `index`, the added ones waiting, then the one at `index`."""
-        self._merge_recorded(range(self._start, index))
-        self.merged += self._added
-        self._added = []
-        self._merge_recorded(range(index, min(index + 1, len(self.recorded))))
-        self._start = index + 1
-
-    def _merge_recorded(self, indices: range) -> None:
-        for index in indices:
-            self.merged.append(self.recorded[index])
-            if index < self.given:
-                self.given_end = len(self.merged)
-
-    def _find_original(self, message: _messages.ModelMessage) -> tuple[int | None, bool]:
-        """The recorded message `message` is a copy of, among the ones the history dropped, and whether it rewrote it.
-
-        A copy that only fills in or adds to a message, as `_rewritten` allows, stands for it. So does one that keeps
-        its timestamp and run, as `dataclasses.replace` does, as a rewrite of it, even with a `run_id` the run filled in.
-        """
-        for index in range(self._start, len(self.recorded)):
-            original = self.recorded[index]
-            if id(original) in self._held:
-                break
-            if type(original) is not type(message):
-                continue
-            if not _rewritten(message, original):
-                return index, False
-            if (
-                original.timestamp is not None
-                and message.timestamp == original.timestamp
-                and original.run_id in (None, message.run_id)
-            ):
-                return index, True
-        return None, False
 
 
 _STATE_KEYS = (
@@ -722,6 +526,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             [_agent_graph.AgentNode[AgentDepsT, Any]],
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
+        events_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Run the post-stream portion of the node lifecycle.
 
@@ -761,10 +566,11 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         # runner state so agent_run.result correctly reflects whether the run is finished.
         if result is not pre_hook_result:
             self._sync_graph_state(result)
+        await self._deliver_leftover_events(result, events_handler)
 
         _utils.raise_if_cancelling()
         if isinstance(result, End):
-            _keep_full_history(self.ctx.state)
+            keep_full_history(self.ctx.state)
         return result
 
     async def _run_node_with_hooks(
@@ -774,11 +580,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             [_agent_graph.AgentNode[AgentDepsT, Any]],
             Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
         ],
+        events_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
         """Run the complete node lifecycle inside `wrap_node_run`.
 
         The wrapped handler runs `before_node_run`, the step with `on_node_run_error` recovery,
-        and `after_node_run`.
+        and `after_node_run`. When the run ends, events emitted after the node's stream closed go to
+        `events_handler`, the handler `step_fn` streams the node's events to, if any.
         """
         # Bind before `before_node_run` awaits: when the run is driven from a different task than
         # the previous step (manual `next()` from another task), the controller must target this
@@ -825,8 +633,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             result = drain_pending_messages_at_end(run_context, result)
             if not self._graph_reflects(result):
                 self._sync_graph_state(result)
+            await self._deliver_leftover_events(result, events_handler)
             if isinstance(result, End):
-                _keep_full_history(self.ctx.state)
+                keep_full_history(self.ctx.state)
             return result
         finally:
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
@@ -916,6 +725,38 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
             del self
 
+    async def _deliver_leftover_events(
+        self,
+        result: _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]],
+        events_handler: EventStreamHandler[AgentDepsT] | None,
+    ) -> None:
+        """When a deferred-tool pause recorded queued content, deliver the events emitted after the last node stream.
+
+        The `EnqueuedMessagesEvent` for the recorded content is one: listeners such as a capability's `@on_event`
+        method see it through the capability chain, as they see a node's events, and so does `events_handler`, the
+        run's stream handler. Without either, the events stay buffered, as a node's events do when nothing streams
+        it. A run that ends any other way, or pauses with nothing queued, leaves the buffer as it always has.
+
+        Listeners see every event before `events_handler` sees the first: `SubAgents` acknowledges a recorded
+        report on its event, so a handler that stops partway must not leave later reports unacknowledged.
+        """
+        if not (
+            isinstance(result, End)
+            and isinstance(result.data.output, DeferredToolRequests)
+            and any(isinstance(event, _messages.EnqueuedMessagesEvent) for event in self.ctx.state.event_stream_buffer)
+        ):
+            return
+        capability = self.ctx.deps.root_capability
+        if events_handler is None and not (capability.has_wrap_run_event_stream or capability.has_on_event):
+            return
+        stream = _agent_graph.leftover_event_stream(self.ctx)
+        try:
+            events = [event async for event in stream]
+        finally:
+            await _utils.aclose_if_supported(stream)
+        if events_handler is not None:
+            await events_handler(_agent_graph.build_run_context(self.ctx), _agent_graph.buffered_events(events))
+
     async def _stream_and_advance(
         self,
         node: _agent_graph.AgentNode[AgentDepsT, Any],
@@ -956,11 +797,12 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
     @property
     def pending_messages(self) -> list[PendingMessage]:
-        """Internal: live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
+        """Live view of the queue mutated by `enqueue` and drained by the internal `PendingMessageDrainCapability`.
 
-        Exposed for inspection / debugging; use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
+        While the run is live, use [`enqueue`][pydantic_ai.run.AgentRun.enqueue] to add messages,
         and [`dequeue`][pydantic_ai.run.AgentRun.dequeue] or [`set_enqueue_priority`][pydantic_ai.run.AgentRun.set_enqueue_priority]
-        to change them.
+        to change them. After a run pauses, it holds what the pause left undelivered, which can be read but
+        no longer changed; see [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run).
         """
         return self._graph_run.state.pending_messages
 
@@ -1023,7 +865,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 assembled sequence must end in a request. Calling with no positional args is a no-op.
             priority: When to deliver:
                 `'asap'` (default) — at the earliest opportunity (next model request,
-                    or a redirect if the agent would otherwise end).
+                    or a redirect if the agent would otherwise end; a run that pauses adds the
+                    content to the history instead, or leaves it queued; see
+                    [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run)).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
 
         Returns:
@@ -1275,7 +1119,7 @@ class AgentRunResult(Generic[OutputDataT]):
             data['conversation_saved'] = True
         if self._state.conversation_merged_tail is not None:
             data['conversation_merged_tail'] = self._state.conversation_merged_tail
-        if (full := _full_history(self._state)) is not None:
+        if (full := full_history(self._state)) is not None:
             # The messages the history still holds are referred to by their index in it rather than repeated.
             positions = {id(message): index for index, message in enumerate(self._state.message_history)}
             data['conversation_messages'] = [positions.get(id(message), message) for message in full[0]]
@@ -1440,56 +1284,18 @@ class AgentRunResult(Generic[OutputDataT]):
         were stored and appended, so its store gets neither again.
         """
         output = self.output
-        full = _full_history(self._state)
-        messages, new_message_index = _split_merged_tail(
-            self._state, *(full or (self._state.message_history, self._new_message_index))
+        return conversation_from_state(
+            self._state,
+            self._new_message_index,
+            messages=list(self.all_messages()),
+            deferred_tool_requests=output if isinstance(output, DeferredToolRequests) else None,
         )
-        conversation = Conversation(
-            messages=list(messages),
-            usage=copy(self.usage),
-            conversation_id=self.conversation_id,
-            deferred_tool_requests=(
-                DeferredToolRequests(
-                    calls=list(output.calls),
-                    approvals=list(output.approvals),
-                    metadata=dict(output.metadata),
-                    _kinds=dict(output._kinds),  # pyright: ignore[reportPrivateUsage]
-                )
-                if isinstance(output, DeferredToolRequests)
-                else None
-            ),
-            revision=self._state.conversation_revision,
-        )
-        index = self._conversation_new_message_index(messages, new_message_index)
-        if index is not None and self._state.conversation_unchecked:
-            # Its store compares the messages before the index with the stored ones instead.
-            conversation.new_message_index = index
-        elif index is not None:
-            mark_stored(conversation, conversation.messages[:index])
-        return conversation
 
     def _conversation_saved(self, revision: str) -> None:
         """Record that a store saved this result's conversation, so its `conversation` continues from the new revision."""
         self._state.conversation_revision = revision
         self._state.conversation_unchecked = False
         self._state.conversation_saved = True
-
-    def _conversation_new_message_index(
-        self, messages: list[_messages.ModelMessage], new_message_index: int
-    ) -> int | None:
-        if self._state.conversation_saved:
-            return len(messages)
-        unsaved = self._state.conversation_unsaved
-        if unsaved is None:
-            return None
-        # The unsaved messages the run was given come just before the ones it added, unless the run changed
-        # them, in which case the store compares the whole history instead. Filling in what a request it sends
-        # lacks doesn't count as a change.
-        start = new_message_index - len(unsaved)
-        carried = messages[start:new_message_index] if start >= 0 else []
-        if len(carried) != len(unsaved) or any(map(_rewritten, carried, unsaved)):
-            return None
-        return start
 
     @property
     def timestamp(self) -> datetime:

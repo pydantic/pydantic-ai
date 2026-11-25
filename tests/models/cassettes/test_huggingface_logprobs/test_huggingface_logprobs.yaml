@@ -1,0 +1,152 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://router.huggingface.co/novita/v3/openai/chat/completions
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "195"
+      content-type:
+      - application/json
+      host:
+      - router.huggingface.co
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: What is the capital of France? Answer in one word.
+        model: meta-llama/llama-3.1-8b-instruct
+        logprobs: true
+        tools: []
+        top_logprobs: 2
+        stream: false
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - >-
+        X-Repo-Commit,X-HF-Warning,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash,RateLimit,RateLimit-Policy
+      connection:
+      - keep-alive
+      content-length:
+      - "1204"
+      content-type:
+      - application/json
+      cross-origin-opener-policy:
+      - same-origin
+      inference-id:
+      - 0-01a1e7d5-f9de-7648-be9a-c3225a1f4df5
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: f162a333109193bd07566bf518b0f212
+        object: chat.completion
+        created: 1794890922
+        model: meta-llama/llama-3.1-8b-instruct
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: Paris.
+          finish_reason: stop
+          logprobs:
+            content:
+            - token: Paris
+              logprob: 0
+              bytes:
+              - 80
+              - 97
+              - 114
+              - 105
+              - 115
+              top_logprobs:
+              - token: Paris
+                logprob: 0
+                bytes:
+                - 80
+                - 97
+                - 114
+                - 105
+                - 115
+              - token: Par
+                logprob: -17.142858505249023
+                bytes:
+                - 80
+                - 97
+                - 114
+            - token: '.'
+              logprob: -0.008023055270314217
+              bytes:
+              - 46
+              top_logprobs:
+              - token: '.'
+                logprob: -0.008023055270314217
+                bytes:
+                - 46
+              - token: <|eot_id|>
+                logprob: -4.82944917678833
+                bytes:
+                - 60
+                - 124
+                - 101
+                - 111
+                - 116
+                - 95
+                - 105
+                - 100
+                - 124
+                - 62
+            - token: <|eot_id|>
+              logprob: 0
+              bytes:
+              - 60
+              - 124
+              - 101
+              - 111
+              - 116
+              - 95
+              - 105
+              - 100
+              - 124
+              - 62
+              top_logprobs:
+              - token: <|eot_id|>
+                logprob: 0
+                bytes:
+                - 60
+                - 124
+                - 101
+                - 111
+                - 116
+                - 95
+                - 105
+                - 100
+                - 124
+                - 62
+              - token: " "
+                logprob: -17.14285659790039
+                bytes:
+                - 32
+        usage:
+          prompt_tokens: 47
+          completion_tokens: 3
+          total_tokens: 50
+          prompt_tokens_details: null
+          completion_tokens_details: null
+        system_fingerprint: ""
+  recorded_at: 2026-11-17T04:48:42.869793+00:00

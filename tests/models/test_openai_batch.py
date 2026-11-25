@@ -247,7 +247,11 @@ async def test_batch_encode_carries_the_responses_params() -> None:
         custom_id='item',
         messages=[ModelRequest(parts=[UserPromptPart('Hello')], instructions='Answer briefly')],
         model_settings=OpenAIResponsesModelSettings(
-            max_tokens=100, temperature=0.5, openai_user='user', extra_body={'metadata': {'source': 'test'}}
+            max_tokens=100,
+            temperature=0.5,
+            openai_user='user',
+            openai_safety_identifier='safety_id',
+            extra_body={'metadata': {'source': 'test'}},
         ),
         model_request_parameters=ModelRequestParameters(
             function_tools=[ToolDefinition(name='weather', parameters_json_schema={'type': 'object', 'properties': {}})]
@@ -273,6 +277,7 @@ async def test_batch_encode_carries_the_responses_params() -> None:
             'max_output_tokens': 100,
             'temperature': 0.5,
             'user': 'user',
+            'safety_identifier': 'safety_id',
             'metadata': {'source': 'test'},
         }
     )
@@ -439,7 +444,11 @@ class _FakeBatchAPI:
     files: dict[str, str] = field(default_factory=dict[str, str])
     requests: list[tuple[str, str]] = field(default_factory=list[tuple[str, str]])
     delete_status: int = 200
+    delete_gave_up: bool = False
+    """Whether the delete's `delete_status` is one a retrying transport gave up on, so it raises `HTTPStatusError`."""
     create_error: tuple[int, dict[str, Any]] | None = None
+    create_gave_up: bool = False
+    """Whether the create's `create_error` is one a retrying transport gave up on, so it raises `HTTPStatusError`."""
     response_bodies: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     def handle(self, request: httpx2.Request) -> httpx2.Response:
@@ -447,11 +456,19 @@ class _FakeBatchAPI:
         self.requests.append((request.method, path))
         if request.method == 'DELETE' and path.startswith('/files/'):
             if self.delete_status != 200:
-                return httpx2.Response(self.delete_status, json={'error': {'message': 'Nope', 'type': 'server_error'}})
+                response = httpx2.Response(
+                    self.delete_status, json={'error': {'message': 'Nope', 'type': 'server_error'}}, request=request
+                )
+                if self.delete_gave_up:
+                    raise httpx2.HTTPStatusError('Server error', request=request, response=response)
+                return response
             return httpx2.Response(200, json={'id': path.split('/')[2], 'object': 'file', 'deleted': True})
         if request.method == 'POST' and path == '/batches' and self.create_error is not None:
             status_code, body = self.create_error
-            return httpx2.Response(status_code, json=body)
+            response = httpx2.Response(status_code, json=body, request=request)
+            if self.create_gave_up:
+                raise httpx2.HTTPStatusError('Error', request=request, response=response)
+            return response
         if request.method == 'POST' and path == '/responses':
             # A request sent on its own, outside a batch.
             self.response_bodies.append(json.loads(request.read()))
@@ -924,10 +941,18 @@ async def test_cancelled_batch_returns_what_it_ran(allow_model_requests: None) -
     assert ('DELETE', '/files/file-input') not in api.requests
 
 
-@pytest.mark.parametrize('delete_status', [200, 404, 500])
-async def test_completed_batch_deletes_its_input_file(allow_model_requests: None, delete_status: int) -> None:
-    """Once every request has run, the input file isn't needed; deleting it is best effort, so failing to is fine."""
-    api = _FakeBatchAPI(batch=_batch_json('in_progress'), delete_status=delete_status)
+@pytest.mark.parametrize(
+    'delete_status, delete_gave_up',
+    [(200, False), (404, False), (500, False), pytest.param(503, True, id='transport-gave-up')],
+)
+async def test_completed_batch_deletes_its_input_file(
+    allow_model_requests: None, delete_status: int, delete_gave_up: bool
+) -> None:
+    """Once every request has run, the input file isn't needed; deleting it is best effort, so failing to is fine.
+
+    That includes a status a retrying transport gave up on, which `openai` lets through unwrapped.
+    """
+    api = _FakeBatchAPI(batch=_batch_json('in_progress'), delete_status=delete_status, delete_gave_up=delete_gave_up)
     model = _fake_model(api)
     batch = await model.batch_create([await model.batch_encode(_request('ok'))])
     api.files['file-output'] = _line('ok', {'status_code': 200, 'body': _RESPONSE_BODY})
@@ -1112,17 +1137,43 @@ async def test_batch_usage_has_cached_and_reasoning_tokens(allow_model_requests:
     assert response.cost().total_price < standard.cost().total_price
 
 
-@pytest.mark.parametrize('status_code, deleted', [(429, True), (400, True), (500, False)])
+@pytest.mark.parametrize(
+    'status_code, gave_up, deleted',
+    [(429, False, True), (400, False, True), (500, False, False), (429, True, True), (503, True, False)],
+)
 async def test_a_refused_batch_deletes_its_input_file(
-    allow_model_requests: None, status_code: int, deleted: bool
+    allow_model_requests: None, status_code: int, gave_up: bool, deleted: bool
 ) -> None:
-    """Nothing reads the file of a batch OpenAI refused; after a server error, the batch may exist and read it."""
+    """Nothing reads the file of a batch OpenAI refused; after a server error, the batch may exist and read it.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
     error = {'error': {'message': 'Refused', 'type': 'invalid_request_error'}}
-    api = _FakeBatchAPI(batch=_batch_json('validating'), create_error=(status_code, error))
+    api = _FakeBatchAPI(batch=_batch_json('validating'), create_error=(status_code, error), create_gave_up=gave_up)
     model = _fake_model(api)
     with pytest.raises(ModelHTTPError):
         await model.batch_create([await model.batch_encode(_request())])
     assert (('DELETE', '/files/file-input') in api.requests) is deleted
+
+
+async def test_a_refused_batch_raises_its_refusal_when_deleting_its_input_file_fails(
+    allow_model_requests: None,
+) -> None:
+    """Deleting the input file of a refused batch is best effort, so a status a retrying transport gave up on doesn't
+    replace the refusal.
+
+    Not a VCR test: the transport raises `HTTPStatusError` itself, so there is no response to record.
+    """
+    error = {'error': {'message': 'Refused', 'type': 'invalid_request_error'}}
+    api = _FakeBatchAPI(
+        batch=_batch_json('validating'), create_error=(400, error), delete_status=503, delete_gave_up=True
+    )
+    model = _fake_model(api)
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await model.batch_create([await model.batch_encode(_request())])
+    assert isinstance(exc_info.value, ModelRequestRejectedError)
+    assert exc_info.value.status_code == 400
+    assert ('DELETE', '/files/file-input') in api.requests
 
 
 @pytest.mark.parametrize(

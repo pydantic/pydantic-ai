@@ -162,11 +162,25 @@ class PostgresStepStore:
         self._schema_lock = anyio.Lock()
 
     async def _ensure_schema(self) -> None:
+        """Create the tables once, unless they all exist, so a role without `CREATE` on the schema can use them."""
         if self._schema_ready:
             return
         async with self._schema_lock:
             if self._schema_ready:
                 return
+            tables = (
+                self._runs_table,
+                self._events_table,
+                self._snapshots_table,
+                self._messages_table,
+                self._snapshot_keys_table,
+                self._tool_effects_table,
+            )
+            async with self._pool.acquire() as connection:
+                exists = ' AND '.join(f'to_regclass(${i}) IS NOT NULL' for i in range(1, len(tables) + 1))
+                if await connection.fetchval(f'SELECT {exists}', *tables):
+                    self._schema_ready = True
+                    return
             async with self._pool.acquire() as connection, connection.transaction():
                 # `CREATE TABLE IF NOT EXISTS` is not race-free in Postgres: concurrent
                 # callers can collide on `pg_type`'s unique index.

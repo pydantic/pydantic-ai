@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-
-ORIGIN = 'pydantic-ai-harness.refine_output.v1'
+from pydantic_ai_harness.refine_output import ReviewRoundPart
 
 model_calls: list[None] = []
 """One entry per `drafting_model` call, so a test can tell a replayed response from a new one."""
@@ -35,12 +34,12 @@ def numbered_model() -> FunctionModel:
     return FunctionModel(model, stream_function=stream)
 
 
-def reviews(messages: Sequence[ModelMessage]) -> list[tuple[str, object]]:
+def reviews(messages: Sequence[ModelMessage]) -> list[tuple[str, int]]:
     """The content and round of each review instruction in `messages`."""
     return [
-        (part.content, part.metadata['round'])
+        (part.content, part.round)
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, SystemPromptPart) and part.metadata and part.metadata['origin'] == ORIGIN
+        if isinstance(part, ReviewRoundPart)
     ]

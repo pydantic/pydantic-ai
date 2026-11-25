@@ -43,6 +43,7 @@ from .._cancel import CancellationToken, RunBinding, provide_run_binding
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._run_context import set_current_run_context
+from .._run_conversation import failed_run_conversation
 from ..capabilities import AgentCapability
 from ..conversation import Conversation
 from ..exceptions import RunCancelled
@@ -55,6 +56,7 @@ from ..tool_manager import ToolManager
 from ..tools import (
     AgentDepsT,
     AgentNativeTool,
+    DeferredToolRequests,
     DeferredToolResults,
     RunContext,
     Tool,
@@ -260,11 +262,13 @@ class AgentRunEvents(
         agent_run = self._binding.agent_run
         if agent_run is None:
             return
-        _agent_graph.run_cancelled_snapshot(
+        cancelled = _agent_graph.run_cancelled_snapshot(
             'The agent run was cancelled by an external asyncio cancellation.',
             agent_run.ctx.state,
             agent_run.ctx.deps,
-        )._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+        )
+        cancelled._pydantic_ai_conversation = failed_run_conversation(agent_run.ctx.state, agent_run.ctx.deps)  # pyright: ignore[reportPrivateUsage]
+        cancelled._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
 
     async def aclose(self) -> None:
         """Cancel the background run (if started) and close the receive stream, idempotently."""
@@ -351,6 +355,11 @@ class _RunStreamEventsContext(Generic[OutputDataT], AbstractAsyncContextManager[
             # `run()`/`iter()`. Attached after `aclose()` so teardown-committed history is included.
             if isinstance(exc_value, asyncio.CancelledError):
                 self._iterator._attach_run_state(exc_value)  # pyright: ignore[reportPrivateUsage]
+
+
+def _recorded_at_pause(output: object, added: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
+    """What the run's end added to the history, when it paused for deferred tools; nothing at any other end."""
+    return added if isinstance(output, DeferredToolRequests) else []
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -691,7 +700,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     if agent_run.result is not None:
                         break
                     if _stream_step is not None:
-                        node = await agent_run._run_node_with_hooks(node, _stream_step)  # pyright: ignore[reportPrivateUsage]
+                        node = await agent_run._run_node_with_hooks(node, _stream_step, event_stream_handler)  # pyright: ignore[reportPrivateUsage]
                     else:
                         node = await agent_run.next(node)  # pyright: ignore[reportArgumentType]
 
@@ -1159,15 +1168,28 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 # append a new ModelRequest using the tool returns and retries
                                 if parts:
                                     messages.append(
-                                        _messages.ModelRequest(
-                                            parts,
-                                            run_id=graph_ctx.state.run_id,
-                                            conversation_id=graph_ctx.state.conversation_id,
-                                            timestamp=_utils.now_utc(),
+                                        _agent_graph.final_tool_results_request(
+                                            parts, graph_ctx.state, final_result.output
                                         )
                                     )
 
-                                await agent_run.next(_agent_graph.SetFinalResult(final_result))
+                                # Like `next()`, but events emitted as the run ends also reach `event_stream_handler`.
+                                # Content queued at a deferred pause is recorded as the run ends, after `messages`
+                                # was copied, so it's carried over even if a handler fails on its event. Any other
+                                # end leaves `messages` as copied.
+                                recorded_from = len(graph_ctx.state.message_history)
+                                try:
+                                    await agent_run._run_node_with_hooks(  # pyright: ignore[reportPrivateUsage]
+                                        _agent_graph.SetFinalResult(final_result),
+                                        agent_run._stream_and_advance,  # pyright: ignore[reportPrivateUsage]
+                                        event_stream_handler,
+                                    )
+                                finally:
+                                    messages.extend(
+                                        _recorded_at_pause(
+                                            final_result.output, graph_ctx.state.message_history[recorded_from:]
+                                        )
+                                    )
 
                                 # The tool calls above (and any agents they delegated to) added usage to the run
                                 # after the stream snapshotted it. The final response itself is only recorded once
@@ -1186,8 +1208,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             )
                             yield streamed_result
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.
-                            # before_node_run fired above; on_complete() later calls
-                            # agent_run.next(SetFinalResult(...)) which fires the full lifecycle
+                            # before_node_run fired above; on_complete() later runs
+                            # SetFinalResult(...) through the full node lifecycle, which fires it
                             # for SetFinalResult, but not for this ModelRequestNode.
                             break
                 elif self.is_call_tools_node(node):
@@ -1208,6 +1230,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     run_ctx,
                     node,
                     agent_run._advance_graph,  # pyright: ignore[reportPrivateUsage]
+                    event_stream_handler,
                 )
                 if isinstance(next_node, End) and agent_run.result is not None:
                     # A final output could have been produced by the CallToolsNode rather than the ModelRequestNode,
@@ -1839,6 +1862,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         native_tools: Sequence[AgentNativeTool[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         instructions: _instructions.AgentInstructions[AgentDepsT] | _utils.Unset = _utils.UNSET,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         metadata: AgentMetadata[AgentDepsT] | _utils.Unset = _utils.UNSET,
         model_settings: AgentModelSettings[AgentDepsT] | _utils.Unset = _utils.UNSET,
         retries: int | AgentRetries | _utils.Unset = _utils.UNSET,
@@ -1858,6 +1882,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             tools: The tools to use instead of the tools registered with the agent.
             native_tools: The native tools to use instead of the agent's configured native tools.
             instructions: The instructions to use instead of the instructions registered with the agent.
+            capabilities: The capabilities to use instead of the agent's configured capabilities. When set,
+                these replace (not merge with) the agent's existing capabilities. To add to the existing
+                set, include them explicitly:
+                `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.
+                On an agent with a durability capability, build the list this way: a list without the bound
+                durability capability raises a `UserError`, and inside a durable workflow or flow, the
+                capabilities the list adds follow the rules for capabilities passed to a run.
             metadata: The metadata to use instead of the metadata passed to the agent constructor. When set, any
                 per-run `metadata` argument is ignored.
             model_settings: The model settings to use instead of the model settings passed to the agent constructor.

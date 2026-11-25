@@ -37,6 +37,7 @@ from ._event_stream import (
     stream_agent_events,
     workflow_stream_event_handler,
 )
+from ._external_events import fail_external_event, resolve_external_event
 from ._logfire import LogfirePlugin
 from ._operation_names import TemporalOperationNamer
 from ._payload_converter import PydanticAIPayloadConverter
@@ -61,6 +62,8 @@ __all__ = [
     'DurableAgentRunEvents',
     'workflow_stream_event_handler',
     'stream_agent_events',
+    'resolve_external_event',
+    'fail_external_event',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
@@ -156,6 +159,11 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # sandbox. Safe to pass through: the call only happens once at module init.
             'fastmcp',
             'mcp',
+            # `fastmcp_tasks` builds a `pydantic_settings` object at import time, which reads dotenv
+            # files and so calls `Path.expanduser` too. `MCPToolset` imports it on the MCP SDK v2
+            # path, so a toolset constructed inside a workflow reaches it. Same reasoning as above:
+            # the call happens once at module init.
+            'fastmcp_tasks',
             # The `anthropic` SDK (>=0.99.0) calls `Path.home()` during client construction to
             # resolve its credentials/profile config directory (`~/.config/anthropic`) — restricted
             # by the workflow sandbox. This trips when a model is constructed inside the workflow,
@@ -279,10 +287,17 @@ class AgentPlugin(SimplePlugin):
     [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]
     capability (whose chain is walked to find the bound capability), or the
     deprecated [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent]
-    wrapper, and registers the agent's activities on the worker.
+    wrapper, and registers the agent's activities on the worker, along with the child
+    workflows of any tools configured to run as one.
+
+    Args:
+        agent: The agent whose activities and child workflows to register.
+        register_workflows: Whether to register the agent's child workflows. Pass `False` on a
+            worker that only runs activities to register only the agent's activities; the worker
+            that runs your workflows must then register the child workflows.
     """
 
-    def __init__(self, agent: AbstractAgent[Any, Any]):
+    def __init__(self, agent: AbstractAgent[Any, Any], *, register_workflows: bool = True):
         workflows: list[type] = []
         if isinstance(agent, TemporalAgent):  # pyright: ignore[reportDeprecated]
             activities = agent.temporal_activities
@@ -293,7 +308,7 @@ class AgentPlugin(SimplePlugin):
                     f'Agent {agent.name!r} has no `TemporalDurability` capability; '
                     'add one to `capabilities=[...]` before constructing the plugin.'
                 )
-            activities, workflows = worker_registrations(durability)
+            activities, workflows = worker_registrations(durability, include_workflows=register_workflows)
         super().__init__(  # type: ignore[reportUnknownMemberType]
             name='AgentPlugin',
             activities=activities,

@@ -44,6 +44,7 @@ from ..conftest import RequestCapture, try_import
 
 with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.realtime._openai_protocol import (
         _seed_request_items as _seed_openai_realtime_items,  # pyright: ignore[reportPrivateUsage]
@@ -539,7 +540,8 @@ async def test_mcp_sampling_sends_the_summary_in_user_voice(allow_model_requests
         ('user', McpTextContent(type='text', text=FRAMED)),
         ('user', McpTextContent(type='text', text=QUESTION)),
     ]
-    assert create_message.call_args.kwargs['system_prompt'] == 'You are a concise assistant.'
+    system_prompt = create_message.call_args.kwargs['system_prompt']
+    assert system_prompt == f'{lookalike_note_announcement(system_role=False)}\n\nYou are a concise assistant.'
 
 
 @pytest.mark.skipif(not openai_available(), reason='openai not installed')
@@ -689,6 +691,31 @@ async def test_openai_chat_reads_the_summary(
     assert 'Bluefin' in output
     [body] = request_capture.bodies()
     assert body['messages'] == [
+        {'role': 'system', 'content': 'You are a concise assistant.'},
+        {'role': 'user', 'content': FRAMED},
+        {'role': 'user', 'content': QUESTION},
+        {'role': 'system', 'content': ANNOUNCEMENT},
+    ]
+
+
+@pytest.mark.vcr
+@pytest.mark.skipif(not openai_available(), reason='openai not installed')
+async def test_openai_decisions_reads_the_summary(
+    allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
+):
+    """Only the summary names the codename, so a `True` comes from the summary.
+
+    A decision model needs a typed output with a question, so it doesn't go through `_ask`.
+    """
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    model = OpenAIDecisionsModel('gpt-6-luna', provider=provider)
+    agent = Agent(model, output_type=bool, instructions="Did the user settle on the codename 'Bluefin'?")
+
+    result = await agent.run(QUESTION, message_history=_compacted_history())
+
+    assert result.output is True
+    [body] = request_capture.bodies()
+    assert body['input'] == [
         {'role': 'system', 'content': 'You are a concise assistant.'},
         {'role': 'user', 'content': FRAMED},
         {'role': 'user', 'content': QUESTION},

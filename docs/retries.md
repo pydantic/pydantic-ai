@@ -4,7 +4,18 @@ description: "Configure retries in Pydantic AI: HTTP transport retries for rate 
 
 # Retries
 
-"Retry" means eight different things in an agent run, at eight different layers, and they don't share budgets. Mixing them up is the usual cause of a run that retries far more (or far less) than expected. This page is the map; each layer links to the page that configures it in detail.
+"Retry" means nine different things in an agent run, at nine different layers, and they don't share budgets. Mixing them up is the usual cause of a run that retries far more (or far less) than expected. This page is the map; each layer links to the page that configures it in detail.
+
+To retry rate limits and server errors with backoff on any provider, add the [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md) capability:
+
+```python {title="retry_quickstart.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import RetryOnModelErrors
+
+agent = Agent('{{ openai:medium }}', capabilities=[RetryOnModelErrors()])
+```
+
+For model requests made outside an agent, such as [direct model requests](direct.md), use a [retrying transport](#transport-retries) instead.
 
 ## The layers
 
@@ -13,13 +24,14 @@ description: "Configure retries in Pydantic AI: HTTP transport retries for rate 
 | [Transport](#transport-retries) | The same HTTP request to the provider | [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport] on your HTTP client | Nothing — the agent never sees the attempts |
 | [Provider SDK](#provider-sdk-retries) | The same HTTP request, re-issued by the provider SDK's own client | The SDK client itself; defaults and configuration are provider-specific | Nothing — the agent never sees the attempts |
 | [Durable execution](durable_execution/overview.md) | The whole model request, re-executed by the workflow engine — re-entering every layer nearer the wire; unbounded by default on Temporal (`maximum_attempts=0`) | `retry_policy` in Temporal's `ActivityConfig`, `max_attempts` in DBOS's `StepConfig`, `retries` in Prefect's `TaskConfig` | Nothing — the engine replays the step |
+| [Model request retries](#retrying-the-same-model) | The same request against the *same* model, on a transient error such as a rate limit | The [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md) capability's `retry_on` and `max_attempts` | Only the winning response, which lists the failed attempts in `failed_attempts` |
 | [Model fallback](#model-fallback-is-not-a-retry) | The same request against a *different* model | The [`ModelFallback`](capabilities/model-fallback.md) capability, or a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] | Only the winning response, which lists the failed attempts in `failed_attempts` |
 | [Model request attempts](capabilities/custom.md#model-request-attempts) | The same request step, against the same model or another one, when `prepare_model_request`, `after_model_request` or `on_model_request_error` raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] | The hook itself; it draws on no retry budget, and a step is attempted at most 100 times | Only the response that's accepted, which lists the attempts before it in `failed_attempts` |
 | [Tool](#tool-retries) | One tool call, by asking the model to correct it | `retries={'tools': N}` and per-tool limits | A [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` as that call's result |
 | [Output](#output-retries) | The model's final answer, by asking it to correct it | `retries={'output': N}` and [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries] | A [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart], or a retried `ToolReturnPart` — see [below](#output-retries) |
 | [Model-request hooks](hooks.md) | The model request, from `before_model_request`, `after_model_request`, `wrap_model_request`, or `on_model_request_error` raising `ModelRetry` | The hook itself; it draws on the **output** budget | A new request carrying a `RetryFeedbackPart` |
 
-Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The other five are invisible to the model: it never sees an attempt fail.
+Only the last three are "agent retries" — they cost a model round trip each, because a retry *is* another request. The other six are invisible to the model: it never sees an attempt fail.
 
 [Batched requests](batch.md#failed-requests) add one more layer: a request that failed on the provider's side is submitted again in a new batch, up to `max_resubmissions` times.
 
@@ -28,11 +40,11 @@ Only the last three are "agent retries" — they cost a model round trip each, b
 The layers don't share budgets, but they stack: a retry at one layer wraps the attempts of every layer nearer the wire. If a logical call can issue up to `N` model requests — the initial attempt plus one follow-up per tool call and whatever the [tool](#tool-retries) and [output](#output-retries) retry budgets add — each model request can be attempted up to `F` times by [model fallback](#model-fallback-is-not-a-retry) or another capability raising `RetryModelRequest`, each of those is sent by a provider SDK client allowed up to `M` attempts, and each attempt travels on a transport allowed up to `K` attempts, so one logical call can put up to `N`×`F`×`M`×`K` wire requests on the network. Under [durable execution](durable_execution/overview.md) the step that runs the model request retries too, re-entering `M` and `K` each time — and on Temporal that retry count is unbounded unless you set `maximum_attempts` yourself.
 
 - `N` — model requests per logical call: the initial attempt, one follow-up per tool call (even a successful tool call queues another request), and any retries the [tool](#tool-retries) and [output](#output-retries) budgets add
-- `F` — attempts per model request. The agent makes one attempt per model in a [`ModelFallback`](capabilities/model-fallback.md) chain, or `1` without one, plus any further attempts a capability asks for by raising [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], up to 100 per request step. A `prepare_model_request` hook that moves an attempt to another model before anything is sent counts towards that ceiling too, but records no failed attempt or span. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] walks its own models inside a single one of those attempts, outside the ceiling, so a `FallbackModel` among `ModelFallback`'s models multiplies the two
+- `F` — attempts per model request. The agent makes one attempt per model in a [`ModelFallback`](capabilities/model-fallback.md) chain, or `1` without one, times up to `max_attempts` per model with [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md), plus any further attempts a capability asks for by raising [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], up to 100 per request step. A `prepare_model_request` hook that moves an attempt to another model before anything is sent counts towards that ceiling too, but records no failed attempt or span. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] walks its own models inside a single one of those attempts, outside the ceiling, so a `FallbackModel` among `ModelFallback`'s models multiplies the two
 - `M` — attempts per model request inside the provider SDK client. The SDK determines this budget; for example, an OpenAI client configured with `max_retries=N` allows `1 + N` attempts, and [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) overrides it per request. See [provider SDK retries](#provider-sdk-retries) for the provider-specific settings.
 - `K` — attempts per request on the wire: the transport's stop strategy, so `stop_after_attempt(N)` allows `N` total attempts (`K = N`), not one plus retries — see [transport retries](#transport-retries)
 
-Every wire request pays its own latency — and bills tokens once the request reaches the model — so the worst case, not the happy path, is what your budgets must absorb. [`UsageLimits`][pydantic_ai.usage.UsageLimits] bounds only `N`: its `request_limit` (default `50`) counts the model responses committed to each run's history, and never sees the fallback attempts, other `RetryModelRequest` attempts, SDK client retries and transport retries beneath them. Their tokens and cost do count towards its token and cost limits whenever the provider reports them, as it does for a response a fallback model rejected, but usually not for a request that failed. [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] applies per attempt — a retrying SDK client re-arms it for every retry — and only on the [model classes that forward it](timeouts.md#bounding-how-long-a-step-takes). [`ModelSettings.request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout] instead bounds all `M × K` attempts at a request to one model, on every model class: see [Model request deadlines](timeouts.md#model-request-deadlines). On a streamed request, [`ModelSettings.first_event_timeout`][pydantic_ai.settings.ModelSettings.first_event_timeout] bounds those attempts until the first output, but not the response that follows: see [Waiting for the first event](timeouts.md#waiting-for-the-first-event). See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for the time side.
+Every wire request pays its own latency — and bills tokens once the request reaches the model — so the worst case, not the happy path, is what your budgets must absorb. [`UsageLimits`][pydantic_ai.usage.UsageLimits] bounds only `N`: its `request_limit` (default `50`) counts the model responses committed to each run's history, and never sees the retry and fallback attempts, other `RetryModelRequest` attempts, SDK client retries and transport retries beneath them. Their tokens and cost do count towards its token and cost limits whenever the provider reports them, as it does for a response a fallback model rejected, but usually not for a request that failed. [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout] applies per attempt — a retrying SDK client re-arms it for every retry — and only on the [model classes that forward it](timeouts.md#bounding-how-long-a-step-takes). [`ModelSettings.request_timeout`][pydantic_ai.settings.ModelSettings.request_timeout] instead bounds all `M × K` attempts at a request to one model, on every model class: see [Model request deadlines](timeouts.md#model-request-deadlines). On a streamed request, [`ModelSettings.first_event_timeout`][pydantic_ai.settings.ModelSettings.first_event_timeout] bounds those attempts until the first output, but not the response that follows: see [Waiting for the first event](timeouts.md#waiting-for-the-first-event). See [Timeouts](timeouts.md#bounding-how-long-a-step-takes) for the time side.
 
 A run with `retries={'output': 2}` (up to 3 model requests for the final answer alone), the OpenAI SDK's default `max_retries=2` (3 attempts per request), and a transport stopped by `stop_after_attempt(2)` (2 attempts per wire request) can put `3` × `1` × `3` × `2 = 18` requests on the network without a fallback model, and twice that with a fallback model of two models. Each of those carries its own `ModelSettings(timeout=10)` deadline — 180 seconds of request time in the worst case, before any backoff wait between retries.
 
@@ -42,15 +54,16 @@ The HTTP transport, the provider SDK and a durable execution engine all re-send 
 
 | Owner | Choose it when | Give the others one attempt with |
 |---|---|---|
+| The [`RetryOnModelErrors`](#retrying-the-same-model) capability (recommended) | You want the agent to own retrying: it decides by the [normalized error categories](models/overview.md#handling-model-api-errors) every model raises, retries a stream that fails before any output, records every attempt in `failed_attempts`, composes with [`ModelFallback`](capabilities/model-fallback.md), and waits durably on Temporal and DBOS | Nothing for the SDK: the capability sends its requests with `max_retries=0`, unless you set it yourself. No retrying transport. On [Temporal](durable_execution/temporal.md#activity-retries), model errors become non-retryable in the activity automatically, so keep a bounded `maximum_attempts` for crashes and timeouts |
 | The provider SDK | Its defaults suit you. This is what you get without configuring anything | Nothing, except on [Temporal](durable_execution/temporal.md#activity-configuration), where a model request activity retries without limit until you set `maximum_attempts=1` in its retry policy. DBOS and Prefect don't retry a step by default |
 | A [retrying transport](#transport-retries) | You want one policy across providers, your own choice of which errors to retry, or waits that respect `Retry-After` up to a limit you set | [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) set to `0`, and one attempt in a durable engine's retry policy |
 | A [durable execution](durable_execution/overview.md) engine | The model request runs as a Temporal activity or a DBOS or Prefect step, and you want the engine to record and schedule its attempts | `max_retries` set to `0`, and no retrying transport |
 
 How many attempts the SDK makes by default, and whether `max_retries` can bring it down to one, depends on the provider: most make 3, Google, Mistral and Hugging Face make 1 unless you configure retries, AWS Bedrock makes 5, and xAI up to 5. [Setting the SDK retry count per request](#setting-the-sdk-retry-count-per-request) has the numbers for each, and how to make one attempt where the setting doesn't apply. A retrying transport works with every provider whose SDK takes an `httpx2` client; see [Using with `httpx2`-compatible providers](#using-with-httpx2-compatible-providers) for the exceptions.
 
-With one owner, a failing model request is retried on the wire at most as many times as that owner allows: `K` for a transport stopped by `stop_after_attempt(K)`, `1 + N` for an SDK allowed `N` retries, or the engine's maximum attempts. Each model in a [`ModelFallback`](capabilities/model-fallback.md) chain gets that budget again, so a chain of `F` models allows `F` times as many. To fall back sooner, give the models before the last one a smaller budget, as in [Setting the SDK retry count per request](#setting-the-sdk-retry-count-per-request).
+With one owner, a failing model request is retried on the wire at most as many times as that owner allows: `K` for a transport stopped by `stop_after_attempt(K)`, `1 + N` for an SDK allowed `N` retries, or the engine's maximum attempts. The exception is a streamed Google [long decode](models/google.md#long-decode) on `google-genai` 2.31.0 and later, whose SDK can send a later request that fails up to 4 times that. Each model in a [`ModelFallback`](capabilities/model-fallback.md) chain gets that budget again, so a chain of `F` models allows `F` times as many. To fall back sooner, give the models before the last one a smaller budget, as in [Setting the SDK retry count per request](#setting-the-sdk-retry-count-per-request).
 
-When the transport owns retrying, setting `max_retries` to `0` matters even for errors you'd expect only the transport to see. The Anthropic and Groq SDKs retry *any* exception the HTTP client raises, including the `HTTPStatusError` a `validate_response` like the one in [A retrying client](#a-retrying-client) raises after the transport's last attempt. With the SDK's default of 2 retries, a 503 that a transport stopped by `stop_after_attempt(3)` gives up on goes on the wire 9 times before it's raised, as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with that status.
+When the transport owns retrying, setting `max_retries` to `0` matters even for errors you'd expect only the transport to see. The Anthropic and Groq SDKs retry *any* exception the HTTP client raises, including the `HTTPStatusError` a `validate_response` like the one in [A retrying client](#a-retrying-client) raises after the transport's last attempt. With the SDK's default of 2 retries, a 503 that a transport stopped by `stop_after_attempt(3)` gives up on goes on the wire 9 times before it's raised, as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with that status. `google-genai` 2.31.0 and later send a later request of a streamed Google [long decode](models/google.md#long-decode) that fails this way 3 more times, whatever `max_retries` says, so that 503 goes on the wire 12 times.
 
 When a durable engine owns retrying, configure its retry policy for model requests and turn the SDK's retries off. On Temporal:
 
@@ -80,6 +93,8 @@ agent = Agent(
 
 On Temporal, the engine doesn't retry errors that another attempt can't fix, like a rejected API key, an exhausted quota or a request that ran out of its deadline; see [Activity retries](durable_execution/temporal.md#activity-retries) to change which.
 
+When a model error says how long to wait before trying again, in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after], [Temporal](durable_execution/temporal.md#activity-retries) and [DBOS](durable_execution/dbos.md#step-retries) wait that long before the engine's next attempt, up to a cap, instead of their own backoff. The wait is durable: nothing runs while it lasts, and a recovered run doesn't wait it again. [Prefect](durable_execution/prefect.md#retry-considerations) can't, so its configured delay applies. Among the [Pydantic AI Harness](harness/index.md) engines, [AWS Lambda](harness/aws-lambda.md), [Azure Durable Task](harness/azure-durable-task.md), [Absurd](harness/absurd.md) and [pgtask](harness/pgtask.md) wait it durably too, and [Render Workflows](harness/render-workflows.md) can't. An SDK or transport retry inside the durable unit waits inside it instead, which is one more reason to leave the retries to the engine.
+
 ## Recovery scopes compared {#recovery-scopes}
 
 What a layer re-attempts decides when to reach for it. Retrying the *same* model is for transient failures, like a rate limit or a dropped connection: the next attempt sends the same request to the same model, so the prompt cache that earlier requests built usually still applies, and the behavior and price you chose stay the same. [Falling back](capabilities/model-fallback.md) switches to a *different* model, for when the first one stays unavailable or rejects the request: the next model usually starts without that prompt cache, can answer differently, and is priced differently. Correcting a tool call or the output is neither of those: the request succeeded, and the model is asked to do better. A scope further down the table re-runs the ones above it, so their attempts [multiply](#retry-multiplication):
@@ -89,7 +104,7 @@ What a layer re-attempts decides when to reach for it. Retrying the *same* model
 | [Transport retry](#transport-retries) | Another HTTP request, and the wait before it | Nothing | The transport's stop strategy, and the request's [`request_timeout`](timeouts.md#model-request-deadlines). Each attempt gets a fresh `timeout` | An HTTPX span per attempt, with [HTTPX instrumentation](logfire.md#monitoring-http-requests) on |
 | [SDK retry](#provider-sdk-retries) | The same as a transport retry, with the SDK's own wait | Nothing | The SDK's retry count, set by [`max_retries`](#setting-the-sdk-retry-count-per-request), and the request's `request_timeout`. Each attempt gets a fresh `timeout` | An HTTPX span per attempt, and the SDK's own logging. The agent only sees the final response or error |
 | [Durable step retry](durable_execution/overview.md) | The whole model request again, including its SDK and transport retries | Nothing: the engine records the result of the attempt that succeeded | The engine's retry policy, which on Temporal is unlimited by default | The engine's own history, like a Temporal activity's attempt count |
-| [Same-model re-request](capabilities/custom.md#model-request-attempts) | Another model request to the same model, which can usually reuse the prompt cache | Only the response that's accepted, with the attempts before it in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] | At most 100 attempts per request step. Not [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit], but a rejected response's tokens and cost count towards the token and cost limits | `failed_attempts`, and a `model request attempt` span for each attempt that failed |
+| [Same-model re-request](#retrying-the-same-model): [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md), or a [hook](capabilities/custom.md#model-request-attempts) raising `RetryModelRequest()` | Another model request to the same model, which can usually reuse the prompt cache | Only the response that's accepted, with the attempts before it in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] | `RetryOnModelErrors`' `max_attempts` per model, and at most 100 attempts per request step. Not [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit], but a rejected response's tokens and cost count towards the token and cost limits | `failed_attempts`, and a `model request attempt` span for each attempt that failed |
 | [Fallback](capabilities/model-fallback.md) | A request to a different model: usually no prompt cache from earlier requests, possibly different behavior, and a different price | Only the winning response, whose `model_name` says which model answered, with the attempts before it in `failed_attempts` | One attempt per model in the chain, each with the SDK and transport retries beneath it. Not `request_limit`, but a rejected response's tokens and cost count towards the token and cost limits | `failed_attempts`, a `model request attempt` span for each attempt that failed, and a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] when every model fails |
 | Correction: [tool](#tool-retries) and [output](#output-retries) retries, and [model-request hooks](hooks.md) raising `ModelRetry` | Another model request, carrying the feedback for the model to act on | A [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'`, or a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart]. It stays in the history, so a later run that reuses the history sees it too | The tool or output retry budget. Each correction is a model request, so it also counts towards `request_limit` and the token and cost limits | The message history, and the [`pydantic_ai.tool.retry.*`](#auditing-rejected-tool-calls) span attributes |
 | Run restart | Everything the run did, again, unless the new run resumes from the old one's message history | A new run, which has only the history you pass it | Your own code: nothing re-runs an agent for you, and each run starts with fresh retry budgets and usage limits | A separate agent run span |
@@ -162,6 +177,8 @@ agent = Agent(model, model_settings={'max_retries': 0})
 ```
 
 The transport you pass replaces the one the client would build, so it owns the connection pool. Without `wrapped`, a retrying transport sends its attempts through an `httpx2.AsyncHTTPTransport` it creates with the same pool limits as Pydantic AI's own clients (1000 connections, up to 100 kept alive). HTTPX also stops reading proxies from the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` environment variables once a client has a transport, so give the retrying transport your own `wrapped` transport with a `proxy` if you need one. A `wrapped` transport you build has HTTPX's default pool of 100 connections, 20 kept alive, unless you set its `limits` too: `wrapped=httpx2.AsyncHTTPTransport(proxy=..., limits=httpx2.Limits(max_connections=1000, max_keepalive_connections=100))`.
+
+If the client also submits [batches](batch.md), have `validate_response` [skip batch creates](batch.md#retrying-transports): the transport otherwise sends a create that failed with an error response again, which can create a second batch.
 
 ### Wait strategies
 
@@ -447,7 +464,7 @@ agent = Agent(model, model_settings={'max_retries': 0})
 
 ### Error handling
 
-The retry transports re-raise the last exception once they run out of attempts, and the model raises it as a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] like any other failed request: an error status your `validate_response` rejected becomes a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with that status and its [error category](models/overview.md#handling-model-api-errors). A connection error or timeout becomes a [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] or [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]. Either way, a [fallback model](#model-fallback-is-not-a-retry) moves on from it by default. Make sure to handle these appropriately in your application:
+The retry transports re-raise the last exception once they run out of attempts, and the model raises it as a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] like any other failed request: an error status your `validate_response` rejected becomes a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with that status and its [error category](models/overview.md#handling-model-api-errors). A connection error or timeout becomes a [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] or [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]. Either way, a [fallback model](#model-fallback-is-not-a-retry) moves on from it by default. Some recoveries a model runs for an error response still run for a status the transport gave up on, like Anthropic's retries for an [expired code execution container](models/anthropic.md#code-execution-containers) and a [stale thinking block](models/anthropic.md#thinking-block-binding). Others don't, so that fallback moves on: see [Azure content filters](models/azure.md#content-filters) and OpenAI [background mode](models/openai.md#background-mode). Make sure to handle these appropriately in your application:
 
 ```python {title="error_handling_example.py" requires="smart_retry_example.py"}
 from pydantic_ai import Agent
@@ -460,6 +477,8 @@ client = create_retrying_client()
 model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
 agent = Agent(model, model_settings={'max_retries': 0})
 ```
+
+Before retrying or re-raising an error status, `AsyncHTTPX2TenacityTransport` and `HTTPX2TenacityTransport` read the response body, so the error keeps its [`body`][pydantic_ai.exceptions.ModelAPIError.body] and gets what Pydantic AI parses from it: the error category, like an exhausted quota's [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] or an overloaded provider's [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError], the provider's [`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code] and [`provider_error_type`][pydantic_ai.exceptions.ModelAPIError.provider_error_type], and, for Google, the wait in [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. An OpenAI image generation request blocked for content moderation raises a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Each rejected attempt therefore downloads its error body, and once the download completes, its connection goes back to the pool. A success status your `validate_response` rejects is closed without reading its body. If reading an error body fails, the transport closes the response and still raises the exception from your `validate_response`, and the error's `body` is `None`. The deprecated [`TenacityTransport`][pydantic_ai.retries.TenacityTransport] and [`AsyncTenacityTransport`][pydantic_ai.retries.AsyncTenacityTransport] close a rejected response without reading it, so its error's `body` is `None` and only its status sets its category.
 
 ### Performance considerations
 
@@ -504,6 +523,8 @@ Set it to `0` when another layer owns retrying, so the attempt budget is the one
 - a [durable execution](durable_execution/overview.md) engine's retry policy;
 - a [fallback model](#model-fallback-is-not-a-retry) that should move to its next model as soon as one fails.
 
+[`RetryOnModelErrors`](#retrying-the-same-model) does this for you.
+
 With [`ModelFallback`](capabilities/model-fallback.md), `max_retries` set on the agent or run applies to every model in the chain, and takes precedence over each model's own settings. To keep SDK retries on the last model, the one with nothing to fall back to, set it on the other models instead:
 
 ```python {title="fallback_max_retries.py"}
@@ -528,7 +549,7 @@ Not every SDK can take the setting per request, and they don't all start from th
 | Anthropic | 3 | ✅ | Full feature support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
 | Groq | 3 | ✅ | Full feature support |
 | Cohere | 3 for status 408, 409, 429 and 5xx, 1 for a connection error or timeout | ✅ | Full feature support |
-| Google | 1, unless the provider has `retry_options` | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, or the SDK's defaults when those aren't set |
+| Google | 1, unless the provider has `retry_options` | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, or the SDK's defaults when those aren't set. With `google-genai` 2.31.0 and later, a later request of a streamed [long decode](models/google.md#long-decode) that fails with an error the HTTP client raises is sent 3 more times, which `max_retries` can't turn off. A connection that can't be opened, or a timeout before the response arrives, is also retried up to `max_retries` times on each of those requests |
 | Mistral | 1, unless the client has a `retry_config` | ✅ | Limited parameter support: `0` only. The SDK bounds retries by elapsed time, not count, so `0` turns off a `retry_config` set on the client and other values are ignored |
 | TypeSafe | 3 | ✅ | Limited parameter support: the request's other `RetryPolicy` options are the SDK defaults, not the client's |
 | AWS Bedrock | 5, in boto3's default `legacy` retry mode | ❌ | boto3 retries per client, so for one attempt, pass a `bedrock_client` built with `Config(retries={'max_attempts': 0})`; see [Configuring Retries](models/bedrock.md#configuring-retries) |
@@ -537,11 +558,29 @@ Not every SDK can take the setting per request, and they don't all start from th
 
 The model classes that honor it are listed under [`ModelSettings.max_retries`][pydantic_ai.settings.ModelSettings.max_retries]; the others don't change their retries, and warn with [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] that they ignore it. With such a model in a fallback chain, set `max_retries` on the other models' own settings, as above, rather than on the agent or run.
 
+## Retrying the same model
+
+The [`RetryOnModelErrors`](capabilities/retry-on-model-errors.md) capability attempts the same model again when a request fails with an error that waiting may fix: by default a rate limit, an unavailable or overloaded model, a server error, or a connection error, the errors [`TRANSIENT_MODEL_ERRORS`][pydantic_ai.capabilities.TRANSIENT_MODEL_ERRORS] lists. It's the retry layer the agent can see, configured on the agent like any capability:
+
+- it decides by the [normalized error categories](models/overview.md#handling-model-api-errors) every model raises, not by status codes, and you choose which with `retry_on`;
+- it waits the error's [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after], or an exponential backoff, but never longer than `max_delay` or past the request's or the run's deadline, and on [Temporal](durable_execution/temporal.md) and [DBOS](durable_execution/dbos.md) the wait is durable;
+- it retries a stream that fails before any output, which a [retrying transport](#transport-retries) can't do once the response headers have arrived;
+- it records every attempt in the answering response's `failed_attempts`, in the same list as [model fallback](#model-fallback-is-not-a-retry), and composes with it: each model is retried before the request falls back to the next.
+
+```python {title="retry_on_model_errors_layer.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import RetryOnModelErrors
+
+agent = Agent('{{ openai:medium }}', capabilities=[RetryOnModelErrors(max_attempts=4)])
+```
+
+It owns retrying the requests it makes: it sends them with [`ModelSettings['max_retries']`](#setting-the-sdk-retry-count-per-request) set to `0`, so the provider SDK doesn't retry underneath it and `max_attempts` is the number of requests sent. A `max_retries` you set yourself is kept. A [`request_timeout`](timeouts.md#model-request-deadlines) covers its retries of a model and the waits between them.
+
 ## Model fallback is not a retry
 
-The [`ModelFallback`](capabilities/model-fallback.md) capability and [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] move to the *next* model when the current one fails; they never re-attempt the same one. Pair either one with transport retries rather than treating it as a substitute: retry the same provider for transient failures, fall back to a different provider when it's genuinely down. The response that answers lists the attempts it moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], with each one's model, duration, error and any usage. See [Model Fallback](capabilities/model-fallback.md) and [Fallback Model](models/overview.md#fallback-model).
+The [`ModelFallback`](capabilities/model-fallback.md) capability and [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] move to the *next* model when the current one fails; they never re-attempt the same one. Pair either one with a retry layer rather than treating it as a substitute: retry the same provider for transient failures, with [`RetryOnModelErrors`](#retrying-the-same-model) or transport retries, and fall back to a different provider when it's genuinely down. The response that answers lists the attempts it moved on from in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], with each one's model, duration, error and any usage. See [Model Fallback](capabilities/model-fallback.md) and [Fallback Model](models/overview.md#fallback-model).
 
-To re-attempt the *same* model within a request step, a capability raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] without a model from `on_model_request_error` or `after_model_request`: see [Model request attempts](capabilities/custom.md#model-request-attempts).
+To re-attempt the *same* model within a request step, use [`RetryOnModelErrors`](#retrying-the-same-model), or, for a policy of your own, raise [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] without a model from `on_model_request_error` or `after_model_request` in a capability: see [Model request attempts](capabilities/custom.md#model-request-attempts).
 
 ## Tool retries
 
@@ -681,6 +720,49 @@ _(This example is complete, it can be run "as is")_
 
 When a tool's retry budget runs out, the run raises [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] instead of recording another retried result, so that last rejection is only visible as the exception.
 
+### Finding tool errors in history
+
+To find the retries in a run's messages or a stored history, use [`is_retry`][pydantic_ai.messages.is_retry]. It matches a retried tool call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] (`outcome='retried'`), and a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] for a retry that answers no tool call, such as output that failed validation (see [Feedback that belongs to no tool call](#feedback-that-belongs-to-no-tool-call)). Those two are what the deprecated `RetryPromptPart` used to record, and stored histories load in this shape too, so `is_retry(part)` replaces an `isinstance(part, RetryPromptPart)` check:
+
+```python {title="find_retries.py"}
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    ModelRetry,
+    TextPart,
+    ToolCallPart,
+)
+from pydantic_ai.messages import is_retry
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def lookup_then_answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('lookup', {'invoice_id': 'INV-1'})])
+    return ModelResponse(parts=[TextPart('There is no such invoice.')])
+
+
+agent = Agent(FunctionModel(lookup_then_answer))
+
+
+@agent.tool_plain
+def lookup(invoice_id: str) -> str:
+    raise ModelRetry('no such invoice')
+
+
+result = agent.run_sync('Find invoice INV-1')
+retries = [part for message in result.all_messages() for part in message.parts if is_retry(part)]
+print([(type(part).__name__, part.content) for part in retries])
+#> [('ToolReturnPart', 'no such invoice')]
+```
+
+_(This example is complete, it can be run "as is")_
+
+A tool call that failed (`outcome='failed'`, see [above](#what-a-retry-looks-like-in-message-history)) isn't a retry, so `is_retry` leaves it out. To find every tool call that reached the model as an error, check the [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] of any [`BaseToolReturnPart`][pydantic_ai.messages.BaseToolReturnPart] against [`ERROR_OUTCOMES`][pydantic_ai.messages.ERROR_OUTCOMES], which holds `'retried'` and `'failed'`: `isinstance(part, BaseToolReturnPart) and part.outcome in ERROR_OUTCOMES`. That also covers a [native tool](native-tools.md)'s return.
+
+Don't rely on `retry` being set: a retried return loaded from a deprecated `RetryPromptPart`, or one your own code builds, can have `retry=None`, so the outcome is the check that always holds.
+
 
 ## Output retries
 
@@ -689,7 +771,7 @@ The output budget is separate from the tool budget, and how it's enforced depend
 - **Text path** (`output_type=str`, [`TextOutput`](output.md#text-output), [`NativeOutput`](output.md#native-output), [`PromptedOutput`](output.md#prompted-output), and responses with no usable output): one budget shared across the whole run. There is no tool call to answer, so the retry becomes a new [`ModelRequest`][pydantic_ai.messages.ModelRequest] whose only part is a [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] — see [Feedback that belongs to no tool call](#feedback-that-belongs-to-no-tool-call).
 - **Tool path** ([`ToolOutput`](output.md#tool-output)): the output budget acts as the default limit *per output tool*, overridable with [`ToolOutput(max_retries=N)`][pydantic_ai.output.ToolOutput.max_retries]. The retry is bound to the output tool's `tool_call_id` and looks exactly like a function tool's.
 
-Both are triggered by validation failures, by an [output function](output.md#output-functions) or [output validator](output.md#output-validator-functions) raising `ModelRetry`, and by a model response with nothing actionable in it. Both raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] when the budget runs out.
+Both are triggered by validation failures, by an [output function](output.md#output-functions) or [output validator](output.md#output-validator-functions) raising `ModelRetry`, and by a model response with nothing actionable in it. Both raise [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] when the budget runs out. A response the provider never sent, like a stream that ended before its first event, is different: the model raises [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] without spending the output budget, and a [fallback](capabilities/model-fallback.md) moves on from it.
 
 The last of those triggers has an exception: if the output type allows `None` — `output_type=str | None`, for instance — an empty or thinking-only response is a valid final result of `None` rather than a retry. Models that finish their work in a tool call and then emit only thinking would otherwise be pushed into producing filler text. Output validators still run on that `None`, so they can force a retry themselves by raising `ModelRetry`.
 
@@ -767,7 +849,7 @@ The text inside these wrappers goes in as written ([details](message-history.md#
     Feedback never joins the run's standing prompt, even when it opens the history — through a hand-built `message_history`, an adapter load, [compaction](capabilities/compaction.md), [`ProcessHistory`](capabilities/process-history.md) filtering, or a model-request hook retrying the first request of a run with no user prompt. Only the [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart]s the history was written with go to the provider's own system field; `'no_output'` feedback in that position goes out as `<system>`-tagged user text, whatever the provider.
 
 !!! note "`RetryPromptPart` is deprecated"
-    Both retries used to be a single [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], which is deprecated and will be removed in v3. A stored history loads as the two parts above, so to read a retry from history, match [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='retried'` or `RetryFeedbackPart` instead. See the [upgrade guide](changelog.md#deprecated-in-v2-to-be-removed-in-v3) for the details.
+    Both retries used to be a single [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart], which is deprecated and will be removed in v3. A stored history loads as the two parts above, so to read a retry from history, check it with [`is_retry`][pydantic_ai.messages.is_retry], which matches both, as in [Finding tool errors in history](#finding-tool-errors-in-history). See the [upgrade guide](changelog.md#deprecated-in-v2-to-be-removed-in-v3) for the details.
 
 ## What is never retried
 

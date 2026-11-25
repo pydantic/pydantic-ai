@@ -36,9 +36,11 @@ flowchart TB
 pip/uv-add "pydantic-ai-harness[coder,sprites,anthropic]"
 ```
 
-The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `SPRITE_TOKEN` to your Sprites API token, and `ANTHROPIC_API_KEY` for the examples.
+Set `SPRITE_TOKEN` to your Sprites API token. The examples also use `Coder` and an Anthropic model, so they need the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`. Swap them for your own tools and model provider.
 
 ## Quick start
+
+<span id="choose-the-tools"></span>
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -49,13 +51,19 @@ agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
-`Coder`'s shell and file tools now run in a Sprite, not on your machine. With `Coder`, `RepoContext` creates the Sprite when the run starts, even without a tool call; use `Coder(repo_context=False)` for lazy creation. It has no lifetime limit: it sleeps when idle and keeps its files, and costs money, until you delete it; see [Clean up](#clean-up).
+`Coder`'s shell and file tools now run in a Sprite. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
 
-Give the agent a project directory with `SpritesSandbox(working_dir='/home/sprite/project')`: a new Sprite gets it created for you, and commands and relative paths start there.
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It has no lifetime limit. It sleeps when idle, keeps its files and installed packages, and costs money until you delete it. See [Clean up](#clean-up).
+- Processes pause between commands unless you run them as a [Sprites service](https://docs.fly.io/sprites/concepts/services/).
+- Commands run as the non-root `sprite` user in `/home/sprite`. Pass `working_dir='/home/sprite/project'` to give the agent a project directory. It is created on a new Sprite.
+- A new Sprite has git, Python and Node.js, but not pytest or `rg`. See its [preinstalled tools](https://docs.fly.io/sprites/working-with-sprites/). Install what your project needs once and reuse the Sprite by its ref. For faster `Coder` searches, run `sudo apt-get update && sudo apt-get install ripgrep`.
 
-A new Sprite comes with git, Python, and Node.js ([preinstalled tools](https://docs.fly.io/sprites/working-with-sprites/)), but not pytest or ripgrep (`rg`). Install what your project needs, such as pytest; Sprites retain installed packages. For faster `Coder` searches, run `sudo apt-get update && sudo apt-get install ripgrep` once in the Sprite and store its ref to reuse it on later runs.
+## Continue in the same Sprite
 
-## Continue in the same sandbox
+<span id="continue-in-the-same-sandbox"></span><span id="reattach-later"></span>
+
+Pass the message history, and the next run works in the same Sprite:
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -69,68 +77,16 @@ followup = agent.run_sync(
     'Which capability would you add next, and where would it live?',
     message_history=result.all_messages(),
 )
+ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-The follow-up run finds the Sprite in the message history and works in it, so the clone is still there. Without the history, a run starts a new Sprite. If the Sprite has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one. If the Sprite is deleted while a command runs, the command raises this error too, whatever exit code it reported: after each command, the backend asks the Sprites control plane whether the Sprite still exists. That lookup counts against the command's `timeout`, and a lookup that fails or runs out of time returns the command's result, so a SIGKILLed command in a live Sprite still returns exit 137.
+The history records the Sprite as a `WorkspaceRef`, or "ref": the provider's name and the Sprite's ID. `result.workspace.ref` is the same ref, for continuing without the history.
 
-## Choose the tools
+If the Sprite has been deleted, the run raises `WorkspaceUnavailableError`, as does a command running when it is deleted. Pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
 
-For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) instead of `Coder`, or write your own tool that runs in the Sprite:
+The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN` or a `client=` too.
 
-```python {names="defined"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
-
-agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Shell(), FileSystem()])
-
-
-@agent.tool
-async def run_python(ctx: RunContext, code: str) -> str:
-    """Run a Python snippet in the Sprite."""
-    result = await ctx.workspace.run(['python', '-c', code], timeout=10)
-    return result.stdout + result.stderr
-```
-
-A Sprite pauses processes between commands unless you run them as a [Sprites service](https://docs.fly.io/sprites/concepts/services/).
-
-Commands run as the non-root `sprite` user, but Unix permissions do not restrict it: a file with mode `000` is still readable. Do not rely on them to keep tools out of a path.
-
-File reads refuse FIFOs rather than waiting for a writer. File writes go through the Sprites filesystem API, which writes through a symlink to its target and creates missing parent directories.
-
-### What a timeout stops
-
-A command timeout starts after the Sprite is ready. The backend closes that command's exec connection and asks Sprites to stop it after one second; it does not delete the Sprite. Stopping is best effort: the command's process group, plain `&` children of a shell included, is not guaranteed to have stopped. If stopping is uncertain, inspect the Sprite or delete it explicitly. `timeout=None` removes the command deadline, not the Sprite's idle pause or transport limits.
-
-A background child that inherits stdout or stderr keeps `run()` waiting until that child exits, because Sprites reports the exit status only after the output stream closes. Redirect background output to a file when starting a long-running job; `Shell.start_command` manages its own output log.
-
-See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
-
-## Reattach later
-
-To come back to the Sprite without the message history, pass its ref back as `workspace=`:
-
-```python {names="defined"}
-from pydantic_ai import Agent
-from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.sprites_sandbox import SpritesSandbox
-
-agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder()])
-
-result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
-ref = result.workspace.ref  # store this, e.g. in your database
-
-later = agent.run_sync('Which capability would you add next, and where would it live?', workspace=ref)
-```
-
-The ref holds no credentials, so the process that reattaches needs `SPRITE_TOKEN` too. Pass `workspace='new'` to start a fresh Sprite even when the message history names one.
-
-`runtime` only shapes a new Sprite, and an unknown one raises `WorkspaceUnavailableError` on first use; `working_dir` and `env` apply to every command, including after you reattach. A new Sprite gets `working_dir` created for it; on an attached or caller-supplied Sprite it must already exist, or commands fail with `WorkspaceError`.
-
-Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite)` to a run, with `SpritesSandboxBackend` from `pydantic_ai_harness.sprites_sandbox`. `SpritesSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
-
-A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from `SPRITE_TOKEN`, not the Sprite, and a later operation opens a new one. A `client=` or `sandbox=` you passed is never closed.
+Already have a `sprites.AsyncSprite`? Pass `workspace=SpritesSandboxBackend(sandbox=sprite, working_dir=..., env=..., desktop=...)` to a run. `SpritesSandbox`'s settings don't apply to it. A backend's `get_sandbox()` returns its `sprites.AsyncSprite` for Sprites features the workspace API doesn't cover. On a backend with no Sprite yet, it creates one, which Sprites bills.
 
 ## Prepare a Sprite before the run
 
@@ -158,11 +114,22 @@ async def run_in_prepared_sprite() -> str:
             await SpritesSandbox().destroy(ref)
 ```
 
-The run uses the backend as it is, so `SpritesSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the Sprite instead, store `backend.ref` and pass it as `workspace=` to reattach later.
+The run leaves a backend you built open, so close it with `aclose()`. That closes the client it opened from `SPRITE_TOKEN`, not the Sprite. A `client=` or `sandbox=` you passed is never closed. To keep the Sprite, store `backend.ref` instead of destroying it.
+
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](computer-use.md):
+`capabilities=[SpritesSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another.
+
+The first use installs [the display's programs](computer-use.md#what-the-display-needs) with `apt-get`, which can take a minute. There's no web browser.
+
+- A [cold wake](https://docs.fly.io/sprites/concepts/lifecycle.md) stops the display and closes the agent's windows; files on disk are kept. The display restarts on the agent's next screenshot or action; until then, a program started from the shell can't open a window.
+- The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
 ## Clean up
 
-The Sprite keeps its files and installed packages after the run ends. Pydantic AI never deletes it. It sleeps when idle and wakes on the next command: you pay for compute while it is active and for storage until you delete it. Delete it with the ref you stored:
+Delete a Sprite with the ref you stored. This doesn't wake it:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -173,9 +140,9 @@ async def delete_sprite(ref: WorkspaceRef) -> None:
     await SpritesSandbox().destroy(ref)
 ```
 
-`destroy(ref)` deletes by Sprite id without attaching or waking it, and a Sprite that no longer exists returns quietly. Only destroy Sprites you own. Use `backend(ref)` to construct a lazy backend for an existing Sprite; `get_sandbox()` attaches to it and returns its native `sprites.AsyncSprite` (on a backend with no Sprite yet, it creates one). A backend you build yourself outside a run opens its own client, which you close with `aclose()`; after that, call `get_sandbox()` again for a working handle. See [Sprite lifecycle](https://docs.sprites.dev/concepts/lifecycle/).
+A ref can name any Sprite your `SPRITE_TOKEN` reaches, and `destroy` deletes whatever it names, so keep refs on your server and only destroy Sprites you created.
 
-A failed run returns no result, so there is no ref to store. To terminate its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails. If creation's reply was lost, the ref may identify a Sprite that is not yet visible to the API; a lookup failure does not prove it was never created:
+A failed run returns no result, so delete its Sprite in an `on_run_error` hook. If Sprites' reply to the create was lost, the ref still names the Sprite the backend tried to create, which may or may not exist. Delete it by that name anyway; deleting a Sprite that doesn't exist returns quietly:
 
 ```python
 from typing import Any
@@ -194,8 +161,7 @@ hooks = Hooks()
 @hooks.on.run_error
 async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        # Shielded, so an `anyio` deadline around the run doesn't cut the kill short,
-        # and bounded, so a hung API call can't hang the run indefinitely.
+        # Shielded so a deadline around the run can't cut the kill short, bounded so a hung call can't hang it.
         with anyio.move_on_after(30, shield=True):
             await SpritesSandbox().destroy(ctx.workspace.ref)
     raise error
@@ -204,24 +170,49 @@ async def terminate_failed_run(ctx: RunContext[None], *, error: BaseException) -
 agent = Agent('{{ anthropic:large }}', capabilities=[SpritesSandbox(), Coder(), hooks])
 ```
 
-Unlike Modal and E2B sandboxes, a Sprite has no lifetime timeout: it persists until deleted. So a run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the Sprite behind. Its id is logged at INFO as `Created Sprite <id>` when it is created; delete it with `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites', id=...))`.
+You pay for compute while a Sprite is active, and for storage until you delete it. See [Sprite lifecycle](https://docs.sprites.dev/concepts/lifecycle/).
+
+### Find a lost Sprite
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the Sprite stays until you delete it, since a Sprite never expires. To find it:
+
+- List your Sprites. Sprites Pydantic AI creates are named `pydantic-ai-<hex>`, and the name is the ref's id.
+- Or search your logs for `Created Sprite <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+- If the run stopped before Sprites replied, there is no log line, but the Sprite may still exist. Look for it in the list.
+
+Then delete it: `await SpritesSandbox().destroy(WorkspaceRef(provider='sprites', id='<id>'))`.
 
 ## Configuration
 
 | Option | What it does |
 | --- | --- |
-| `client` | A `sprites.AsyncSpritesClient` to share across runs on one event loop, or to set its base URL or timeout. Default: `None`, a client each run opens from `SPRITE_TOKEN` and closes when it ends. You close a client you pass; `SpritesSandbox` never does. |
-| `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the Sprite's own (`/home/sprite`, where commands run as non-root `sprite`); set a project directory, or use relative paths for portable code. Created on a new Sprite; on an attached or caller-supplied Sprite it must already exist. |
-| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the Sprite. |
+| `client` | A `sprites.AsyncSpritesClient` to share across runs on one event loop, or to set its base URL or timeout. Default: `None`, a client each run opens from `SPRITE_TOKEN` and closes when it ends. You close a client you pass. |
+| `runtime` | Runtime for a new Sprite. Default: `None`, Sprites' default. An unknown runtime fails on first use with `WorkspaceUnavailableError`. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/sprite`. Created on a new Sprite. On an attached one, it must already exist. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the Sprite. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `desktop` | Give the Sprite a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
+| `authority` | Who wrote the Sprite's files. A capability that puts a file's text in the prompt gives it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the Sprite, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-Sprites runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
+`client`, `working_dir`, `env`, `desktop`, `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. `runtime` only shapes a new Sprite.
+
+## Limits
+
+<span id="what-a-timeout-stops"></span>
+
+- Unix permissions don't restrict the `sprite` user. A file with mode `000` is still readable. Don't rely on them to keep tools out of a path.
+- Stopping a command on a timeout or cancellation is best effort, and its children may keep running. If unsure, inspect or delete the Sprite.
+- A background process that keeps the command's stdout or stderr open keeps `run()` waiting. Redirect its output to a file. `Shell.start_command` does this for you.
+- `timeout=None` removes the command deadline, not the Sprite's idle pause.
+- The Sprites SDK needs asyncio. Under Trio, every operation raises `UserError`.
 
 ## Durable execution
 
-If the exec socket drops after connection but before an exit status arrives, the command may have run. This raises a non-retryable workspace error rather than replaying a potentially non-idempotent command. A handshake that fails before the socket opens cannot have started the command: the backend retries it three times over about five seconds, then lets it propagate as retryable.
+Add a durability capability, such as `TemporalDurability()` from the `temporal` extra, next to `SpritesSandbox()`. [Workspaces](../workspace.md#durable-execution) covers what changes.
 
-A shared client is created at module import so activities on this worker reuse it. Close it when the worker stops. Run a Temporal dev server on `localhost:7233` first.
+If the connection drops after a command started but before it finished, the command may have run, so it raises a non-retryable error rather than running again.
+
+In this example, one client is created when the module is imported, so the worker's activities share it. Close it when the worker stops. Run a Temporal dev server on `localhost:7233` first.
 
 ```python
 import asyncio
@@ -275,13 +266,9 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-`Coder`, `Shell`, and `FileSystem` work under DBOS, Temporal and Prefect. See the [Coder](coder.md#durable-execution), [Shell](shell.md#durable-execution), and [FileSystem](filesystem.md#durable-execution) guides for engine-specific limits.
-
-Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
-
 ## Telemetry
 
-`SpritesSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the Sprite on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a Sprite logs its name at `INFO` (`Created Sprite <name>`) on the `pydantic_ai_harness.sprites_sandbox._backend` logger, so a Sprite that outlives its run can still be found.
+`SpritesSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
 
 ## API reference
 

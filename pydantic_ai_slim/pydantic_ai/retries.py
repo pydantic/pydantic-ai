@@ -14,6 +14,7 @@ The module includes:
 from __future__ import annotations
 
 import warnings
+from contextlib import suppress
 from types import TracebackType
 
 import httpx2
@@ -163,6 +164,8 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
         validate_response: Optional callable that takes a Response and can raise an exception
             to be handled by the controller if the response should trigger a retry.
             Common use case is to raise exceptions for certain HTTP status codes.
+            When it raises for a 4xx or 5xx status, the transport reads the response body before closing the
+            response, so an exception holding the response, like `httpx2.HTTPStatusError`, keeps the body.
             If None, no response validation is performed.
 
     Example:
@@ -217,6 +220,13 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
                 try:
                     self.validate_response(response)
                 except Exception:
+                    # Read an error status's body, so the re-raised exception carries it and the connection returns
+                    # to the pool. Whatever the wrapped transport's stream raises, a failed read must not replace the
+                    # exception the retry predicate decides on; the response is closed whether or not the read
+                    # completed.
+                    if response.is_error:
+                        with suppress(Exception):
+                            response.read()
                     response.close()
                     raise
             return response
@@ -263,6 +273,8 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
         validate_response: Optional callable that takes a Response and can raise an exception
             to be handled by the controller if the response should trigger a retry.
             Common use case is to raise exceptions for certain HTTP status codes.
+            When it raises for a 4xx or 5xx status, the transport reads the response body before closing the
+            response, so an exception holding the response, like `httpx2.HTTPStatusError`, keeps the body.
             If None, no response validation is performed.
 
     Example:
@@ -322,6 +334,16 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
                 try:
                     self.validate_response(response)
                 except Exception:
+                    # Read an error status's body, so the re-raised exception carries it and the connection returns
+                    # to the pool. Whatever the wrapped transport's stream raises, a failed read must not replace the
+                    # exception the retry predicate decides on; the response is closed whether or not the read
+                    # completed.
+                    if response.is_error:
+                        # A cancelled read skips the close below: httpx2 closes the response as the read unwinds,
+                        # and the default `httpx2.AsyncHTTPTransport` closes its connection under a cancellation
+                        # shield. A wrapped transport whose stream's `aclose()` awaits unshielded can stay open.
+                        with suppress(Exception):
+                            await response.aread()
                     await response.aclose()
                     raise
             return response

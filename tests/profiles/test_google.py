@@ -321,6 +321,7 @@ def test_model_profile_image_model():
         ('gemini-3.1-pro-preview', False),
         ('gemini-4-argon', False),
         ('gemini-4-carbon', False),
+        ('gemini-4-hydrogen', False),
         # `gemini-3.1-flash-lite-image` does accept `MINIMAL` — its levels are `minimal, high`.
         ('gemini-3.1-flash-lite-image', True),
         ('gemini-3-flash-preview', True),
@@ -348,7 +349,10 @@ def test_model_profile_minimal_thinking_level_matches_model_prefix():
         ('gemini-3-pro-preview', frozenset(('LOW', 'HIGH'))),
         ('gemini-4-argon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
         ('gemini-4-carbon', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
-        # Models supporting the full scale carry no level set.
+        ('gemini-4-hydrogen', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
+        ('gemma-4-31b-it', frozenset(('MINIMAL', 'HIGH'))),
+        ('gemma-4-26b-a4b-it', frozenset(('MINIMAL', 'HIGH'))),
+        # Models supporting the default levels carry no level set.
         ('gemini-3-flash-preview', None),
         # Budget-based models carry no level set.
         ('gemini-2.5-flash', None),
@@ -358,3 +362,25 @@ def test_model_profile_thinking_levels(model_name: str, expected: frozenset[str]
     profile = google_model_profile(model_name)
     assert profile is not None
     assert profile.get('google_thinking_levels') == expected
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'supports_thinking'),
+    [
+        ('gemma-4-31b-it', True),
+        ('gemma-4-26b-a4b-it', True),
+        ('gemma4:31b', True),
+        ('gemma-3-27b-it', False),
+        ('gemma3:27b', False),
+        # MedGemma is built on Gemma 3; its `4b` size must not read as Gemma 4.
+        ('medgemma-4b-it', False),
+    ],
+)
+def test_gemma_thinking_support(model_name: str, supports_thinking: bool):
+    """Gemma 4 thinks with levels and stays off `VALIDATED` tool calling; earlier Gemma doesn't think."""
+    profile = google_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('supports_thinking') is supports_thinking
+    assert profile.get('google_supports_thinking_level') is supports_thinking
+    assert profile.get('thinking_always_enabled') is False
+    assert profile.get('google_supports_strict_tool_definition') is False

@@ -310,12 +310,12 @@ def test_api_errors(tmp_path: Path, script: str, overrides: dict[str, str], expe
     ('filename', 'score'),
     [
         ('.github/workflows/pydantic-ai-pr-review.lock.yml', 0),
-        ('src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static/index.html', 0),
-        ('src/pydantic_clai2/pydantic_clai2/builtin_plugins/web/static/assets/app.js', 0),
-        ('src/pydantic_clai2/web-ui/package-lock.json', 0),
+        ('src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static/index.html', 0),
+        ('src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static/assets/app.js', 0),
+        ('src/pydantic_ai_pax/web-ui/package-lock.json', 0),
         ('.github/workflows/pydantic-ai-pr-review.md', 1000),
-        ('src/pydantic_clai2/web-ui/src/app.ts', 2000),
-        ('src/pydantic_clai2/web-ui/package.json', 2000),
+        ('src/pydantic_ai_pax/web-ui/src/app.ts', 2000),
+        ('src/pydantic_ai_pax/web-ui/package.json', 2000),
     ],
 )
 def test_generated_files(tmp_path: Path, script: str, filename: str, score: int):

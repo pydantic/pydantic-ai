@@ -1,719 +1,482 @@
-# CLAI 2.0
+---
+title: Pax
+description: "Pax is a coding agent TUI built on the Pydantic AI Harness SDK's Coder, and a terminal interface for any Pydantic AI agent."
+---
 
-A separately installable terminal client for Pydantic AI, using `Coder(unrestricted_filesystem=True)` by default.
-Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydantic/pydantic-ai-harness/issues/875.
+<!-- Generated from src/pydantic_ai_pax/README.md by src/pydantic_ai_pax/scripts/sync_docs_page.py. Edit the README instead. -->
 
-CLAI file tools can access paths outside the workspace, including `/tmp`, and do
-not protect secret files or repository metadata. OS permissions still apply.
-CLAI attaches the launch directory as the agent's workspace, so relative paths
-and commands start there. Commands get CLAI's environment minus LLM provider API
-keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools. Shell output is displayed dimly.
+# Pax
 
-## Pasting images
+A coding agent TUI built on the [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)
+SDK's [`Coder`](https://pydantic.dev/docs/ai/harness/coder/), ready to run as it comes or
+with a harness of your own. Pax is also a terminal
+[interface](https://pydantic.dev/docs/ai/overview/interfaces/) for any
+[Pydantic AI](https://pydantic.dev/docs/ai/) agent.
 
-Copy a screenshot or image, then press **Ctrl-V** in CLAI to attach it. If your
-terminal intercepts Ctrl-V, use **Alt-V** (or press Esc, then V). On macOS, Cmd-V
-is the terminal's text paste, not CLAI's clipboard-image shortcut. You can also
-paste or drag an existing image file path into the prompt using your terminal's
-bracketed-paste support.
+Pax reads your code, edits files, and runs commands, and you see every step as it
+happens. Use the model you like: sign in with your ChatGPT or GitHub Copilot
+subscription, or bring an API key for OpenAI, Anthropic, or another provider Pydantic AI
+supports.
 
-Paste errors clear from the footer after 30 seconds, even without keyboard input,
-without losing your draft, attachments, or queued input.
+Everything in Pax is a plugin, the coding agent included, so you can add tools,
+commands and menus without forking anything, or swap any piece out. Sandboxes and
+workspaces are plugins too, so where the agent runs and where it works are yours to
+choose. To run an agent of your own instead, use `pax --agent my_module:agent`, which
+loads that agent on its own without Pax's plugins.
 
-See the [image-paste reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#pasting-images)
-for Linux clipboard setup, remote bridges, error guidance, and attachment limits.
+![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
-## Word deletion
+- **Any model, any account.** Switch models mid-conversation. Sign in to several
+  accounts and let Pax move to the next one when you hit a limit.
+- **Fast.** In code mode, Pax runs the model's tool calls while the model is still
+  writing them.
+- **Nothing gets lost.** Every conversation is saved. Resume it, fork it into the
+  background, or rewind it to an earlier prompt. You can even pick up sessions from
+  Claude Code and Codex.
+- **Yours to change.** Turn plugins on and off from a menu, install one from Git, or
+  write your own in a few lines of Python. Ask Pax how: it can look up its own
+  [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#ask-pax-about-itself)
+  and plugin docs when you need them.
 
-Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
-including trailing whitespace. Spaces, tabs, and newlines separate words. Text
-after the cursor is preserved. Your terminal must send Option as Alt/Meta for
-this shortcut; legacy and modified-key encodings are supported.
+Pax runs commands and edits files as you, with no sandbox and no approval step. Run it
+in a project you trust.
 
-## Undo and redo
+**Contents:** [Pydantic AI, the harness SDK, `Coder`, and Pax](#pydantic-ai-the-harness-sdk-coder-and-pax) · [Install](#install) · [First run](#first-run) · [Updating](#updating) ·
+[Models and accounts](#models-and-accounts) · [A tour](#a-tour) · [Make it yours](#make-it-yours) ·
+[Plugins](#plugins) · [Pax in your own code](#pax-in-your-own-code) · [Reference](#reference)
 
-Ctrl+Z undoes the last change to your draft on macOS, Linux, and Windows. It
-brings back text removed with Backspace, Delete, word deletion, Ctrl+U, Ctrl+K,
-or Ctrl+C, and takes back a paste or a history recall. Typing undoes a word at a
-time, and a run of Backspace or Delete presses undoes in one step. Ctrl+Y or
-Ctrl+Shift+Z redoes. CLAI keeps the last 100 steps; submitting a message starts
-the next draft with none.
+## Pydantic AI, the harness SDK, `Coder`, and Pax
 
-The editor reads keys in raw mode, so Ctrl+Z reaches CLAI instead of suspending
-it to the shell. CLAI has no suspend shortcut; quit with Ctrl+D or `/exit`.
-Without kitty or xterm modified-key reporting, a terminal sends Ctrl+Shift+Z
-as Ctrl+Z, so use Ctrl+Y to redo there.
+An agent on its own is a loop calling a model and tools. A **harness** is everything around that loop that makes it hold up on real work: the workspace it acts in, the tools, context management, recovery, guardrails, and the interface you steer it through. Four layers carry that idea; start with the one that matches what you are doing:
 
-Cmd+Z and Cmd+Shift+Z undo and redo too, when the terminal passes them on. CLAI
-asks for kitty keyboard reporting, which reports Cmd as Super, but most macOS
-terminals keep Cmd shortcuts for their own menus:
+| Layer | What it is | Start here when |
+|---|---|---|
+| [Pydantic AI](https://pydantic.dev/docs/ai/) (`pydantic-ai`) | The agent framework: the agent loop, models from every major provider, tools, structured output, and the capability system | You are building an agent, or an LLM feature in your own application |
+| [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) (`pydantic-ai-harness`) | The SDK you build a harness of your own from: workspaces, file and shell tools, memory, sub-agents, context management, and ready-made agents like `Coder` | Your agent needs to edit files, run commands, remember, delegate, or keep working through long runs |
+| [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) | A ready-made coding agent in one capability: file and shell tools, task delegation, repo instructions and context management. You supply the workspace it runs in, and any guardrails | You want a coding agent in your own code, to run, extend or swap parts of |
+| [Pax](#install) (`pydantic-ai-pax`) | The TUI in front of `Coder`, and a terminal interface for any Pydantic AI agent; everything in it is a plugin, the coding agent included | You want to use a coding agent rather than build one, or run your own agent in a terminal |
 
-- kitty passes Cmd+Z on with no setup.
-- Ghostty uses Cmd+Z to reopen a closed tab or split. Add
-  `keybind = cmd+z=text:\x1a` and `keybind = cmd+shift+z=csi:122;10u` to its config.
-- WezTerm: set `config.enable_kitty_keyboard = true`, or map SUPER+z to
-  `wezterm.action.SendString '\x1a'`.
-- iTerm2: in Settings > Profiles > Keys > Key Mappings, map Cmd+Z to
-  *Send Hex Codes* `0x1a`, and Cmd+Shift+Z to *Send Escape Sequence* `[122;10u`.
-- Terminal.app, VS Code, and tmux: use Ctrl+Z, or map Cmd+Z to `0x1a` in the
-  outer terminal as above.
+Each package installs the one it is built on: `pydantic-ai-harness` installs `pydantic-ai-slim`, and `pydantic-ai-pax` installs `pydantic-ai-harness`. `Coder` supplies the tools, context management and recovery; you choose the workspace it runs in and any guardrails, and Pax is the interface in front of it. That is why either works without the other: build on `Coder` and never open Pax, or point Pax at an agent that is entirely your own. Neither is the [`clai` chat CLI](https://pydantic.dev/docs/ai/integrations/cli/) that ships with Pydantic AI.
 
-## Interrupting a turn
+## Install
 
-Press Ctrl-C once to cancel the active agent turn and return to input. Tool cleanup
-and terminal restoration finish before the next prompt. Press Ctrl-C again within
-two seconds to exit, including across the transition back to input. At the prompt,
-the first press clears input and the second exits. Ctrl-D and `/exit` also quit.
-External application cancellation still propagates; cancelled turns are not added
-to conversation history, but completed tool side effects cannot be undone.
-
-## Input history
-
-Submitted prompts and slash commands persist across restarts for Up/Down recall,
-including multiline input. They are stored as plaintext in `input-history` next
-to `config.db`: `$XDG_CONFIG_HOME/pydantic-clai2/input-history`, or
-`~/.config/pydantic-clai2/input-history` by default. On POSIX the file is restricted
-to its owner (mode 0600). Avoid entering secrets in the prompt: input history is
-not encrypted. Delete this file while CLAI is closed to clear saved input.
-`/clear` (alias `/new`), or bare `clear`, clears model conversation history, not
-input recall, and clears the screen back to the startup banner.
-Model responses and tool results are not saved to this file.
-
-## Start chatting
-
-Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
-Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
-Type `/set model ` and press Tab to pick another provider-qualified model name.
-The choice is saved in SQLite and used for the next prompt without restarting.
-
-From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
-
-For API-key providers, export the provider's API key before starting, or put it in
-a `.env` in the launch directory. See [Environment variables](#environment-variables)
-for discovery, precedence, and trust requirements.
-Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
-can read and modify files and execute commands with your user permissions. Run it
-in a workspace you trust. CLAI does not add a sandbox or approval layer.
-
-The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
-pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
-The splash is disabled for redirected output, CLI arguments, small terminals,
-Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
-
-## Environment variables
-
-CLAI trusts the launch directory and its parents for automatic dotenv loading.
-A `.env` can change provider endpoints while reusing your exported API keys, and
-alter how tool subprocesses execute. Set `PYTHON_DOTENV_DISABLED=1` in your
-environment before launching CLAI in an untrusted directory.
-
-CLAI loads the nearest `.env` file at startup using `python-dotenv`, before reading
-settings or importing agents and plugins. It searches the launch directory first,
-then its parents, and loads only the first file found. The search is not limited
-to Git repository boundaries. With `--worktree`, loading happens before switching
-directories. Missing files and named pipes are ignored. Unreadable or non-UTF-8
-files are skipped with a diagnostic on stderr.
-
-Use `.env` for provider API keys and settings such as `CLAI_MODEL` or
-`CLAI_NO_SPLASH`. Existing environment variables take precedence, including empty
-values. Keep `.env` files containing credentials out of version control.
-
-## Git worktrees
+Pax needs Python 3.11 or newer. Install it with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-py-cli clai2 --worktree my-task
+uv tool install --compile-bytecode pydantic-ai-pax
 ```
+
+This gives you the `pax` command (and `pydantic-ai-pax`, which does the same).
+The package used to be `pydantic-clai2`, with the command `clai2`. Those names still work and print a note
+pointing here; your settings, sessions, and plugins carry over. A plugin that imports `pydantic_clai2` needs
+the `pydantic-clai2` package installed, or its imports changed to `pydantic_ai_pax`.
+`--compile-bytecode` makes the install take a little longer so the first start doesn't, and
+`/update now` uses it too. To try Pax without installing, run `uvx pydantic-ai-pax`; set
+`UV_COMPILE_BYTECODE=1` to compile the bytecode up front there too.
+
+Pax comes with the OpenAI and Anthropic SDKs. Other providers may need their SDK
+installed too; `/model` tells you which one when you pick the model. TypeSafe's Jev
+models need an extra:
 
 ```bash
-py-cli clai2 -w
+uv tool install --compile-bytecode 'pydantic-ai-pax[typesafe]'
 ```
 
-A Git worktree is another checkout of the same repository with its own branch
-and working files. Run these commands inside a repository with at least one
-commit. `--worktree NAME` creates a `clai-NAME` branch from the current `HEAD`
-and starts CLAI at `<repository-root>/.worktrees/NAME`. If that worktree already
-exists, CLAI reopens it; if only the `clai-NAME` branch exists, CLAI checks it out.
-`-w` is the short form; omit the name to generate one. Names start with a letter
-or digit and contain only ASCII letters, digits, hyphens, and underscores.
+## First run
 
-After checkout succeeds, CLAI adds `/.worktrees/` to Git's local `info/exclude`
-file to keep generated checkouts out of `git status`, without changing your
-tracked `.gitignore`.
-Uncommitted changes, ignored files, and untracked files are not copied. Project settings, repository instructions, and coding
-tools use the new worktree root. Your user settings and plugins stay available;
-a relative `--database` path still refers to the directory you launched from.
-
-CLAI prints the path and branch. A directory at that path that is not a Git
-worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
-created, without forcing deletion. If cleanup or the ignore edit fails, the error
-names the retained branch or checkout for recovery.
-
-On interactive exit, CLAI removes an unchanged worktree this launch created and
-tries to delete its newly created branch with `git branch -d`. It also removes
-a `--worktree` checkout with no uncommitted or untracked files and no unpushed commits,
-keeping the branch, unless a saved **No, don't ask again for this worktree**
-choice keeps it. Ignored files are deleted with the checkout; lock it with
-`git worktree lock PATH` to keep it. Other unchanged worktrees are kept. If the
-checkout changed, CLAI asks whether to remove it.
-Default Git removal keeps the branch and refuses dirty or locked checkouts.
-
-You can register a user-only `worktrees.remove_commands` entry for a repository.
-After confirmation, that command runs instead of Git and may delete the branch
-and uncommitted files. Automatic removal and
-`/workspaces destroy` continue to use Git. See
-[the removal-command reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/docs/reference.md#register-a-worktree-removal-command)
-for configuration and shell-function examples.
-
-Headless runs, piped input, and startup errors keep the checkout without asking.
-Enter a retained directory and run `clai2 --continue` or `clai2 --resume` to
-continue a saved session. `--worktree` cannot be combined with `--resume`,
-`--continue`, `config`, or `plugins`.
-
-When you no longer need the checkout, use Git's own cleanup commands from your
-original repository root. Without `--force`, Git refuses to remove a dirty worktree:
+Open a terminal in your project and start Pax:
 
 ```bash
-git worktree remove .worktrees/my-task
-git branch -d clai-my-task
+cd my-project
+pax
 ```
 
-!!! warning "Worktrees are not sandboxes"
-    A worktree separates working files, not permissions. CLAI's default tools can
-    still access files outside it. Creation runs before the agent starts and emits
-    no agent telemetry spans.
+You get the Pax banner, a prompt at the bottom, and a status row under it with the
+model, the folder, and how much context the conversation uses. Type what you want and
+press <kbd>Enter</kbd>.
 
-## Codex authentication
+The default model is `openai-codex:gpt-6-astra`, which runs on a ChatGPT subscription. Run
+`/login openai-codex` to sign in, or pick another model with `/model`
+([see below](#models-and-accounts)).
 
-`/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
-authorization code with PKCE, state validation, and a callback at
-`http://localhost:1455/auth/callback`. It times out after five minutes. The browser
-must be able to reach that callback on the machine running CLAI.
+A few keys to know:
 
-Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
-(`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
-that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
-backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
-at most once per session, so macOS asks for keychain access at most once, instead of
-once per saved credential. Logins that older versions saved as keyring entries are
-moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
-uses the configured backend and does not enforce its encryption or storage policy.
-Installing or selecting a plaintext backend can store the key in plaintext. Core owns
-token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
-the browser, and OAuth exchange and do not access real credentials.
+| Key | What it does |
+|---|---|
+| <kbd>Enter</kbd> | Send. While Pax works, <kbd>Enter</kbd> queues your message for after the current turn. |
+| <kbd>Alt</kbd>+<kbd>Enter</kbd> (<kbd>Option</kbd>+<kbd>Enter</kbd>; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> on [Windows](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#windows-terminal)) | Steer: send your message to the turn that is running now. |
+| <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays. |
+| <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
+| <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
+| <kbd>Ctrl</kbd>+<kbd>O</kbd> | Show or hide the full output of commands. Output already in the terminal's scrollback is shown on the alternate screen, which stays for the session. |
+| <kbd>@</kbd> then <kbd>Tab</kbd> | Complete a file path. |
+| <kbd>Ctrl</kbd>+<kbd>D</kbd> or `/exit` | Quit. |
 
-If Codex cannot refresh your login, CLAI tells you to run `/login openai-codex`
-in an interactive session, then retry your message. This replaces the generic
-connection error that can hide an expired login. Headless runs show the same
-advice on stderr and exit with code 1. CLAI does not retry the turn automatically.
+Type `/` to see every command, or `/help` for the full list.
 
-The default Coder shell runs under your OS identity, without a sandbox. Commands
-can read files and access credential backends available to that identity, including
-CLAI's tokens. Keyring is storage, not isolation from model-controlled commands.
-Use a separate OS account or isolated environment for untrusted repositories.
+Pax reads `AGENTS.md` (or `CLAUDE.md`) from the folder you start it in and the folders above
+it, then a subfolder's as it works there, and follows what they say (not yet on Windows). If
+the folder (or a parent) has a `.env` file, Pax loads it at startup.
 
-The requested default does not guarantee model availability for a subscription.
-Custom agents supplied to `chat` retain their model unless settings explicitly
-select an override. `/login` is async, and plugin command handlers may also return
-an awaitable string.
+The first time you start Pax in a folder, it asks whether you trust the files in it, and lists
+the instruction files, skills, and agent folders it found there. Answer **Yes** for your own
+projects. **No**, the default, keeps the folder untrusted: the agent still reads, edits, and runs
+code there, and capabilities that check workspace authority treat the folder's files as the
+repository's, not yours (walk-up instruction files, skills, and agent folders still load as before
+until they check authority). Pax remembers the answer for the whole repository, and `/trust` shows
+or changes it. The status row says `trusted` or `untrusted`. See
+[folder trust](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#folder-trust)
+in the reference.
 
-## GitHub Copilot subscriptions
+### Where Pax keeps things
 
-From a source checkout:
+Your settings, saved sessions, and plugins live in `~/.config/pydantic-clai2/`, or in
+`$XDG_CONFIG_HOME/pydantic-clai2/` if you set `XDG_CONFIG_HOME`:
 
-```bash
-uv run --project pydantic-clai2 clai2
-```
+- `config.db`: settings, saved models, plugin choices, and which folders you trust
+- `sessions.db`: saved conversations
+- `plugins/`: plugins you drop in
+- `input-history`: what you typed, for the <kbd>↑</kbd> arrow
 
-Run `/login github-copilot`. Login adds every model your account's catalog lists
-to `/model` and, when you have not chosen a model, selects a recent strong one, such
-as Claude Opus 5.5 or Gemini 4 Argon; a model you chose stays selected. To switch,
-open `/model add` and choose `github-copilot`. The provider menu also starts login
-when no credentials exist. If listing the models fails, the login stays saved and
-CLAI reports why.
+Sign-ins and API keys are encrypted, with the key kept in your system keychain. Without a
+keychain, they are saved unencrypted in a file only you can read. A
+repository can also pin settings for everyone who works in it with a
+`.clai/settings.json` file. See [files](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#files)
+and [project settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#project-settings)
+in the reference.
 
-No application registration or client ID configuration is required. CLAI supplies the same
-[public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
-and requests `read:user` access to your GitHub profile. This identifies the existing
-Copilot OAuth application, not a separately registered CLAI application.
-`GITHUB_COPILOT_CLIENT_ID` is an optional override for your own device-enabled OAuth
-application; unset or blank uses the bundled default. The workspace pins the merged
-Pydantic AI device-flow implementation until its release.
+## Updating
 
-Login prints a code and `https://github.com/login/device`, then starts polling.
-Open the link on this or another device and approve only your own session's code.
-CLAI does not launch a browser, so a text browser cannot block login or take over
-an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
+Run `/update` to see whether a newer Pax is out, and choose **Update…** to install it.
+`/update now` installs without asking, and `pax update` (or `pax --update`) does it from your shell and exits
+(on Windows, use `/update now` instead).
+Pax installs the newest build, then restarts into it with the same conversation open.
+In the web UI, **Update…** in Settings › About installs from any session's page, and the
+restart reopens the session the terminal shows, or under `pax --web`, the one Pax started with.
+While other live sessions run turns, as ones the browser opened can, `/update now`
+and `/reload` ask you to try again when they finish; bare `/update` still shows the
+menu. Installs and reloads restart Pax in the folder it started in, so a session
+from another folder shown in the terminal cannot run them. While another `pax` process
+runs from the same install, updating would break it, so Pax asks you to quit it first.
 
-GitHub authorization does not establish Copilot access. Login and the model menu
-query your account's catalog and keep only picker-enabled `/chat/completions` models.
-It includes current-model details and `Ctrl+S` settings. Subscription and
-organization policy still control inference access. A known ID also works with
-`/model github-copilot:claude-haiku-4.5`.
+When a newer build is out, the status row tells you, for example
+`update 0.57.0: /update`. Pax checks once at startup and again when you change channel.
+It shows nothing when you are offline.
 
-The `github-copilot` keyring account is separate from Codex and named API keys.
-Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
-fallback under the user's CLAI config directory, created with mode `0600`.
-Tokens and issuance time stay out of settings, history, and login output.
-Expiring tokens require another `/login github-copilot`; there is no automatic
-refresh. Failed or cancelled authorization preserves the previous login.
+There are two channels. Pick one with `/set updates.channel`:
 
-Saved login takes precedence over `GITHUB_COPILOT_API_KEY`,
-`GITHUB_COPILOT_API_TOKEN`, and `COPILOT_GITHUB_TOKEN`, checked in that order when
-no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
-application's token files. Core owns inference and its telemetry; CLAI adds no
-login-specific spans. Bare `/login` asks which sign-in to run.
-
-Set `GITHUB_COPILOT_INTEGRATION_ID` to change the integration id CLAI sends with
-every Copilot request; [Integration id](../models/github-copilot.md#integration-id)
-covers what Copilot does with it.
-
-## Settings and commands
-
-Preferences live in `$XDG_CONFIG_HOME/pydantic-clai2/config.db`, falling back to
-`~/.config/pydantic-clai2/config.db`. Use `--database PATH` to select another database.
-A repository can add its own layer with a `.clai/settings.json` file, found by
-walking up from the launch directory to the git root. Its display settings apply
-at once, as does a `permissions` value no wider than your own; any other key, such as
-`model`, a wider `permissions`, or `instructions`, waits until you approve it for that
-repository with `/project approve`. Conversation messages and CLAI's
-Codex tokens are not written to the settings database. Plugin settings are arbitrary
-JSON stored in plaintext in this database, including secrets if you put them there.
-Pass secret references or use plugin-owned credential storage instead of embedding keys.
+- `stable` (the default): the newest release on PyPI.
+- `main`: the newest build of the `main` branch, for trying fixes and features before
+  they are released. The status row names the build by its commit.
 
 ```text
-/set
-/set model <Tab>
-/set display.thinking false
-/set run.request_limit 10000
+/set updates.channel main
+/update now
 ```
 
-`/set` on its own opens a full-screen menu, the same kind Code Puppy uses: the
-settings on the left, details for the highlighted one on the right (current
-value, default, what it does). Press `/` to search. While searching, printable
-characters, including Space and `R`, are query text, not actions. Enter ends the
-search and keeps the matches; `/` resumes it. Esc clears the search or retained
-filter first; with no filter, Esc closes.
+`/update now` works when Pax was installed with `uv tool install`. On Windows, Pax closes
+first and installs in a new PowerShell window; start `pax` again when it is done.
+`/update now` reinstalls `pydantic-ai-pax` without extras or `--with` packages, so add those
+again afterwards. See
+[Updating](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#updating)
+in the reference for the details.
 
-Outside search, Space cycles the highlighted setting through its declared
-choices in order, wrapping from the last to the first, and saves immediately
-without moving the selection or scroll position. If the current value is unset
-or not listed, Space selects the first choice. This includes booleans, model,
-theme, spinner, and other settings with multiple choices; Space does nothing on
-free-text or single-choice rows. Enter still opens a picker for fields with
-choices (the model list is searchable, with "Type a value..." for anything not
-listed), or a typed input that validates as you go for other fields.
-The input opens holding the current value unless it is the default or not
-set: Enter without changes saves nothing, and an empty input resets.
-`R` resets the highlighted setting outside search. Every edit saves and applies
-immediately, the same as `/set KEY VALUE`; **Save & close** only leaves the menu
-with those edits already saved. `/settings` is
-an alias of `/set` and accepts the same arguments.
+## Models and accounts
 
-While a turn is running, `/set`, `/settings`, `/system_prompt`, `/model`, `/model add`, `/model settings`,
-`/theme`, and `/spinner` typed without further arguments open their menu right
-away instead of queueing.
-The turn keeps running: its output is held while the menu is open
-and printed in order when the menu closes. A question from the agent waits for
-the menu to close. Model and run settings saved in the menu apply once the
-running turn ends. `/model settings` edits to the running model apply to its
-next model request in the same turn. With arguments, these commands queue like
-any other.
+### Pick a model: `/model`
 
-`/plugins` runs right away during a turn too, with or without arguments, so
-`/plugins disable NAME` does not wait behind the turn or your queued messages.
-Commands, status segments, and model providers change at once. The running turn
-keeps the tools and hooks it started with, because the agent binds them when a
-run begins; the change reaches the agent on your next prompt, and CLAI says so.
-A plugin turned off mid-turn finishes its cleanup when the turn ends. While a
-delegated task is running, `/plugins` still refuses changes, as between turns.
+`/model` lists the models you have added, with details for the highlighted one. Press
+<kbd>Enter</kbd> to switch. The next prompt uses the new model, and the conversation carries on.
 
-`/system_prompt` shows the full system prompt sent with the latest request and
-edits your own instructions, the `run.instructions` setting. CLAI sends them after
-its built-in instructions, `AGENTS.md`, and plugin instructions, which stay
-read-only; yours replace none of them, and resetting removes them. Editing opens
-`$VISUAL` or `$EDITOR`; on Windows, when neither is set, or when the editor cannot
-start, a built-in editor opens instead. Changes apply from your next prompt.
+![The /model picker listing saved models](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/model.png)
 
-## Models and their settings
+You can also type a model name directly, such as `/model anthropic:claude-sonnet-4-6`.
+<kbd>Tab</kbd> completes names. Highlight a model and press <kbd>Ctrl</kbd>+<kbd>D</kbd> to remove it from the list.
 
-`/model` selects from models you have already added. Choose **Add a model...**
-to browse providers. `/model PROVIDER:NAME` switches directly to any model. A model
-not yet in your list is added and selected; CLAI does not check that it exists, so a
-mistyped name fails on the next prompt with the provider's error. Model names normally
-start with a provider (`{{ openai:medium }}`), so no real model is called `add` or `settings`.
+### Find a new one: `/model add`
 
-| Command | What it does |
-| --- | --- |
-| `/model` | Pick a saved model, add one, or delete one |
-| `/model NAME` | Select `NAME`, adding it first if needed |
-| `/model add` | Browse providers and their models |
-| `/model add NAME` | The same as `/model NAME` |
-| `/model settings` | Choose a saved model to configure |
-| `/model settings NAME` | Configure `NAME` |
+`/model add` lists every provider, then that provider's models, with the context size and
+price of each. Type to filter. Press <kbd>Enter</kbd> to use a model, or <kbd>Ctrl</kbd>+<kbd>S</kbd> to change its
+settings first, such as reasoning effort or thinking.
 
-`/add_model` and `/model_settings` still work as deprecated spellings of
-`/model add` and `/model settings`.
+![/model add showing Anthropic models with context size and prices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/model-add.png)
 
-`/model add` opens a searchable provider list, then a model picker for that provider.
-Esc from the model list returns to providers. Providers are unique prefixes from
-the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
-`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
-Unknown prices and context limits are not inferred.
+Each model keeps its own settings. Change them later with `/model settings`, or use the
+shortcuts: `/effort high` sets reasoning effort, and `/fast` picks the speed of Codex
+models, ultrafast by default on the models that offer it.
 
-The model catalog combines genai-prices' catalog
-filtered to providers Pydantic AI can run, plus core's own model list, plus
-whatever you have set now. The left side shows model names and marks the current
-model; token counts stay in the details. The right side shows the provider, context window,
-prices, and any settings you have saved for that model. Type to filter. Enter
-makes it the model for the next prompt. `Ctrl+S` opens that model's settings:
-`max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, `timeout`, the two
-penalties, `parallel_tool_calls`, `thinking`, and `service_tier`. They are
-saved per model and passed to every run with that model. Unsupported settings
-may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
+### Sign in: `/login` and `/accounts`
 
-CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
-missing from the Python CLAI runs on fails right away, naming the install command, instead
-of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+`/login openai-codex` signs in with your ChatGPT subscription. `/login github-copilot`
+signs in with GitHub Copilot. Neither needs an API key.
 
-```bash
-pip/uv-add "pydantic-clai2[typesafe]"
-```
+`/accounts` shows every account you are signed in to, grouped by provider, with usage
+limits where the provider reports them. Press `a` to add an account, `r` to rename one,
+`[` and `]` to change the order, and `d` to sign out.
 
-From a pydantic-ai checkout, run CLAI with the extra instead:
+![/accounts listing signed-in accounts by provider](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/accounts.png)
 
-```bash
-uv run --package pydantic-clai2 --extra typesafe clai2
-```
-
-Tab completes setting names, boolean values, and model names from Pydantic AI's
-built-in catalog without network access. Provider prefixes include `openai-codex:`,
-which core supports but does not currently include in that model catalog. Complete
-the provider prefix, then enter the model identifier; suggestions do not establish
-subscription availability. Custom model identifiers are accepted too.
-
-The command registry uses Termflow's `Completer`, `Document`, and `Completion`
-types. The current input widget and popup still use prompt-toolkit through a small
-adapter; replacing that editor with a Termflow-based editor is separate work.
-`/set SETTING` shows its current value. `/set` changes apply to subsequent prompts
-and preserve conversation history; splash changes apply at next startup.
-
-Precedence is defaults, SQLite overrides, `CLAI_MODEL`, then explicit CLI flags.
-Settings are validated before writes. `/set` updates the active settings snapshot;
-legacy `/config` writes apply on restart; plugin changes apply on the next prompt.
-`--request-limit` controls the full prompt's model-request budget.
-
-Interactive commands: `/login`, `/set` (alias `/settings`), `/system_prompt`, `/theme`, `/model`, `/help`, `/clear` (alias `/new`), `/exit`, `/config`, `/plugins`, and `/reload`.
-Tab completion suggests commands, settings, boolean values, plugin identifiers,
-and paths after `@`. Path completion inserts a path; it does not attach file contents.
-Unknown slash commands are not sent to the model. Up/down recall prompt history
-(see [Input history](#input-history)). Ctrl-D exits. For Ctrl-C, see
-[Interrupting a turn](#interrupting-a-turn). No cancelled run is automatically retried.
-
-## Reload CLAI during development
+A second account of the same provider is a profile, written `PROVIDER@PROFILE`:
 
 ```text
-/reload
+/login openai-codex@work        # a second ChatGPT account
+/login openai@work              # an OpenAI API key, saved for this profile
+/model openai-codex@work:gpt-6-astra
+/model openai-codex@*:gpt-6-astra   # every signed-in Codex account, in /accounts order
 ```
 
-After editing `pydantic_clai2` source, run `/reload` without arguments. It uses
-`importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
-and session with the updated code. The Python process, agent, dependencies passed
-to `chat`, conversation messages, selected model, and active settings are kept.
-Enabled plugins unload and load again so their handlers use the refreshed
-shell types. Disabled and unapproved project plugins stay off.
+When a provider has more than one account, a model runs on the first one and moves to
+the next when it hits a rate or usage limit.
 
-If an import or shell rebuild fails, CLAI reports the error and restores the
-previous module bindings. Correct the source and retry `/reload`. Plugin
-instances and their contributions are recreated. Installed module globals not
-overwritten by the new source can survive; initialize mutable state in `__init__`.
-Import-time side effects cannot be undone.
+### Fallback chains
 
-Reload ordering follows the modules' existing imports. Restart after changing
-import dependencies, startup code, or the custom agent's construction. `/reload`
-does not rerun the CLI or recursively reload third-party packages. Use
-`/plugins reload NAME` when you only want to reload one plugin.
+A fallback chain tries several models in order, such as Codex first and Claude after it.
+Make one in the `/model` picker with **New fallback chain...**, then select it like any
+other model. It shows up as `chain:NAME`.
 
-## The stock agent in your own code
+### API keys and environment variables
 
-`open_stock_agent` opens CLAI's stock coding agent without the terminal. Use it with
-`agent.run`, `run_stream_events`, `iter`, or anything else that takes an agent:
+For providers that use an API key, set the usual environment variable before you start
+Pax, such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`. You can also put them in a `.env`
+file. Pax loads the nearest `.env` from the folder you start in, or one of its parents.
+Variables already set in your shell win. In a folder you do not trust, start Pax with
+`PYTHON_DOTENV_DISABLED=1` so it skips `.env` files.
 
-```python
-import asyncio
-from pathlib import Path
+Shell commands the agent runs do not see your provider API keys.
 
-from pydantic_clai2 import open_stock_agent
+`/keys` keeps named API keys in an encrypted store. vLLM and OpenRouter connections,
+`/login PROVIDER@PROFILE`, a model's `api_key` in `/model settings`, and plugins such as
+Linear and Notion can use a saved key by name, so you change it in one place. The names are labels: Pax does not set them as
+environment variables. Press <kbd>a</kbd> to add a key, <kbd>Enter</kbd> to replace one, <kbd>r</kbd> to rename, and
+<kbd>d</kbd> to delete. Values are never shown.
 
+![/keys listing saved API key names](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/keys.png)
 
-async def main() -> None:
-    async with open_stock_agent(workspace=Path.cwd(), model='{{ anthropic:large }}') as agent:
-        result = await agent.run('Summarize this repository in one paragraph.')
-        print(result.output)
+See [Models and their settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#models-and-their-settings),
+[Several accounts and fallback chains](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#several-accounts-and-fallback-chains),
+and [Environment variables](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#environment-variables)
+in the reference for everything else, including vLLM and OpenRouter.
 
+## A tour
 
-asyncio.run(main())
-```
+### Tool calls and diffs
 
-The agent has the `coder`, `repo_context`, and `compaction` built-ins,
-configured as in `clai2`, except that `coder`'s `task_control` is off: pass
-`plugin_settings={'coder': {'task_control': True}}` to give the model the task
-tools and background delegation. The file and shell tools work in `workspace`,
-unless a capability you pass supplies a workspace, and `AGENTS.md` or
-`CLAUDE.md` is read from it. Model names resolve as in `clai2`, with CLAI's
-per-model defaults. Nothing else you saved for `clai2` applies: no saved,
-drop-in, or project plugins, no `.clai/settings.json`, no `/model settings`, and
-no `chain:` fallback chains. `plugin_settings` changes a built-in's settings,
-merged over the stock ones, such as `{'coder': {'agent_folders': []}}`.
-`capabilities` adds your own capabilities, bound beside the built-ins so
-delegated tasks carry them too. Plugins close when the `async with` block exits.
+Each tool call gets one line: the tool and what it worked on, as in the screenshot at
+the top. When Pax edits or writes a file, you see the diff. A shell command adds one row
+with its exit code and line count, such as `⎿ exit 0 · 23 lines`, in red when the
+command fails. A failed or refused call of any tool gets a red row with the reason.
+The rest of the shell output stays out of the way: press <kbd>Ctrl</kbd>+<kbd>O</kbd> to
+show it under the row, or `/set display.tool_output true` to always print a preview; the
+model always gets the full output. To list fewer lines, `/set display.tool_calls grouped`
+counts calls in a row instead, such as `● shell 4, grep 2`. That style prints no result
+rows.
 
-To serve it to an editor, pass the agent to [`run_acp_stdio`](acp.md). Every session
-then works in `workspace`. To follow the folder each client session opens instead,
-return a `workspace` from a `session_config`, as
-[Rooting tools at the workspace](acp.md#rooting-tools-at-the-workspace) shows. With a
-capability that requires approval, such as a `ToolGuardrail` returning
-`GuardrailResult.approve()`, pass `plugin_settings={'coder': {'sub_agents': False}}`:
-a delegated task cannot yet pass an approval up to the client
-([#4302](https://github.com/pydantic/pydantic-ai/issues/4302)).
+### Questions from the model
 
-## Bring an agent
+When a task could go more than one way, the model can ask you instead of guessing. Pick
+an answer with the arrow keys and <kbd>Enter</kbd>, or press its number. **Other** lets you type
+your own answer. <kbd>Esc</kbd> declines; the model is told, and carries on with a choice it states.
 
-```python
-import asyncio
-from pydantic_ai import Agent
-from pydantic_clai2 import chat
+![The model asking which CI service to use, with three numbered choices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/ask-user.png)
 
-agent = Agent('test')  # No capabilities required.
-asyncio.run(chat(agent, deps=None))
-```
+### Run a shell command: `!`
 
-`Session(agent, deps=..., plugins=..., on_stream_event=...)` is the noninteractive
-API. Call `await session.prompt(text)` for each turn. Native `agent.run` drives the
-loop through tools to completion. Successful turns retain `result.all_messages()`;
-failed or cancelled turns leave the previous history intact, though external tool
-side effects may already have occurred. History is in memory only. Structured
-outputs are supported and displayed after completion.
+Start a line with `!` to run it as a shell command, without asking the model. The command and
+its output are saved, so the model sees them on your next prompt. In a `/sandbox` conversation it runs in
+the sandbox. Use `!!` for interactive programs, such as `!!python`, to give them the whole terminal.
 
-### Themes
+![Running git log and the project's CLI with !](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/shell.png)
 
-```text
-/theme
-/theme tokyo_night
-/set display.theme github_light
-/theme default
-```
+### Code mode and speculative execution
 
-`/theme` opens a searchable picker. Its preview shows a sample conversation with
-Markdown, thinking, a tool call, syntax highlighting, warnings, errors, and the
-input/status area. Each bundled palette paints the sample's foreground and
-background. Browsing does not apply a palette or save a setting. Enter confirms;
-Esc or Ctrl-C keeps your current choice. Narrow terminals show the list alone.
+Code mode is on by default. The model writes one short Python snippet that calls many
+tools, and Pax runs each statement as soon as it arrives, so a slow test run starts
+before the model has finished writing.
 
-`default` preserves CLAI's existing brand colours, including Markdown, menus,
-and status. Its diffs use green additions and red deletions. Starting and exiting with this choice leaves your
-terminal palette untouched. The default preview has no forced background.
-`/theme default` restores this appearance after trying another palette.
+Press <kbd>Ctrl</kbd>+<kbd>X</kbd> <kbd>Ctrl</kbd>+<kbd>S</kbd> to turn on speculative execution as well. Pax then starts file
+reads and searches the moment their line appears. A row above the status line counts how
+many early starts paid off, and the time they saved.
 
-All other choices come from Termflow's bundled registry, including
-`catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. CLAI adds
-no new palettes. `/theme NAME` and `/set display.theme NAME` apply the same
-validated preference immediately and save it for future sessions. Tab completes
-these names. The `/set` theme row also lets you reset immediately;
-`/config reset display.theme` removes the saved override for the next startup.
+![A run_code call reading files, with the Speculative Execution row showing hits](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/code-mode.png)
 
-For a bundled palette, Markdown and newly opened menus use Termflow's
-`to_render_style()`, and shell roles use its colours. Termflow changes the terminal
-foreground, background, and 16 ANSI slots via OSC escape sequences. Supported
-terminals may also recolour existing ANSI-styled scrollback. CLAI resets terminal
-colours when you return to `default` or exit a selected palette, including failure
-and cancellation. Unsupported terminals may ignore these changes. Redirected
-output receives no palette-changing sequences. Your terminal configuration file
-is not modified.
+### Rewind a conversation
 
-The early splash and the `CLAI 2.0` banner keep Pydantic's brand colours under
-every palette, except on 16-colour terminals, where the palette owns the ANSI
-slots. Syntax highlighting keeps Monokai;
-bundled palettes use Termflow's default diff colours. Theme selection adds no
-model requests or telemetry.
+Between turns, press <kbd>Esc</kbd> twice to open **Rewind conversation**. Pick an earlier prompt
+and press <kbd>Enter</kbd>. Pax removes it and everything after it from the conversation, and puts
+it back in the editor so you can change it. Rewinding does not undo changes to files.
 
-### Streaming
+![The rewind picker listing earlier prompts](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/rewind.png)
 
-Streaming matches Code Puppy's separate output and thinking paths:
+### Pick up where you left off: `/resume`
 
-- Markdown uses Termflow `SmoothWriter`: 12 ms ticks, 0.5-second catch-up,
-  minimum one visible character per tick. Prose is parsed line-by-line. Fenced
-  code is buffered until the closing fence or text part end, then highlighted
-  as a whole block so multiline strings and comments keep their context.
-  Unlabelled and Markdown fences stay literal, including indentation and blank
-  lines. Unknown languages use plain text. Long code lines wrap to the terminal width.
-- Thinking deltas feed `StreamSmoother` immediately: 20 ms ticks, 0.4-second
-  catch-up, minimum two characters per tick. They display as dim literal text,
-  without waiting for newlines or interpreting Markdown.
-- Smoothing applies only to interactive terminal output. Redirected output is
-  written directly. Parts drain before the next heading, tool status, or prompt.
+Every conversation is saved. `/resume` opens a browser with your projects on the left
+and their sessions on the right. Pax names sessions in the background so you can find
+them, using your current model or a smaller `sessions.naming_model`; `/set sessions.naming false`
+keeps the titles taken from each session's first prompt. Press <kbd>/</kbd> to search, <kbd>→</kbd> to read a transcript, and <kbd>Enter</kbd> to resume.
+<kbd>a</kbd> archives a session you are done with, hiding it without deleting anything, and <kbd>h</kbd> shows archived ones.
 
-`/set display.smooth_seconds 0.5` restores the Code Puppy response catch-up
-window if you previously saved a slower preference. This response-only setting
-accepts 0.1 to 5 seconds; thinking retains its separate 0.4-second window.
-Empty thinking parts show no heading. The CLI disables core's first-run
-observability banner.
-Cancellation discards queued output. Incomplete Markdown lines are still buffered
-until a newline or part end; smoothing does not remove that parsing delay.
-Thinking signatures without text cannot be shown. A supplied agent's existing
-stream handler is preserved. Custom renderer integrations must await `finish()`
-and use `await abort()` on cancellation.
+![The /resume session browser with projects and named sessions](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/resume.png)
 
-Response and thinking parts end with a blank separator line; responses have no
-repeated CLAI heading. Intermediate text is flushed when a tool-call part begins,
-before the tool's arguments finish streaming. Incomplete lines within a text part
-still wait for a newline or part boundary, as in Code Puppy's Markdown path.
+From your shell, `pax --resume` opens the same browser, and `pax --continue` (`-c`)
+restores the most recent session in the current directory. `/resume claude` and
+`/resume codex` continue a session you started in Claude Code or Codex.
 
-Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
-without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
-muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
-changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
-rather than adding a separate `Finished:` line to the transcript.
+With `/web` running, the browser can open other sessions while this one runs. `/resume`
+of one of them shows it here, even mid-turn, instead of copying it; the session you
+left keeps running in the browser.
 
-With `/set display.tool_calls grouped`, each call adds to a streak of the same tool on one line instead
-of printing its own: `● shell 4, grep 2, shell 3`. On a terminal the line is redrawn from column zero
-as each call arrives, so the last count is final only once another tool, visible text or thinking, a diff, or a widget follows.
-In the interactive prompt the line keeps counting above anything printed meanwhile, such as a command typed
-mid-turn. A tool that no longer fits the row starts the next line. Elsewhere the line prints once, when it ends.
-The `grouped` style ignores `display.tool_output` and `display.tool_arg_chars`, and hides shell command output.
-`edit_file` and `write_file` calls are not counted: they print their summary and diff as in the `detailed` style.
-`/set` previews both styles when you pick one. The setting applies to the next turn; the default is `detailed`.
+On Unix, `pax sessions` lists live sessions across your terminal tabs and processes,
+including idle sessions and those waiting for an answer. It shows unique session-ID
+prefixes and folder names without opening a session or starting a turn. See
+[Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#sessions).
 
-## Grep previews
+### Work in the background: `/fork`
 
-Grep calls display the expression and path. Results show the first 20 logical
-lines by default; `/set display.grep_lines 10` changes the next turn's preview
-(0 to 1000). `Truncated N result lines` counts returned lines hidden by the UI,
-including context lines. If the tool itself capped the search, a separate notice
-states that the additional result count is unknown. No matches is shown explicitly.
-The model still receives the original tool result.
+`/fork PROMPT` runs a copy of the conversation in the background while you keep working.
+Add `@MODEL` to use a different model for it. When it finishes, Pax prints its answer
+and the session to resume if you want to continue it.
 
-Shell output is rendered one completed line at a time. Carriage-return progress
-updates replace the buffered line rather than printing control-code text; the last
-update appears at newline or tool completion. CRLF works across chunk boundaries.
-Long display lines are ellipsized to terminal width. Multiline commands show their
-first line and the number of additional command lines rather than dumping scripts.
-Full output remains in the log; display formatting does not alter model results.
+![The answer of a background fork, printed when it finished](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/fork.png)
 
-## Shell preview limit
+### Several sessions at once: `pax --web`
 
-Shell output defaults to the first 20 logical lines per command. Change it with
-`/set display.shell_lines 50` (0 to 1000; zero hides output). The setting applies
-to the next prompt. After the command returns, `Truncated N lines` reports omitted
-lines from the log snapshot at that time, including an unterminated final line.
-The capability's 16 KB event preview cap can shorten the preview further. Full
-output remains in the displayed log path. Background commands can keep writing
-after the snapshot; those future lines are not included in its count.
+`pax --web` drives Pax from your browser. Click any session in the sidebar and it
+opens live, even while others run: each works in its own folder, with its own queued
+prompts and running turn, and a dot shows which ones are running or waiting for you.
+Esc stops only the session you are looking at. A session left idle for an hour
+closes; it stays saved, so click it to pick it up again. See
+[Several sessions in the web UI](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#several-sessions-in-the-web-ui).
 
-Read headers show the path, zero-based offset, and effective line limit (Coder
-default and maximum: 2000). Listing headers show the directory, recursive mode,
-result limit (default 200), and optional glob. Coder listings recurse using
-ripgrep and honor ignore rules. These displayed defaults describe Coder tools.
+### Usage, cost, and `/compact`
 
-File-write/edit headers include the path on the same line as the tool name.
-Shell headers include the command on that line. Arguments use cyan, with no
-repeated completion heading before the diff or output.
+`/usage` shows the tokens and cost of each turn, and `/cost` the total. Costs come from
+public price data; a model without a price, like the scripted one in these screenshots,
+shows `unknown`. Both answer at once, even while a turn runs, and cover the turns that
+have finished.
 
-## Tool details
+When a response omits usage, `/usage` and `/cost` label known totals as lower bounds,
+and the status row prefixes a known cost with `>=`.
 
-Native capability events drive specialized output: `FileEditedEvent` renders its
-bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
-uses. The default appearance uses Claude Code's green addition and red deletion
-backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
-Code syntax colours retain the Monokai default. Successful file writes also show the proposed diff from their matching
-`FileChangeRequestedEvent`: new files show additions, overwrites show before/after
-changes. Without a matching request event, only the written path is shown. Failed
-or cancelled writes do not display a success diff. Large diffs retain the
-filesystem's truncation notice. Coder shell events show the command, attached
-combined output, exit status (or background state), and durable log paths. Output
-is capped by the capability and truncation is marked. The standalone `Shell`
-capability does not yet emit these Coder-specific shell events.
+When the conversation nears the model's context limit, Pax summarises older messages
+for you. Run `/compact` to do it now, and add a note to say what the summary must keep,
+such as `/compact keep the API decisions`.
 
-Terminal control characters in model text and diffs are escaped before rendering.
-Shell output permits ANSI SGR color/style sequences, decoded into Rich text rather
-than passed directly to the terminal. Styles persist across chunks and lines per
-command; cursor movement, clipboard commands, and other controls remain escaped.
-Plain shell output stays dim. ANSI generated by Termflow itself is retained.
+![/usage table, /cost line, and /compact reporting the tokens it saved](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/usage.png)
 
-## Status line
+### Your own instructions: `/system_prompt`
 
-The terminal footer shows the selected model, activity, latest reported
-context tokens, and streamed output estimate, including text, thinking, and
-string tool-argument deltas. The estimate is characters divided by four, not a
-provider tokenizer count. On completion it is replaced by reported run output
-usage. Context is the most recent response's reported input plus output tokens,
-not cumulative conversation billing or a context-window percentage; `?` means
-unavailable. During a request it may reflect the previous response.
+`/system_prompt` shows what the model is told: Pax's instructions, your project's
+`AGENTS.md`, and what your plugins add. Add instructions of your own and Pax sends them
+with every prompt, in this and later sessions.
 
-While running, the footer reserves the terminal's bottom row using ANSI scrolling
-regions. Its text shimmers with a moving highlight at ten frames per second, with no spinner and
-a 16-colour fallback when truecolour is unavailable. Prompt-toolkit owns the footer while accepting input. The run footer is
-disabled for redirected output and restores normal scrolling on cancellation or
-failure. The cursor is hidden during runs and restored on completion, failure,
-or cancellation. No model requests or telemetry are added for status reporting.
+![The /system_prompt menu](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/system-prompt.png)
+
+## Make it yours
+
+### Settings: `/set`
+
+`/set` lists every setting with its value, its default, and what it does. Changes save
+and apply right away. You can also type one directly, such as
+`/set display.thinking false`.
+
+![The /set menu](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/set.png)
+
+### Colours: `/theme`
+
+`/theme` previews each palette on a sample conversation before you pick it. `default`
+keeps Pax's usual colours and leaves your terminal's palette alone. On a light terminal
+background it uses darker shades that stay readable on it.
+
+![The /theme picker previewing tokyo_night](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/theme-tokyo-night.png)
+
+![The /theme picker previewing github_light](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/theme-github-light.png)
+
+### The working animation: `/spinner`
+
+`/spinner` picks the animation that runs while Pax works, with a live preview. Use `-`
+and `+` to change its speed. Add your own in `spinners.json`; `/spinner init` writes a
+starter file.
+
+![The /spinner picker](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/spinner.png)
 
 ## Plugins
 
-Everything beyond the prompt loop is a plugin, including the default coding
-tools. A plugin is a `Plugin` subclass that declares what it contributes the way
-a [capability](../capabilities/overview.md) does: it overrides methods to react to
-lifecycle moments, add `/commands`, give the agent capabilities, draw its own
-output, and take validated settings.
+The coding tools are a plugin, and so are the integrations. `/plugins` lists them all:
+press <kbd>Space</kbd> to turn one on or off, <kbd>c</kbd> to configure it, <kbd>r</kbd> to reload it, and <kbd>d</kbd> to
+remove it. Changes apply from your next prompt, with no restart.
 
-```python
-from pydantic_clai2.plugins import Plugin, TurnEnd
+![The /plugins menu listing built-in plugins](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/plugins.png)
 
+These are on from the start:
 
-class Bell(Plugin):
-    async def on_turn_end(self, event: TurnEnd) -> None:
-        self.host.console.bell()
+- `coder`: the file and shell tools, delegating tasks to sub-agents, and Agent Skills.
+  Configure a delegate model menu to select a model per call. Separately enable a read-only `Review`
+  specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#delegate-models-and-review-directory).
+- `ask_user`: questions from the model
+- `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
+- `compaction`: summarises older messages, and `/compact`
+- `refinement`: `/refine`, which has the model review and revise its last answer
+- `persistence`: extra checkpoints so an interrupted session can recover
+- `mcp`: MCP servers, managed with `/mcp`
+- `notifications`: a desktop notification when a turn finishes
+- `observability`: traces to [Logfire](https://pydantic.dev/logfire), when you set a token
+
+Turn on more when you need them, such as `github`, `linear`, `notion`, `slack`,
+`google_workspace`, and `logfire_mcp`.
+
+To install a plugin, clone it from Git, name a plugin or a harness capability by its import
+path, or drop a file in `~/.config/pydantic-clai2/plugins/`:
+
+```text
+/plugins add https://github.com/your-org/my-plugin.git
+/plugins add exa pydantic_ai_harness.exa:ExaSearch '{"max_results": 8}'
 ```
 
-Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
-importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
-repository with `/plugins add https://github.com/your-org/my-plugin.git` inside
-CLAI. Git repositories need an `__init__.py` or `plugin.py` at their root; install
-any dependencies in CLAI's Python environment first. See
-[where plugins live](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md#where-plugins-live)
-for supported URLs and checkout management.
-The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
-reload, and remove: Enter or Space toggles the highlighted plugin, and `c`, `r`, and `d`
-configure, reload, and remove it. Plugins are trusted code running as you.
+The second line adds web search from
+[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). It needs the `exa` extra and an `EXA_API_KEY`:
 
-Two built-in plugins connect to [Logfire](https://pydantic.dev/logfire): `observability`
-sends traces of your runs there, and the Logfire plugin (id `logfire_mcp`, command
-`/logfire`) lets the agent query your data through Logfire's MCP server. Both ask
-which Logfire with the same picker: Logfire US, Logfire EU, or another typed as a
-host, the URL you open it at, or its MCP URL. The one you last picked in either is
-remembered, and the other plugin's picker starts there until it has a Logfire of
-its own.
+```bash
+uv tool install --compile-bytecode pydantic-ai-pax --with 'pydantic-ai-harness[exa]'
+export EXA_API_KEY=...
+```
 
-[PLUGINS.md](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_clai2/PLUGINS.md) has every method, event, and rule.
+Plugins are Python code that runs as you, so only install ones you trust.
 
-## Telemetry and references
+To write your own, read the [plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md).
+Or ask Pax: it has a guide to its own plugin API, so you can ask it to "make a plugin
+that adds a `/standup` command".
 
-CLAI emits no additional telemetry. Pydantic AI's own instrumentation covers model
-requests, tools, and capability hooks when configured on the supplied agent.
+## Pax in your own code
 
-- [Pydantic AI agent execution and events](https://pydantic.dev/docs/ai/core-concepts/agent/)
-- [Capability events](https://pydantic.dev/docs/ai/capabilities/overview/)
-- [Code Puppy splash](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/splash.py)
-- [Code Puppy streaming](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/agents/event_stream_handler.py)
-- [Code Puppy command registry](https://github.com/mpfaffenberger/code_puppy/blob/main/code_puppy/command_line/command_registry.py)
+- `pax -p "Explain this repository"` runs one prompt and prints only the answer.
+- `pax --agent my_module:agent` chats with your own Pydantic AI agent.
+- `open_stock_agent(...)` gives your Python code Pax's coding agent, without the terminal.
+- `chat(agent, deps=...)` opens the Pax terminal on any agent.
 
-See `THIRD_PARTY_NOTICES.md` for attribution.
+See [Using Pax from code](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#using-pax-from-code)
+in the reference.
 
-## vllm connection
+## Reference
 
-Open `/model add`, choose `vllm`, then enter a trusted HTTP(S) server root or `/v1` URL, and optionally a token. CLAI queries `/v1/models` and opens a searchable model picker. HTTP sends tokens unencrypted; use HTTPS outside trusted local networks.
+The [reference](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md)
+covers everything in detail:
 
-## openrouter connection
+- [Commands](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#commands),
+  [command-line options](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#command-line-options),
+  [settings](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#settings),
+  [environment variables](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#environment-variables-at-a-glance),
+  and [files](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#files)
+- [Models and accounts](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#models-and-accounts):
+  per-model settings, Codex, Copilot, vLLM, OpenRouter, and saved keys
+- [The prompt](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#the-prompt):
+  keys, images, history, and `!` commands
+- [Sessions](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#sessions):
+  `/resume`, `/fork`, and Git worktrees
+- [Plugins and integrations](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#plugins-and-integrations):
+  MCP, notifications, herdr, Agent of Empires, and telemetry
+- [The plugin guide](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/PLUGINS.md):
+  every plugin method, event, and rule
 
-Open `/model add`, choose `openrouter`, then paste an API key from https://openrouter.ai/keys in the masked prompt, then select a model from the live catalog. CLAI validates the key with `/api/v1/key` before fetching `/api/v1/models`. This flow uses API-key authentication, not browser OAuth.
-
-The connection is saved in the configured Python keyring backend after selection; backend security depends on your keyring configuration. Tokens are not stored in SQLite or command history. The selected model persists across restarts. Select the provider again to browse its live models or reconfigure the saved connection. Discovery is explicit and has a 20-second network timeout; redirects are not followed. Agent inference uses Pydantic AI core.
+The screenshots are real Pax sessions. Only the model is scripted (`demo:tour`), so they
+need no account and cost nothing. To make them again, run
+`src/pydantic_ai_pax/scripts/screenshots/capture.sh`.
