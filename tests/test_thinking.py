@@ -241,14 +241,14 @@ class TestAnthropicThinkingTranslation:
         )
 
     def test_thinking_true_adaptive(self, adaptive_model: FunctionModel):
-        """thinking=True with adaptive model -> {'type': 'adaptive'}."""
+        """thinking=True with adaptive model -> {'type': 'adaptive', 'display': 'summarized'}."""
         params = ModelRequestParameters(thinking=True)
         settings: ModelSettings = {}
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
         assert result == snapshot({'type': 'adaptive', 'display': 'summarized'})
 
     def test_thinking_true_non_adaptive(self, non_adaptive_model: FunctionModel):
-        """thinking=True with non-adaptive model -> {'type': 'enabled', 'budget_tokens': 10000}."""
+        """thinking=True with non-adaptive model -> {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}."""
         params = ModelRequestParameters(thinking=True)
         settings: ModelSettings = {}
         result = AnthropicModel._translate_thinking(non_adaptive_model, settings, params)
