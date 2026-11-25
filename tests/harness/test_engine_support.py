@@ -53,7 +53,7 @@ def _is_durability(name: str, module: str) -> bool:
 
 
 def test_every_durability_capability_is_an_engine() -> None:
-    """A new engine can't land without a column: its durability capability must be in `ENGINE_CAPABILITIES`."""
+    """A new engine can't land without a column: its durability capability must be in `ENGINE_CAPABILITIES`. It reads test tables or source, with no provider exchange to record, so it isn't a VCR test."""
     found = {
         ref.name for ref in discover_capabilities(DURABILITY_PACKAGES).values() if _is_durability(ref.name, ref.module)
     }
@@ -61,7 +61,7 @@ def test_every_durability_capability_is_an_engine() -> None:
 
 
 def test_every_cell_is_a_case_with_calls() -> None:
-    """A cell only means something for a case whose calls a suite runs."""
+    """A cell only means something for a case whose calls a suite runs. It reads test tables or source, with no provider exchange to record, so it isn't a VCR test."""
     for name in ENGINE_SUPPORT:
         assert name in PUBLIC, f'`ENGINE_SUPPORT` names {name}, which is not a public capability'
         assert CASES[name].calls is not None, f'`ENGINE_SUPPORT` names {name}, which has no `calls` to run'
@@ -69,7 +69,8 @@ def test_every_cell_is_a_case_with_calls() -> None:
 
 def test_measured_cells_only_go_up() -> None:
     """How many cases each engine's suites measure, i.e. the cells that aren't `untested`: a PR may raise an
-    engine's count by testing a cell, never lower it."""
+    engine's count by testing a cell, never lower it. It reads test tables or source, with no provider exchange to
+    record, so it isn't a VCR test."""
     measured = Counter(
         engine
         for name, case in CASES.items()
@@ -102,11 +103,19 @@ def test_measured_cells_only_go_up() -> None:
     ],
 )
 def test_a_cell_says_what_its_level_needs(make: Callable[[], Support], error: str) -> None:
+    """A cell missing what its level needs is rejected when it's built.
+
+    It checks a test-only type, with no provider exchange to record, so it isn't a VCR test.
+    """
     with pytest.raises(ValueError, match=error):
         make()
 
 
 def test_an_exempt_cell_links_its_issue() -> None:
+    """A refused or broken cell's exemption names its issue's URL.
+
+    It checks a test-only type, with no provider exchange to record, so it isn't a VCR test.
+    """
     assert Support('refused', 'no id', raises='id').exempt.reason == 'no id'
     assert Support('broken', 'wrong order', issue=1).exempt.reason == (
         'wrong order: https://github.com/pydantic/pydantic-ai/issues/1'
