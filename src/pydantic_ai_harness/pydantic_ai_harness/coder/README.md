@@ -275,7 +275,8 @@ a flag for the behavior it corrects:
   interpreter or a specific Python version, the agent finds out what's allowed before writing code.
 
 The evidence for them is weak: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'`, one run each, `Coder` scored 53.2
-with the three sentences against 51.0 without them, within that benchmark's single-run noise of about 5.6 points.
+with the three sentences against 51.0 without them (measured with the classify sentence in place of the shared
+misread check; both are sent here), within that benchmark's single-run noise of about 5.6 points.
 Like the rule against unrequested delegation (see [Sub-agents](#sub-agents)), each is its own instruction block that
 follows the model handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability to a model without the flag,
