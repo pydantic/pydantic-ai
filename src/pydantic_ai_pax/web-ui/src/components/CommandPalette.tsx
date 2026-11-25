@@ -124,6 +124,7 @@ export function CommandPalette({
             autoFocus
             value={query}
             placeholder="Search commands"
+            aria-label="Search commands"
             spellCheck={false}
             aria-controls="palette-list"
             aria-activedescendant={shown[cursor] ? `palette-${shown[cursor].name}` : undefined}
