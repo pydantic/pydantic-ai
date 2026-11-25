@@ -493,7 +493,7 @@ Use `https://` unless the network is trusted: the connection carries your agent'
 
 Only code execution moves to the worker. Tools, `os_access`, and `print` output stay in your process, and REPL state persists across `run_code` calls as it does locally. `mount` directories are read in your process too, except when turns run as activities, where the activity worker reads them.
 
-Run the server on `pydantic-monty>=1.7.0`: servers before 1.5 speak WebSockets, which this client no longer uses, and the `run_code` description lists the modules Monty 1.7 can import.
+Run the server on `pydantic-monty>=1.7.0`, the first release that imports every module the `run_code` description lists. Servers before 1.5 speak WebSockets, which this client no longer uses.
 
 ### Error handling
 
