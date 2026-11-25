@@ -24,7 +24,7 @@ import pytest
 
 from pydantic_ai.messages import CAPABILITY_PART_TYPES, CapabilityPart
 
-from .capability_cases import CORE_CAPABILITY_PACKAGES, caused_by_missing_dependency
+from ..capability_cases import CORE_CAPABILITY_PACKAGES, caused_by_missing_dependency
 
 _PACKAGES = (*CORE_CAPABILITY_PACKAGES, 'pydantic_ai_harness', 'pydantic_ai_pax', 'pydantic_clai2')
 """Every package that can declare a capability part kind; walking them imports, and so registers, each kind."""
@@ -53,7 +53,12 @@ def _registered_kinds() -> dict[str, type[CapabilityPart]]:
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         for package_name in _PACKAGES:
-            package = importlib.import_module(package_name)
+            try:
+                package = importlib.import_module(package_name)
+            except ModuleNotFoundError as exc:  # pragma: no cover - Pax and clai2 are optional next to the harness
+                if exc.name != package_name:
+                    raise
+                continue
             for module_info in pkgutil.walk_packages(package.__path__, f'{package_name}.'):
                 try:
                     importlib.import_module(module_info.name)
@@ -91,14 +96,15 @@ def _module_texts() -> list[tuple[str, str]]:
                 continue
             nested = {id(v) for node in ast.walk(function) if isinstance(node, ast.JoinedStr) for v in node.values}
             for node in ast.walk(function):
+                text: str
                 if isinstance(node, ast.JoinedStr):
-                    text = ''.join(v.value if isinstance(v, ast.Constant) else '{}' for v in node.values)
+                    text = ''.join(str(v.value) if isinstance(v, ast.Constant) else '{}' for v in node.values)
                 elif isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in nested:
                     text = node.value
                 else:
                     continue
-                if _FOLLOWS.search(str(text)):
-                    texts.setdefault(str(text), f'{module.__name__}.{function.name}')
+                if _FOLLOWS.search(text):
+                    texts.setdefault(text, f'{module.__name__}.{function.name}')
     return [(where, text) for text, where in texts.items()]
 
 
