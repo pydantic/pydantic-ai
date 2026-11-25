@@ -42,6 +42,10 @@ PARAMS = ModelRequestParameters(
 
 @pytest.mark.parametrize('provider', CAPTURED_PROVIDERS)
 async def test_each_voice_is_read_back(provider: CapturedProvider, allow_model_requests: None) -> None:
+    """Each provider's system, user, assistant, tool-result and tool-definition text comes back in its voice.
+
+    Not a VCR test: `capture` answers the request offline, and what it checks is the request the model built.
+    """
     captured = await capture(provider, HISTORY, PARAMS)
     markers = ('SYSTEM_MARK', 'USER_MARK', 'ASSISTANT_MARK', 'RESULT_MARK', 'TOOL_MARK', 'ARG_MARK')
     assert {marker: captured.voices_of(marker) for marker in markers} == {

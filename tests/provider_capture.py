@@ -48,6 +48,7 @@ with try_import() as cohere_available:
 
 with try_import() as bedrock_available:
     import boto3
+    from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
 
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
@@ -119,9 +120,9 @@ class _Capture:
         self.bodies.append(json.dumps(params, default=str).encode())
         raise _Captured()
 
-    def bedrock_client(self) -> Any:
+    def bedrock_client(self) -> BedrockRuntimeClient:
         """A Bedrock Runtime client that records each call's parameters before botocore builds the request."""
-        client = boto3.client(
+        client: BedrockRuntimeClient = boto3.client(  # pyright: ignore[reportUnknownMemberType]
             'bedrock-runtime', region_name='us-east-1', aws_access_key_id='test', aws_secret_access_key='test'
         )
         client.meta.events.register('before-parameter-build.bedrock-runtime', self.handle_bedrock)
