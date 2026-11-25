@@ -381,6 +381,11 @@ class SandboxPlugin(Plugin):
 
     def _mint_in_background(self) -> None:
         """Mint without holding up the prompt; the idle row repaints each second, so the link shows once it arrives."""
+        sandbox = self.current()
+        # Only for a sandbox this session already reached: reaching one starts it if it is stopped, which a
+        # conversation opened only to read must not do. The next turn or `/computer-use on` gets its link.
+        if sandbox is None or sandbox.backend is None:
+            return
         if self._minting is None or self._minting.done():
             self._minting = asyncio.create_task(self._mint_watch_link(), name='pax-watch-live')
 

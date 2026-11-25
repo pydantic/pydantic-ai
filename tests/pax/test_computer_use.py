@@ -510,19 +510,29 @@ async def test_the_status_row_links_to_the_desktop_while_it_is_on(
     await plugin.computer_use_command(['off'])
     assert row(plugin) == ['fake sandbox', '']
 
-    # A Pax resuming the conversation gets its prompt back at once, and the link shows once the desktop is up.
-    linked.booted = anyio.Event()
+    # A Pax resuming the conversation leaves a stopped sandbox alone, so no link until a turn reaches it.
     resumed_loaded = load(checkout, Transcript(messages=[*loaded.host.conversation.messages[:-2]]))
+    resumed = plugin_of(resumed_loaded)
     await resumed_loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
-    await resumed_loaded.dispatch(ConversationChanged(conversation_id='resumed', title=None))
-    assert row(plugin_of(resumed_loaded)) == ['fake sandbox (computer-use)', '']
+    assert row(resumed) == ['fake sandbox (computer-use)', ''] and len(linked.links) == 1
+    await resumed_loaded.dispatch(TurnStart(text='go'))
+    assert row(resumed) == ['fake sandbox', watch(1)]
+
+    # Shown again once reached, it gets its prompt back at once, and the link shows once the desktop is up.
+    sandbox_shown = resumed.current()
+    assert sandbox_shown is not None
+    sandbox_shown.watch_url = None
+    linked.booted = anyio.Event()
+    for _ in range(2):  # Shown twice while it runs, it still mints once.
+        await resumed_loaded.dispatch(ConversationChanged(conversation_id='resumed', title=None))
+    assert row(resumed) == ['fake sandbox (computer-use)', '']
     async with anyio.create_task_group() as tg:
         # A prompt sent at once waits for that mint instead of starting another.
         tg.start_soon(resumed_loaded.dispatch, TurnStart(text='go'))
         await anyio.wait_all_tasks_blocked()
         linked.booted.set()
-    assert row(plugin_of(resumed_loaded)) == ['fake sandbox', watch(1)]
-    assert len(linked.links) == 2, 'one mint at a time'
+    assert row(resumed) == ['fake sandbox', watch(2)]
+    assert len(linked.links) == 3, 'one mint at a time'
     await plugin.on_session_end(SessionEnd(reason='exit'))
     await plugin_of(resumed_loaded).on_session_end(SessionEnd(reason='exit'))
 
