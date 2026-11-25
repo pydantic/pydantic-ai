@@ -5466,7 +5466,11 @@ class _LengthFunctionModel(FunctionModel):
 
 @pytest.mark.parametrize('last', [True, False], ids=['last', 'not_last'])
 async def test_streamed_output_tool_call_with_empty_args_is_cut_off_only_when_last(last: bool):
-    """In `run_stream()`, as in `run()`, only the tool call the response ended on can have been cut off by the token limit."""
+    """In `run_stream()`, as in `run()`, only the tool call the response ended on can have been cut off by the token limit.
+
+    Not a VCR test: no provider reliably ends a response at `max_tokens` with an empty-args output tool call followed by
+    another part, so the stream is scripted; `test_anthropic_tool_output_cut_off_by_max_tokens` records the last-part case.
+    """
 
     async def stream(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
         yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='')}
