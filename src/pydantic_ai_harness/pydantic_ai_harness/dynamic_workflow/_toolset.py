@@ -62,6 +62,7 @@ from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
     PrintCapture,
+    in_durable_task_orchestration,
     in_temporal_workflow,
 )
 from pydantic_ai_harness._monty_turns import is_sandbox_panic
@@ -99,7 +100,8 @@ class WorkflowResourceLimits(TypedDict, total=False):
     nor a concurrent `asyncio.gather` batch, because during that wait the script is suspended on
     the host, not running sandbox code. There is no default cap. Set one to bound a pure-CPU
     `while True` loop, which would otherwise burn a core in the sandbox worker (and block the
-    workflow thread under Temporal) -- the one runaway the sub-agent budgets do not catch.
+    workflow thread under Temporal or Azure Durable Task) -- the one runaway the sub-agent
+    budgets do not catch.
     Sleeping is not execution time either, so when set, the script may also sleep for up to this
     long in total."""
 
@@ -108,6 +110,14 @@ class WorkflowResourceLimits(TypedDict, total=False):
 
     max_memory: int
     """Maximum sandbox memory, in bytes."""
+
+
+def _uses_portal() -> bool:
+    """Whether Monty must be called through a portal: in replaying code whose loop Monty's thread can't wake.
+
+    That is a Temporal workflow's loop or a Durable Task orchestrator's loop (see `call_monty`).
+    """
+    return in_temporal_workflow() or in_durable_task_orchestration()
 
 
 def _default_resource_limits() -> ResourceLimits:
@@ -1045,7 +1055,6 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             completed_dispatches.append(_CompletedDispatch(agent_name=agent_name, task=task, result=output))
             return output
 
-        in_temporal = in_temporal_workflow()
         bridge = _lambda_bridge()
         branches = _LambdaBranches(bridge, self.tool_name) if bridge is not None else None
         sequential = any(_runs_under_dbos(w.agent) for w in self._by_name.values())
@@ -1057,7 +1066,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         monty = MontyRunState()
         try:
             session = await monty.get_session(
-                type_check=True, type_check_stubs=type_check_stubs, limits=limits, use_portal=in_temporal
+                type_check=True, type_check_stubs=type_check_stubs, limits=limits, use_portal=_uses_portal()
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for

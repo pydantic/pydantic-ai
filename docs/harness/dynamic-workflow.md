@@ -163,7 +163,7 @@ These limits guard the orchestration script's own memory, not the sub-agents it 
 DynamicWorkflow(agents=[...], resource_limits={'max_duration_seconds': 30})
 ```
 
-`max_duration_seconds` counts sandbox execution time, excluding waits for sub-agents. There is no default duration cap. A CPU-bound loop that never awaits is not stopped by sub-agent budgets and blocks the workflow thread under Temporal. Set `max_duration_seconds` to stop such loops. A partial limits dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource limits; the separate 10 MiB print cap remains. `max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
+`max_duration_seconds` counts sandbox execution time, excluding waits for sub-agents. There is no default duration cap. A CPU-bound loop that never awaits is not stopped by sub-agent budgets and blocks the workflow thread under Temporal or Azure Durable Task. Set `max_duration_seconds` to stop such loops. A partial limits dict overrides only the named caps. Pass `'unlimited'` to remove sandbox resource limits; the separate 10 MiB print cap remains. `max_duration_secs` is the deprecated name of `max_duration_seconds` and still works, with a warning.
 
 ### Workflows do not nest
 
@@ -267,6 +267,15 @@ branch has a child context of its own, whose step IDs derive from the branch's p
 sub-agent's model requests and tool calls keep their own checkpoints. A branch's output is checkpointed
 with the `serdes` in the sub-agent's `step_config`, like its steps. Recovery returns each finished
 branch's recorded output, and an unfinished branch replays its own checkpoints and runs on from there.
+
+[`AzureDurableTaskDurability`](azure-durable-task.md) runs the script in orchestrator code, like
+Code Mode's `run_code`, and re-runs it against the recorded results each time the SDK replays the orchestrator, which it does
+after every activity. Attach it to the orchestrating agent and to each sub-agent whose model requests
+and tools should run as activities, and register every agent on the worker. Gathered sub-agents
+schedule their activities concurrently, and an `asyncio.sleep` in the script is a durable timer. While
+the script computes, the orchestrator thread waits for it. As under Temporal, a `max_duration_seconds`
+you set still applies, so a script that runs close to it can stop at a different point on replay and
+fail the orchestration with a `NonDeterminismError`.
 
 Under other engines, sub-agents run concurrently.
 

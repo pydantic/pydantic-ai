@@ -115,6 +115,8 @@ completed results from history. This shapes how you write agents for it:
 - **Code Mode runs snippets in orchestrator code.** `CodeMode`'s `run_code` re-runs its snippets
   on every replay, with nested tool calls as activities; see [Code Mode's Azure Durable Task
   section](../code_mode/README.md#azure-durable-task-durability).
+  `DynamicWorkflow` scripts run there too, with sub-agent model requests and tools as activities; see
+  [Dynamic Workflow's durable engines section](../dynamic_workflow/README.md#running-under-other-durable-engines).
 - **Names are persisted.** Activity names come from the agent's `name`, toolset IDs and tool names.
   Don't rename them while orchestrations that use them are still running.
 - **Token counts are activities.** With `count_tokens_before_request=True`, the count ahead of each
