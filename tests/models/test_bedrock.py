@@ -206,12 +206,12 @@ async def test_bedrock_model_blocks_requests_when_disabled():
         await model.count_tokens(messages, None, model_request_parameters)
 
 
-class _StubBedrockResponseClient(_StubBedrockClient):
+class _StubBedrockResponseClient:
     """Minimal Bedrock client whose `converse` returns the provided response."""
 
     def __init__(self, response: dict[str, Any]):
-        super().__init__(ClientError({'Error': {'Code': 'Unused'}}, 'Converse'))
         self._response = response
+        self.meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
 
     def converse(self, **_: Any) -> dict[str, Any]:
         return self._response
@@ -9841,7 +9841,7 @@ async def test_bedrock_empty_malformed_response_falls_back(allow_model_requests:
         'metrics': {'latencyMs': 1},
     }
     model = BedrockConverseModel(
-        'us.amazon.nova-micro-v1:0', provider=_StubBedrockProvider(_StubBedrockResponseClient(response))
+        'us.amazon.nova-micro-v1:0', provider=_StubBedrockProvider(cast(Any, _StubBedrockResponseClient(response)))
     )
     agent = Agent(model, capabilities=[ModelFallback(TestModel(custom_output_text='fallback used'))])
 

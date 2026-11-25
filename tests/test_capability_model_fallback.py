@@ -2937,7 +2937,7 @@ class _StreamEndsWithError(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
+    ) -> AsyncGenerator[StreamedResponse]:
         async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
             stream.finish_reason = 'error'
             yield stream
