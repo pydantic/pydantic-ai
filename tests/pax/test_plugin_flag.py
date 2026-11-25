@@ -1,5 +1,6 @@
 """`pax -x NAME`: load a plugin for one launch, whatever is saved, and save nothing that says it is enabled."""
 
+import argparse
 import io
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -151,27 +152,49 @@ async def test_reloading_a_launched_plugin_keeps_it_in_the_other_sessions(tmp_pa
     await first.close('exit')
 
 
+async def test_removing_a_launched_plugin_removes_it_from_the_launch(tmp_path: Path) -> None:
+    """`/plugins remove` turns it off in every session, and in the ones started later in the launch."""
+    store = SettingsStore(tmp_path / 'config.db')
+    first = _shell(store)
+    await first.loader.load_all()
+    second = _shell(store, process=first.process)
+    await second.loader.load_all()
+    await first.loader.remove('probe')
+    assert _loaded(first) == _loaded(second) == []
+    later = _shell(store, process=first.process)
+    await later.loader.load_all()
+    assert _loaded(later) == []
+    for shell in (later, second, first):
+        await shell.close('exit')
+
+
 async def test_a_project_declaration_needs_approval_first(tmp_path: Path) -> None:
     """`-x` doesn't stand in for `/plugins enable`, the approval of what a repository declares."""
     store = SettingsStore(tmp_path / 'config.db')
     project = ProjectSettings(plugins=(PROBE.model_copy(update={'id': 'pinned'}),))
+    with pytest.raises(ValueError, match='pinned: declared by the project; approve it with /plugins enable first'):
+        create_shell(
+            Agent(TestModel(call_tools=[])),
+            deps=None,
+            plugins=(),
+            usage_limits=None,
+            console=Console(file=io.StringIO()),
+            settings=None,
+            store=store,
+            builtin_plugins=[],
+            project=project,
+            headless=True,
+            launch_plugins=['pinned'],
+        )
+    # Named in the launch some other way, it still doesn't load.
     shell = _shell(store, project=project)
     shell.process.plugins.launch |= {'pinned'}
-    with pytest.raises(ValueError, match='pinned: declared by the project; approve it with /plugins enable first'):
-        shell.process.plugins.check_launch({'pinned': project.plugins[0]}, console=Console(file=io.StringIO()))
     await shell.loader.load_all()
     assert _loaded(shell) == ['probe']
     await shell.close('exit')
 
 
-def test_unknown_plugin_lists_the_available_ones(
-    tmp_path: Path, run_cli: CliRunner, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # The launch fails first.
-    async def chat(*args: object, **kwargs: object) -> None:  # pragma: no cover
-        raise AssertionError('started')
-
-    monkeypatch.setattr('pydantic_ai_pax.app.chat', chat)
+def test_unknown_plugin_lists_the_available_ones(tmp_path: Path, run_cli: CliRunner) -> None:
     result = run_cli('--database', str(tmp_path / 'config.db'), '-x', 'sandbox', '-x', 'nope', cwd=tmp_path)
     assert result.returncode == 2
     assert 'Unknown plugin nope; available: ' in result.stderr
@@ -222,3 +245,25 @@ def test_plugins_reach_headless_and_web(tmp_path: Path, monkeypatch: pytest.Monk
         except SystemExit as exit:
             assert exit.code == 0
     assert seen == [['web'], ['web']]
+
+
+async def test_launch_plugins_need_plugins(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match='`launch_plugins` needs `load_plugins=True`'):
+        await headless.run_headless(
+            text='go',
+            settings=Settings(model=None),
+            store=SettingsStore(tmp_path / 'config.db'),
+            project=ProjectSettings(),
+            agent=Agent(TestModel(), deps_type=type(None)),
+            launch_plugins=['sandbox'],
+        )
+
+
+def test_update_restarts_with_the_plugins_still_launched() -> None:
+    """A plugin disabled or removed during the launch stays off after `/update`, as after `/reload`."""
+    args = argparse.Namespace(web=False, agent=None, model=None, request_limit=None, database=None, plugin=['a', 'b'])
+    assert cli.relaunch_argv(args, executable='/b/pax', session_id=None, launch_plugins=['b']) == [
+        '/b/pax',
+        '--plugin',
+        'b',
+    ]

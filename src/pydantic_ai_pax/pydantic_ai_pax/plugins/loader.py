@@ -880,6 +880,8 @@ class SessionPlugins(Generic[DepsT]):
         _requested('remove', name)
         requires = self._requirements(entry)
         await self.unload(name)
+        # Removed on purpose, like a disable: a session started later in this launch doesn't load it again.
+        self._process.launch -= {name}
         checkout_notice = ''
         # A relative path never names a drop-in, only an approval saved before paths were anchored: forget it.
         if entry.path is not None and entry.path.is_absolute() and not entry.shipped:

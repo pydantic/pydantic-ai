@@ -3359,12 +3359,13 @@ only, even when it is disabled. It works in the terminal, with `-p`, and with
 `/plugins` lists as built in, added, or a drop-in file; an unknown one fails
 before Pax starts, listing the ones there are. A plugin the project's
 `.clai/settings.json` declares isn't loaded this way: approve it with
-`/plugins enable NAME`, as usual. Nothing saved
-changes: the next `pax` without `-x` leaves a disabled plugin off, even if the
-plugin saved its settings meanwhile. `/plugins disable NAME` unloads it, saves it
-disabled as usual, and keeps it off through `/reload`; `/update` restarts the new
-build with the same `-x` options, which load it again. `-x` can't be combined with `--agent`, which loads no
-plugins.
+`/plugins enable NAME`, as usual.
+
+Nothing saved changes: the next `pax` without `-x` leaves a disabled plugin off,
+even if the plugin saved its settings meanwhile. `/plugins disable NAME` or
+`/plugins remove NAME` turns it off for the rest of the launch, also through
+`/reload` and `/update`, and is saved as usual. `-x` can't be combined with
+`--agent`, which loads no plugins.
 
 ### Built-in plugins at a glance
 

@@ -205,7 +205,8 @@ async def chat(
     `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
     session only; saved plugin preferences are untouched.
     `launch_plugins` names plugins to load for this launch even when disabled, as `pax -x NAME` does; nothing
-    saved changes, and `/reload` keeps them.
+    saved changes, and `/reload` keeps them. A name no plugin has, one only the project declares, or any with
+    `load_plugins=False` raises `ValueError` before the session starts.
     `resume` restores a saved conversation (`''` opens the browser); `fork_session` then continues in a copy.
     `session_id` names the new conversation, or the copy. These follow the CLI's rules: a bad combination,
     or a `session_id` that is not a UUID, raises `ValueError` before anything is drawn.

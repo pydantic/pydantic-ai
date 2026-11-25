@@ -183,7 +183,6 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
         if args.worktree is not None:
             worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
         project = load_project_settings(Path.cwd(), store=store)
-        _check_plugins(args.plugin, store=store, project=project)
         _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
         settings_for = _settings_for(
@@ -291,20 +290,6 @@ def _frozen_imports(*, enabled: bool) -> 'Generator[None]':
         gc.enable()
 
 
-def _check_plugins(names: 'Sequence[str]', *, store: 'SettingsStore', project: 'ProjectSettings') -> None:
-    """Fail on a `--plugin` name that is neither built in, saved, a drop-in, nor declared by the project."""
-    if not names:
-        return
-    from rich.console import Console
-
-    from pydantic_ai_pax.app import STOCK_PLUGINS
-    from pydantic_ai_pax.config.settings_store import canonical_plugin_declarations
-    from pydantic_ai_pax.plugins.process_plugins import ProcessPlugins
-
-    plugins = ProcessPlugins[None](store=store, builtin=STOCK_PLUGINS, launch=names)
-    plugins.check_launch(canonical_plugin_declarations(project.plugins), console=Console(stderr=True))
-
-
 def _resolve_paths(args: argparse.Namespace) -> None:
     """Resolve `--database` and `--token-file` against the directory Pax was launched in."""
     if args.database is not None:
@@ -331,6 +316,7 @@ def _relaunch(args: argparse.Namespace, relaunch: 'Relaunch', *, launched: 'Work
         executable=relaunch.executable,
         session_id=relaunch.session_id,
         new_session_id=relaunch.new_session_id,
+        launch_plugins=relaunch.launch_plugins,
     )
     _remember_worktree(launched)
     if relaunch.web is not None:
@@ -471,12 +457,18 @@ def _remember_worktree(worktree: 'Worktree | None') -> None:
 
 
 def relaunch_argv(
-    args: argparse.Namespace, *, executable: str, session_id: str | None, new_session_id: str | None = None
+    args: argparse.Namespace,
+    *,
+    executable: str,
+    session_id: str | None,
+    new_session_id: str | None = None,
+    launch_plugins: 'Sequence[str] | None' = None,
 ) -> list[str]:
     """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`.
 
     An unsaved conversation started with `--session-id` restarts under `new_session_id`. The token
-    `--token-file` names stays in its file.
+    `--token-file` names stays in its file. `launch_plugins`, the `-x` plugins the launch still loads,
+    replaces `args.plugin`, so one disabled or removed meanwhile stays off.
     """
     argv = [executable]
     if args.web:
@@ -491,7 +483,7 @@ def relaunch_argv(
         argv += ['--model', args.model]
     if args.request_limit is not None:
         argv += ['--request-limit', str(args.request_limit)]
-    for name in args.plugin:
+    for name in args.plugin if launch_plugins is None else launch_plugins:
         argv += ['--plugin', name]
     if args.database is not None:
         argv += ['--database', str(args.database)]

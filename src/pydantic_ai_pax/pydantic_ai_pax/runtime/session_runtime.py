@@ -54,7 +54,7 @@ from pydantic_ai_pax.commands import (
 )
 from pydantic_ai_pax.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PluginSettings, Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
-from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.config.settings_store import SettingsStore, canonical_plugin_declarations
 from pydantic_ai_pax.errors import error_message
 from pydantic_ai_pax.models import login_names
 from pydantic_ai_pax.models.chains import settings_model as chain_settings_model
@@ -175,6 +175,22 @@ def _process(
     )
 
 
+def _check_launch(
+    names: Sequence[str],
+    *,
+    process: ClaiProcess[DepsT],
+    project: ProjectSettings,
+    load_plugins: bool,
+    console: Console,
+) -> None:
+    """Fail on `launch_plugins` a session can't load: unknown, only the project's, or with plugins off."""
+    if not names:
+        return
+    if not load_plugins:
+        raise ValueError('`launch_plugins` needs `load_plugins=True`: a session without plugins loads none of them.')
+    process.plugins.check_launch(canonical_plugin_declarations(project.plugins), console=console)
+
+
 def _fast_command(
     args: list[str],
     *,
@@ -245,6 +261,8 @@ def create_shell(
     it gets its own over `store`, `builtin_plugins` and `launch_plugins`, which are otherwise unused.
     `signals` lets Ctrl+C cancel this session's turns; only the session the terminal shows takes it.
     `settings_for` gives the settings Pax starts with beside a project file, which `/project` applies from.
+    A `launch_plugins` name that no plugin has, or one only `project` declares, raises `ValueError`, as does
+    `launch_plugins` with `load_plugins=False`.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
@@ -252,6 +270,7 @@ def create_shell(
         else Settings(model=None)
     )
     process = _process(process=process, store=store, builtin_plugins=builtin_plugins, launch_plugins=launch_plugins)
+    _check_launch(launch_plugins, process=process, project=project, load_plugins=load_plugins, console=console)
     store, conversations = process.store, process.conversations
     session = Session(
         agent,
@@ -901,6 +920,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
             new_session_id=summary.id if not summary.revision and self.sessions.chosen else None,
             web=web,
+            launch_plugins=sorted(self.process.plugins.launch),
         )
 
     @property
