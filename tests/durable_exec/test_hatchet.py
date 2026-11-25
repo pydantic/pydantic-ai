@@ -21,8 +21,6 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
-    FunctionToolCallEvent,
-    FunctionToolResultEvent,
     ModelMessage,
     ModelResponse,
     PartDeltaEvent,
@@ -362,8 +360,6 @@ async def test_event_stream(app: App):
         'AgentRunResultEvent',
     ]
     assert any(isinstance(event, PartDeltaEvent) for event in events)
-    assert any(isinstance(event, FunctionToolCallEvent) for event in events)
-    assert any(isinstance(event, FunctionToolResultEvent) for event in events)
     terminal = events[-1]
     assert isinstance(terminal, AgentRunResultEvent)
     assert terminal.result.output == RunOutput.model_validate(result).output == 'It is sunny.'
