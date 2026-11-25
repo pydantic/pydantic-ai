@@ -327,18 +327,16 @@ def warn_encrypted_value_not_persisted(ag_ui_version: str) -> None:
     """Warn that the claims riding on `encrypted_value` are lost when dumping below `ENCRYPTED_VALUE_VERSION`.
 
     The carrier only exists from 0.1.11, so on older versions features like lazy capabilities and tool
-    search silently forget their state across a round-trip, harness retry feedback reloads as an
-    operator-authored system prompt or a user prompt, depending on the voice it was dumped in, and
-    text and tool calls lose their provider data, such as Gemini's thought signatures; upgrading the
-    client fixes all three.
+    search silently forget their state across a round-trip, and harness retry feedback reloads as an
+    operator-authored system prompt or a user prompt, depending on the voice it was dumped in;
+    upgrading the client fixes both.
     """
     warnings.warn(
         f'ag-ui-protocol {ag_ui_version} predates the `encrypted_value` field (added in 0.1.11), so '
         'the claims Pydantic AI carries there cannot survive a dump/load round-trip: the `tool_kind` '
         'of typed tool parts (e.g. lazy capabilities, tool search) is dropped and those parts reload '
-        'as their base classes, a `RetryFeedbackPart` reloads as a plain `SystemPromptPart` or '
-        '`UserPromptPart`, and the `provider_details` of a `TextPart` or `ToolCallPart` (e.g. Gemini '
-        'thought signatures) is dropped. '
+        'as their base classes, and a `RetryFeedbackPart` reloads as a plain `SystemPromptPart` or '
+        '`UserPromptPart`. '
         'Upgrade the client to ag-ui-protocol >= 0.1.11 to preserve them.',
         UserWarning,
         stacklevel=3,

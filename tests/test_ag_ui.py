@@ -2961,12 +2961,12 @@ def _gemini_model(mocker: MockerFixture, *responses: Sequence[Part]) -> tuple[Go
     return model, generate
 
 
-async def _gemini_history(mocker: MockerFixture) -> list[ModelMessage]:
+async def _gemini_history(mocker: MockerFixture, text: str = 'Let me check.') -> list[ModelMessage]:
     """A run whose answer has text and a function call that both carry a thought signature, as Gemini 3 sends them."""
     model, _ = _gemini_model(
         mocker,
         [
-            Part(text='Let me check.', thought_signature=b'text-sig'),
+            Part(text=text, thought_signature=b'text-sig'),
             Part(
                 function_call=GeminiFunctionCall(name='lookup', args={'q': 1}, id='call-1'),
                 thought_signature=b'call-sig',
@@ -2997,17 +2997,21 @@ async def _gemini_signatures(mocker: MockerFixture, history: list[ModelMessage])
 
 @requires_ag_ui('0.1.11')
 @pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
-async def test_dump_load_roundtrip_gemini_thought_signatures(allow_model_requests: None, mocker: MockerFixture) -> None:
+@pytest.mark.parametrize('text', [pytest.param('Let me check.', id='text'), pytest.param('', id='empty-text')])
+async def test_dump_load_roundtrip_gemini_thought_signatures(
+    allow_model_requests: None, mocker: MockerFixture, text: str
+) -> None:
     """Gemini's thought signatures on text and function calls come back from the round trip, and are sent again.
 
     `GoogleModel` keeps them in the parts' `provider_details`, and sends them only to the system that issued them, so
     the parts' `provider_name` and the response's `canonical_system` come back too. Lost, the text's signature is
-    dropped and the function call gets the dummy `skip_thought_signature_validator`.
+    dropped and the function call gets the dummy `skip_thought_signature_validator`. Gemini can sign empty text, which
+    `GoogleModel` keeps for its signature, so that comes back too.
 
     The client is mocked rather than recorded because the claim is that two renderings match: the request that
     continues the reloaded history sends what the request continuing the server's own history sends.
     """
-    history = await _gemini_history(mocker)
+    history = await _gemini_history(mocker, text)
     reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(history, ag_ui_version='0.1.11'))
 
     sent = await _gemini_signatures(mocker, reloaded)
@@ -3141,9 +3145,13 @@ def test_load_malformed_part_provider_claims(claim: str | dict[str, Any]) -> Non
 
 @pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
 async def test_dump_gemini_thought_signatures_below_0_1_11(allow_model_requests: None, mocker: MockerFixture) -> None:
-    """Before 0.1.11 there's no `encrypted_value` to carry the signatures in, so they're lost, and the dump warns."""
+    """Before 0.1.11 there's no `encrypted_value` to carry the signatures in, so they're lost, as they always were.
+
+    The dump doesn't warn: the loss predates the carrier, so warning would change what a dump for an old client does.
+    """
     history = await _gemini_history(mocker)
-    with pytest.warns(UserWarning, match='predates the `encrypted_value` field'):
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
         dumped = AGUIAdapter.dump_messages(history, ag_ui_version='0.1.10')
 
     assert await _gemini_signatures(mocker, AGUIAdapter.load_messages(dumped)) == snapshot(

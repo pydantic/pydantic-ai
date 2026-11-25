@@ -881,7 +881,6 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 # arming the warning for it would start warning users who never hit retry feedback.
                 and part.tool_kind is not None
             )
-            or (isinstance(part, (TextPart, ToolCallPart)) and part.provider_details is not None)
             for msg in messages
             for part in msg.parts
         ):
@@ -967,12 +966,13 @@ def _load_assistant_message(assistant_msg: AssistantMessage, context: _LoadMessa
     last = builder.messages[-1] if builder.messages else None
     if (content or tool_calls_list) and isinstance(last, ModelResponse) and last.parts == [TextPart(content='')]:
         builder.messages.pop()
+    provider = parse_encrypted_text_provider_metadata(
+        assistant_msg.encrypted_value if context.use_encrypted_value else None
+    )
     # An empty answer still keeps its place as a response, so the request after it doesn't
-    # merge into the one before it.
-    if content or (content == '' and not tool_calls_list):
-        provider = parse_encrypted_text_provider_metadata(
-            assistant_msg.encrypted_value if context.use_encrypted_value else None
-        )
+    # merge into the one before it. Empty text that carries provider fields, such as a Gemini
+    # thought signature, is kept beside tool calls too.
+    if content or (content == '' and (not tool_calls_list or provider)):
         builder.add(
             TextPart(
                 content=content,
