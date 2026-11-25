@@ -479,6 +479,10 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         that carries the run's result, so they can be handed to a [`UIAdapter`][pydantic_ai.ui.UIAdapter]. The
         topic keeps its messages after the run, so a consumer can subscribe late, or again.
 
+        A durable task that's cancelled publishes no terminal event, because Hatchet stops a task it evicts the same
+        way and an evicted task's run continues once it's restored. A consumer that has to notice a cancelled run
+        checks the workflow run's status, e.g. with `hatchet.runs.aio_get_status(workflow_run_id)`.
+
         Args:
             workflow_run_id: The workflow run ID of the durable task running the agent.
             output_type: The agent's output type, so the terminal event's result is decoded into it.

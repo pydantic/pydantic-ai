@@ -116,6 +116,9 @@ async for event in durability.stream_agent_events(ref.workflow_run_id):
 
 Model events are published from the model request task that produces them, so tokens stream through while the model responds. A replayed durable task publishes its events again, and the iterator yields each one once. If the run fails, the iterator ends early and its `error` holds the name of the exception's class, but not its message, which can carry a provider's error body.
 
+!!! note "A cancelled durable task publishes no terminal event"
+    Hatchet stops a durable task it evicts the same way as one that's cancelled, and an evicted task's run continues once it's restored, so neither publishes a terminal event and the iterator keeps waiting. To notice a cancelled run, check the workflow run's status alongside the stream, e.g. with `hatchet.runs.aio_get_status(workflow_run_id)`.
+
 ## Task Configuration
 
 `task_config` is the base [`HatchetTaskConfig`][pydantic_ai.durable_exec.hatchet.HatchetTaskConfig] for every task, by default a 60-second `execution_timeout` and no retries. `model_task_config`, `event_stream_handler_task_config` and `toolset_task_config` (keyed by toolset ID) are merged on top of it:
