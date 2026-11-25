@@ -14,24 +14,32 @@ import gzip
 import hashlib
 import mimetypes
 import re
-import secrets
-from collections.abc import Awaitable, Callable, MutableMapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, TypeVar
-from urllib.parse import parse_qs
 
 import anyio
 from anyio import to_thread
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field, JsonValue, TypeAdapter, ValidationError
-from starlette.datastructures import Headers
 
 from pydantic_ai_harness.ask_user import AskUserAnswer
 from pydantic_ai_pax.builtin_plugins.web.changes import Changes, ChangeScope, session_changes
 from pydantic_ai_pax.builtin_plugins.web.channel import SessionChannel, Switch
 from pydantic_ai_pax.builtin_plugins.web.framing import FRAME_SOURCES
+
+# Re-exported: the web plugin's modules and tests import these from here.
+from pydantic_ai_pax.builtin_plugins.web.guard import (
+    HEADER as HEADER,
+    ASGIApp as ASGIApp,
+    Guard as Guard,
+    Message as Message,
+    Receive as Receive,
+    Scope as Scope,
+    Send as Send,
+)
 from pydantic_ai_pax.builtin_plugins.web.live import RESYNC
 from pydantic_ai_pax.builtin_plugins.web.orchestrator import Orchestrator
 from pydantic_ai_pax.builtin_plugins.web.protocol import (
@@ -57,63 +65,11 @@ from pydantic_ai_pax.runtime.git_actions import GitStatus, PullRequestDraft
 from pydantic_ai_pax.runtime.image_codec import decode_images
 
 STATIC = Path(__file__).with_name('static')
-HEADER = 'x-clai-token'
 UNBUILT = 'The web UI is not built in this checkout: run `npm ci && npm run build` in src/pydantic_ai_pax/web-ui.'
 
-Scope = MutableMapping[str, object]
-Message = MutableMapping[str, object]
-Receive = Callable[[], Awaitable[Message]]
-Send = Callable[[Message], Awaitable[None]]
-ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 ResultT = TypeVar('ResultT')
 MenuPath = Annotated[tuple[str, ...], Query(alias='menu')]
 """`?menu=KEY`, once per row chosen from a declared settings menu to reach the menu that row opens."""
-
-
-class Guard:
-    """Refuse any request without the token, for another host name, or, for the WebSocket, from another origin."""
-
-    def __init__(self, app: ASGIApp, *, token: str, hosts: frozenset[str]) -> None:
-        self.app = app
-        self.token = token
-        self.hosts = hosts
-        self.origins = frozenset(f'http://{host}' for host in hosts)
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        kind = scope['type']
-        if kind not in ('http', 'websocket'):
-            await self.app(scope, receive, send)
-            return
-        if self._allowed(kind, str(scope['path']), Headers(scope=scope), _query(scope)):
-            await self.app(scope, receive, send)
-        elif kind == 'websocket':
-            await send({'type': 'websocket.close', 'code': 1008})
-        else:
-            refused = Response(
-                "Open the address Pax printed: it carries this launch's access token.",
-                status_code=403,
-                media_type='text/plain',
-            )
-            await refused(scope, receive, send)
-
-    def _allowed(self, kind: object, path: str, headers: Headers, query: dict[str, list[str]]) -> bool:
-        if headers.get('host') not in self.hosts:
-            return False
-        if kind == 'websocket':
-            return headers.get('origin') in self.origins and self._valid(query.get('token', [''])[0])
-        if path.startswith('/api/'):
-            return self._valid(headers.get(HEADER, ''))
-        if path.startswith('/assets/'):
-            return True
-        return self._valid(query.get('token', [''])[0])
-
-    def _valid(self, token: str) -> bool:
-        return secrets.compare_digest(token.encode(), self.token.encode())
-
-
-def _query(scope: Scope) -> dict[str, list[str]]:
-    raw = scope.get('query_string', b'')
-    return parse_qs(raw.decode() if isinstance(raw, bytes) else '')
 
 
 class Input(BaseModel):

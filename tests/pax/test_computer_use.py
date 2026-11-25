@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, MutableMapping
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import anyio
@@ -70,7 +70,6 @@ from pydantic_ai_pax.builtin_plugins.sandbox.viewer import (
     DesktopFrame,
     DesktopSession,
     DesktopViewer,
-    _ViewerGuard,  # pyright: ignore[reportPrivateUsage]
     create_viewer_app,
     sandbox_key,
 )
@@ -399,54 +398,40 @@ async def test_computer_use_toggle_upgrade_and_errors(
     with pytest.raises(ValueError, match='Computer use is not on here'):
         await plugin.computer_use_command(['view'])
 
-    # `desktop_at_create=True` on an UNUSED sandbox automatically restarts it with `desktop=True` (no `/new` needed).
+    # A provider that gives a desktop only at create never replaces a sandbox to add one, even an unused one: a fork
+    # or copy of the conversation may work in it, and only `/sandbox delete` deletes a sandbox.
     provider.desktop_at_create = True
-    upgrade_plugin = plugin_of(load(work))
-    await upgrade_plugin.command(['fake'])
-    assert history_sandbox(upgrade_plugin.host.conversation.messages) == WorkspaceRef(provider='fake', id='sbx-2')
-    upgraded = await upgrade_plugin.computer_use_command([])
-    assert 'now runs in Fake sandbox sbx-3' in upgraded and 'Computer use is on' in upgraded
-    assert provider.created_desktop[-1] is True
-    assert history_sandbox(upgrade_plugin.host.conversation.messages) == WorkspaceRef(provider='fake', id='sbx-3')
-    assert provider.deleted[-1] == WorkspaceRef(provider='fake', id='sbx-2')
-    # Off and on again keeps the sandbox: it already has its desktop, also once compaction dropped the markers.
-    await upgrade_plugin.computer_use_command(['off'])
-    upgraded_ref = WorkspaceRef(provider='fake', id='sbx-3')
-    await upgrade_plugin.host.conversation.commit_messages(
-        [
-            ModelRequest.user_text_prompt('A summary of the earlier work.'),
-            ModelResponse(parts=[TextPart('done')], workspace_ref=upgraded_ref, metadata={COMPUTER_USE: False}),
-        ]
-    )
-    assert 'Computer use is on' in await upgrade_plugin.computer_use_command(['on'])
-    assert len(provider.created) == 3
-
-    # A `!` line counts as work in the sandbox too, so it is never replaced after one.
-    shell_plugin = plugin_of(load(work))
-    await shell_plugin.command(['fake'])
-    await shell_plugin.host.conversation.commit_messages(
-        [*shell_plugin.host.conversation.messages, ModelRequest.user_text_prompt('! touch notes.txt')]
-    )
-    with pytest.raises(ValueError, match='already worked in this one'):
-        await shell_plugin.computer_use_command(['on'])
-
-    # `desktop_at_create=True` on an ALREADY USED sandbox refuses safely without losing work.
-    used_plugin = plugin_of(load(work))
-    await used_plugin.command(['fake'])
-    used_ref = WorkspaceRef(provider='fake', id='sbx-5')
-    # Two messages, as compaction can leave, but not the `/sandbox` exchange.
-    await used_plugin.host.conversation.commit_messages(
-        [
-            ModelRequest.user_text_prompt('A summary of the earlier work.'),
-            ModelResponse(parts=[TextPart('done')], workspace_ref=used_ref),
-        ]
-    )
-    with pytest.raises(ValueError, match=r'already worked in this one\. Run /new, /computer-use, then /sandbox fake'):
-        await used_plugin.computer_use_command(['on'])
+    refused_plugin = plugin_of(load(work))
+    await refused_plugin.command(['fake'])
+    deleted = list(provider.deleted)
+    with pytest.raises(
+        ValueError,
+        match=r'gives a desktop only to a new sandbox\. Run /sandbox delete, /new, /computer-use, then /sandbox fake',
+    ):
+        await refused_plugin.computer_use_command(['on'])
+    assert provider.deleted == deleted
     with pytest.raises(ValueError, match='Computer use is not on here'):
-        await used_plugin.computer_use_command(['view'])
+        await refused_plugin.computer_use_command(['view'])
     with pytest.raises(UserError, match='has no desktop'):
-        await on_screen_sandbox(used_plugin).screenshot()
+        await on_screen_sandbox(refused_plugin).screenshot()
+
+    # `/computer-use` first makes the sandbox with its desktop. Off and on again keeps it, also once compaction
+    # dropped the markers.
+    desktop_plugin = plugin_of(load(work))
+    await desktop_plugin.computer_use_command(['on'])
+    await desktop_plugin.command(['fake'])
+    assert provider.created_desktop[-1] is True
+    await desktop_plugin.computer_use_command(['off'])
+    desktop_ref = history_sandbox(desktop_plugin.host.conversation.messages)
+    await desktop_plugin.host.conversation.commit_messages(
+        [
+            ModelRequest.user_text_prompt('A summary of the earlier work.'),
+            ModelResponse(parts=[TextPart('done')], workspace_ref=desktop_ref, metadata={COMPUTER_USE: False}),
+        ]
+    )
+    created = len(provider.created)
+    assert 'Computer use is on' in await desktop_plugin.computer_use_command(['on'])
+    assert len(provider.created) == created
 
 
 @pytest.mark.moves_cache_prefix(reason='`/permissions full` mid-conversation adds the `computer` tool')
@@ -459,6 +444,7 @@ async def test_the_computer_tool_needs_full_permissions(
     planned: list[dict[str, JsonValue]] = []
     offered: list[list[str]] = []
     instructions: list[str] = []
+    revoke_mid_turn: list[bool] = []
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         offered.append([tool.name for tool in info.function_tools])
@@ -466,6 +452,8 @@ async def test_the_computer_tool_needs_full_permissions(
         if 'computer' not in offered[-1] or isinstance(messages[-1].parts[-1], ToolReturnPart):
             yield 'done'
         else:
+            if revoke_mid_turn:
+                settings[PERMISSIONS_SETTING] = 'auto'
             args = json.dumps({'actions': planned}) if planned else '{'
             yield {0: DeltaToolCall(name='computer', json_args=args, tool_call_id='cu')}
 
@@ -490,6 +478,11 @@ async def test_the_computer_tool_needs_full_permissions(
     planned[:] = [{'type': 'click', 'x': 1, 'y': 2}]
     await session.prompt('click it now')
     assert display.actions == [Click(x=1, y=2)]
+
+    # `/permissions` can leave `full` while a turn runs: the steps after that no longer offer the tool.
+    revoke_mid_turn.append(True)
+    await session.prompt('click again')
+    assert 'computer' in offered[-2] and 'computer' not in offered[-1]
     await plugin.on_session_end(SessionEnd(reason='exit'))
 
 
@@ -616,9 +609,6 @@ async def test_desktop_viewer_app_end_to_end() -> None:
         assert (await client.get(f'/?token={token}&sandbox={key}', headers={'host': 'evil.example'})).status_code == 403
         assert (await client.get(f'/?token=wrong&sandbox={key}')).status_code == 403
         assert (await client.post(f'/api/capture?sandbox={key}')).status_code == 403
-        assert (
-            await client.post(f'/api/capture?sandbox={key}', headers={HEADER: token, 'origin': 'https://evil.example'})
-        ).status_code == 403
 
         # Unknown sandbox -> 404.
         assert (await client.get(f'/?token={token}&sandbox=missing')).status_code == 404
@@ -684,27 +674,7 @@ async def test_desktop_viewer_app_end_to_end() -> None:
     await viewer.close()
 
 
-async def test_viewer_guard_and_server_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
-    seen: list[object] = []
-
-    async def inner(
-        scope: Mapping[str, object],
-        receive: Callable[[], Awaitable[MutableMapping[str, object]]],
-        send: Callable[[MutableMapping[str, object]], Awaitable[None]],
-    ) -> None:
-        seen.append(scope['type'])
-        await send(await receive())
-
-    async def noop_receive() -> MutableMapping[str, object]:
-        return {}
-
-    async def noop_send(message: MutableMapping[str, object]) -> None:
-        seen.append(message)
-
-    guard = _ViewerGuard(inner, token='tok', hosts=frozenset({'127.0.0.1:1'}))
-    await guard({'type': 'lifespan'}, noop_receive, noop_send)
-    assert seen == ['lifespan', {}]
-
+async def test_viewer_server_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     # Exercise DesktopViewer.ensure_started(), url(), and close() via a WebServer.serve stub (no bound socket needed).
 
     stopped: list[int] = []

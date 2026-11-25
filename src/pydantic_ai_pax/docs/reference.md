@@ -3246,8 +3246,9 @@ not in the web UI.
   desktop.
 - **In a running sandbox**: `boxd`, `daytona`, `local smol`, `render`, `sprites` and `kubernetes`
   add a desktop to the sandbox you have. `e2b`, `modal`, `local boxlite` and `opensandbox` can only
-  give a desktop to a new sandbox: Pax replaces the sandbox if nothing has run in it yet (no turn and
-  no `!` line), and otherwise asks you to run `/new`, `/computer-use`, then `/sandbox PROVIDER`.
+  give a desktop to a new sandbox, so Pax asks you to run `/sandbox delete`, `/new`, `/computer-use`,
+  then `/sandbox PROVIDER`. It never deletes the sandbox itself, since a fork or copy of the conversation
+  may use it.
 - **Turning it off**: `/computer-use off` removes the `computer` tool from the next turn. The sandbox
   keeps running until `/sandbox delete`.
 - **Permissions**: the model gets the `computer` tool only under `/permissions full`, since the screen can

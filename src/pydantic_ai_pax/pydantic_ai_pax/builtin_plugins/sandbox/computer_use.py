@@ -15,6 +15,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.computer_use import (
+    COMPUTER_KIND,
     Click,
     ComputerCallPart,
     ComputerResult,
@@ -34,6 +35,7 @@ from pydantic_ai.computer_use import (
     Zoom,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.computer_use import ActionsPerformedEvent, ComputerUse, SupportsDisplay
 from pydantic_ai_pax.ui.rendering import theme
@@ -60,9 +62,6 @@ def computer_use_state(messages: Sequence[ModelMessage]) -> bool | None:
 def computer_use_on(messages: Sequence[ModelMessage]) -> bool:
     """Whether `/computer-use` is on, according to the history's latest response."""
     return computer_use_state(messages) is True
-
-
-"""The actions that only look at the screen, which run whatever `/permissions` is."""
 
 
 FrameCallback = Callable[[WorkspaceRef, bytes, Sequence[ComputerToolAction], ComputerResult | None], None]
@@ -212,12 +211,23 @@ def history_frames(
 
 @dataclass
 class _ObservedComputerUse(WrapperCapability[None]):
-    """Wraps harness `ComputerUse` to hand each screenshot, with the actions that led to it, to `on_frame`."""
+    """Wraps harness `ComputerUse` to hand each screenshot, with the actions that led to it, to `on_frame`.
+
+    It also drops the `computer` tool from any step that starts after `/permissions` left `full`, which a turn
+    already running can see.
+    """
 
     on_frame: FrameCallback = field(repr=False)
+    full_access: Callable[[], bool] = field(repr=False)
     _calls: dict[str, Sequence[ComputerToolAction]] = field(
         default_factory=dict[str, Sequence[ComputerToolAction]], init=False, repr=False
     )
+
+    async def prepare_tools(self, ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        tool_defs = await super().prepare_tools(ctx, tool_defs)
+        if self.full_access():
+            return tool_defs
+        return [tool_def for tool_def in tool_defs if tool_def.tool_kind != COMPUTER_KIND.id]
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         if isinstance(event, FunctionToolCallEvent) and isinstance(event.part, ComputerCallPart):
@@ -238,8 +248,8 @@ class DesktopComputerUse(AbstractCapability[None]):
 
     on_frame: FrameCallback = field(repr=False)
     full_access: Callable[[], bool] = field(repr=False)
-    """Whether `/permissions` is `full`, read at each run: like harness on a read-only workspace, no `computer` tool
-    otherwise, as the screen can change anything."""
+    """Whether `/permissions` is `full`, read at each run and each step: like harness on a read-only workspace, no
+    `computer` tool otherwise, as the screen can change anything."""
     _computer_use: ComputerUse[None] = field(default_factory=ComputerUse[None], init=False, repr=False)
 
     async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
@@ -250,5 +260,7 @@ class DesktopComputerUse(AbstractCapability[None]):
             and isinstance(backend, SupportsDisplay)
             and backend.display is not None
         ):
-            return _ObservedComputerUse(await self._computer_use.for_run(ctx), on_frame=self.on_frame)
+            return _ObservedComputerUse(
+                await self._computer_use.for_run(ctx), on_frame=self.on_frame, full_access=self.full_access
+            )
         return AbstractCapability[None]()
