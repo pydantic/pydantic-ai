@@ -29,14 +29,13 @@ from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import BackgroundTools, CodeMode, SubAgent, SubAgents, ToolBridge
 
-from ..append_only import ToolArgs, ToolCall, drain_events, run_through_ui, ui_imports_successful
+from ..append_only import OneCallPerResponse, ToolArgs, ToolCall, drain_events, run_through_ui, ui_imports_successful
 from ..capability_cases import Calls
 from ..conftest import try_import
 from .capability_runs import (
     PROBES,
     SUBJECTS,
     RouteRun,
-    Script,
     build_lowered,
     case_calls,
     run_native,
@@ -151,7 +150,8 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
         loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(native.messages))
         return RouteRun(loaded, native.ran)
     capabilities, observer = await build_lowered(calls, directory)
-    script = Script(calls.made, _WRAPS.get(route))
+    # A sub-agent's run doesn't stream.
+    script = OneCallPerResponse(calls.made, wrap=_WRAPS.get(route), unstreamed=route == 'sub_agent')
     if route in ('vercel_ai', 'ag_ui'):
         agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, observer])
         protocol: Literal['vercel', 'agui'] = 'vercel' if route == 'vercel_ai' else 'agui'
@@ -162,7 +162,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
     if route == 'sub_agent':
         child = Agent(script.model, deps_type=type(None), name='child', capabilities=[observer])
         parent = Agent(
-            Script([('delegate_task', {'agent_name': 'child', 'task': 'go'})]).model,
+            OneCallPerResponse([('delegate_task', {'agent_name': 'child', 'task': 'go'})]).model,
             deps_type=type(None),
             capabilities=[SubAgents(agents=[SubAgent(child)], shared_capabilities=capabilities)],
         )
