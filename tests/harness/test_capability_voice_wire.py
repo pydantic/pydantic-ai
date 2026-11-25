@@ -3,12 +3,13 @@
 Each case's calls run natively, with every capability lowered to `with_authority('none')` (`run_native`). The history
 they end with, as it is and after a `ModelMessagesTypeAdapter` round trip, is sent through each provider model's own
 message mapping, captured offline (`provider_capture.capture`). Every capability part in that history must reach the
-model only in a voice that may carry its [`effective_authority`][pydantic_ai._capability_parts.effective_authority]:
+model only in a voice no higher than its [`effective_authority`][pydantic_ai._capability_parts.effective_authority]:
 the predicate the in-process sink check (C2) uses too, here applied to what each provider puts on the wire.
 
-`max_authority` says what each wire voice may carry, once for every provider: the system or developer voice only
-`'operator'`, the user turn `'user'` or below, framed data in the user turn and a tool result `'none'`, and the
-assistant's turn nothing from a request part. A part may land lower than its authority, never higher. Every line of
+`voice_authority` says, once for every provider, what authority the model hears each wire voice with: the system or
+developer voice needs `'operator'`, the unframed user turn `'user'` or above, framed data and tool results take any
+authority, and no request part may reach the assistant's turn. A part may land lower than its authority, never
+higher. Every line of
 its text must land somewhere: a line that reaches the model in no voice at all has lost its voice.
 
 A provider that breaks this for a case is a known finding in `KNOWN`, a strict `xfail` with what fixes it, so the fix
@@ -44,8 +45,11 @@ from .capability_runs import CASES, PROBES, PUBLIC, case_calls, run_native
 _RANK: dict[Authority, int] = {'none': 0, 'user': 1, 'operator': 2}
 
 
-def max_authority(voice: Voice) -> Authority | None:
-    """The highest authority text in `voice` may carry, or `None` if no request part may reach the model in it."""
+def voice_authority(voice: Voice) -> Authority | None:
+    """The authority the model hears text in `voice` with, or `None` if no request part may reach the model in it.
+
+    A part may land in `voice` only if its own authority is at least this.
+    """
     if voice in ('system', 'developer'):
         return 'operator'
     if voice == 'user':
@@ -87,8 +91,8 @@ def voice_violations(captured: CapturedRequest, messages: Sequence[ModelMessage]
                 if not voices:
                     violations.append(f'{part.kind} ({authority}) reaches {captured.provider} in no voice: {marker!r}')
                 for voice in voices:
-                    allowed = max_authority(voice)
-                    if allowed is None or _RANK[allowed] > _RANK[authority]:
+                    heard = voice_authority(voice)
+                    if heard is None or _RANK[heard] > _RANK[authority]:
                         violations.append(
                             f'{part.kind} ({authority}) reaches {captured.provider} as {voice}: {marker!r}'
                         )
