@@ -123,6 +123,12 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 - **Bind `Coder` on the `Agent`**: passing it to `run(capabilities=...)` raises `UserError` unless
   `sub_agents=False`. Delegates re-run the bound agent (same model, workspace, and neighbouring
   capabilities such as approval gates), up to 3 levels deep.
+- **The rule against unrequested delegation is GPT-only:** `Coder` tells the model not to call
+  `delegate_task` unless the user or `AGENTS.md` asks only when the model's profile sets
+  `delegates_unprompted` (OpenAI's GPT models, not gpt-oss). After a `ModelFallback` fallback to a model
+  without it, the rule is withdrawn by an appended note; a `FallbackModel` gets no rule (and a one-time
+  `UserWarning`: use the `ModelFallback` capability). To make another
+  model hold back, pass `profile={'delegates_unprompted': True}` to its model or say so in `instructions=`.
 - **Lazy sandbox creation:** `RepoContext` reads the workspace at run start, which creates a sandbox
   before any tool call. `Coder(repo_context=False)` defers it (the instructions then stop naming the
   working directory). To use your own `RepoContext`, pass it as `repo_context=RepoContext(...)` rather than

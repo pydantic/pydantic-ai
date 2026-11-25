@@ -1906,6 +1906,35 @@ def test_temporal_model_context_window_follows_active_model():
         assert temporal_model.context_window not in (None, 100)
 
 
+class _OutsidePrefixTestModel(TestModel):
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        return True
+
+
+def test_temporal_model_rewrite_instructions_outside_prefix_follows_active_model():
+    """The instruction window rule comes from the active model, so a run moved off a default that reads dynamic
+    instructions outside the cached prefix keeps the shared rule.
+
+    A raw model string has no model to ask, so it keeps the shared rule, as `Model` does.
+    """
+    temporal_model = TemporalModel(
+        _OutsidePrefixTestModel(model_name='default-model'),
+        activity_name_prefix='test__rewrite_instructions_outside_prefix',
+        activity_config={'start_to_close_timeout': timedelta(seconds=60)},
+        deps_type=type(None),
+        models={'alt': TestModel(model_name='alt-model')},
+    )
+
+    assert temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('alt'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+    with temporal_model.using_model('openai-responses:gpt-6.2-sol'):
+        assert not temporal_model._rewrite_instructions_outside_prefix  # pyright: ignore[reportPrivateUsage]
+
+
 def test_temporal_model_model_id_follows_active_model():
     """`model_id` resolves through `using_model()` rather than reporting the wrapped default's.
 
