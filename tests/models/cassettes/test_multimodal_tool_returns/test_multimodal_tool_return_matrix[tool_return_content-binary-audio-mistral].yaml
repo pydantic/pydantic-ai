@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.mistral.ai/v1/chat/completions
     headers:
       accept:
       - application/json
@@ -8,70 +11,80 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '376'
+      - "428"
       content-type:
       - application/json
       host:
       - api.mistral.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: Use the get_file tool now to retrieve a audio file, then describe what you received.
-        role: user
-      model: mistral-medium-latest
-      n: 1
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: ''
-          name: get_file
-          parameters:
-            additionalProperties: false
-            properties: {}
-            type: object
-      top_p: 1.0
-    uri: https://api.mistral.ai/v1/chat/completions
+    body:
+      type: json
+      content:
+        model: mistral-medium-latest
+        messages:
+        - content: >-
+            Use the get_file tool now to retrieve a audio file, then describe what you
+            received.
+          role: user
+        top_p: 1.0
+        stream: false
+        stop: null
+        tools:
+        - function:
+            name: get_file
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+            description: ""
+          type: function
+        tool_choice: auto
+        presence_penalty: null
+        frequency_penalty: null
+        "n": 1
   response:
+    status: 200
     headers:
       access-control-allow-origin:
-      - '*'
+      - "*"
       alt-svc:
       - h3=":443"; ma=86400
       connection:
       - keep-alive
-      content-length:
-      - '438'
       content-type:
       - application/json
       mistral-correlation-id:
-      - 019c486c-f73e-7c71-be88-fd1a066f4c41
+      - 01a21038-d6b7-7c0f-a967-2654569dd25d
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
       - chunked
-    parsed_body:
-      choices:
-      - finish_reason: tool_calls
-        index: 0
-        message:
-          content: ''
-          role: assistant
-          tool_calls:
-          - function:
-              arguments: '{}'
-              name: get_file
-            id: vqiEbTwpv
-            index: 0
-      created: 1770741626
-      id: 9473c9d9129541e3876e757b351a481c
-      model: mistral-medium-latest
-      object: chat.completion
-      usage:
-        completion_tokens: 6
-        num_cached_tokens: 32
-        prompt_tokens: 64
-        total_tokens: 70
-    status:
-      code: 200
-      message: OK
+    body:
+      type: json
+      content:
+        id: b4a525ff2bc140e48d4e5bafee0c05ed
+        created: 1795568490
+        model: mistral-medium-latest
+        usage:
+          prompt_tokens: 76
+          total_tokens: 82
+          completion_tokens: 6
+          prompt_tokens_details:
+            cached_tokens: 0
+          completion_tokens_details:
+            reasoning_tokens: 0
+          service_tier: standard
+        object: chat.completion
+        choices:
+        - index: 0
+          finish_reason: tool_calls
+          message:
+            role: assistant
+            tool_calls:
+            - id: OshEd8M95
+              type: function
+              function:
+                name: get_file
+                arguments: "{}"
+              index: 0
+            content: ""
+  recorded_at: 2026-11-25T01:01:30.501987+00:00

@@ -1,49 +1,66 @@
+version: 1
 interactions:
 - request:
-    body: '{"messages": [{"role": "user", "content": [{"text": "Use the get_file tool now to retrieve a audio file, then describe
-      what you received."}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_file",
-      "inputSchema": {"json": {"additionalProperties": false, "properties": {}, "type": "object"}}}}], "toolChoice": {"auto":
-      {}}}}'
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
     headers:
       amz-sdk-invocation-id:
-      - !!binary |
-        ZmQxN2E2MDAtNmNjMS00MzE1LTlkOTItOTkyMTFhZjQyZjUy
+      - 5e044fac-ee5a-4678-bf5d-fec50d0c8d6e
       amz-sdk-request:
-      - !!binary |
-        YXR0ZW1wdD0x
+      - attempt=1
       content-length:
-      - '365'
+      - "365"
       content-type:
-      - !!binary |
-        YXBwbGljYXRpb24vanNvbg==
-    method: POST
-    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.amazon.nova-2-lite-v1%3A0/converse
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Use the get_file tool now to retrieve a audio file, then describe what you
+              received.
+        system: []
+        inferenceConfig: {}
+        toolConfig:
+          tools:
+          - toolSpec:
+              name: get_file
+              inputSchema:
+                json:
+                  additionalProperties: false
+                  properties: {}
+                  type: object
+          toolChoice:
+            auto: {}
   response:
+    status: 200
     headers:
       connection:
       - keep-alive
       content-length:
-      - '305'
+      - "305"
       content-type:
       - application/json
-    parsed_body:
-      metrics:
-        latencyMs: 440
-      output:
-        message:
-          content:
-          - toolUse:
-              input: {}
-              name: get_file
-              toolUseId: tooluse_LyxmGXcDVlyNeBtK55wUyP
-          role: assistant
-      stopReason: tool_use
-      usage:
-        inputTokens: 901
-        outputTokens: 14
-        serverToolUsage: {}
-        totalTokens: 915
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 682
+        output:
+          message:
+            content:
+            - toolUse:
+                input: {}
+                name: get_file
+                toolUseId: tooluse_l9fjEsaNTdtRH7YfHcP1pf
+            role: assistant
+        stopReason: tool_use
+        usage:
+          inputTokens: 901
+          outputTokens: 14
+          serverToolUsage: {}
+          totalTokens: 915
+  recorded_at: 2026-11-25T01:07:28.501531+00:00

@@ -21,27 +21,28 @@ interactions:
       cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: 13e0d83b-ba54-555d-8f78-83c033957cdf
+      id: e19b4a1c-cdc7-9d65-a93e-96805c4dc4ec
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_66642665
+          - id: call-d42b3933-6918-47ff-a63f-98c1667fad3b-0
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-01-30T16:37:06.766615010Z'
-      model: grok-4-1-fast-non-reasoning
-      system_fingerprint: fp_9bb3d5b553
+      created: '2026-11-25T01:01:57.108191827Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
       usage:
-        completion_tokens: 15
-        prompt_tokens: 359
-        total_tokens: 374
-        prompt_text_tokens: 359
-        cached_prompt_text_tokens: 158
+        completion_tokens: 6
+        prompt_tokens: 263
+        total_tokens: 269
+        prompt_text_tokens: 263
+        cached_prompt_text_tokens: 128
+        cost_in_usd_ticks: '2093500'
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -54,8 +55,9 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiQxM2UwZDgzYi1iYTU0LTU1NWQtOGY3OC04M2MwMzM5NTdjZGYSKwgEGicQAhojCg1jYWxsXzY2
-      NjQyNjY1EAEYAVIOCghnZXRfZmlsZRICe30qDAiyvPPLBhDiu8btAjIbZ3Jvay00LTEtZmFzdC1u
-      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjieAVjg9yFaYxABLTMzMz86
-      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
-      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+      CiRlMTliNGExYy1jZGM3LTlkNjUtYTkzZS05NjgwNWM0ZGM0ZWMSSwgEGkcQAhpBCitjYWxsLWQ0
+      MmIzOTMzLTY5MTgtNDdmZi1hNjNmLTk4YzE2NjdmYWQzYi0wEAEYAVIOCghnZXRfZmlsZRICe304
+      ASoLCIXnmNgGENPAyzMyCGdyb2stNC4zOhNmcF9lYjNjMDAzZmM2NmMxNGVkShkIBhCHAhiNAiCH
+      AjiAAVi843+QAYcCmAEGWmMQAS0zMzM/OgIIAUJRCk8KCGdldF9maWxlIkN7ImFkZGl0aW9uYWxQ
+      cm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMz
+      cz8=

@@ -21,27 +21,28 @@ interactions:
       cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: e5217900-9035-c6df-794b-eb4b5c9a5540
+      id: 3b58ed0f-876a-913a-b5f9-4e5f815fcef4
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_53524367
+          - id: call-ff6cf903-629f-4b4d-bfd1-43dcb9ecbadf-0
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-02-09T18:53:59.523654120Z'
-      model: grok-4-1-fast-non-reasoning
-      system_fingerprint: fp_9bb3d5b553
+      created: '2026-11-25T01:02:17.717443544Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
       usage:
-        completion_tokens: 15
-        prompt_tokens: 359
-        total_tokens: 374
-        prompt_text_tokens: 359
-        cached_prompt_text_tokens: 158
+        completion_tokens: 6
+        prompt_tokens: 263
+        total_tokens: 269
+        prompt_text_tokens: 263
+        cached_prompt_text_tokens: 128
+        cost_in_usd_ticks: '2093500'
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -54,8 +55,9 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRlNTIxNzkwMC05MDM1LWM2ZGYtNzk0Yi1lYjRiNWM5YTU1NDASKwgEGicQAhojCg1jYWxsXzUz
-      NTI0MzY3EAEYAVIOCghnZXRfZmlsZRICe30qDAjH2qjMBhDop9n5ATIbZ3Jvay00LTEtZmFzdC1u
-      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjieAVjg9yFaYxABLTMzMz86
-      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
-      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+      CiQzYjU4ZWQwZi04NzZhLTkxM2EtYjVmOS00ZTVmODE1ZmNlZjQSSwgEGkcQAhpBCitjYWxsLWZm
+      NmNmOTAzLTYyOWYtNGI0ZC1iZmQxLTQzZGNiOWVjYmFkZi0wEAEYAVIOCghnZXRfZmlsZRICe304
+      ASoMCJnnmNgGENijjdYCMghncm9rLTQuMzoTZnBfZWIzYzAwM2ZjNjZjMTRlZEoZCAYQhwIYjQIg
+      hwI4gAFYvON/kAGHApgBBlpjEAEtMzMzPzoCCAFCUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFs
+      UHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifU0z
+      M3M/

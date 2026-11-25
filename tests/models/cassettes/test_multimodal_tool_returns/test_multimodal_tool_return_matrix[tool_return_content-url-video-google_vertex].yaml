@@ -1,42 +1,50 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai-dev/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
     headers:
       accept:
-      - '*/*'
+      - "*/*"
       accept-encoding:
       - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '368'
+      - "434"
       content-type:
       - application/json
       host:
       - aiplatform.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      tools:
-      - functionDeclarations:
-        - description: ''
-          name: get_file
-          parametersJsonSchema:
-            additionalProperties: false
-            properties: {}
-            type: object
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: ""
+            name: get_file
+            parameters_json_schema:
+              additionalProperties: false
+              properties: {}
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
   response:
+    status: 200
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '5741'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -45,228 +53,107 @@ interactions:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      candidates:
-      - avgLogprobs: -36.42410318258507
-        content:
-          parts:
-          - functionCall:
-              args:
-                name: input_file_0.mp4
-              name: get_file
-            thoughtSignature: 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
-          role: model
-        finishReason: STOP
-      createTime: '2026-02-17T17:52:32.074437Z'
-      modelVersion: gemini-3-flash-preview
-      responseId: 4KqUacXFBJvllOoPj7LucA
-      usageMetadata:
-        candidatesTokenCount: 16
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 16
-        promptTokenCount: 22
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 22
-        thoughtsTokenCount: 1048
-        totalTokenCount: 1086
-        trafficType: ON_DEMAND
-    status:
-      code: 200
-      message: OK
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            role: model
+            parts:
+            - functionCall:
+                name: get_file
+                args: {}
+                id: call_17057189013780746566
+              thoughtSignature: >-
+                AY89a1/PsbKUhiQEhPc+GlLzg6nuF18KtdXvg7AXlf+ais54C2wwxChFkjCmTDZFFASEnClQRLAGQtISesZ6pHzgl5DVFn30h1dIRnBFiDGWD/NPjHlrWpB4Q9hzw/uHEjrdVg/mNUpbM6h85CQozETPYzEHXR/SlzuJthEyDhfikgbg0dVFJpReslr5PK5q9tKP3LGs3/4xOkeMakJ+zmoq9q7whBzniDyG6aGy7RwbptqHTCB0xXSQhxLq92gq89tcAFbA+3/M5V+4VrCUsl5c20Ty4Emk3LwUmzIzCxD2rGq0eGjVBJUXhWpKQd1NS5ICK4a8h5MwoooD41KJ1BhdRQhxgQy4TAOSAZq8QFPD8BAA9qWrfqClGQ2CPDVcpwlRVCuukTDkT5/IHZ4eBDW1kNsmjuv381+GKuYFFGsq52kGCy0X/VWLYFGVb522L3jC7mJOO3aPpRP4wnFXY8pMLCcjvfJGF5d+9lNQccEy7EJ6KlHm6a5C3qTciBm1+AaIAPjZPlEntmm7ievTXxqbTsA+zflYyX++2268+Nab8YGGrJJG4KvlN4NFL6SYj6nA6H/SGNP/Wu9dX3n3KKidm+oTUbuBVpczxgYxjbh/tm/C+KLNlFlU9V3fNtdmz9GayGlqXnhtdeDqSImtBzWsKq/hoOSbctUN/bKgskGCxOr9vQMmNG0nDmiaEllB6/EvlsnUA22CaKWKpXAXMbcBByqIknTflx4yP3TF58TNbrxk73y3X3Ob6oeWIDz83ASM7LkM16svHhnyWlMcEVfsfI1MBhYLD4IN99RCaa/d5Eib/byGDmAuqEQDQDR0PlroAagXlqOTMH50D2tnGU13suMJJytReOYPEAEjaZWn5sy6frmyrWzLJOSRfHMkkJc4sP4NAev9i4uT5XdOLOvK3efC7/LDVoMONeghCwN3Fpqlj0PFsTTiSLUw/XuQ1B+TwvF+Kjh4YGVVMGQiuOXwoqCHzFAV7e93Q4+i0u/5jriXSg98Z10Gd9Zbhl4/Xboxg+eimNUbk/wpsRg9udor6PtmWnFlKT5JON99DttUD15JoJX2yXHnUo7DcV3UgvJLaIipX+XUbbpTD4arA7EW5XeS0bB38aUh5PWMZUn2wAwygpUkWKpWPCP4Hh5WOeitAXYg4lcuGr2vVKm9poiYEPtA0nsIqEj1N4KXdj6ocP+SkonRpo7bZOiontA6Lt3hGGDW9Yr+LlXbqo6NbgUMQd0pd19PKmGTGdaIBoXcYOC0kGJjiRHiuRH8tqVY27T8RgUu5Gz3d+5CdGnbmPFwySV+GM7DDO1k2RYL1m6YEoHgAA5rhjAT+W8qzy/UI2Pg2ZMFvwwpEDbOEdfdcYFhQDmgbkfb+JOKFBjs1QtMD59plK+nCudHg0vB2vcKCDA2DL0kCycWQ05R9UUvZCuv0J/6qK4weOHSkQphlyaPZcEg02tecO+tJFSnusCvqwzemO9BWUpuqwzcRrO1EFPDMP2J6bm8d/qc59PscaCz0MXFKH7Zq9hzssS6vPgYTARKZv5xvR5aysh1nqd58R3VJlaf8D6GaQmE++QMiSm8CI6cCBdqPsZiF2RYFoazjVD7QBBXjNclO/2q28aAWJKddJ/kPTAP7XDfwJXqxq4NWrgIg+6+Agqz7RsIqEPHz6GqsgFSM3CG+awXHceEVuXlGgnp/8WsoJTBfoQfI9z4IAM1It7Pwd2jlsxxzXzDCBNqzAMY7NKwyPgED96zNzr9qGzgGZXnPtqnHYqtyTZUy6dwwzvVWQO5NZufAHqRgzkRCYAXBBAmGgBLZYQ/9TkBw9dfbkgMCcHzEfOennKe/RjM6dQkDgaverx0vNnQ7Rg91yyGPTKugXEVdzvOary/XEE7asYkCZsmo5wmCTSCd0HcsY40drNU887GDiKk8KY/ul2Tth0mW0wn2DC1P9ZEvTwErJl6N9LtcVANqwOE3tKnUHmmSB72de7Vki87nAjgMCpM00q0BnFx0HMTVJ2J9rbyHqusfbJ0ljJSqP2K6P/a53RCyQKRgdM3AfehxYs4wHLnk+wnYc7HI7cviD5IMZ1r4hdu0mg+ymIwK8AL96k0ozB/IUEeaO31k2O0mUmOSZ5A0a7RXl5mJyxhqxB+SrAixkhJSJdwfB8AwJy9GRtKJPdp6x+GFCL1BlyIUV9e+eKoM6Grv+7BLrPfcDxWeRgEfn+nLAS+ZK2gEOb6UzzrMOHjoIk0raLDv6qizptBQyG4D4rxLPzd6OQnezotQTJlL67lhe1+UxeOWqbl4wXlrJiEgesV+OOkEAQrbvq/HXOWadEgQNE+lt+akJK0+HKoYqXD9uz3VrXjwVz1VySltJjKSgx1PfciJEV8XuFp5dLtdXGVffDyDANjTyX26OB8uAtIRHZ/76iGeT4jgwcxx/hTfHeUvJucK3ZzZn7Wn8XlzfmZvOxsYD1wTm4Qf3u1rh9JoFr6C3GyG4DdlWN9qNpGmepdxB6ueA7jmtrto3zbks5t6DWHcnJ7/vLVYkg/kqmPDcMTq6tqVAXL1WbuX8bVhldPins/gCNcfpJQuYonDPMI1X0HsG+VVwwZ5cF+ymCGdttaaVjI/D/taBcXiAy2wYteQosUD/0z+fNLvBkWACyTbaR7mKYg0NpeYkf5K9dDP5jZxPN/n+H02zsvQDEEDbHu4P0KhQDuTJIxkkMh+Wgae50PGDKbn+MrzzS9JA2QtIQbgIjGfXPfN/tRSHB1sPWEaaqUs2Fm89iyDQzF4bpa2QIGdVGmzR/xo9yffYl0918jTEfPZL70CWcdi4BISLmDmLgRoSi/Wag/mB41ccU27OhtMRJ3LwI7+NKu+L6dXZ1JjQxYwMzW2WCbE/1T0MH4+Yiit8gqPhQQCs+h5SfOKhVxYNLJljI5Qv6LBoQJ2d8xrN7xxiTanwCGkmZCScv5Kig/bTr2pm7ooc841XKbFR/tkTTJ7+Wa5l1pc/wOqL0lLsFx8Pex9eKnC5K5+YbW1ulk2qhZMvMdZFIdOlqcRhl1vT6uI5sZ8URnA5SyHihnef3cMf+Zzmgilj/bUGSIHXT/Enl34riveKln6GPQIq247P6u4hljWoDNnbBpibdph8c0WjSVRHmE2E70r7ADL77xE8YDJLsOpwG8s2vphVt9esfVDEtdnN/YEEpEnh780+OKqPbE5e3LOqJDXh+lE0w5z97/WKsBTV1BQneEoud8iMQwr1AOwFL7XrzRmwRrDUvuqLI0VJ5mLrTyD5IQKaJ1CkTlCsibg8lakbPZqmlRXaHRlnv0hLEG3lEWq6h1fhdhh9R5bsMw5PDbIO+kqlyUw+e+GsmayXC15oKdh/ZqIaPGHGgxPP7mv/q2tap07jkVvOKOfOJ+uANJ8ubL8s/8bRBItsy2zfEkJCNx8t6nnxKbWZT8TPzh8zeyONxP1rPoJBl7gMccqcN0B2IhQ+68rg3VhXU8sbTpp0upp0deItpNtofiYw9/LmJKrHdNtiEyOmn2ioHT6ZycDOBLKqkvDoxA8AKMFzcXN2Y21aFhERYB/Kyp3GebRJzHlHwgC9KJay5pfqoEx+AfF+7yRc0GoGLIgDWxnf6yRCOphhYqChNoyJNvG17btyIGQnp4d4ujCHYOmzL0Z9Hls9yDlaU7dq6b8fmsGZzgqYLvcNSVvkYdi6TFOTc8lzhYepGCdM4pgZCM5G752UDfxx6W/GsLG/OLb8tGc+9GqQm7iv5IQ+auhdZmYNW6jMwRtXVIte5EIoLTgGbCOTtFCdPqxBdb/nVhnjncMVqHLamc7hs92U7aiaVYbjl8fGIVYqjmq6jgy0tY93J6IQYhATxRRfDZlp9Ko7t53Glk9JHBSCmUSeBCAs0z8RbzGW1NogcOHPW+KHuaed1mTWgPCJ2FaMU/b23d3Bh6Rrj+y5nX7FUuAZ4yGA+tD9qc4I3Je+9jt31RFtZL50DhUmHncztEFMwrGV+ojpCrCK9deyvM07sJCCGwAkTlYgM8pmDHtWRBaF0eiFUancrkZipVkBmV1l30jjq4yCiC/EMrbm5YuW/r5VMe4qPqYnAMuifvteDXC371pMCkEfNx+v5eSx5/zUsY8DDtUru12WdTJIoxxk/zRLQSrQmCQgUqoByo7Y5DKjSk012iU9U5VmRqVmdQwg7+ZjxhrnZ1lVyhqBbPzH34/bBIx6ov2xa2sRgSydKX/inTXuaPuEWyt/Je9NSAQ2SgZ9/OZPw69WL5PLLDeI/v+8MjDjrUkXm+ceWBULkHkgoc70780RghddFLuZarbw2E73Y0nL6vva3gqnDQpEiOk5Vi72uO6lPywimm3ZG5xAaVCAVbxVUz6cNQj7lE6cMdkKU1xUPWvlyhuPe/xyTrD1UwPbTr+Q8sSwIIqwz1erGk7JgZqHiHtFC4XSlFhTDNZ0JOuT5AeuVU47kRYQ==
+          finishReason: STOP
+        usageMetadata:
+          promptTokenCount: 29
+          candidatesTokenCount: 11
+          totalTokenCount: 925
+          trafficType: ON_DEMAND
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 29
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 11
+          thoughtsTokenCount: 885
+        modelVersion: gemini-3-flash-preview
+        createTime: 2026-11-25T01:11:59.833004Z
+        responseId: 3zUGa-zrMs3i8sYP3oKlOA
+  recorded_at: 2026-11-25T01:12:04.510382+00:00
 - request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai-dev/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
     headers:
       accept:
-      - '*/*'
+      - "*/*"
       accept-encoding:
       - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '6054'
+      - "5589"
       content-type:
       - application/json
       host:
       - aiplatform.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
-        role: user
-      - parts:
-        - function_call:
-            args:
-              name: input_file_0.mp4
-            id: pyd_ai_31e830a4ce804a148dca165fdb7d37fc
-            name: get_file
-          thought_signature: CvIdAY89a1_E5b743Z8_XOmESn7FluerCcZ6htIba461XJvW4HohqQ7Pf8ACoiseR2WvRMhb24gtjSf-eZ18-tZNp78Vr5zskSirncQMBZll4SlB-I7NpMDmJF382R3yzVL-Ig-DetEzyEjjTNwBVSxDHklJUP5Tz-sVssZbDmJTFITjlqTIn6FhyVV1ntXZtcp_xTYJEp3dLRd6gsHTYWDMjvGDxSBzCFQpiIqQd18TmVLWZSE5HPP25XLon_MgiYLOb8BzSe0RSmfjIpcqzx9qlel0t5VmaVJR6jdVv2RgDA3aYNW23zei11-JvBvX6eHhd8FmGczo4-XaIm-MmQcQzD5j4na_skxGRAhgzHOq0iWcA83nY1d70DYGoztouC8G5iP0ZWK-pn2ZXoDG3t4VcTfDKwMWp-phiK2E9hIGOfzcRKJv_W3Geym68F6BwBtUhQJqL_iuceKyLzQp1ItPlgfSyFbzlmbSft68LoVQ8fsuVO9PtLWtP24wg966K7ZW-xwx-AhPR50FE9aDCDrJua2eM8CtyJUiY7XXw7Sl6CTSNrwM0AoPLqMkYaFA7_91TbOZDHqj9DXzzeN0JmfZwGKM1Lo5QZ3R0QmahIfAPxpvU-5sh0TZazXYBpXN6AhJdtQF77CFx_U56hdpkA3h221Q-z_q1kS1L9ArjFc15pAkhspBPVQVZeod7u70ZFqba2bI2rffMU4086ESvUDv7XMkQiyc9UkSkDTrxyqVOqLh4sjKwPMFHs7K2iPi7ao8x5o62CztiCd4dG67opXYhJWoO6nRkU2opzEDmD_Je3l24YUZsfdKixqevkhWhcU6k1W_lEhU_FD-3qwuL_LYS_HyAmUQy3JBlyuNO8g9vuIDdg09QmECAJST0hUOokvTt23p994xuVkvouf95G_hi0KiXNLggmZFN-9tKv70WXtKmvFR9V7C1C3m9af0cAsmFXS6ByxT-qy_vuh2a28Ip3BIkKcQuY2ZeVI6pKk2U0n7WYJoNVCuRZPGbpk9D00-_TH6-XPEr2U5JdHnqMNnTS5Ej1xDYUHyk0ud-K8rZMHJEok0Z5slUEH72YfO28UxFWqbHQQRLVCbwxpm2yRyVOoBQXuHNcHh4mnMX05E8FW3Szb6q1FPjC4jzHGnyJI7MeRyO1wOn687tI8KFHv33X8dPuRJCy2qZpiPeLfxute_YFMVi_3MVX1UFxs_SB_PecSYAFSc4DyvMvULqUmv72drEIa1TvuA6x192YcQW0H9KgKGe4msyQRtBqkUZGBkx-TKeRtR_psEQ1MISkUVahS5xRh5sGxlw1eOY-xicLKM3jppgsXIXgl9N9r0jrho0x1fkPiz-n5GPkWoMDa8sYzYxZ1zGTjCs3gZYj57J0_pPe5fkXpvkJ_uuRvDc1IxtAR1DEq8iz2CXyDQA456QSWc2HnkiMRoXyBiq8EQP4KuD8Nd85rH9qRLohFTD5-EwTW6jppE4YcCYzRMrVU9eocc5rvjjigAIEW-LAlYg1A-n-Kpk09pxaBal9XI5SXMbdS2ESfmYHDdN8GkVlj7rSSkIqPWIm5-it9R7EjTLRYrfUpE89PMUvnlRxUdQbA-FDPUL8stIr7D2HbnILjW23EeVQ3QBfPmcI8A-PRw9_R90qFQZhXHy0EtunQdRqljuz4kcaI5u7vJnFXtZDstMZS0s8hAQ6T5qntrDMLBh9naO-WVldyPyP2W3RF-gciCE4YkpmRpaLVTex5wen7n-hvERjXqYGiDr-zkdhCk4M6wtF52KYkea5cSkP9a59Gj5kqRYFEv-Q-YhQl2_3loOuPPRE9IBpGP6SxutDMfjDs8a48zx18z7aFAvrO1cVmOmS03PxqprPuA0chhSylvJGoO0FHRVNHg07TiZDOLNmuOUvRD0XLueTKaLw5gG8bHcw7MswzuAUHq-VAM5pSB1xmSz7B9674DydfkXexQH4_CJqtd_HY10GZa21W0xJ0EawqJYcrTPMqjYpkOcvo_atPtyRLB8qtTBG-dZF4J0kwTf7LC8FReGL-SL0hfaUOCigKx8WQ8Zm5oVcJ3CrXC4E7b_AA9ndO0ZQ-PpjcBngB8x9AxXsM6k8mtahlBiTOp80JppsxtJyKhS4GTGrpkyNg_j-sNR7d2eFiHKt99JiDiiqZ81Fbqj_Es00VQPeHLTq5UjiueJu297S1DFsc8k8A2VuYEsjZMvIJFCMPITmw-XpOJatqnN7PApvfYTEivma9TgvhO61IIDExw1RN4xqTW6rW9IrwWWuydHBRxUqnCpI6xVIzEpG714WYnFQTGAWERK4BipXD7cX8_3U7loYVDACjIzL1tWTjVSww1X50wCe8_TpENGMwkO8oduNMk7DcEJyHX0u19rd8DWO1JY7HR3H_YbHIl8FjsEl_I44zz4HJf11HGQDuWySOg5M73k1SDbXNFXUdkLTqyrxCH27tMkYM8weOo1SilXnatCS--qCxq1gR-QGue4ieZfgWWgibZ2ZNv_xGaVPZxacbl1t0zf9hSNYAgDfk-VNHDXh86eJcT3ggkDajtaptzOfUC3Ufr5tstG8DxiYa5FY75Iz9BpvpspDpbyTzVH1YRL99E98M-iPM6kmqKdIG67TeMdzex7wyKB25s9WBPknrzWT-0hxC12-0bub7HOpRirbBtHyWX4nE2a7roRzydd1kKgIePJAREzabsakyQJVEpTM-vC5PrANzj6nXjwfsizl8dR8M6h_ZPhipY3IQ4H3SiMIjLpRWc7lgkd8_xdCF7ljho7Djn3_Vsjh7TTfSKgHd4lFOxouBsKpoD_M02ga7QwCb2sBQLdiZC6xxRzMCvvLrhRJkUTntdlkk6ZViHmtrGmkX46eR3ns6i7LOG0VqypRQVh9bCgGZuKpFwn1adzYovB67CRY9IAC_Rsuo1h6yMgHsOOmal_QdA2ZDw_KTfr9Z04zTMYpoF5_xBcH5KWiYxRp-oNtfNVGk6JC3qRK7_dq-C8lU_q0sW7tufS8AgNMu8NWFFvSGcU6_F2wgBnHNrLKZ6vCKUYhW9S-EceLKsr3jXkHS7cSzsmDIZZy2rgjiQiZMBRLmnJY7gqKeNba6p-od5UL9YItuGeXd_ftyKKUDohJJaqveX6iJyaEE5yGwcsX-GqURVFBU8IXZOjxxFGJhq-7IbYwWF6ni2seFvCvRT5u_JcR2QDUK1BtGNhdrEJbrtF6lNhx6WAKTnMIz52Xu05CVli1uhHIzbSQ-2QqBUWj9R-QL482Dq4YBmOLqxvxTAObRmUBLJBBKVl1It36KdHvBq6bw86KJW3x2H_XwxPUsF57MDCOJPU-RZX_iWQHgqL878oOcohWuV-zBbyPtbHBvHkZGgTZczYEWshlZ3Jo6_MoOQT0A2SbXvPAHaElx9tdgqG5xIVKPHzSqVn_ZGlb3XJ-65pPwMUzmygj6ealWLfc9vF1oeOrbXA05T1oWWbW1YKxTkQcpKj-vpSRBUqS6qrVX5A9kfUzrMHuuWMx_NbeiUzk5GKk4Aa3i6N2xqReMH_2ozNEvpPpYfnqNFswwsFmurVwq52NLHShntpCHOQTORTRXNPRMd_YsoEPcCKnYBDPhYT74zipVujRnxVTbJ6eLMmiPbf6R9Z-OgGPYxMlWoTK1_6lAyiVnridiAMJllib1XjmJok26jIjfho_sehAva1Oo3IVWqSzcDh5D-dsayXdXM7fKxhELg3o-Ex_nupWmXP1wdD4eoixaDIsc5Ik2qb_JajnXRGSEw-pXICw-nyjJa5ABRmoohMKQeZdhr-DTs7_iSFsTRSIAURy5IsxiedT0w1ADEJ018LgQfF1eZovRtJN03w335GFJgiZfDE2PcSLz5DBOXsE4Nb-icCOmh9GclgZwbcmVwTwDchoiC_0nQljVayK3AfwT3hwnBMJhNzvCAJcO_w8gqsxNHc1ABCknszF3xtkHbkYkvVs-qudA8HNBrjr1zDCha4YJtO11Bn3SnxJ7HhfVTwPbFQm8V5Mrg-WY6KRMf4gLakW2O6F25ArZo6_aPFHo7qAaBg3ppCImGciLPrTqHBAWEkhRnWrXxw63c_l_tnf7kgsH6-pquqO-FJgFUreQzGbrDSq5h0fvV5VQbRCkPCut91XA5iWC-Jg6yC0sFkADLoMTUC9bkyIY4SYZo5qggDaouG2J13-VPt_Sr92g-NkA0XFq4GsmE0Bk4bgiQzuLrkto5ulYP737IwJeSOvuR-DO7OXallG-5oQHtigtNNL0lZgXQxViZwyx_8gtYmzNaD7XQFKQ4R9LfijxojnANSzEYefjpIFCX-0KQw76EYv2tAgNlLsdQKdiqWW6Dc5yXbig8HDQhF8igTff7hnOoL7jCsmm5mZeO3QML4i1wQiKPwNE3rBlMOj_ceLIB1eUXvFo-LebwlofY1tcw-sLnc780fgym7dIJu4TfN9UdDQHh_Vjw8Gbvr167m82XFfmN3DiPa6smNsR5VDutWhXmj6wCzIOTWDflemn1VJePZrpUJwGBPD9kry1EAFUZTB8y8BE7jFv3Sb_UJezZKP3cBV8XDuZn0vd17seTiJlyhz9GlecMixMM7Hu66ARTHUgfEZtoeVXCi4GfZR9pLzmSoKPu1fc1qi-q6QJHRPHxeHrBRAEo2SoivK4diN0vXKwVQXMmikKQzdo_BXDW0k7qGCguEh9tuiYXhkgAeHHANqLo9repSduFvYPGB-2NoKaY8Z2i7E9wGqJDq9eTnITeGPAfzNu_99-ZgHiO0Bep0IXYSCmf65IZjopkm0va0WvDRCgRnsoO-BncDBUNnGgjRgrdGaVeBkVXonOHJT9UY948MMQlkqX9hDkgoOdN5fbD8hDBGt0MnppXpl7Gv0ghV8tBX29CyZAqEyccB8lLhFik5mYBwIKQwqBCKzVcY91b24GRSqvWSRtxmBeAR_47fUroVS3A9G4I-3HsaUGCwaXcSP1hCGi1L1zNelFrI5ANN5ESZrpf0K7_4o8vHqOrGC59lhd1wMRh5mmldYXLOEq4qNEVOgNDrZpeulUv8wntyz3t0Yw0mZJh86nfH1nIk1MlW1tnsnKXcDDC7ynyArBEqBCIPMQy-nGPvQ==
-        role: model
-      - parts:
-        - function_response:
-            id: pyd_ai_31e830a4ce804a148dca165fdb7d37fc
-            name: get_file
-            response:
-              error: |-
-                1 validation error:
-                ```json
-                [
-                  {
-                    "type": "extra_forbidden",
-                    "loc": [
-                      "name"
-                    ],
-                    "msg": "Extra inputs are not permitted",
-                    "input": "input_file_0.mp4"
-                  }
-                ]
-                ```
-
-                Fix the errors and try again.
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      tools:
-      - functionDeclarations:
-        - description: ''
-          name: get_file
-          parametersJsonSchema:
-            additionalProperties: false
-            properties: {}
-            type: object
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '1286'
-      content-type:
-      - application/json; charset=UTF-8
-      transfer-encoding:
-      - chunked
-      vary:
-      - Origin
-      - X-Origin
-      - Referer
-    parsed_body:
-      candidates:
-      - avgLogprobs: -9.333719494639029
-        content:
-          parts:
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: >-
+              Use the get_file tool now to retrieve a video file, then describe what you
+              received.
+          role: user
+        - parts:
           - functionCall:
+              id: call_17057189013780746566
               args: {}
               name: get_file
-            thoughtSignature: CvoDAY89a1/XSSxy9NsvTMUfDDrzFiZ1F6ZuY8QJwRfA2382Ai/WSQSC0OQcGbAtzqQUXsTLnzkdnALPsBcyNHuJKp1l+ZCktQf5Os2TBBGX44wYwYXIhv9C8GBNaUBNZ+Q2jCJALxswj6KUSB5yjlkLppDQ5dJohmcqxKJslYjBSM7UEGT/LjRjpMnsklr6kJCfP4q84mTqz4FEkl+eMJccO8hUmBNzs8sNRL2+bvu+oIyGOZ63uoHRgz55m9IQex2h+htLkncHY1P0T/fg6yNcpRAsks5cFhJasMxGOtl7ArME/8q+ipWSs92aCOBTRNMhSNqdYQfCMxnGZHNhWfXUBwJPsjF9k7/BUmBdOBoaCUhtFoCZ8hakGOOE6IgNLCuXGHvLWuM8sbdoSRkaxly09oKQluFVbk8N9qqyUlO9XLsP8RQrD8lOi5fESJU/VeYy3WLFm+mxCHUY7aFt/1oLgwmwLhfNwdFNIqZt2A72hPtP0Jomu8kwlHVamfcuKPMc/S6bEEwhE3M4k7zh53Sb7lYBFH32+MEhCSbsNEj8OcOshMVeGlS429MKTPG8y/FacQRBvrme+7p7rt5mh2HrV5VPs8WyOpj8nPMG9aFsoDJKVq5TnJCG4D5KZ9sgjrftLvaB52hvxaVf+T+27xa89qcsHLZ9p7m/6ro=
+            thoughtSignature: >-
+              AY89a1_PsbKUhiQEhPc-GlLzg6nuF18KtdXvg7AXlf-ais54C2wwxChFkjCmTDZFFASEnClQRLAGQtISesZ6pHzgl5DVFn30h1dIRnBFiDGWD_NPjHlrWpB4Q9hzw_uHEjrdVg_mNUpbM6h85CQozETPYzEHXR_SlzuJthEyDhfikgbg0dVFJpReslr5PK5q9tKP3LGs3_4xOkeMakJ-zmoq9q7whBzniDyG6aGy7RwbptqHTCB0xXSQhxLq92gq89tcAFbA-3_M5V-4VrCUsl5c20Ty4Emk3LwUmzIzCxD2rGq0eGjVBJUXhWpKQd1NS5ICK4a8h5MwoooD41KJ1BhdRQhxgQy4TAOSAZq8QFPD8BAA9qWrfqClGQ2CPDVcpwlRVCuukTDkT5_IHZ4eBDW1kNsmjuv381-GKuYFFGsq52kGCy0X_VWLYFGVb522L3jC7mJOO3aPpRP4wnFXY8pMLCcjvfJGF5d-9lNQccEy7EJ6KlHm6a5C3qTciBm1-AaIAPjZPlEntmm7ievTXxqbTsA-zflYyX--2268-Nab8YGGrJJG4KvlN4NFL6SYj6nA6H_SGNP_Wu9dX3n3KKidm-oTUbuBVpczxgYxjbh_tm_C-KLNlFlU9V3fNtdmz9GayGlqXnhtdeDqSImtBzWsKq_hoOSbctUN_bKgskGCxOr9vQMmNG0nDmiaEllB6_EvlsnUA22CaKWKpXAXMbcBByqIknTflx4yP3TF58TNbrxk73y3X3Ob6oeWIDz83ASM7LkM16svHhnyWlMcEVfsfI1MBhYLD4IN99RCaa_d5Eib_byGDmAuqEQDQDR0PlroAagXlqOTMH50D2tnGU13suMJJytReOYPEAEjaZWn5sy6frmyrWzLJOSRfHMkkJc4sP4NAev9i4uT5XdOLOvK3efC7_LDVoMONeghCwN3Fpqlj0PFsTTiSLUw_XuQ1B-TwvF-Kjh4YGVVMGQiuOXwoqCHzFAV7e93Q4-i0u_5jriXSg98Z10Gd9Zbhl4_Xboxg-eimNUbk_wpsRg9udor6PtmWnFlKT5JON99DttUD15JoJX2yXHnUo7DcV3UgvJLaIipX-XUbbpTD4arA7EW5XeS0bB38aUh5PWMZUn2wAwygpUkWKpWPCP4Hh5WOeitAXYg4lcuGr2vVKm9poiYEPtA0nsIqEj1N4KXdj6ocP-SkonRpo7bZOiontA6Lt3hGGDW9Yr-LlXbqo6NbgUMQd0pd19PKmGTGdaIBoXcYOC0kGJjiRHiuRH8tqVY27T8RgUu5Gz3d-5CdGnbmPFwySV-GM7DDO1k2RYL1m6YEoHgAA5rhjAT-W8qzy_UI2Pg2ZMFvwwpEDbOEdfdcYFhQDmgbkfb-JOKFBjs1QtMD59plK-nCudHg0vB2vcKCDA2DL0kCycWQ05R9UUvZCuv0J_6qK4weOHSkQphlyaPZcEg02tecO-tJFSnusCvqwzemO9BWUpuqwzcRrO1EFPDMP2J6bm8d_qc59PscaCz0MXFKH7Zq9hzssS6vPgYTARKZv5xvR5aysh1nqd58R3VJlaf8D6GaQmE--QMiSm8CI6cCBdqPsZiF2RYFoazjVD7QBBXjNclO_2q28aAWJKddJ_kPTAP7XDfwJXqxq4NWrgIg-6-Agqz7RsIqEPHz6GqsgFSM3CG-awXHceEVuXlGgnp_8WsoJTBfoQfI9z4IAM1It7Pwd2jlsxxzXzDCBNqzAMY7NKwyPgED96zNzr9qGzgGZXnPtqnHYqtyTZUy6dwwzvVWQO5NZufAHqRgzkRCYAXBBAmGgBLZYQ_9TkBw9dfbkgMCcHzEfOennKe_RjM6dQkDgaverx0vNnQ7Rg91yyGPTKugXEVdzvOary_XEE7asYkCZsmo5wmCTSCd0HcsY40drNU887GDiKk8KY_ul2Tth0mW0wn2DC1P9ZEvTwErJl6N9LtcVANqwOE3tKnUHmmSB72de7Vki87nAjgMCpM00q0BnFx0HMTVJ2J9rbyHqusfbJ0ljJSqP2K6P_a53RCyQKRgdM3AfehxYs4wHLnk-wnYc7HI7cviD5IMZ1r4hdu0mg-ymIwK8AL96k0ozB_IUEeaO31k2O0mUmOSZ5A0a7RXl5mJyxhqxB-SrAixkhJSJdwfB8AwJy9GRtKJPdp6x-GFCL1BlyIUV9e-eKoM6Grv-7BLrPfcDxWeRgEfn-nLAS-ZK2gEOb6UzzrMOHjoIk0raLDv6qizptBQyG4D4rxLPzd6OQnezotQTJlL67lhe1-UxeOWqbl4wXlrJiEgesV-OOkEAQrbvq_HXOWadEgQNE-lt-akJK0-HKoYqXD9uz3VrXjwVz1VySltJjKSgx1PfciJEV8XuFp5dLtdXGVffDyDANjTyX26OB8uAtIRHZ_76iGeT4jgwcxx_hTfHeUvJucK3ZzZn7Wn8XlzfmZvOxsYD1wTm4Qf3u1rh9JoFr6C3GyG4DdlWN9qNpGmepdxB6ueA7jmtrto3zbks5t6DWHcnJ7_vLVYkg_kqmPDcMTq6tqVAXL1WbuX8bVhldPins_gCNcfpJQuYonDPMI1X0HsG-VVwwZ5cF-ymCGdttaaVjI_D_taBcXiAy2wYteQosUD_0z-fNLvBkWACyTbaR7mKYg0NpeYkf5K9dDP5jZxPN_n-H02zsvQDEEDbHu4P0KhQDuTJIxkkMh-Wgae50PGDKbn-MrzzS9JA2QtIQbgIjGfXPfN_tRSHB1sPWEaaqUs2Fm89iyDQzF4bpa2QIGdVGmzR_xo9yffYl0918jTEfPZL70CWcdi4BISLmDmLgRoSi_Wag_mB41ccU27OhtMRJ3LwI7-NKu-L6dXZ1JjQxYwMzW2WCbE_1T0MH4-Yiit8gqPhQQCs-h5SfOKhVxYNLJljI5Qv6LBoQJ2d8xrN7xxiTanwCGkmZCScv5Kig_bTr2pm7ooc841XKbFR_tkTTJ7-Wa5l1pc_wOqL0lLsFx8Pex9eKnC5K5-YbW1ulk2qhZMvMdZFIdOlqcRhl1vT6uI5sZ8URnA5SyHihnef3cMf-Zzmgilj_bUGSIHXT_Enl34riveKln6GPQIq247P6u4hljWoDNnbBpibdph8c0WjSVRHmE2E70r7ADL77xE8YDJLsOpwG8s2vphVt9esfVDEtdnN_YEEpEnh780-OKqPbE5e3LOqJDXh-lE0w5z97_WKsBTV1BQneEoud8iMQwr1AOwFL7XrzRmwRrDUvuqLI0VJ5mLrTyD5IQKaJ1CkTlCsibg8lakbPZqmlRXaHRlnv0hLEG3lEWq6h1fhdhh9R5bsMw5PDbIO-kqlyUw-e-GsmayXC15oKdh_ZqIaPGHGgxPP7mv_q2tap07jkVvOKOfOJ-uANJ8ubL8s_8bRBItsy2zfEkJCNx8t6nnxKbWZT8TPzh8zeyONxP1rPoJBl7gMccqcN0B2IhQ-68rg3VhXU8sbTpp0upp0deItpNtofiYw9_LmJKrHdNtiEyOmn2ioHT6ZycDOBLKqkvDoxA8AKMFzcXN2Y21aFhERYB_Kyp3GebRJzHlHwgC9KJay5pfqoEx-AfF-7yRc0GoGLIgDWxnf6yRCOphhYqChNoyJNvG17btyIGQnp4d4ujCHYOmzL0Z9Hls9yDlaU7dq6b8fmsGZzgqYLvcNSVvkYdi6TFOTc8lzhYepGCdM4pgZCM5G752UDfxx6W_GsLG_OLb8tGc-9GqQm7iv5IQ-auhdZmYNW6jMwRtXVIte5EIoLTgGbCOTtFCdPqxBdb_nVhnjncMVqHLamc7hs92U7aiaVYbjl8fGIVYqjmq6jgy0tY93J6IQYhATxRRfDZlp9Ko7t53Glk9JHBSCmUSeBCAs0z8RbzGW1NogcOHPW-KHuaed1mTWgPCJ2FaMU_b23d3Bh6Rrj-y5nX7FUuAZ4yGA-tD9qc4I3Je-9jt31RFtZL50DhUmHncztEFMwrGV-ojpCrCK9deyvM07sJCCGwAkTlYgM8pmDHtWRBaF0eiFUancrkZipVkBmV1l30jjq4yCiC_EMrbm5YuW_r5VMe4qPqYnAMuifvteDXC371pMCkEfNx-v5eSx5_zUsY8DDtUru12WdTJIoxxk_zRLQSrQmCQgUqoByo7Y5DKjSk012iU9U5VmRqVmdQwg7-ZjxhrnZ1lVyhqBbPzH34_bBIx6ov2xa2sRgSydKX_inTXuaPuEWyt_Je9NSAQ2SgZ9_OZPw69WL5PLLDeI_v-8MjDjrUkXm-ceWBULkHkgoc70780RghddFLuZarbw2E73Y0nL6vva3gqnDQpEiOk5Vi72uO6lPywimm3ZG5xAaVCAVbxVUz6cNQj7lE6cMdkKU1xUPWvlyhuPe_xyTrD1UwPbTr-Q8sSwIIqwz1erGk7JgZqHiHtFC4XSlFhTDNZ0JOuT5AeuVU47kRYQ==
           role: model
-        finishReason: STOP
-      createTime: '2026-02-17T17:52:43.250540Z'
-      modelVersion: gemini-3-flash-preview
-      responseId: 66qUaaylD_btirgPiNDVqAs
-      usageMetadata:
-        candidatesTokenCount: 7
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 7
-        promptTokenCount: 116
-        promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 116
-        thoughtsTokenCount: 112
-        totalTokenCount: 235
-        trafficType: ON_DEMAND
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - '*/*'
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '7191'
-      content-type:
-      - application/json
-      host:
-      - aiplatform.googleapis.com
-    method: POST
-    parsed_body:
-      contents:
-      - parts:
-        - text: Use the get_file tool now to retrieve a video file, then describe what you received.
-        role: user
-      - parts:
-        - function_call:
-            args:
-              name: input_file_0.mp4
-            id: pyd_ai_31e830a4ce804a148dca165fdb7d37fc
+        - parts:
+          - functionResponse:
+              id: call_17057189013780746566
+              name: get_file
+              response:
+                return_value: File attached
+          role: user
+        - parts:
+          - text: >-
+              <system>The accompanying <tool_content tool_name="get_file"> is part of what
+              the `get_file` tool returned (such as a page or document it fetched); neither the
+              application nor the user wrote it.</system>
+          - text: <tool_content tool_name="get_file">
+          - fileData:
+              file_uri: https://www.w3schools.com/html/mov_bbb.mp4
+              mime_type: video/mp4
+          - text: </tool_content>
+          role: user
+        tools:
+        - functionDeclarations:
+          - description: ""
             name: get_file
-          thought_signature: CvIdAY89a1_E5b743Z8_XOmESn7FluerCcZ6htIba461XJvW4HohqQ7Pf8ACoiseR2WvRMhb24gtjSf-eZ18-tZNp78Vr5zskSirncQMBZll4SlB-I7NpMDmJF382R3yzVL-Ig-DetEzyEjjTNwBVSxDHklJUP5Tz-sVssZbDmJTFITjlqTIn6FhyVV1ntXZtcp_xTYJEp3dLRd6gsHTYWDMjvGDxSBzCFQpiIqQd18TmVLWZSE5HPP25XLon_MgiYLOb8BzSe0RSmfjIpcqzx9qlel0t5VmaVJR6jdVv2RgDA3aYNW23zei11-JvBvX6eHhd8FmGczo4-XaIm-MmQcQzD5j4na_skxGRAhgzHOq0iWcA83nY1d70DYGoztouC8G5iP0ZWK-pn2ZXoDG3t4VcTfDKwMWp-phiK2E9hIGOfzcRKJv_W3Geym68F6BwBtUhQJqL_iuceKyLzQp1ItPlgfSyFbzlmbSft68LoVQ8fsuVO9PtLWtP24wg966K7ZW-xwx-AhPR50FE9aDCDrJua2eM8CtyJUiY7XXw7Sl6CTSNrwM0AoPLqMkYaFA7_91TbOZDHqj9DXzzeN0JmfZwGKM1Lo5QZ3R0QmahIfAPxpvU-5sh0TZazXYBpXN6AhJdtQF77CFx_U56hdpkA3h221Q-z_q1kS1L9ArjFc15pAkhspBPVQVZeod7u70ZFqba2bI2rffMU4086ESvUDv7XMkQiyc9UkSkDTrxyqVOqLh4sjKwPMFHs7K2iPi7ao8x5o62CztiCd4dG67opXYhJWoO6nRkU2opzEDmD_Je3l24YUZsfdKixqevkhWhcU6k1W_lEhU_FD-3qwuL_LYS_HyAmUQy3JBlyuNO8g9vuIDdg09QmECAJST0hUOokvTt23p994xuVkvouf95G_hi0KiXNLggmZFN-9tKv70WXtKmvFR9V7C1C3m9af0cAsmFXS6ByxT-qy_vuh2a28Ip3BIkKcQuY2ZeVI6pKk2U0n7WYJoNVCuRZPGbpk9D00-_TH6-XPEr2U5JdHnqMNnTS5Ej1xDYUHyk0ud-K8rZMHJEok0Z5slUEH72YfO28UxFWqbHQQRLVCbwxpm2yRyVOoBQXuHNcHh4mnMX05E8FW3Szb6q1FPjC4jzHGnyJI7MeRyO1wOn687tI8KFHv33X8dPuRJCy2qZpiPeLfxute_YFMVi_3MVX1UFxs_SB_PecSYAFSc4DyvMvULqUmv72drEIa1TvuA6x192YcQW0H9KgKGe4msyQRtBqkUZGBkx-TKeRtR_psEQ1MISkUVahS5xRh5sGxlw1eOY-xicLKM3jppgsXIXgl9N9r0jrho0x1fkPiz-n5GPkWoMDa8sYzYxZ1zGTjCs3gZYj57J0_pPe5fkXpvkJ_uuRvDc1IxtAR1DEq8iz2CXyDQA456QSWc2HnkiMRoXyBiq8EQP4KuD8Nd85rH9qRLohFTD5-EwTW6jppE4YcCYzRMrVU9eocc5rvjjigAIEW-LAlYg1A-n-Kpk09pxaBal9XI5SXMbdS2ESfmYHDdN8GkVlj7rSSkIqPWIm5-it9R7EjTLRYrfUpE89PMUvnlRxUdQbA-FDPUL8stIr7D2HbnILjW23EeVQ3QBfPmcI8A-PRw9_R90qFQZhXHy0EtunQdRqljuz4kcaI5u7vJnFXtZDstMZS0s8hAQ6T5qntrDMLBh9naO-WVldyPyP2W3RF-gciCE4YkpmRpaLVTex5wen7n-hvERjXqYGiDr-zkdhCk4M6wtF52KYkea5cSkP9a59Gj5kqRYFEv-Q-YhQl2_3loOuPPRE9IBpGP6SxutDMfjDs8a48zx18z7aFAvrO1cVmOmS03PxqprPuA0chhSylvJGoO0FHRVNHg07TiZDOLNmuOUvRD0XLueTKaLw5gG8bHcw7MswzuAUHq-VAM5pSB1xmSz7B9674DydfkXexQH4_CJqtd_HY10GZa21W0xJ0EawqJYcrTPMqjYpkOcvo_atPtyRLB8qtTBG-dZF4J0kwTf7LC8FReGL-SL0hfaUOCigKx8WQ8Zm5oVcJ3CrXC4E7b_AA9ndO0ZQ-PpjcBngB8x9AxXsM6k8mtahlBiTOp80JppsxtJyKhS4GTGrpkyNg_j-sNR7d2eFiHKt99JiDiiqZ81Fbqj_Es00VQPeHLTq5UjiueJu297S1DFsc8k8A2VuYEsjZMvIJFCMPITmw-XpOJatqnN7PApvfYTEivma9TgvhO61IIDExw1RN4xqTW6rW9IrwWWuydHBRxUqnCpI6xVIzEpG714WYnFQTGAWERK4BipXD7cX8_3U7loYVDACjIzL1tWTjVSww1X50wCe8_TpENGMwkO8oduNMk7DcEJyHX0u19rd8DWO1JY7HR3H_YbHIl8FjsEl_I44zz4HJf11HGQDuWySOg5M73k1SDbXNFXUdkLTqyrxCH27tMkYM8weOo1SilXnatCS--qCxq1gR-QGue4ieZfgWWgibZ2ZNv_xGaVPZxacbl1t0zf9hSNYAgDfk-VNHDXh86eJcT3ggkDajtaptzOfUC3Ufr5tstG8DxiYa5FY75Iz9BpvpspDpbyTzVH1YRL99E98M-iPM6kmqKdIG67TeMdzex7wyKB25s9WBPknrzWT-0hxC12-0bub7HOpRirbBtHyWX4nE2a7roRzydd1kKgIePJAREzabsakyQJVEpTM-vC5PrANzj6nXjwfsizl8dR8M6h_ZPhipY3IQ4H3SiMIjLpRWc7lgkd8_xdCF7ljho7Djn3_Vsjh7TTfSKgHd4lFOxouBsKpoD_M02ga7QwCb2sBQLdiZC6xxRzMCvvLrhRJkUTntdlkk6ZViHmtrGmkX46eR3ns6i7LOG0VqypRQVh9bCgGZuKpFwn1adzYovB67CRY9IAC_Rsuo1h6yMgHsOOmal_QdA2ZDw_KTfr9Z04zTMYpoF5_xBcH5KWiYxRp-oNtfNVGk6JC3qRK7_dq-C8lU_q0sW7tufS8AgNMu8NWFFvSGcU6_F2wgBnHNrLKZ6vCKUYhW9S-EceLKsr3jXkHS7cSzsmDIZZy2rgjiQiZMBRLmnJY7gqKeNba6p-od5UL9YItuGeXd_ftyKKUDohJJaqveX6iJyaEE5yGwcsX-GqURVFBU8IXZOjxxFGJhq-7IbYwWF6ni2seFvCvRT5u_JcR2QDUK1BtGNhdrEJbrtF6lNhx6WAKTnMIz52Xu05CVli1uhHIzbSQ-2QqBUWj9R-QL482Dq4YBmOLqxvxTAObRmUBLJBBKVl1It36KdHvBq6bw86KJW3x2H_XwxPUsF57MDCOJPU-RZX_iWQHgqL878oOcohWuV-zBbyPtbHBvHkZGgTZczYEWshlZ3Jo6_MoOQT0A2SbXvPAHaElx9tdgqG5xIVKPHzSqVn_ZGlb3XJ-65pPwMUzmygj6ealWLfc9vF1oeOrbXA05T1oWWbW1YKxTkQcpKj-vpSRBUqS6qrVX5A9kfUzrMHuuWMx_NbeiUzk5GKk4Aa3i6N2xqReMH_2ozNEvpPpYfnqNFswwsFmurVwq52NLHShntpCHOQTORTRXNPRMd_YsoEPcCKnYBDPhYT74zipVujRnxVTbJ6eLMmiPbf6R9Z-OgGPYxMlWoTK1_6lAyiVnridiAMJllib1XjmJok26jIjfho_sehAva1Oo3IVWqSzcDh5D-dsayXdXM7fKxhELg3o-Ex_nupWmXP1wdD4eoixaDIsc5Ik2qb_JajnXRGSEw-pXICw-nyjJa5ABRmoohMKQeZdhr-DTs7_iSFsTRSIAURy5IsxiedT0w1ADEJ018LgQfF1eZovRtJN03w335GFJgiZfDE2PcSLz5DBOXsE4Nb-icCOmh9GclgZwbcmVwTwDchoiC_0nQljVayK3AfwT3hwnBMJhNzvCAJcO_w8gqsxNHc1ABCknszF3xtkHbkYkvVs-qudA8HNBrjr1zDCha4YJtO11Bn3SnxJ7HhfVTwPbFQm8V5Mrg-WY6KRMf4gLakW2O6F25ArZo6_aPFHo7qAaBg3ppCImGciLPrTqHBAWEkhRnWrXxw63c_l_tnf7kgsH6-pquqO-FJgFUreQzGbrDSq5h0fvV5VQbRCkPCut91XA5iWC-Jg6yC0sFkADLoMTUC9bkyIY4SYZo5qggDaouG2J13-VPt_Sr92g-NkA0XFq4GsmE0Bk4bgiQzuLrkto5ulYP737IwJeSOvuR-DO7OXallG-5oQHtigtNNL0lZgXQxViZwyx_8gtYmzNaD7XQFKQ4R9LfijxojnANSzEYefjpIFCX-0KQw76EYv2tAgNlLsdQKdiqWW6Dc5yXbig8HDQhF8igTff7hnOoL7jCsmm5mZeO3QML4i1wQiKPwNE3rBlMOj_ceLIB1eUXvFo-LebwlofY1tcw-sLnc780fgym7dIJu4TfN9UdDQHh_Vjw8Gbvr167m82XFfmN3DiPa6smNsR5VDutWhXmj6wCzIOTWDflemn1VJePZrpUJwGBPD9kry1EAFUZTB8y8BE7jFv3Sb_UJezZKP3cBV8XDuZn0vd17seTiJlyhz9GlecMixMM7Hu66ARTHUgfEZtoeVXCi4GfZR9pLzmSoKPu1fc1qi-q6QJHRPHxeHrBRAEo2SoivK4diN0vXKwVQXMmikKQzdo_BXDW0k7qGCguEh9tuiYXhkgAeHHANqLo9repSduFvYPGB-2NoKaY8Z2i7E9wGqJDq9eTnITeGPAfzNu_99-ZgHiO0Bep0IXYSCmf65IZjopkm0va0WvDRCgRnsoO-BncDBUNnGgjRgrdGaVeBkVXonOHJT9UY948MMQlkqX9hDkgoOdN5fbD8hDBGt0MnppXpl7Gv0ghV8tBX29CyZAqEyccB8lLhFik5mYBwIKQwqBCKzVcY91b24GRSqvWSRtxmBeAR_47fUroVS3A9G4I-3HsaUGCwaXcSP1hCGi1L1zNelFrI5ANN5ESZrpf0K7_4o8vHqOrGC59lhd1wMRh5mmldYXLOEq4qNEVOgNDrZpeulUv8wntyz3t0Yw0mZJh86nfH1nIk1MlW1tnsnKXcDDC7ynyArBEqBCIPMQy-nGPvQ==
-        role: model
-      - parts:
-        - function_response:
-            id: pyd_ai_31e830a4ce804a148dca165fdb7d37fc
-            name: get_file
-            response:
-              error: |-
-                1 validation error:
-                ```json
-                [
-                  {
-                    "type": "extra_forbidden",
-                    "loc": [
-                      "name"
-                    ],
-                    "msg": "Extra inputs are not permitted",
-                    "input": "input_file_0.mp4"
-                  }
-                ]
-                ```
-
-                Fix the errors and try again.
-        role: user
-      - parts:
-        - function_call:
-            args: {}
-            id: pyd_ai_941bde903bac4c97987ba8a3838833b6
-            name: get_file
-          thought_signature: CvoDAY89a1_XSSxy9NsvTMUfDDrzFiZ1F6ZuY8QJwRfA2382Ai_WSQSC0OQcGbAtzqQUXsTLnzkdnALPsBcyNHuJKp1l-ZCktQf5Os2TBBGX44wYwYXIhv9C8GBNaUBNZ-Q2jCJALxswj6KUSB5yjlkLppDQ5dJohmcqxKJslYjBSM7UEGT_LjRjpMnsklr6kJCfP4q84mTqz4FEkl-eMJccO8hUmBNzs8sNRL2-bvu-oIyGOZ63uoHRgz55m9IQex2h-htLkncHY1P0T_fg6yNcpRAsks5cFhJasMxGOtl7ArME_8q-ipWSs92aCOBTRNMhSNqdYQfCMxnGZHNhWfXUBwJPsjF9k7_BUmBdOBoaCUhtFoCZ8hakGOOE6IgNLCuXGHvLWuM8sbdoSRkaxly09oKQluFVbk8N9qqyUlO9XLsP8RQrD8lOi5fESJU_VeYy3WLFm-mxCHUY7aFt_1oLgwmwLhfNwdFNIqZt2A72hPtP0Jomu8kwlHVamfcuKPMc_S6bEEwhE3M4k7zh53Sb7lYBFH32-MEhCSbsNEj8OcOshMVeGlS429MKTPG8y_FacQRBvrme-7p7rt5mh2HrV5VPs8WyOpj8nPMG9aFsoDJKVq5TnJCG4D5KZ9sgjrftLvaB52hvxaVf-T-27xa89qcsHLZ9p7m_6ro=
-        role: model
-      - parts:
-        - function_response:
-            id: pyd_ai_941bde903bac4c97987ba8a3838833b6
-            name: get_file
-            response:
-              return_value: File attached
-        role: user
-      - parts:
-        - file_data:
-            file_uri: https://www.w3schools.com/html/mov_bbb.mp4
-            mime_type: video/mp4
-        role: user
-      generationConfig:
-        responseModalities:
-        - TEXT
-      tools:
-      - functionDeclarations:
-        - description: ''
-          name: get_file
-          parametersJsonSchema:
-            additionalProperties: false
-            properties: {}
-            type: object
-    uri: https://aiplatform.googleapis.com/v1beta1/projects/gen-lang-client-0498264908/locations/global/publishers/google/models/gemini-3-flash-preview:generateContent
+            parameters_json_schema:
+              additionalProperties: false
+              properties: {}
+              type: object
+        toolConfig:
+          functionCallingConfig:
+            mode: VALIDATED
+        generationConfig:
+          responseModalities:
+          - TEXT
   response:
+    status: 200
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
-      content-length:
-      - '3339'
       content-type:
       - application/json; charset=UTF-8
       transfer-encoding:
@@ -275,40 +162,39 @@ interactions:
       - Origin
       - X-Origin
       - Referer
-    parsed_body:
-      candidates:
-      - avgLogprobs: -1.4554587748387213
-        content:
-          parts:
-          - text: The video features a large, plump, white rabbit in a grassy field. Initially, the rabbit is lying on its
-              back, watching a pink butterfly flutter around it. The camera then shifts to a wider shot, showing the rabbit
-              standing up and admiring the beautiful landscape, which includes rolling hills and lush green trees under a
-              bright blue sky. Several butterflies are seen flying around, and one even lands on the rabbit's head, much to
-              its delight. The peaceful scene is suddenly interrupted when a small, round orange object flies into the frame
-              and hits the rabbit in the stomach, causing it to look down in surprise.
-            thoughtSignature: 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
-          role: model
-        finishReason: STOP
-      createTime: '2026-02-17T17:52:45.243188Z'
-      modelVersion: gemini-3-flash-preview
-      responseId: 7aqUafTrDtzllOoPydzVmAk
-      usageMetadata:
-        candidatesTokenCount: 123
-        candidatesTokensDetails:
-        - modality: TEXT
-          tokenCount: 123
-        promptTokenCount: 1017
-        promptTokensDetails:
-        - modality: VIDEO
-          tokenCount: 640
-        - modality: TEXT
-          tokenCount: 127
-        - modality: AUDIO
-          tokenCount: 250
-        thoughtsTokenCount: 392
-        totalTokenCount: 1532
-        trafficType: ON_DEMAND
-    status:
-      code: 200
-      message: OK
-version: 1
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            role: model
+            parts:
+            - text: |-
+                The video shows a large, white, fluffy rabbit-like creature in a bright, green meadow.
+
+                It starts with an overhead view of the creature lying in the grass surrounded by small purple flowers. A glowing pink butterfly flies around and eventually lands on its head, much to the creature's delight.
+
+                The scene then shifts to a wide shot of the creature standing in the meadow, with rolling hills and trees in the background. As it happily watches the butterfly, a red apple falls from the sky and hits it directly on the head, leaving the creature looking startled and confused.
+              thoughtSignature: >-
+                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
+          finishReason: STOP
+        usageMetadata:
+          promptTokenCount: 1024
+          candidatesTokenCount: 119
+          totalTokenCount: 1488
+          trafficType: ON_DEMAND
+          promptTokensDetails:
+          - modality: AUDIO
+            tokenCount: 250
+          - modality: TEXT
+            tokenCount: 114
+          - modality: VIDEO
+            tokenCount: 660
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 119
+          thoughtsTokenCount: 345
+        modelVersion: gemini-3-flash-preview
+        createTime: 2026-11-25T01:12:04.587465Z
+        responseId: 5DUGa8ntI-OI8sYPkaz4qA8
+  recorded_at: 2026-11-25T01:12:07.725970+00:00

@@ -21,27 +21,28 @@ interactions:
       cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
   response_sample:
     json:
-      id: f5701b72-3e7f-f96f-a94a-dbba184c2905
+      id: b159e387-39c4-9d25-93a7-0719404ac7d2
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_17564532
+          - id: call-f634be93-0356-42e2-9e02-237928e05c2e-0
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-03-04T20:36:26.942067509Z'
-      model: grok-4-1-fast-non-reasoning
-      system_fingerprint: fp_1daff7bd79
+      created: '2026-11-25T01:02:19.796444132Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
       usage:
-        completion_tokens: 15
-        prompt_tokens: 359
-        total_tokens: 374
-        prompt_text_tokens: 359
-        cached_prompt_text_tokens: 158
+        completion_tokens: 6
+        prompt_tokens: 263
+        total_tokens: 269
+        prompt_text_tokens: 263
+        cached_prompt_text_tokens: 256
+        cost_in_usd_ticks: '749500'
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -54,11 +55,12 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiRmNTcwMWI3Mi0zZTdmLWY5NmYtYTk0YS1kYmJhMTg0YzI5MDUSKwgEGicQAhojCg1jYWxsXzE3
-      NTY0NTMyEAEYAVIOCghnZXRfZmlsZRICe30qDAjKr6LNBhC1npvBAzIbZ3Jvay00LTEtZmFzdC1u
-      b24tcmVhc29uaW5nOg1mcF8xZGFmZjdiZDc5ShIIDxDnAhj2AiDnAjieAVjg9yFaYxABLTMzMz86
-      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
-      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+      CiRiMTU5ZTM4Ny0zOWM0LTlkMjUtOTNhNy0wNzE5NDA0YWM3ZDISSwgEGkcQAhpBCitjYWxsLWY2
+      MzRiZTkzLTAzNTYtNDJlMi05ZTAyLTIzNzkyOGUwNWMyZS0wEAEYAVIOCghnZXRfZmlsZRICe304
+      ASoMCJvnmNgGEOSL4/sCMghncm9rLTQuMzoTZnBfZWIzYzAwM2ZjNjZjMTRlZEoZCAYQhwIYjQIg
+      hwI4gAJYvN8tkAGHApgBBlpjEAEtMzMzPzoCCAFCUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFs
+      UHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifU0z
+      M3M/
 - request_sample:
     json:
       messages:
@@ -70,19 +72,27 @@ interactions:
         - text: ''
         role: ROLE_ASSISTANT
         tool_calls:
-        - id: call_17564532
+        - id: call-f634be93-0356-42e2-9e02-237928e05c2e-0
           type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
           status: TOOL_CALL_STATUS_COMPLETED
           function:
             name: get_file
             arguments: '{}'
       - content:
+        - text: <system>The accompanying <tool_content tool_name="get_file"> is part
+            of what the `get_file` tool returned (such as a page or document it fetched);
+            neither the application nor the user wrote it.</system>
+        role: ROLE_USER
+      - content:
+        - text: <tool_content tool_name="get_file">
         - file:
             file_id: file_20ac2a79-38a3-40ae-83d0-0a604d8fd316
+        - text: </tool_content>
         role: ROLE_USER
       - content:
         - text: File attached
         role: ROLE_TOOL
+        tool_call_id: call-f634be93-0356-42e2-9e02-237928e05c2e-0
       model: grok-4-1-fast-non-reasoning
       tools:
       - function:
@@ -92,52 +102,40 @@ interactions:
         mode: TOOL_MODE_AUTO
     raw: !!binary |
       CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGltYWdlIGZpbGUs
-      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKKwoCCgAQAiIjCg1jYWxsXzE3NTY0
-      NTMyEAEYAVIOCghnZXRfZmlsZRICe30KMQotGisKKWZpbGVfMjBhYzJhNzktMzhhMy00MGFlLTgz
-      ZDAtMGE2MDRkOGZkMzE2EAEKEwoPCg1GaWxlIGF0dGFjaGVkEAUSG2dyb2stNC0xLWZhc3Qtbm9u
-      LXJlYXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNl
-      LCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAEKSQoCCgAQAiJBCitjYWxsLWY2MzRi
+      ZTkzLTAzNTYtNDJlMi05ZTAyLTIzNzkyOGUwNWMyZS0wEAEYAVIOCghnZXRfZmlsZRICe30K0gEK
+      zQEKygE8c3lzdGVtPlRoZSBhY2NvbXBhbnlpbmcgPHRvb2xfY29udGVudCB0b29sX25hbWU9Imdl
+      dF9maWxlIj4gaXMgcGFydCBvZiB3aGF0IHRoZSBgZ2V0X2ZpbGVgIHRvb2wgcmV0dXJuZWQgKHN1
+      Y2ggYXMgYSBwYWdlIG9yIGRvY3VtZW50IGl0IGZldGNoZWQpOyBuZWl0aGVyIHRoZSBhcHBsaWNh
+      dGlvbiBub3IgdGhlIHVzZXIgd3JvdGUgaXQuPC9zeXN0ZW0+EAEKawolCiM8dG9vbF9jb250ZW50
+      IHRvb2xfbmFtZT0iZ2V0X2ZpbGUiPgotGisKKWZpbGVfMjBhYzJhNzktMzhhMy00MGFlLTgzZDAt
+      MGE2MDRkOGZkMzE2ChEKDzwvdG9vbF9jb250ZW50PhABCkAKDwoNRmlsZSBhdHRhY2hlZBAFOitj
+      YWxsLWY2MzRiZTkzLTAzNTYtNDJlMi05ZTAyLTIzNzkyOGUwNWMyZS0wEhtncm9rLTQtMS1mYXN0
+      LW5vbi1yZWFzb25pbmeKAVEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBm
+      YWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In2SAQIIAQ==
   response_sample:
     json:
-      id: 44a9d496-87b9-9797-9e53-f3d0ad171d44
+      id: 440756b0-2e32-96c3-a909-d9f1fb4e8dc5
       outputs:
-      - finish_reason: REASON_TOOL_CALLS
-        message:
-          role: ROLE_ASSISTANT
-          tool_calls:
-          - id: call_30186963
-            type: TOOL_CALL_TYPE_ATTACHMENT_SEARCH_TOOL
-            status: TOOL_CALL_STATUS_COMPLETED
-            function:
-              name: read_attachment
-              arguments: '{"key":"kiwi.jpg","query":"Describe the image in detail,
-                including what it shows, colors, and any notable features."}'
       - finish_reason: REASON_STOP
-        index: 2
         message:
-          content: "The image is a close-up, straight-on photograph of a perfectly\
-            \ sliced horizontal cross-section through the middle of a fresh kiwi fruit,\
-            \ set against a plain white background. \n\nKey details:\n- **Skin**:\
-            \ Thin, fuzzy, golden-brown to light tan outer edge with visible fine\
-            \ hairs.\n- **Flesh**: Vibrant, juicy bright green (lime to emerald tones),\
-            \ smooth and even.\n- **Center**: Creamy white to pale yellow-white core,\
-            \ surrounded by a symmetrical starburst pattern of tiny dark brown to\
-            \ black edible seeds arranged in radial lines.\n\nIt's a clean, appetizing\
-            \ studio shot highlighting the fruit's classic star-like appearance, with\
-            \ bright even lighting and high contrast between the green flesh, white\
-            \ core, and dark seeds."
+          content: I received an image file of a kiwi fruit cross-section. It's a
+            close-up view of a sliced kiwi showing the characteristic bright green
+            flesh with a radial pattern of small black seeds arranged around a white
+            center core. The fuzzy brown skin is visible around the outer edge of
+            the fruit.
           role: ROLE_ASSISTANT
-      created: '2026-03-04T20:36:29.989325213Z'
-      model: grok-4-1-fast-non-reasoning
-      system_fingerprint: fp_1daff7bd79
+      created: '2026-11-25T01:02:21.923703586Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
       usage:
-        completion_tokens: 199
-        prompt_tokens: 2196
-        total_tokens: 2395
-        prompt_text_tokens: 2196
-        cached_prompt_text_tokens: 1066
-        server_side_tools_used:
-        - SERVER_SIDE_TOOL_ATTACHMENT_SEARCH
+        completion_tokens: 56
+        prompt_tokens: 736
+        total_tokens: 792
+        prompt_text_tokens: 392
+        prompt_image_tokens: 344
+        cached_prompt_text_tokens: 256
+        cost_in_usd_ticks: '7912000'
       settings:
         parallel_tool_calls: true
         temperature: 0.7
@@ -150,23 +148,13 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiQ0NGE5ZDQ5Ni04N2I5LTk3OTctOWU1My1mM2QwYWQxNzFkNDQSqAEIBBqjARACGp4BCg1jYWxs
-      XzMwMTg2OTYzEAcYAVKIAQoPcmVhZF9hdHRhY2htZW50EnV7ImtleSI6Imtpd2kuanBnIiwicXVl
-      cnkiOiJEZXNjcmliZSB0aGUgaW1hZ2UgaW4gZGV0YWlsLCBpbmNsdWRpbmcgd2hhdCBpdCBzaG93
-      cywgY29sb3JzLCBhbmQgYW55IG5vdGFibGUgZmVhdHVyZXMuIn0S2AUIAxACGtEFCswFVGhlIGlt
-      YWdlIGlzIGEgY2xvc2UtdXAsIHN0cmFpZ2h0LW9uIHBob3RvZ3JhcGggb2YgYSBwZXJmZWN0bHkg
-      c2xpY2VkIGhvcml6b250YWwgY3Jvc3Mtc2VjdGlvbiB0aHJvdWdoIHRoZSBtaWRkbGUgb2YgYSBm
-      cmVzaCBraXdpIGZydWl0LCBzZXQgYWdhaW5zdCBhIHBsYWluIHdoaXRlIGJhY2tncm91bmQuIAoK
-      S2V5IGRldGFpbHM6Ci0gKipTa2luKio6IFRoaW4sIGZ1enp5LCBnb2xkZW4tYnJvd24gdG8gbGln
-      aHQgdGFuIG91dGVyIGVkZ2Ugd2l0aCB2aXNpYmxlIGZpbmUgaGFpcnMuCi0gKipGbGVzaCoqOiBW
-      aWJyYW50LCBqdWljeSBicmlnaHQgZ3JlZW4gKGxpbWUgdG8gZW1lcmFsZCB0b25lcyksIHNtb290
-      aCBhbmQgZXZlbi4KLSAqKkNlbnRlcioqOiBDcmVhbXkgd2hpdGUgdG8gcGFsZSB5ZWxsb3ctd2hp
-      dGUgY29yZSwgc3Vycm91bmRlZCBieSBhIHN5bW1ldHJpY2FsIHN0YXJidXJzdCBwYXR0ZXJuIG9m
-      IHRpbnkgZGFyayBicm93biB0byBibGFjayBlZGlibGUgc2VlZHMgYXJyYW5nZWQgaW4gcmFkaWFs
-      IGxpbmVzLgoKSXQncyBhIGNsZWFuLCBhcHBldGl6aW5nIHN0dWRpbyBzaG90IGhpZ2hsaWdodGlu
-      ZyB0aGUgZnJ1aXQncyBjbGFzc2ljIHN0YXItbGlrZSBhcHBlYXJhbmNlLCB3aXRoIGJyaWdodCBl
-      dmVuIGxpZ2h0aW5nIGFuZCBoaWdoIGNvbnRyYXN0IGJldHdlZW4gdGhlIGdyZWVuIGZsZXNoLCB3
-      aGl0ZSBjb3JlLCBhbmQgZGFyayBzZWVkcy4QAioMCM2vos0GEJ3P39cDMhtncm9rLTQtMS1mYXN0
-      LW5vbi1yZWFzb25pbmc6DWZwXzFkYWZmN2JkNzlKFwjHARCUERjbEiCUETiqCEoBCFjg+tIZWmMQ
-      AS0zMzM/OgIIAUJRCk8KCGdldF9maWxlIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2Us
-      ICJwcm9wZXJ0aWVzIjoge30sICJ0eXBlIjogIm9iamVjdCJ9TTMzcz8=
+      CiQ0NDA3NTZiMC0yZTMyLTk2YzMtYTkwOS1kOWYxZmI0ZThkYzUSqwIIAxqmAgqfAkkgcmVjZWl2
+      ZWQgYW4gaW1hZ2UgZmlsZSBvZiBhIGtpd2kgZnJ1aXQgY3Jvc3Mtc2VjdGlvbi4gSXQncyBhIGNs
+      b3NlLXVwIHZpZXcgb2YgYSBzbGljZWQga2l3aSBzaG93aW5nIHRoZSBjaGFyYWN0ZXJpc3RpYyBi
+      cmlnaHQgZ3JlZW4gZmxlc2ggd2l0aCBhIHJhZGlhbCBwYXR0ZXJuIG9mIHNtYWxsIGJsYWNrIHNl
+      ZWRzIGFycmFuZ2VkIGFyb3VuZCBhIHdoaXRlIGNlbnRlciBjb3JlLiBUaGUgZnV6enkgYnJvd24g
+      c2tpbiBpcyB2aXNpYmxlIGFyb3VuZCB0aGUgb3V0ZXIgZWRnZSBvZiB0aGUgZnJ1aXQuEAI4ASoM
+      CJ3nmNgGEKKyurgDMghncm9rLTQuMzoTZnBfZWIzYzAwM2ZjNjZjMTRlZEodCDgQ4AUYmAYgiAMo
+      2AI4gAJYwPTiA5AB4AWYATxaYxABLTMzMz86AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25h
+      bFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3BlcnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1N
+      MzNzPw==
