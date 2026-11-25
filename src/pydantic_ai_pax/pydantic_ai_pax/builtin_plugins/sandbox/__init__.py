@@ -11,8 +11,8 @@ A sandbox stays until `/sandbox delete`, which keeps the history: a copy of the 
 
 `/computer-use` lets the model see and control the sandbox's desktop. The history records whether it is on
 (`computer_use_on`). `/computer-use` before `/sandbox` makes
-the sandbox with a desktop. In a running sandbox it adds one where the provider can, and otherwise starts the
-sandbox again with one, but only while no turn has run in it. The model's screenshots go to a loopback viewer
+the sandbox with a desktop. In a running sandbox it adds one where the provider can; where it cannot, it says how
+to start a sandbox with one. The model's screenshots go to a loopback viewer
 (`DesktopViewer`): `computer` rows link to it, `/computer-use view` opens it, and `pax --web` shows it beside
 the transcript.
 """
@@ -71,7 +71,10 @@ from pydantic_ai_pax.ui.menus.dialogs import RUNNERS, TerminalDialogs
 from pydantic_ai_pax.ui.rendering.status import StatusSegment
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
-__all__ = ('SandboxPlugin',)
+__all__ = (
+    'SandboxPlugin',
+    'imported_kind',
+)
 
 
 def history_sandbox(messages: Sequence[ModelMessage]) -> WorkspaceRef | None:
@@ -461,31 +464,17 @@ class SandboxPlugin(Plugin):
         if (missing := sandbox.provider.missing(desktop=True)) is not None:
             raise ValueError(missing)
         if sandbox.provider.desktop_at_create and computer_use_state(self.host.conversation.messages) is None:
-            return await self._restart_with_desktop(sandbox)
+            # Replacing the sandbox would lose any work a fork or copy of the conversation did in it.
+            raise ValueError(
+                f'{sandbox.provider.title} gives a desktop only to a new sandbox. '
+                f'Run /sandbox delete, /new, /computer-use, then /sandbox {sandbox.provider.name}.'
+            )
         sandbox.add_desktop()
         await self._record_computer_use(sandbox, on=True)
         return (
             'Computer use is on: the model can see and control the desktop. /computer-use view shows it.'
             + self._needs_full()
         )
-
-    async def _restart_with_desktop(self, sandbox: _Sandbox) -> str:
-        """Replace a sandbox whose provider gives a desktop only at create with a new one that has it.
-
-        That is safe only while the conversation holds just the `/sandbox` exchange: a turn or a `!` line after it
-        may have made files there.
-        """
-        messages = self.host.conversation.messages
-        first = messages[0] if len(messages) == 2 else None
-        if not isinstance(first, ModelRequest) or [imported_kind(part) for part in first.parts] != ['sandbox']:
-            raise ValueError(
-                f'{sandbox.provider.title} gives a desktop only to a new sandbox, and this conversation has '
-                f'already worked in this one. Run /new, /computer-use, then /sandbox {sandbox.provider.name}.'
-            )
-        await self._delete_sandbox(sandbox)
-        await self.host.conversation.commit_messages([])
-        self._armed_for = self.host.conversation.conversation_id
-        return await self._start(sandbox.provider)
 
     async def _record_computer_use(self, sandbox: _Sandbox, *, on: bool) -> None:
         """Save `/computer-use on|off` as an exchange, as `/sandbox` saves its own."""

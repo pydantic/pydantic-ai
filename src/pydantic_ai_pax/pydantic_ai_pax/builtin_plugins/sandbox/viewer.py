@@ -18,13 +18,13 @@ import os
 import secrets
 import tempfile
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qs, quote
+from urllib.parse import quote
 
 import anyio
 from anyio import to_thread
@@ -35,15 +35,8 @@ from pydantic_ai.workspaces import WorkspaceError, WorkspaceRef
 from pydantic_ai_pax.builtin_plugins.sandbox.computer_use import ActionMarker, action_markers, format_actions
 
 if TYPE_CHECKING:
-    from starlette.datastructures import Headers
-
+    from pydantic_ai_pax.builtin_plugins.web.guard import ASGIApp
     from pydantic_ai_pax.builtin_plugins.web.server import WebServer
-
-Scope = MutableMapping[str, object]
-Message = MutableMapping[str, object]
-Receive = Callable[[], Awaitable[Message]]
-Send = Callable[[Message], Awaitable[None]]
-ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 HEADER = 'x-pax-desktop-token'
 MAX_FRAMES = 30
@@ -158,49 +151,6 @@ class DesktopSession:
             queue.put_nowait(None)
 
 
-class _ViewerGuard:
-    """Require the per-launch token and loopback `Host` header on every viewer request."""
-
-    def __init__(self, app: ASGIApp, *, token: str, hosts: frozenset[str]) -> None:
-        self.app = app
-        self.token = token
-        self.hosts = hosts
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope['type'] != 'http':
-            await self.app(scope, receive, send)
-            return
-        from starlette.datastructures import Headers
-        from starlette.responses import Response
-
-        headers = Headers(scope=scope)
-        path = str(scope['path'])
-        raw_query = scope.get('query_string', b'')
-        query = parse_qs(raw_query.decode() if isinstance(raw_query, bytes) else '')
-        if self._allowed(path, headers, query):
-            await self.app(scope, receive, send)
-            return
-        refused = Response(
-            'Open the desktop link Pax printed: it carries this session access token.',
-            status_code=403,
-            media_type='text/plain',
-        )
-        await refused(scope, receive, send)
-
-    def _allowed(self, path: str, headers: Headers, query: dict[str, list[str]]) -> bool:
-        if headers.get('host') not in self.hosts:
-            return False
-        if path.startswith('/api/'):
-            origin = headers.get('origin')
-            if origin is not None and origin not in {f'http://{host}' for host in self.hosts}:
-                return False
-            return self._valid(headers.get(HEADER, ''))
-        return self._valid(query.get('token', [''])[0])
-
-    def _valid(self, token: str) -> bool:
-        return secrets.compare_digest(token.encode(), self.token.encode())
-
-
 def _viewer_html(page: str, *, session: DesktopSession, token: str, nonce: str) -> str:
     """`viewer.html` (`page`) for `session`, with its title, script nonce, and starting state filled in."""
     config = json.dumps(
@@ -229,9 +179,11 @@ async def _event_stream(session: DesktopSession) -> AsyncIterator[str]:
 
 
 def create_viewer_app(viewer: DesktopViewer, *, token: str, hosts: frozenset[str]) -> ASGIApp:
-    """Build the FastAPI app for `viewer`, protected by `_ViewerGuard`."""
+    """Build the FastAPI app for `viewer`, protected by the web plugin's `Guard`."""
     from fastapi import FastAPI, HTTPException, Query
     from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+
+    from pydantic_ai_pax.builtin_plugins.web.guard import Guard
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -291,7 +243,7 @@ def create_viewer_app(viewer: DesktopViewer, *, token: str, hosts: frozenset[str
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         return JSONResponse(item.meta())
 
-    return _ViewerGuard(app, token=token, hosts=hosts)
+    return Guard(app, token=token, hosts=hosts, header=HEADER)
 
 
 def _write_launch_page(url: str) -> Path:
