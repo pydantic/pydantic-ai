@@ -1316,11 +1316,13 @@ jobs:
         suite: [durable-exec, harness-temporal]
         # A `pydantic-ai-harness`-only change runs no `durable-exec` leg but the 3.15 one below.
         harness_only: ["${{ needs.classify.outputs.harness_only }}"]
-        # A pull request runs only the legs that collect coverage (see `COLLECT_COVERAGE`), which
-        # include one `lowest` leg (see the `test` job's matrix), the 3.13 `locked` leg that runs the
-        # Render local runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` leg below,
-        # the newest Python, which runs the manifest freshness test of a `pydantic-ai-harness`-only
-        # change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`).
+        # A pull request runs only the Python and resolution pairs whose legs carry a check: the pairs
+        # that collect coverage (see `COLLECT_COVERAGE`), which include one `lowest` pair (see the
+        # `test` job's matrix), the 3.13 `locked` pair, whose `durable-exec` leg runs the Render local
+        # runtime tests (see `RENDER_LOCAL_RUNTIME`), and the 3.15 `locked` pair below, the newest
+        # Python, whose `durable-exec` leg runs the manifest freshness test of a
+        # `pydantic-ai-harness`-only change (see `DURABLE_EXEC_MANIFEST_FRESHNESS`). Each pair it keeps
+        # runs both suites.
         pull_request: ["${{ github.event_name == 'pull_request' && 'true' || 'false' }}"]
         exclude:
           - pull_request: "true"
