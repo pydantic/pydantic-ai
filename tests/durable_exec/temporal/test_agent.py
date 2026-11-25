@@ -761,6 +761,114 @@ async def _replay_signal_cancellation(history: WorkflowHistory) -> None:
     ).replay_workflow(history)
 
 
+_partial_cancellation_activity_started: asyncio.Event | None = None
+
+
+async def _partial_cancellation_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'The partial '
+    yield 'reply'
+    assert _partial_cancellation_activity_started is not None
+    _partial_cancellation_activity_started.set()
+    # Block until the run's cancellation cancels the model activity.
+    await asyncio.Event().wait()
+
+
+async def _partial_cancellation_event_stream_handler(
+    ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]
+) -> None:
+    async for _ in stream:
+        pass
+
+
+_partial_cancellation_agent = Agent(
+    FunctionModel(stream_function=_partial_cancellation_stream_model),
+    name='partial_cancellation_agent',
+    deps_type=type(None),
+    capabilities=[
+        TemporalDurability(
+            event_stream_handler=_partial_cancellation_event_stream_handler,
+            # A short heartbeat timeout delivers the cancellation to the activity quickly.
+            model_activity_config=ActivityConfig(heartbeat_timeout=timedelta(seconds=1)),
+        )
+    ],
+)
+
+_partial_cancellation_messages: list[ModelMessage] = []
+"""What the run cancelled by `handle.cancel()` recorded, as the workflow can't return it."""
+
+
+@workflow.defn
+class PartialCancellationWorkflow:
+    def __init__(self) -> None:
+        self._token = CancellationToken()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        try:
+            await _partial_cancellation_agent.run(prompt, cancellation_token=self._token)
+        except RunCancelled as exc:
+            return ModelMessagesTypeAdapter.dump_json(exc.all_messages()).decode()
+        except asyncio.CancelledError as exc:
+            run_cancelled = RunCancelled.from_cancellation(exc)
+            assert run_cancelled is not None
+            _partial_cancellation_messages[:] = run_cancelled.all_messages()
+            raise
+        return 'completed'  # pragma: no cover
+
+    @workflow.signal
+    def cancel(self) -> None:
+        self._token.cancel()
+
+
+async def _run_partial_cancellation_workflow(client: Client, *, by_signal: bool) -> list[ModelMessage]:
+    global _partial_cancellation_activity_started
+
+    _partial_cancellation_activity_started = asyncio.Event()
+    _partial_cancellation_messages.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PartialCancellationWorkflow],
+        plugins=[AgentPlugin(_partial_cancellation_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            PartialCancellationWorkflow.run,
+            args=['Write a reply.'],
+            id=f'{PartialCancellationWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        await _partial_cancellation_activity_started.wait()
+        if by_signal:
+            await handle.signal(PartialCancellationWorkflow.cancel)
+            return ModelMessagesTypeAdapter.validate_json(await handle.result())
+        await handle.cancel()
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await handle.result()
+        assert isinstance(exc_info.value.__cause__, TemporalCancelledError)
+        return list(_partial_cancellation_messages)
+
+
+async def test_temporal_run_cancelled_by_signal_keeps_streamed_partial_response(client: Client) -> None:
+    """A run cancelled while its model activity streams keeps what was streamed, as an `'interrupted'` response."""
+    messages = await _run_partial_cancellation_workflow(client, by_signal=True)
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart(content='The partial reply')]
+    assert response.state == 'interrupted'
+
+
+async def test_temporal_workflow_cancel_keeps_streamed_partial_response(client: Client) -> None:
+    """Cancelling the workflow keeps what the run's model activity streamed, and the workflow still ends cancelled."""
+    messages = await _run_partial_cancellation_workflow(client, by_signal=False)
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [TextPart(content='The partial reply')]
+    assert response.state == 'interrupted'
+
+
 async def _migration_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
     async for _ in stream:
         pass
