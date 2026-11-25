@@ -9,11 +9,6 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai._instructions import (
-    LoadedInstructionValues,
-    _recorded_instruction_values,  # pyright: ignore[reportPrivateUsage]
-    instruction_window,
-)
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Caching,
@@ -1010,29 +1005,6 @@ def _instruction_records(messages: Sequence[ModelMessage], kind: type[ModelReque
     ]
 
 
-def _folded(messages: list[ModelMessage]) -> tuple[dict[str, str | None], dict[str, str | None]]:
-    """The prefix blocks' values as the instruction window and its changes record them, and the loaded blocks'."""
-    baseline = instruction_window(messages)
-    assert baseline is not None
-    recorded = _recorded_instruction_values(messages, baseline)
-    assert recorded is not None
-    return {str(instruction_id): value for instruction_id, value in recorded.items()}, dict(
-        LoadedInstructionValues.of(messages).values
-    )
-
-
-def _current(state: str) -> dict[str, str | None]:
-    """What the prefix's append-mode blocks say: the agent's own and the deferred capability catalog. `Coder`'s
-    model-specific blocks rewrite, so none of them is in the window."""
-    return {
-        'agent:state': f'The state is {state}.',
-        'capability:deferred_capabilities': (
-            'The following capabilities are deferred and can be loaded using the `load_capability` tool. '
-            "A capability's tools stay hidden until it is loaded:\n- counter: Counting."
-        ),
-    }
-
-
 _LOAD_COUNTER = ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'counter'}, tool_call_id='load')])
 
 
@@ -1095,7 +1067,8 @@ class TestModelSwitches:
         """Between switches, the agent's own block and a loaded capability's block append their changes. A switch opens
         a window that carries each prefix block at its current value, as a fresh run on the new model would, and the
         changes recorded before it stay in history without applying to the new window. A loaded capability's block
-        isn't part of any window, so its changes stay in effect and it isn't stated again."""
+        isn't part of any window, so its changes stay in effect and it isn't stated again. After every run, a request
+        with nothing changed records nothing: what history records agrees with what the model was sent."""
         log = _SwitchLog()
         workspace = LocalWorkspaceBackend(tmp_path)
         agent = _switch_agent()
@@ -1129,11 +1102,20 @@ class TestModelSwitches:
             # Earlier changes stay in history.
             assert _instruction_records(messages, InstructionDeltaPart)[: len(deltas_before)] == deltas_before
             deltas_before = _instruction_records(messages, InstructionDeltaPart)
-            # The fold agrees with what the model was sent: the current values, each applied once.
-            assert _folded(messages) == (
-                _current(deps.state),
-                {'counter': f'Count carefully.\n\nThe count is {deps.count}.'},
+            # What history records agrees with what the model was sent: a request on the same model with nothing
+            # changed is sent the same instructions, and no change is recorded or restated for it.
+            idle_log = _SwitchLog()
+            idle = await agent.run(
+                'idle',
+                model=_switch_model(name, idle_log, gpt=gpt),
+                deps=deps,
+                workspace=workspace,
+                message_history=messages,
             )
+            assert idle_log.requests[0][1] == sent
+            assert idle_log.requests[0][2] == log.requests[-1][2]
+            assert _instruction_records(idle.new_messages(), InstructionDeltaPart) == []
+            assert _instruction_records(idle.new_messages(), InstructionBaselinePart) == []
         # What each request was sent after the prefix, by id: the loaded capability's statements are sent in every
         # window, while the state changes from an earlier window are left out once a switch states the current value.
         assert [
