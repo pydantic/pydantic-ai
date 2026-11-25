@@ -173,6 +173,7 @@ _CAPABILITY_PAGE_META = {
     'model-router.md': ('model_router', 'Model Router'),
     'daytona-sandbox.md': ('daytona_sandbox', 'Daytona Sandbox'),
     'boxd-sandbox.md': ('boxd_sandbox', 'boxd Sandbox'),
+    'platinum-sandbox.md': ('platinum_sandbox', 'Platinum Sandbox'),
     'smol-sandbox.md': ('smol_sandbox', 'Smol Sandbox'),
     'boxlite-sandbox.md': ('boxlite_sandbox', 'BoxLite Sandbox'),
     'ssh-workspace.md': ('ssh_workspace', 'SSH Workspace'),

@@ -26,6 +26,7 @@ CAPABILITIES: dict[str, dict[str, str]] = {
     'KubernetesSandbox': {'warm_pool': 'pool'},
     'ModalSandbox': {},
     'OpenSandbox': {'image': 'python:3.13-slim'},
+    'PlatinumSandbox': {},
     'RenderSandbox': {},
     'SmolSandbox': {},
     'SpritesSandbox': {},

@@ -56,7 +56,7 @@ result = agent.run_sync('Find out why tests/test_parser.py fails and fix the bug
 print(result.output)
 ```
 
-`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, Render, Sprites, Daytona, or boxd); see [Workspaces](#workspaces).
+`LocalWorkspace('.')` is where the agent works: its file tools and commands run on your machine, in this directory. It is not a sandbox, so commands can reach anything you can. To run the same agent in an isolated cloud machine, swap it for a sandbox capability (Modal, E2B, Render, Sprites, Daytona, boxd, or Platinum); see [Workspaces](#workspaces).
 
 With [Modal](pydantic_ai_harness/modal_sandbox/), for example:
 
@@ -185,6 +185,7 @@ Where the agent runs commands and keeps files: this machine, a container, or a s
 | [Render Sandbox](pydantic_ai_harness/render_sandbox/) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](pydantic_ai_harness/sprites_sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [boxd Sandbox](pydantic_ai_harness/boxd_sandbox/) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
+| [Platinum Sandbox](pydantic_ai_harness/platinum_sandbox/) | Harness | Commands and files in an isolated [Platinum](https://www.platinum.dev) microVM |
 | [SSH Workspace](pydantic_ai_harness/ssh_workspace/) | Harness | Commands and files on a remote host over your `ssh` client, as your SSH user; not sandboxed there |
 | [Bubblewrapped Workspace](pydantic_ai_harness/bubblewrap_sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
 

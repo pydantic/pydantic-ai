@@ -109,6 +109,7 @@ _PROVIDER_CAPABILITIES = {
     'sprites': 'SpritesSandbox()',
     'daytona': 'DaytonaSandbox()',
     'boxd': 'BoxdSandbox()',
+    'platinum': 'PlatinumSandbox()',
     'kubernetes': 'KubernetesSandbox(warm_pool=...)',
     'opensandbox': 'OpenSandbox()',
 }
