@@ -4348,6 +4348,13 @@ class TestEnforcedPolicyPageApis:
         assert cm.driver.chromium.launch_args == [['--disable-blink-features=FedCm,WebSocketStream']]
 
 
+class _AdmitsEverything(EgressPolicy):
+    """An override the route guard follows for every request."""
+
+    def refuse(self, request: EgressRequest) -> str | None:
+        return None
+
+
 class TestConnectionProxy:
     """With the private-address block on, a launched Chromium connects through a proxy that checks what it dials."""
 
@@ -4372,6 +4379,36 @@ class TestConnectionProxy:
                     await session.ensure_page()
         first, second = cm.driver.chromium.proxies
         assert first is not None and first == second
+
+    @pytest.mark.parametrize(
+        ('policy', 'kind'),
+        [
+            pytest.param(_AdmitsEverything(), 'navigation', id='override-admits-it'),
+            pytest.param(EgressPolicy(resolved_kinds=frozenset({'navigation'})), 'subresource', id='kind-not-resolved'),
+        ],
+    )
+    async def test_the_proxy_refuses_a_private_address_the_route_guard_admits(
+        self, monkeypatch: pytest.MonkeyPatch, policy: EgressPolicy, kind: RequestKind
+    ) -> None:
+        """The proxy applies the private-address block alone, whatever the session's policy says about the request."""
+
+        async def loopback(host: str) -> tuple[str, ...]:
+            return ('127.0.0.1',)
+
+        cm = _install_fake_driver(monkeypatch, _FakePage())
+        monkeypatch.setattr(egress_module, 'getaddrinfo', loopback)
+        async with serve_echo() as echo:
+            async with PlaywrightBrowserSession(policy=policy) as session:
+                await session.ensure_page()
+                proxy = cm.driver.chromium.proxies[-1]
+                assert proxy is not None and 'server' in proxy
+                port = int(proxy['server'].rsplit(':', 1)[1])
+                admitted = await session.decide(EgressRequest(url=f'http://private.example:{echo.port}/', kind=kind))
+                _, writer, reply = await socks_connect(port, socks_name('private.example', echo.port))
+                writer.close()
+                await writer.wait_closed()
+            assert echo.connections == []
+        assert (admitted, reply[:2]) == (None, b'\x05\x02')
 
     async def test_the_proxy_dials_what_the_guard_checked_and_closes_with_the_session(
         self, monkeypatch: pytest.MonkeyPatch
