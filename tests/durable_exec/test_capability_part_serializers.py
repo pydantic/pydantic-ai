@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
     CapabilityPart,
+    CapabilityPartSource,
     CapabilitySource,
     DataCapabilityPart,
     EnqueuedMessagesEvent,
@@ -55,6 +56,8 @@ from pydantic_ai.messages import (
     WorkspaceSource,
 )
 from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Workspace
+
+from ..manifests import union_members
 
 
 @dataclass(kw_only=True)
@@ -210,14 +213,7 @@ async def test_enqueued_parts_round_trip_in_their_event(serializer: str, tmp_pat
 async def test_the_history_holds_every_kind_and_source(tmp_path: Path) -> None:
     """The round trips above are only as strong as the history: every source kind, both voices, and a third party."""
     parts = _capability_parts(await _history(tmp_path))
-    assert {part.source.source_kind for part in parts} == {
-        'tool-result',
-        'model',
-        'workspace',
-        'operator',
-        'user',
-        'capability',
-    }
+    assert {type(part.source) for part in parts} == set(union_members(CapabilityPartSource))
     assert {part.rendering.voice for part in parts} == {'data', 'instruction'}
     assert {type(part) for part in parts} >= {ThirdPartyReportPart, ThirdPartyReminderPart}
 
