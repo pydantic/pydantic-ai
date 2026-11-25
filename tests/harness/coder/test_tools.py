@@ -1,10 +1,12 @@
 """Coder's tool surface as the model sees it; the tools themselves are tested with `FileSystem` and `Shell`."""
 
+import warnings
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, Caching, LocalWorkspace, ModelFallback, ValidatedToolArgs
@@ -23,6 +25,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.settings import CacheSetting, ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceBackend
@@ -54,6 +57,24 @@ _MISREAD_MAX_TEXT = (
     'interpretation is likely wrong, not that the answer is "none".'
 )
 
+_MISREAD_CLASSIFY_TEXT = (
+    'If inputs look inconsistent, first check whether the task or its rules classify them '
+    '(for example as malformed, conflicting, or rejected) and apply that rule. '
+    'Only when no rule covers them, assume you misread: re-read, and try other interpretations before settling.'
+)
+_HANDOFF_TEXT = (
+    'When asked for notes or a handoff, use headed sections: each decision and why, '
+    'the exact verification commands with their observed results, the remaining risk, '
+    'and what was out of scope or not done.'
+)
+_RUNTIME_CONSTRAINTS_TEXT = (
+    'When a task states constraints on where or how the code will run '
+    '(a restricted or sandboxed interpreter, no dependencies, a specific Python version, pure functions, no I/O), '
+    "find out what's actually allowed before writing code. Then prefer the simplest constructs that fit, "
+    'and if possible check the code under those constraints.'
+)
+_MAX_GUIDANCE_FLAGS = ('reinterprets_malformed_inputs', 'omits_handoff_evidence', 'ignores_stated_runtime_constraints')
+
 
 @dataclass
 class _Sent:
@@ -65,7 +86,10 @@ class _Sent:
 
 
 def _scripted(name: str, sent: list[_Sent], *, delegates: bool, fails: bool = False) -> FunctionModel:
-    """A model that logs what it's sent, then fails or answers with its name."""
+    """A model that logs what it's sent, then fails or answers with its name.
+
+    `delegates` sets every flag `Coder` reads, as `openai_model_profile` does for GPT models.
+    """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         last = messages[-1]
@@ -76,7 +100,13 @@ def _scripted(name: str, sent: list[_Sent], *, delegates: bool, fails: bool = Fa
             raise ModelAPIError(model_name=name, message='down')
         return ModelResponse(parts=[TextPart(name)])
 
-    profile: ModelProfile = {'supports_inline_system_prompts': True, 'delegates_unprompted': delegates}
+    profile: ModelProfile = {
+        'supports_inline_system_prompts': True,
+        'delegates_unprompted': delegates,
+        'reinterprets_malformed_inputs': delegates,
+        'omits_handoff_evidence': delegates,
+        'ignores_stated_runtime_constraints': delegates,
+    }
     return FunctionModel(respond, model_name=name, profile=profile)
 
 
@@ -523,11 +553,171 @@ class TestCoder:
             ],
         ]
 
-    @pytest.mark.parametrize('instrumented', [False, True])
-    async def test_fallback_model_gets_no_delegation_rule_and_a_warning(
-        self, tmp_path: Path, instrumented: bool
+    @pytest.mark.parametrize('autonomy', ['high', 'max'])
+    @pytest.mark.parametrize('flag', [None, *_MAX_GUIDANCE_FLAGS])
+    async def test_max_guidance_follows_the_profile_flags(
+        self, tmp_path: Path, autonomy: Autonomy, flag: str | None
     ) -> None:
-        """`FallbackModel` has no profile of its own, so even a GPT-first chain gets no rule, and the run still works.
+        """Each `'max'` sentence is a named block, present from the first request, that only its flag fills."""
+        profile: ModelProfile = {flag: True} if flag is not None else {}  # pyright: ignore[reportAssignmentType]
+        model = TestModel(call_tools=[], profile=profile)
+        coder = Coder(autonomy=autonomy, repo_context=False, sub_agents=False)
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        blocks = {part.name: part.content for part in parts if part.name is not None}
+        is_max = autonomy == 'max'
+        expected = {
+            'misread': _MISREAD_CLASSIFY_TEXT if is_max and flag == 'reinterprets_malformed_inputs' else None,
+            'handoff': _HANDOFF_TEXT if is_max and flag == 'omits_handoff_evidence' else None,
+            'runtime_constraints': _RUNTIME_CONSTRAINTS_TEXT
+            if is_max and flag == 'ignores_stated_runtime_constraints'
+            else None,
+        }
+        # An empty block isn't sent; a sent one is framed as `<pyai:context id="capability:coder_instructions:...">`.
+        assert set(blocks) == {name for name, text in expected.items() if text is not None}
+        for name, text in expected.items():
+            if text is not None:
+                assert f'id="capability:coder_instructions:{name}">\n{text}\n</pyai:context>' in blocks[name]
+        if not is_max:
+            # Below `'max'` the blocks aren't registered, so the instructions stay all static.
+            assert not any(part.dynamic for part in parts)
+        guidance = next(part.content for part in parts if 'software engineering agent' in part.content)
+        assert (_MISREAD_MAX_TEXT in guidance) is is_max
+        assert (_MISREAD_TEXT in guidance) is not is_max
+
+    async def test_max_instructions_are_unchanged_for_a_model_without_the_flags(self, tmp_path: Path) -> None:
+        """A model without the flags gets exactly the `'max'` instructions it got before they existed: the blocks are
+        empty, so not sent, and the default misread check stays inline in the shared guidance."""
+        model = TestModel(call_tools=[])
+        coder = Coder(autonomy='max', repo_context=False)
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        parts = model.last_model_request_parameters.instruction_parts or []
+        assert [part.content for part in parts] == snapshot(
+            [
+                """\
+You are a software engineering agent. Match the surrounding code's style, structure, and imports.
+
+Work fully autonomously; nobody will answer questions. Choose sensible defaults and finish.
+
+Read files with `read_file`, not batched `cat`. Save effort on repeated work, not on understanding the task. Don't re-read files that haven't changed.
+
+Measure results against any numeric target the task states. Before finishing, go through each requirement and edge case the task states and confirm each one explicitly. If inputs seem inconsistent or a criterion impossible (no feasible plan, matching item, or reachable target), assume you misread. Re-read the task and inputs, and try interpretations meeting every stated criterion before settling for a partial answer. A result that leaves a stated criterion unmet means your interpretation is likely wrong, not that the answer is "none". Write checks from the task's stated behavior, not your code. Check behavior with heredocs for one-offs, not new files. Leave only the requested change; delete your scratch files.
+
+Finish long-running work before replying; poll until done or blocked. Servers the task needs may keep running; stop the rest.\
+""",
+                """\
+You can delegate self-contained tasks to these sub-agents using the `delegate_task` tool. Each runs in its own fresh context and does not see this conversation, so pass everything it needs.
+
+Available sub-agents:
+- self: A fresh run of this same agent, with all of your tools, instructions, and capabilities. Use it to hand off a self-contained part of the work.\
+""",
+            ]
+        )
+
+    @pytest.mark.parametrize(('model_name', 'flagged'), [('gpt-6.2-sol', True), ('gpt-oss-120b', False)])
+    async def test_max_guidance_goes_to_gpt_but_not_gpt_oss(
+        self, tmp_path: Path, model_name: str, flagged: bool
+    ) -> None:
+        """`openai_model_profile` flags OpenAI's GPT models, not the open-weights gpt-oss."""
+        model = TestModel(call_tools=[], profile=openai_model_profile(model_name))
+        coder = Coder(autonomy='max', repo_context=False, sub_agents=False)
+        await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert model.last_model_request_parameters is not None
+        text = '\n'.join(part.content for part in model.last_model_request_parameters.instruction_parts or [])
+        assert (_MISREAD_CLASSIFY_TEXT in text) is flagged
+        assert _MISREAD_MAX_TEXT in text
+        assert (_HANDOFF_TEXT in text) is flagged
+        assert (_RUNTIME_CONSTRAINTS_TEXT in text) is flagged
+
+    async def test_a_delegate_gets_the_max_guidance(self, tmp_path: Path) -> None:
+        seen: dict[str, str] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            first = messages[0].parts[-1]
+            seen.setdefault(str(first.content if isinstance(first, UserPromptPart) else None), info.instructions or '')
+            return _delegate_a_command(messages, info)
+
+        profile: ModelProfile = {flag: True for flag in _MAX_GUIDANCE_FLAGS}  # pyright: ignore[reportAssignmentType]
+        agent = Agent(
+            FunctionModel(respond, profile=profile),
+            capabilities=[LocalWorkspace(tmp_path), Coder(autonomy='max', repo_context=False)],
+        )
+        assert (await agent.run('Delegate it')).output == 'done'
+        delegate = seen['Run it']
+        assert _FINISH in delegate
+        assert _MISREAD_CLASSIFY_TEXT in delegate
+        assert _MISREAD_MAX_TEXT in delegate
+        assert _HANDOFF_TEXT in delegate
+        assert _RUNTIME_CONSTRAINTS_TEXT in delegate
+
+    async def test_max_guidance_changes_are_appended_after_a_fallback_to_a_model_without_the_flags(
+        self, tmp_path: Path
+    ) -> None:
+        """A `'max'` conversation that opened on GPT and falls back to Claude keeps the instructions it opened with;
+        Claude is told the GPT-only sentences were withdrawn."""
+        sent: list[_Sent] = []
+        workspace = LocalWorkspaceBackend(tmp_path)
+        first = await Agent(
+            _scripted('gpt', sent, delegates=True), capabilities=[Coder(autonomy='max', repo_context=False)]
+        ).run('go', workspace=workspace)
+        agent = Agent(
+            _scripted('gpt', sent, delegates=True, fails=True),
+            capabilities=[
+                Coder(autonomy='max', repo_context=False),
+                ModelFallback(_scripted('claude', sent, delegates=False)),
+            ],
+        )
+        result = await agent.run('continue', message_history=first.all_messages(), workspace=workspace)
+        assert result.output == 'claude'
+        opened_with = sent[0].instructions
+        assert opened_with is not None
+        assert _MISREAD_CLASSIFY_TEXT in opened_with
+        assert _HANDOFF_TEXT in opened_with
+        assert _RUNTIME_CONSTRAINTS_TEXT in opened_with
+        assert _MISREAD_MAX_TEXT in opened_with
+        assert [(s.model, s.instructions == opened_with) for s in sent] == [
+            ('gpt', True),
+            ('gpt', True),
+            ('claude', True),
+        ]
+        assert [s.system for s in sent] == snapshot(
+            [
+                [],
+                [],
+                [
+                    """\
+<pyai:context id="capability:coder_instructions:delegation">
+This context has been withdrawn.
+</pyai:context>\
+""",
+                    """\
+<pyai:context id="capability:coder_instructions:misread">
+This context has been withdrawn.
+</pyai:context>\
+""",
+                    """\
+<pyai:context id="capability:coder_instructions:handoff">
+This context has been withdrawn.
+</pyai:context>\
+""",
+                    """\
+<pyai:context id="capability:coder_instructions:runtime_constraints">
+This context has been withdrawn.
+</pyai:context>\
+""",
+                ],
+            ]
+        )
+
+    @pytest.mark.parametrize('instrumented', [False, True])
+    @pytest.mark.parametrize(('autonomy', 'sub_agents'), [('high', True), ('max', False)])
+    async def test_fallback_model_gets_no_delegation_rule_and_a_warning(
+        self, tmp_path: Path, instrumented: bool, autonomy: Autonomy, sub_agents: bool
+    ) -> None:
+        """`FallbackModel` has no profile of its own, so even a GPT-first chain gets the default instructions, and the
+        run still works.
 
         `Coder` warns that `ModelFallback` would give each attempt its model's instructions, also when the
         `FallbackModel` is instrumented (the run's `ctx.model` is then still the `FallbackModel`).
@@ -537,13 +727,30 @@ class TestCoder:
             _scripted('gpt', sent, delegates=True, fails=True), _scripted('claude', sent, delegates=False)
         )
         model = InstrumentedModel(fallback) if instrumented else fallback
+        coder = Coder(autonomy=autonomy, repo_context=False, sub_agents=sub_agents)
         with pytest.warns(UserWarning, match="`Coder` can't read model-specific instructions from `FallbackModel`"):
-            result = await Agent(model, capabilities=[Coder(repo_context=False)]).run(
-                'go', workspace=LocalWorkspaceBackend(tmp_path)
-            )
+            result = await Agent(model, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert result.output == 'claude'
         assert [s.model for s in sent] == ['gpt', 'claude']
-        assert all(s.instructions is not None and _DELEGATION_RULE not in s.instructions for s in sent)
+        for s in sent:
+            assert s.instructions is not None
+            assert _DELEGATION_RULE not in s.instructions
+            assert _MISREAD_CLASSIFY_TEXT not in s.instructions
+            assert _HANDOFF_TEXT not in s.instructions
+            assert (_MISREAD_MAX_TEXT in s.instructions) is (autonomy == 'max')
+
+    async def test_fallback_model_gets_no_warning_when_no_instructions_depend_on_the_model(
+        self, tmp_path: Path
+    ) -> None:
+        """Below `'max'` and without `SubAgents`, every model gets the same instructions, so there's nothing to warn
+        about."""
+        sent: list[_Sent] = []
+        fallback = FallbackModel(_scripted('gpt', sent, delegates=True))
+        coder = Coder(repo_context=False, sub_agents=False)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            result = await Agent(fallback, capabilities=[coder]).run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result.output == 'gpt'
 
     @pytest.mark.parametrize('repo_context', [False, True])
     async def test_instructions_name_the_project_once(self, tmp_path: Path, repo_context: bool) -> None:

@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic_ai.messages import InstructionPart
 from pydantic_ai.models import AbstractModel, Model
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 Autonomy = Literal['low', 'medium', 'high', 'max']
@@ -79,6 +80,28 @@ _MISREAD_MAX = (
     'interpretation is likely wrong, not that the answer is "none".'
 )
 """Replaces `_MISREAD` at `'max'` only: nobody can confirm a reading, so a partial answer goes unchallenged."""
+
+_MISREAD_CLASSIFY = (
+    'If inputs look inconsistent, first check whether the task or its rules classify them '
+    '(for example as malformed, conflicting, or rejected) and apply that rule. '
+    'Only when no rule covers them, assume you misread: re-read, and try other interpretations before settling.'
+)
+"""Refines `_MISREAD_MAX` for models whose profile sets `reinterprets_malformed_inputs`, at `'max'` only: they get both."""
+
+_STRUCTURED_HANDOFF = (
+    'When asked for notes or a handoff, use headed sections: each decision and why, '
+    'the exact verification commands with their observed results, the remaining risk, '
+    'and what was out of scope or not done.'
+)
+"""For models whose profile sets `omits_handoff_evidence`, at `'max'` only."""
+
+_RUNTIME_CONSTRAINTS = (
+    'When a task states constraints on where or how the code will run '
+    '(a restricted or sandboxed interpreter, no dependencies, a specific Python version, pure functions, no I/O), '
+    "find out what's actually allowed before writing code. Then prefer the simplest constructs that fit, "
+    'and if possible check the code under those constraints.'
+)
+"""For models whose profile sets `ignores_stated_runtime_constraints`, at `'max'` only."""
 _HEREDOC = 'Check behavior with heredocs for one-offs, not new files.'
 
 _FINISHING = (
@@ -104,26 +127,67 @@ def _compose(lead: str, *, context: Sequence[str], checks: str, suffix: str) -> 
     return '\n\n'.join([_INTRO, lead, *context, _READING, checks, _FINISHING]) + '\n' + suffix
 
 
-def delegation_instruction(delegate_tool: str) -> Callable[[RunContext[AgentDepsT]], InstructionPart]:
-    """The rule against unrequested delegation, as a block for the models that delegate unprompted.
+def _profile_says(model: AbstractModel, flag: Callable[[ModelProfile], bool]) -> bool:
+    try:
+        return isinstance(model, Model) and flag(model.profile)
+    except NotImplementedError:
+        # `FallbackModel` picks its model per request, so no one profile speaks for it.
+        return False
 
-    The block, `capability:coder_instructions:delegation`, is contributed from the first request, empty for a model
-    without `delegates_unprompted`, and appends its changes. It's resolved against the model handling each request, so
-    a conversation that moves to a model without the key keeps the instructions it started with and is told the rule
-    was withdrawn, and one that moves to a model with it is sent the rule as a change.
+
+def _model_specific(
+    name: str, flag: Callable[[ModelProfile], bool], *, flagged: str
+) -> Callable[[RunContext[AgentDepsT]], InstructionPart]:
+    """A named block whose text depends on the profile of the model handling the request.
+
+    The block, `capability:coder_instructions:<name>`, is contributed from the first request and appends its changes.
+    So a conversation that moves to a model with a different profile keeps the instructions it started with and is
+    sent the block as a change, or told it was withdrawn.
     """
-    text = _DELEGATION.format(tool_name=delegate_tool)
 
-    def delegation(ctx: RunContext[AgentDepsT]) -> InstructionPart:
-        model: AbstractModel = ctx.model
-        try:
-            delegates = isinstance(model, Model) and model.profile.get('delegates_unprompted', False)
-        except NotImplementedError:
-            # `FallbackModel` picks its model per request, so no one profile speaks for it.
-            delegates = False
-        return InstructionPart(text if delegates else '', name='delegation', on_change='append')
+    def instruction(ctx: RunContext[AgentDepsT]) -> InstructionPart:
+        return InstructionPart(flagged if _profile_says(ctx.model, flag) else '', name=name, on_change='append')
 
-    return delegation
+    return instruction
+
+
+def model_specific_instructions(
+    *, autonomy: Autonomy, delegate_tool: str | None
+) -> list[Callable[[RunContext[AgentDepsT]], InstructionPart]]:
+    """The blocks of `Coder`'s guidance that only some models get, each empty for the others.
+
+    - `delegation`, with `SubAgents` only: the rule against unrequested delegation, for `delegates_unprompted`.
+    - `misread`: at `'max'`, `_MISREAD_CLASSIFY`, for `reinterprets_malformed_inputs`. It refines the `_MISREAD_MAX`
+      check the shared text carries for every model.
+    - `handoff`: at `'max'`, `_STRUCTURED_HANDOFF`, for `omits_handoff_evidence`.
+    - `runtime_constraints`: at `'max'`, `_RUNTIME_CONSTRAINTS`, for `ignores_stated_runtime_constraints`.
+
+    Below `'max'`, the last three are left out rather than sent empty, so they don't add dynamic parts to an otherwise
+    static instruction list; a block that first appears later in a conversation is still appended.
+    """
+    delegation = (
+        [
+            _model_specific(
+                'delegation',
+                lambda p: p.get('delegates_unprompted', False),
+                flagged=_DELEGATION.format(tool_name=delegate_tool),
+            )
+        ]
+        if delegate_tool is not None
+        else []
+    )
+    if autonomy != 'max':
+        return delegation
+    return [
+        *delegation,
+        _model_specific('misread', lambda p: p.get('reinterprets_malformed_inputs', False), flagged=_MISREAD_CLASSIFY),
+        _model_specific('handoff', lambda p: p.get('omits_handoff_evidence', False), flagged=_STRUCTURED_HANDOFF),
+        _model_specific(
+            'runtime_constraints',
+            lambda p: p.get('ignores_stated_runtime_constraints', False),
+            flagged=_RUNTIME_CONSTRAINTS,
+        ),
+    ]
 
 
 def coder_instructions(

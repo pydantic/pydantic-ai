@@ -324,6 +324,22 @@ def test_openai_compatible_endpoints_fall_back_from_max_effort():
     assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
 
 
+@pytest.mark.parametrize('model_name', ['gpt-5-search-api', 'gpt-5-search-api-2025-10-14'])
+def test_search_api_has_no_reasoning_effort_only_on_openai_provider(model_name: str):
+    """OpenAI's API rejects any `reasoning_effort` on these models, so `OpenAIProvider` pins no accepted effort.
+
+    Reasoning stays always on, which keeps sampling parameters dropped, as the model rejects `temperature` too. The
+    shared profile keeps the `'gpt-5'` efforts, as the hosts that reuse it aren't verified.
+    """
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_reasoning_efforts') == frozenset()
+    assert provider_profile.get('thinking_always_enabled') is True
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get('openai_reasoning_efforts') == frozenset(('minimal', 'low', 'medium', 'high'))
+
+
 @pytest.mark.parametrize(
     ('model_name', 'delegates'),
     [
@@ -336,10 +352,16 @@ def test_openai_compatible_endpoints_fall_back_from_max_effort():
     ],
 )
 def test_delegates_unprompted(model_name: str, delegates: bool):
-    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API."""
+    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API.
+
+    The flags behind `Coder`'s `'max'` guidance go to the same models.
+    """
     profile = OpenAIProvider.model_profile(model_name)
     assert isinstance(profile, dict)
     assert profile.get('delegates_unprompted', False) is delegates
+    assert profile.get('reinterprets_malformed_inputs', False) is delegates
+    assert profile.get('omits_handoff_evidence', False) is delegates
+    assert profile.get('ignores_stated_runtime_constraints', False) is delegates
 
 
 @pytest.mark.parametrize(

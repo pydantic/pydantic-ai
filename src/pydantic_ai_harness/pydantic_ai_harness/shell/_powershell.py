@@ -121,7 +121,8 @@ _LAUNCHER = """try {
   New-Item -ItemType Directory -Force -Path (Split-Path -LiteralPath $dir) -ErrorAction Stop | Out-Null
   # Without `-Force`, so of two launches that claim the same directory, only one creates it.
   New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
-} catch { if ($exclusive -and (Test-Path -LiteralPath $dir)) { exit 126 }; exit 125 }
+# `claimed` is the word `Job.launch` looks for (`_jobs._CLAIMED`).
+} catch { if ($exclusive -and (Test-Path -LiteralPath $dir)) { [Console]::Out.Write('claimed') }; exit 125 }
 # Owner-only, before any job file is written, as `umask 077` makes the `sh` side's: the command and its output
 # may hold secrets, and a checkout's own ACL can let other local users read it.
 try {
@@ -148,9 +149,9 @@ while (-not (Test-Path -LiteralPath (Join-Path $dir 'status.json'))) { Start-Sle
 """
 """Create the job directory, write the command and the wrapper to it, start the wrapper, and print `<pid> -`.
 
-Like the `sh` launcher, an exclusive launch exits 126 when the directory exists already and 125 when it cannot
-be created, and it returns once the wrapper has published its status. The `-` says there is no process group
-to signal: `Job.kill` ends the wrapper's process tree instead.
+Like the `sh` launcher, an exclusive launch exits 125 when it cannot create the directory, after printing
+`claimed` when it exists already, and it returns once the wrapper has published its status. The `-` says there
+is no process group to signal: `Job.kill` ends the wrapper's process tree instead.
 """
 
 

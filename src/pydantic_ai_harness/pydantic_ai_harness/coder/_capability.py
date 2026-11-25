@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, get_args
 
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import InstructionPart, ToolCallPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
@@ -20,7 +20,7 @@ from pydantic_ai_harness.coder._instructions import (
     BENCHMARK_INSTRUCTIONS,
     Autonomy,
     coder_instructions,
-    delegation_instruction,
+    model_specific_instructions,
 )
 from pydantic_ai_harness.compaction import ClearToolResults
 from pydantic_ai_harness.file_system import FileSystem
@@ -143,14 +143,18 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     the first dynamic part. It contributes no toolset. `id` is set on the instance, not as a class
     default, so two copies are rejected rather than merged. A delegate's text comes from
     `delegation_depth()`, which the delegating run sets before the child run is awaited, and which
-    a recorded delegation sets again on the worker. The rule against unrequested delegation is a block of its own,
-    `delegation`, sent only to models whose profile sets `delegates_unprompted`.
+    a recorded delegation sets again on the worker. The text only some models get, such as the rule against
+    unrequested delegation for models whose profile sets `delegates_unprompted`, is in blocks of its own: see
+    `model_specific_instructions`.
     """
 
     guidance: str
     delegated_guidance: str
-    delegation: SubAgents[AgentDepsT] | None = None
-    """The `SubAgents` capability `Coder` adds, if any, whose tool the rule against unrequested delegation names."""
+    model_specific: tuple[Callable[[RunContext[AgentDepsT]], InstructionPart], ...] = ()
+    """The blocks from `model_specific_instructions`, resolved against the model handling each request.
+
+    When there are any, they can differ between models, so running on a `FallbackModel` gets a warning.
+    """
     delegate: bool = False
 
     def __post_init__(self) -> None:
@@ -159,11 +163,11 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         return [
             self.delegated_guidance if self.delegate else self.guidance,
-            *([delegation_instruction(self.delegation.tool_name)] if self.delegation is not None else []),
+            *self.model_specific,
         ]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        if self.delegation is not None and isinstance(ctx.model, FallbackModel):
+        if self.model_specific and isinstance(ctx.model, FallbackModel):
             # Python's default warning filter shows this once per process: it's raised from one line.
             warnings.warn(_FALLBACK_MODEL_WARNING, UserWarning, stacklevel=1)
         if delegation_depth() <= 1:
@@ -172,8 +176,8 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
 
 
 _FALLBACK_MODEL_WARNING = (
-    "`Coder` can't read model-specific instructions from `FallbackModel`, so no model gets its rule against "
-    "unrequested delegation; use the `ModelFallback` capability so each attempt gets its model's instructions."
+    "`Coder` can't read model-specific instructions from `FallbackModel`, so every model gets the default ones; "
+    "use the `ModelFallback` capability so each attempt gets its model's instructions."
 )
 
 
@@ -310,7 +314,15 @@ class Coder(CombinedCapability[AgentDepsT]):
         )
         capabilities: list[AbstractCapability[AgentDepsT]] = [
             RequireWorkspace[AgentDepsT]('Coder'),
-            _CoderGuidance[AgentDepsT](guidance, delegated_guidance, delegation=delegation),
+            _CoderGuidance[AgentDepsT](
+                guidance,
+                delegated_guidance,
+                tuple(
+                    model_specific_instructions(
+                        autonomy=autonomy, delegate_tool=delegation.tool_name if delegation is not None else None
+                    )
+                ),
+            ),
             _file_system(unrestricted=unrestricted_filesystem, max_image_side=max_image_side),
             Shell[AgentDepsT](
                 denied_commands=[],
