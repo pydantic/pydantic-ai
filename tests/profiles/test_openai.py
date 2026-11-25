@@ -29,6 +29,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -360,13 +361,20 @@ def test_cumulative_stream_usage_only_on_openai_provider_gemini_names(model_name
     ],
 )
 def test_minimal_reasoning_effort_off_only_on_openai_provider_gpt_5_1_to_5_5(model_name: str, expected: bool):
-    """The shared profile stays on, as OpenRouter accepts `minimal` for these models (verified live, 2026-11)."""
+    """The shared profile stays on, as OpenRouter accepts `minimal` for these models (verified live, 2026-11).
+
+    `OpenAICodexProvider` keeps it on too: the Codex backend is unverified, and its dialect profile restates the
+    shared one over `OpenAIProvider`'s.
+    """
     provider_profile = OpenAIProvider.model_profile(model_name)
     assert isinstance(provider_profile, dict)
     assert provider_profile.get('openai_supports_minimal_reasoning_effort') is expected
     shared_profile = openai_model_profile(model_name)
     assert isinstance(shared_profile, dict)
     assert shared_profile.get('openai_supports_minimal_reasoning_effort') is True
+    codex_profile = OpenAICodexProvider.model_profile(model_name)
+    assert isinstance(codex_profile, dict)
+    assert codex_profile.get('openai_supports_minimal_reasoning_effort') is True
 
 
 class TestEncryptedReasoningContent:
