@@ -732,3 +732,27 @@ async def test_an_operator_container_that_writes_its_own_instructions_warns_it_r
 
     assert received.instructions == ['Combined note.', 'Combined note.']
     assert len([w for w in caught if 'contained_child' in str(w.message)]) == 1
+
+
+def _loading_agent(authority: Authority) -> Agent[None, str]:
+    """An agent whose model loads a deferred `plugin` capability at `authority` on its first request."""
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'plugin'}, tool_call_id='load')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    plugin = Capability[None](id='plugin', defer_loading=True, description='A plugin.', instructions='Plugin note.')
+    return Agent(
+        FunctionModel(model_fn, profile=INLINE), deps_type=type(None), capabilities=[plugin.with_authority(authority)]
+    )
+
+
+async def test_a_loaded_capability_whose_authority_alone_changed_is_stated_again():
+    first = await _loading_agent('user').run('Hi')
+    second = await _loading_agent('none').run('Again', message_history=first.all_messages())
+
+    assert [(delta.content, delta.authority) for delta in statements(second.all_messages())] == [
+        ('Plugin note.', 'user'),
+        ('Plugin note.', 'none'),
+    ]

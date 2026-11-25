@@ -479,6 +479,9 @@ class LoadedInstructionValues:
     _changed: set[str] = field(default_factory=set[str], repr=False)
     """The capabilities whose value an instruction change delivered, rather than their load return."""
 
+    _authorities: dict[str, Authority] = field(default_factory=dict[str, Authority], repr=False)
+    """The authority of each loaded capability's block as an instruction change last delivered it."""
+
     _unstated: dict[str, int] = field(default_factory=dict[str, int], repr=False)
     """The index of the message holding each load whose instructions nothing has stated since, as `of` folds them."""
 
@@ -506,6 +509,10 @@ class LoadedInstructionValues:
                     if loaded.values[capability_id] is None and _holds_unstated_loads(messages[index]):
                         loaded._unstated[capability_id] = index
         return loaded
+
+    def authority_of(self, capability_id: str) -> Authority:
+        """The authority `capability_id`'s block was last stated with, `'operator'` if no instruction change stated it."""
+        return self._authorities.get(capability_id, 'operator') if capability_id in self._changed else 'operator'
 
     def unstated_load_index(self, capability_id: str) -> int | None:
         """The index of the message holding `capability_id`'s load, if nothing has stated its instructions since.
@@ -553,6 +560,7 @@ class LoadedInstructionValues:
         capability_id = _changed_capability_id(change)
         previous = self.values[capability_id] if capability_id in self._changed else None
         self.values[capability_id] = change.content
+        self._authorities[capability_id] = change.authority
         self._changed.add(capability_id)
         self._unstated.pop(capability_id, None)
         return previous
@@ -678,14 +686,13 @@ def _loaded_instruction_changes(
         on_target = index is not None and any(messages[index] is target for target in targets)
         if capability_id not in current and capability_id in keep_without_parts:
             continue
-        if (content := current.get(capability_id)) == previous:
+        authority = authorities.get(capability_id, 'operator')
+        # Stated again when only its authority changed, so the model reads it at the authority it has now.
+        if (content := current.get(capability_id)) == previous and (
+            content is None or authority == loaded.authority_of(capability_id)
+        ):
             continue
-        change = _instruction_change(
-            loaded_instruction_id(capability_id),
-            previous,
-            content,
-            authority=authorities.get(capability_id, 'operator'),
-        )
+        change = _instruction_change(loaded_instruction_id(capability_id), previous, content, authority=authority)
         if index is not None and not on_target:
             restored.setdefault(index, []).append(change)
         else:
