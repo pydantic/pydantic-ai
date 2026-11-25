@@ -1355,7 +1355,7 @@ class TestAnswerNotes:
         assert retained_note is keep_user_messages
 
     @pytest.mark.parametrize('deferred', [False, True])
-    async def test_notes_are_kept_with_the_result_and_preserve_answers_and_events(
+    async def test_notes_reach_the_user_channel_and_preserve_answers_and_events(
         self, deferred: bool, image_content: BinaryContent
     ) -> None:
         response = AskUserResponse(
@@ -1391,13 +1391,25 @@ class TestAnswerNotes:
         request_id = observer.requested[0].request.id
         last_request = result.all_messages()[-2]
         assert isinstance(last_request, ModelRequest)
-        [tool_part] = last_request.parts
+        tool_part = last_request.parts[0]
         assert isinstance(tool_part, ToolReturnPart)
         assert tool_part.content == snapshot({'Approach': ['Patch'], 'Targets': ['all files']})
-        assert {(attachment.tool_name, attachment.tool_call_id) for attachment in tool_part.attachments} == {
-            (TOOL_NAME, tool_part.tool_call_id)
-        }
-        notes = [attachment.content for attachment in tool_part.attachments]
+        notes: list[UserContent]
+        if deferred:
+            # Answered in a later run, the answer passes none of the tool's result hooks, so the notes stay with the
+            # result as its data.
+            assert len(last_request.parts) == 1
+            assert {(attachment.tool_name, attachment.tool_call_id) for attachment in tool_part.attachments} == {
+                (TOOL_NAME, tool_part.tool_call_id)
+            }
+            notes = [attachment.content for attachment in tool_part.attachments]
+        else:
+            # The user's own words, so `AskUser` sends them in the user's voice right after the answer, as before.
+            user_part = last_request.parts[1]
+            assert tool_part.attachments == ()
+            assert isinstance(user_part, UserPromptPart)
+            assert not isinstance(user_part.content, str)
+            notes = list(user_part.content)
         assert notes == [
             TextContent(
                 '<answer_note header="Approach">',

@@ -7,17 +7,18 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from functools import partial
-from typing import TYPE_CHECKING, Any, overload
+from typing import TYPE_CHECKING, Any, cast, overload
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 from typing_extensions import TypeIs
 
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, HandleDeferredToolCalls
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.external_events import ExternalEventError, wait_for_external_event
-from pydantic_ai.messages import ToolCallPart
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.messages import ToolCallPart, ToolReturn
+from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._combine import one_per_id
@@ -198,6 +199,29 @@ class AskUser(AbstractCapability[AgentDepsT]):
                 for call in questions
             }
         )
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: Any,
+    ) -> Any:
+        """Send the user's notes on an answer in the user's voice, right after the answer, rather than as tool data.
+
+        `ask_user_result` puts them in `ToolReturn.content`, which the model is sent as data the tool returned; they are
+        the user's own words, so this capability enqueues them as the user's instead, and the result keeps the answers.
+        """
+        if tool_def.name != TOOL_NAME or tool_def.capability_id != self.id or not isinstance(result, ToolReturn):
+            return result
+        answer = cast(ToolReturn[Any], result)
+        if not answer.content:
+            return answer
+        notes = answer.content
+        ctx.enqueue(*([notes] if isinstance(notes, str) else notes))
+        return replace(answer, content=None)
 
     def _owns(self, requests: DeferredToolRequests, tool_call_id: str) -> bool:
         """Whether this capability's tool deferred the call, as opposed to another `AskUser` or another tool."""
