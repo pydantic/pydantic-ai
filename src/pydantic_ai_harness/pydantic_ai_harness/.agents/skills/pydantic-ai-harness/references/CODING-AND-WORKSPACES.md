@@ -133,7 +133,7 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
 - **GPT-only `'max'` guidance:** at `autonomy='max'`, three more blocks follow the same per-model pattern:
   `misread` (a classify-first refinement of the inline misread check, for `reinterprets_malformed_inputs`), `handoff` (structured notes, for `omits_handoff_evidence`) and `runtime_constraints` (check what a
   stated runtime allows before writing code, for `ignores_stated_runtime_constraints`). `openai_model_profile` sets
-  all three for GPT models, not gpt-oss. Evidence is one SWE81 run each (53.2 vs 51.0, within noise).
+  all three for GPT models, not gpt-oss or the o-series. Evidence is one SWE81 run each (53.2 vs 51.0, within noise; measured with the classify sentence in place of the shared misread check).
 - **Lazy sandbox creation:** `RepoContext` reads the workspace at run start, which creates a sandbox
   before any tool call. `Coder(repo_context=False)` defers it (the instructions then stop naming the
   working directory). To use your own `RepoContext`, pass it as `repo_context=RepoContext(...)` rather than

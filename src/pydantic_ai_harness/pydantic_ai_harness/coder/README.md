@@ -264,22 +264,24 @@ on benchmarks is opt-in; see [Benchmarking](#benchmarking).
 | `'high'` (default) | Works until done, asking only for credentials, approvals, or real ambiguity, and measures results against any numeric target the task states. |
 | `'max'` | Never asks: chooses sensible defaults, measures against numeric targets, deletes its scratch files, and treats a stated criterion it cannot meet as a sign it misread the task rather than settling for a partial answer. Use it for runs nobody can answer, such as CI jobs. |
 
-At `'max'`, OpenAI's GPT models (not gpt-oss) get three sentences of their own, each sent to models whose profile sets
-a flag for the behavior it corrects:
+At `'max'`, OpenAI's GPT models (not gpt-oss or the o-series) get three sentences of their own, each sent to models
+whose profile sets a flag for the behavior it corrects:
 
-- `reinterprets_malformed_inputs`: a refinement of the misread check: first look for a rule in the task that
-  classifies inconsistent inputs, for example as malformed or rejected, and apply it before assuming a misreading.
+- `reinterprets_malformed_inputs`: refines the misread check. First look for a rule in the task that classifies
+  inconsistent inputs, for example as malformed or rejected, and apply it before assuming a misreading.
 - `omits_handoff_evidence`: notes and handoffs use headed sections with each decision, the verification commands and
   their results, the remaining risk, and what was left out.
 - `ignores_stated_runtime_constraints`: when a task constrains where or how its code will run, such as a restricted
   interpreter or a specific Python version, the agent finds out what's allowed before writing code.
 
 The evidence for them is weak: on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'`, one run each, `Coder` scored 53.2
-with the three sentences against 51.0 without them, within that benchmark's single-run noise of about 5.6 points.
-Like the rule against unrequested delegation (see [Sub-agents](#sub-agents)), each is its own instruction block that
-follows the model handling each request: after a fallback with the
+with the three sentences against 51.0 without them (measured with the classify sentence in place of the shared misread
+check; both are sent here), within that benchmark's single-run noise of about 5.6 points. Like the rule against
+unrequested delegation (see [Sub-agents](#sub-agents)), each is its own instruction block that follows the model
+handling each request: after a fallback with the
 [`ModelFallback`](https://pydantic.dev/docs/ai/capabilities/model-fallback/) capability, or a later run on another
-model, the new model is sent the instructions it would have had from the start, with or without the sentences. Models without the flags get only the shared `'max'` guidance. See
+model, the new model is sent the instructions it would have had from the start, with or without the sentences. Models
+without the flags get only the shared `'max'` guidance. See
 [Instructions for specific models](https://pydantic.dev/docs/ai/core-concepts/agent/#model-specific-instructions).
 
 `autonomy` is guidance to the model, not a limit on its tools. Nothing stops the agent from editing

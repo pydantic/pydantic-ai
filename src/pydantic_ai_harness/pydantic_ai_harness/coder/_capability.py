@@ -153,9 +153,10 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     delegated_guidance: str
     project: tuple[Callable[[RunContext[AgentDepsT]], Awaitable[str]], ...]
     model_specific: tuple[Callable[[RunContext[AgentDepsT]], InstructionPart], ...] = ()
-    """The blocks from `model_specific_instructions`, resolved against the model handling each request."""
-    varies_by_model: bool = False
-    """Whether any of those blocks can differ between models, so that `FallbackModel` deserves a warning."""
+    """The blocks from `model_specific_instructions`, resolved against the model handling each request.
+
+    When there are any, they can differ between models, so running on a `FallbackModel` gets a warning.
+    """
     delegate: bool = False
 
     def __post_init__(self) -> None:
@@ -169,7 +170,7 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
         ]
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        if self.varies_by_model and isinstance(ctx.model, FallbackModel):
+        if self.model_specific and isinstance(ctx.model, FallbackModel):
             # Python's default warning filter shows this once per process: it's raised from one line.
             warnings.warn(_FALLBACK_MODEL_WARNING, UserWarning, stacklevel=1)
         if delegation_depth() <= 1:
@@ -331,7 +332,6 @@ class Coder(CombinedCapability[AgentDepsT]):
                         autonomy=autonomy, delegate_tool=delegation.tool_name if delegation is not None else None
                     )
                 ),
-                varies_by_model=delegation is not None or autonomy == 'max',
             ),
             _file_system(unrestricted=unrestricted_filesystem, max_image_side=max_image_side),
             Shell[AgentDepsT](
