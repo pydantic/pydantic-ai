@@ -77,6 +77,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `-w`, `--worktree [NAME]` | Start in a Git worktree; see [Git worktrees](#git-worktrees) |
 | `--update`, `pax update` | Install the newest Pax from `updates.channel`, print how it went, and exit; see [Updating](#updating) |
 | `--request-limit N` | The full prompt's model-request budget |
+| `--version` | Print the installed Pax version, plus the commit for a `main` install, and exit |
 | `--database PATH` | Use another settings database (and session folder) |
 | `pax config show\|get\|set\|reset` | Read or write saved settings from your shell. A change that could let the agent do more, such as a wider `run.permissions`, is refused: make it with `/config` in a session, since the agent can run `pax` too |
 | `pax plugins list` | List saved plugin declarations from your shell; add, enable, disable, and remove them with `/plugins` in a session |
@@ -246,7 +247,7 @@ the folder that holds `clai2-bleeding.json`. A fork that runs the `Pax bleeding`
 workflow publishes its own:
 
 ```bash
-CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding clai2
+CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding pax
 ```
 
 To try a local checkout, build the same files and serve them over HTTP:
@@ -254,7 +255,7 @@ To try a local checkout, build the same files and serve them over HTTP:
 ```bash
 src/pydantic_ai_pax/scripts/build_bleeding.sh /tmp/clai2-bleeding
 python -m http.server --directory /tmp/clai2-bleeding 8000 &
-CLAI_BLEEDING_URL=http://localhost:8000 clai2
+CLAI_BLEEDING_URL=http://localhost:8000 pax
 ```
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
@@ -3022,7 +3023,7 @@ To call a user-defined shell function, explicitly invoke its shell. For example,
 a zsh function named `cleanup_worktree` could use this argv:
 
 ```json
-["zsh", "-ic", "cleanup_worktree \"$1\"", "clai2-remove", "{branch}"]
+["zsh", "-ic", "cleanup_worktree \"$1\"", "pax-remove", "{branch}"]
 ```
 
 Interactive zsh loads your rc files, adding startup overhead and possibly output.

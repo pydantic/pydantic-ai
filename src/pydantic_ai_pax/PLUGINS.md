@@ -501,7 +501,7 @@ the table under the `hooks` key of its `.clai/settings.json`:
       {"tools": ["write_file", "edit_file"], "command": ["uv", "run", "ruff", "format", "--", "{path}"]}
     ],
     "turn_end": [
-      {"command": ["notify-send", "clai2", "turn finished"]}
+      {"command": ["notify-send", "pax", "turn finished"]}
     ]
   }
 }

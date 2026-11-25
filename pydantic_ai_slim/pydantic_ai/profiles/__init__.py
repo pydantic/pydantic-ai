@@ -463,6 +463,20 @@ class ModelProfile(TypedDict, total=False):
     Anthropic `system` entry, for one — which has no message-level existence to insert before.
     """
 
+    delegates_unprompted: bool
+    """Whether the model hands work to sub-agents the user didn't ask for. Default: `False`.
+
+    A sub-agent starts from a fresh context and explores the task again, so unrequested delegation multiplies tool
+    calls and cost. Instructions that tell a model not to delegate unasked can be sent only to the models with this
+    key, by reading it from the profile of the model handling the request: see
+    [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss. Evidence: in a Terminal-Bench ablation of
+    `Coder`'s instructions (24 tasks, one trial each, November 2026), GPT-6.1 Terra without its instruction against
+    unrequested delegation delegated in all 24 tasks (524 `delegate_task` calls, against none with it), making about 9
+    times as many tool calls at about 5.5 times the cost. Claude Sonnet 5.5 didn't delegate with or without it.
+    """
+
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
 

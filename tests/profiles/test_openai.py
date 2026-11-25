@@ -29,6 +29,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -340,6 +341,24 @@ def test_search_api_has_no_reasoning_effort_only_on_openai_provider(model_name: 
 
 
 @pytest.mark.parametrize(
+    ('model_name', 'delegates'),
+    [
+        ('gpt-6.1-terra', True),
+        ('gpt-5.5', True),
+        ('gpt-4o', True),
+        ('gpt-oss-120b', False),
+        ('o3', False),
+        ('claude-opus-5-5', False),
+    ],
+)
+def test_delegates_unprompted(model_name: str, delegates: bool):
+    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API."""
+    profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(profile, dict)
+    assert profile.get('delegates_unprompted', False) is delegates
+
+
+@pytest.mark.parametrize(
     'key', ['openai_chat_streaming_repeats_usage_totals', 'openai_chat_completion_tokens_omit_reasoning']
 )
 @pytest.mark.parametrize(
@@ -354,6 +373,48 @@ def test_gemini_usage_flags_only_on_openai_provider_gemini_names(key: str, model
     shared_profile = openai_model_profile(model_name)
     assert isinstance(shared_profile, dict)
     assert shared_profile.get(key, False) is False
+
+
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        # OpenAI's API rejects `minimal` with a 400 (verified live on both APIs, 2026-11).
+        ('gpt-5.1', False),
+        ('gpt-5.1-2025-11-13', False),
+        ('gpt-5.2', False),
+        ('gpt-5.3-codex', False),
+        ('gpt-5.4', False),
+        ('gpt-5.4-mini', False),
+        ('gpt-5.4-nano', False),
+        ('gpt-5.5', False),
+        ('gpt-5.5-2026-04-23', False),
+        # Covered by the prefix only: no key reaches them.
+        ('gpt-5.3-codex-spark', False),
+        ('gpt-5.5-cyber-preview', False),
+        # The original GPT-5 family accepts `minimal`.
+        ('gpt-5', True),
+        ('gpt-5-mini', True),
+        ('gpt-5-nano', True),
+    ],
+)
+def test_minimal_reasoning_effort_off_only_on_openai_provider_gpt_5_1_to_5_5(model_name: str, expected: bool):
+    """The shared profile stays on, as OpenRouter accepts `minimal` for these models (verified live, 2026-11).
+
+    `OpenAICodexProvider` keeps it on too: the Codex backend is unverified, and its dialect profile restates the
+    shared one over `OpenAIProvider`'s.
+
+    Not a VCR test: the claim is the resolved flag per provider and model id, which no single recorded request
+    exposes. `test_openai_responses_gpt_5_4_minimal_thinking_uses_low_effort` records the request it changes.
+    """
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_supports_minimal_reasoning_effort') is expected
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get('openai_supports_minimal_reasoning_effort') is True
+    codex_profile = OpenAICodexProvider.model_profile(model_name)
+    assert isinstance(codex_profile, dict)
+    assert codex_profile.get('openai_supports_minimal_reasoning_effort') is True
 
 
 class TestEncryptedReasoningContent:
