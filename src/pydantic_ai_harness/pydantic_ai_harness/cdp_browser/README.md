@@ -115,12 +115,19 @@ policy allows or refuses it. That covers navigations a page script starts and re
 not only `Page.navigate`. A refused request fails with `net::ERR_BLOCKED_BY_CLIENT`, and pages cannot register
 service workers. A target whose requests cannot be intercepted is never resumed, so it makes none.
 
+With the private-address block on, Chrome also sends its `http` and `https` connections through a local SOCKS5
+proxy, so it does not resolve names itself. The proxy resolves each name, reusing the answer the guard looked up,
+and connects only to addresses that pass the block, so a record that changes between the guard's lookup and the
+connection (DNS rebinding) cannot reach a private address. A connection it refuses fails with
+`net::ERR_SOCKS_CONNECTION_FAILED`. The proxy applies the address block alone: Chrome shares one connection between
+requests of different kinds to a host, so the domain lists stay with the guard, which sees each request. It checks
+every name it connects to, whatever `resolved_kinds` holds, and a custom `EgressPolicy.refuse` that admits a private
+address does not reach it over `http` or `https`; set `block_private_addresses=False` for that.
+
 What the guard does not cover:
 
-- DNS rebinding on HTTP requests: Chrome resolves a name again before it connects, so a record that changes between
-  the two lookups gets past the block.
-- Speculative connections: Chrome can open a TCP connection to a refused host before the request is refused,
-  without sending it.
+- Speculative connections: Chrome can open a TCP connection to a host the domain lists refuse before the request is
+  refused, without sending it. With the private-address block off, that includes private addresses.
 - Traffic other than HTTP requests and WebSockets: block it with an egress firewall.
 
 Set `allowed_domains` when the agent acts on untrusted input, and run it on a network where these gaps are
@@ -128,9 +135,9 @@ acceptable.
 
 ### WebSockets
 
-`Fetch` interception does not pause WebSocket handshakes, so Chrome is launched with a local proxy that carries
-every WebSocket and nothing else. The proxy applies the same policy to the socket's host and port, and connects to
-the addresses it checked. A socket it refuses fails to connect. A custom `EgressPolicy.refuse` sees the socket as
+`Fetch` interception does not pause WebSocket handshakes, so Chrome sends every WebSocket to a local proxy of its
+own. That proxy applies the whole policy to the socket's host and port, and connects to the addresses it checked. A
+socket it refuses fails to connect. A custom `EgressPolicy.refuse` sees the socket as
 `ws://host:port/`, without its real scheme or path. Chrome's own proxy settings are replaced, so a system proxy is
 not used.
 

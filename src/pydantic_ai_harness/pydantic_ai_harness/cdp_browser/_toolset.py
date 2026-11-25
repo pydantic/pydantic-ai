@@ -25,9 +25,9 @@ from pydantic_ai_harness._browser_egress import (
     refusal_reason,
     request_kind,
 )
+from pydantic_ai_harness._browser_proxy import PRIVATE_ADDRESS_BLOCK, socks_proxy
 from pydantic_ai_harness._typeguards import is_str_keyed_dict
 from pydantic_ai_harness.cdp_browser._client import CDPClient, CDPError, CDPSession, launch_chrome
-from pydantic_ai_harness.cdp_browser._websocket_proxy import proxy_args, websocket_proxy
 
 DEFAULT_ALLOWED_CDP_METHODS: tuple[str, ...] = (
     'Page.navigate',
@@ -70,6 +70,22 @@ SETUP_TIMEOUT_SECONDS = 10.0
 
 GUARD_ARGS = ('--disable-features=FedCm',)
 """Chrome flags `CDPBrowser` always launches with."""
+
+
+def proxy_args(socket_port: int, http_port: int | None) -> list[str]:
+    """The Chrome flags that send WebSockets to the proxy on `socket_port`, and `http` and `https` to `http_port`.
+
+    No rule names `ws` or `wss`, so Chrome sends them to the `socks` entry. With no `http_port`, `http` and `https` go
+    direct. `<-loopback>` removes Chrome's implicit exemption for loopback and link-local hosts, and Chrome has no
+    fallback to a direct connection, so a connection a proxy does not relay fails. `scripts/cdp_browser_smoke.py`
+    checks this on a real Chrome.
+    """
+    http = 'direct://' if http_port is None else f'socks5://127.0.0.1:{http_port}'
+    return [
+        f'--proxy-server=http={http};https={http};socks=socks5://127.0.0.1:{socket_port}',
+        '--proxy-bypass-list=<-loopback>',
+    ]
+
 
 MAX_SCREENSHOT_BYTES = 5_000_000
 """Largest screenshot returned as image content, the strictest per-image limit among mainstream model providers.
@@ -193,10 +209,15 @@ class CDPBrowserToolset(FunctionToolset[AgentDepsT]):
         if self._entered == 0:
             stack = AsyncExitStack()
             try:
-                proxy_port = await stack.enter_async_context(websocket_proxy(self.policy))
+                socket_port = await stack.enter_async_context(socks_proxy(self.policy))
+                http_port = (
+                    await stack.enter_async_context(socks_proxy(PRIVATE_ADDRESS_BLOCK))
+                    if self.policy.block_private_addresses
+                    else None
+                )
                 self._client = await stack.enter_async_context(
                     launch_chrome(
-                        extra_args=[*proxy_args(proxy_port), *GUARD_ARGS],
+                        extra_args=[*proxy_args(socket_port, http_port), *GUARD_ARGS],
                         headless=self.headless,
                         chrome_path=self.chrome_path,
                         sandbox=self.chrome_sandbox,

@@ -595,11 +595,22 @@ A lookup that does not answer within two seconds is a refusal, not an allow:
 whoever controls a name controls whether its lookup answers, so a stall would
 otherwise be a way past the block. The cost of that is small when the failure is
 honest, since a name this process cannot resolve is one the browser is about to
-fail on too. None of this is proof against DNS rebinding: Chromium resolves the
-name a second time before it connects, and a record that changes in between
-defeats it. The policies
+fail on too. The policies
 are independent and deny wins -- an allowlisted
 private address is still refused until you opt out of `block_private_addresses`.
+
+With the private-address block on, a browser the session launches connects
+through a local SOCKS5 proxy, so Chromium does not resolve names itself. The proxy
+resolves each name, reusing the answer the route guard looked up, and connects
+only to addresses that pass the block, so a record that changes between the
+guard's lookup and the connection (DNS rebinding) cannot reach a private address.
+The proxy applies the address block alone: Chromium shares one connection between
+requests of different kinds to a host, so the domain lists stay with the route
+guard, which sees each request. It checks every name it connects to, whatever
+`resolved_kinds` holds, and a custom `refuse` that admits a private address does
+not reach it; set `block_private_addresses=False` for that. A browser reached over
+`cdp_url` is already running with its own network settings and gets no proxy, so
+it resolves names itself and DNS rebinding stays open there.
 
 Enforcement is at two layers: a network route guard aborts a refused request
 before it leaves (covering clicks, `execute_js`, and history moves, not just
@@ -661,11 +672,9 @@ looked up.
 Neither policy is a general security boundary. Microsoft's own playwright-mcp
 disclaims its origin filter the same way. A page can still signal outward through
 the request kinds the allowlist leaves alone -- an image or script URL carries
-whatever the page puts in it -- and a hostname is classified on the answer this
-process gets, while Chromium resolves it again before connecting, so a record
-that changes in between (DNS rebinding) still wins. That, and the proxy-based
-enforcement mode which is what closes it, are tracked in
-[#415](https://github.com/pydantic/pydantic-ai-harness/issues/415).
+whatever the page puts in it -- and in a browser reached over `cdp_url`, a
+hostname is classified on the answer this process gets while Chromium resolves it
+again before connecting, so a record that changes in between still wins.
 
 For untrusted-input scenarios, run the browser in a container or VM with an
 egress firewall, or front it with a proxy, and pair it with the harness's

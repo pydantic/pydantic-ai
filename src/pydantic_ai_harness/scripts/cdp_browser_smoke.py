@@ -16,6 +16,10 @@ It drives the public `CDPBrowser` surface through scripted agent runs against lo
   `block_private_addresses=False` control that reaches the server for the plain-address pre-check and the `fetch`,
 - the private-name block: a hostname resolving to loopback through a public wildcard DNS service (skipped when
   that name does not resolve),
+- the connection proxy: with the private-address block on, `http://example.com/` and `https://example.com/` load
+  through it (skipped without internet access), and a name whose lookup answers a public address for the request
+  guard and loopback when Chrome connects, the window a rebinding record exploits, never reaches the local server,
+  with a `block_private_addresses=False` control that reaches it,
 - the request guard in targets of their own: a cross-site iframe, a dedicated worker, a shared worker and a popup
   each fail to reach a host the policy refuses, and the iframe and workers reach it when nothing refuses it,
 - service worker registration is blocked,
@@ -44,6 +48,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness import _browser_egress as egress_module, _browser_proxy as proxy_module
 from pydantic_ai_harness.cdp_browser import CDPBrowser, EgressPolicy
 
 _SECRET = 'cdp-browser-smoke-secret'
@@ -242,6 +247,63 @@ async def _check_private_name_block() -> None:
     print('private-name navigation blocked ok (control reached the server)')
 
 
+async def _check_public_pages_through_the_proxy() -> None:
+    """With the address block on, Chrome's `http` and `https` connections go through the proxy and still load."""
+    try:
+        await asyncio.get_running_loop().getaddrinfo('example.com', None)
+    except OSError:
+        print('public pages through the proxy SKIPPED (example.com did not resolve)')
+        return
+    for url in ('http://example.com/', 'https://example.com/'):
+        results = await _run_tools(
+            CDPBrowser[object](chrome_sandbox=_SANDBOX), [_navigate(url), _evaluate('document.title')]
+        )
+        assert "'value': 'Example Domain'" in results[-1], (url, results)
+    print('http and https pages load through the connection proxy ok')
+
+
+async def _check_rebinding_name() -> None:
+    """A name that answers a public address for the guard and loopback when Chrome connects reaches nothing.
+
+    The guard's lookups are answered with a public address, and the proxy's lookup goes to the real resolver, which
+    answers `127.0.0.1.nip.io` with loopback. Chrome itself would get loopback too, so a direct connection would
+    reach the server.
+    """
+    try:
+        await asyncio.get_running_loop().getaddrinfo('127.0.0.1.nip.io', None)
+    except OSError:
+        print('rebinding name SKIPPED (127.0.0.1.nip.io did not resolve)')
+        return
+    real_getaddrinfo = egress_module.getaddrinfo
+
+    async def public_for_the_guard(host: str) -> tuple[str, ...]:
+        return ('93.184.216.34',)
+
+    async def real_answer_at_connect(host: str) -> tuple[str, ...] | None:
+        try:
+            return await real_getaddrinfo(host)
+        except OSError:
+            return None
+
+    async with await _serve('127.0.0.1', _SECRET_ROUTES) as secret:
+        url = f'http://127.0.0.1.nip.io:{secret.port}/'
+        # An earlier check's real answer would otherwise reach the guard from the cache.
+        egress_module.resolution_cache.clear()
+        egress_module.getaddrinfo = public_for_the_guard
+        proxy_module.resolve_host = real_answer_at_connect  # pyright: ignore[reportPrivateImportUsage]
+        try:
+            (navigated,) = await _run_tools(CDPBrowser[object](chrome_sandbox=_SANDBOX), [_navigate(url)])
+        finally:
+            egress_module.getaddrinfo = real_getaddrinfo
+            proxy_module.resolve_host = egress_module.resolve_host  # pyright: ignore[reportPrivateImportUsage]
+            egress_module.resolution_cache.clear()
+        assert 'errorText' in navigated, navigated
+        assert not secret.hits, (secret.hits, navigated)
+        await _run_tools(CDPBrowser[object](chrome_sandbox=_SANDBOX, block_private_addresses=False), [_navigate(url)])
+        assert secret.hits, 'control failed, server unreachable'
+    print(f'rebinding name never reached the server ok ({navigated}; control reached it)')
+
+
 def _targets_page(secret_url: str, child_url: str) -> bytes:
     worker = f"fetch('{secret_url}').then(r => r.text(), e => 'refused: ' + e.message).then(t => postMessage(t));"
     shared = (
@@ -354,6 +416,8 @@ async def _main() -> None:
     await _check_navigate_and_teardown()
     await _check_private_address_block()
     await _check_private_name_block()
+    await _check_public_pages_through_the_proxy()
+    await _check_rebinding_name()
     await _check_other_targets()
     await _check_page_behavior()
     await _check_websocket_guard()

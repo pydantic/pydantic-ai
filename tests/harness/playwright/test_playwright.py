@@ -28,7 +28,12 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import Tracer
 from playwright._impl._errors import TargetClosedError
-from playwright.async_api import Error as PlaywrightError, StorageState, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import (
+    Error as PlaywrightError,
+    ProxySettings,
+    StorageState,
+    TimeoutError as PlaywrightTimeoutError,
+)
 
 import pydantic_ai_harness._browser_egress as egress_module
 import pydantic_ai_harness.playwright._toolset as toolset_module
@@ -58,6 +63,14 @@ from pydantic_ai_harness.playwright import (
     PlaywrightBrowserSession,
     PlaywrightBrowserToolset,
     RequestKind,
+)
+from tests.conftest import IsStr
+from tests.harness._socks_client import (
+    PUBLIC_ADDRESS,
+    dial_public_on_loopback,
+    name as socks_name,
+    serve_echo,
+    socks_connect,
 )
 
 _STORAGE_STATE: StorageState = {'cookies': [{'name': 'session', 'value': 'abc', 'domain': 'example.com', 'path': '/'}]}
@@ -719,6 +732,7 @@ class _FakeChromium:
         self.no_defaults: list[bool | None] = []
         self.launch_timeouts: list[int] = []
         self.launch_args: list[list[str]] = []
+        self.proxies: list[ProxySettings | None] = []
         self.browser: _FakePlaywrightBrowser | None = None
         self.browsers: list[_FakePlaywrightBrowser] = []
 
@@ -733,11 +747,13 @@ class _FakeChromium:
         chromium_sandbox: bool = False,
         timeout: int | None = None,
         args: Sequence[str] | None = None,
+        proxy: ProxySettings | None = None,
     ) -> _FakePlaywrightBrowser:
         self.launched.append(headless)
         self.sandboxed.append(chromium_sandbox)
         self.launch_timeouts.append(timeout if timeout is not None else -1)
         self.launch_args.append(list(args or ()))
+        self.proxies.append(proxy)
         if self._launch_error is not None:
             raise self._launch_error
         self.browser = _FakePlaywrightBrowser(self._page, close_error=self._close_error)
@@ -4331,6 +4347,66 @@ class TestEnforcedPolicyPageApis:
         assert cm.driver.chromium.launch_args == [['--disable-blink-features=FedCm,WebSocketStream']]
 
 
+class TestConnectionProxy:
+    """With the private-address block on, a launched Chromium connects through a proxy that checks what it dials."""
+
+    @pytest.mark.parametrize('block_private_addresses', [True, False], ids=['block', 'no-block'])
+    async def test_a_launched_browser_gets_the_proxy_with_the_address_block(
+        self, monkeypatch: pytest.MonkeyPatch, block_private_addresses: bool
+    ) -> None:
+        cm = _install_fake_driver(monkeypatch, _FakePage())
+        agent = Agent(
+            TestModel(call_tools=['screenshot']),
+            capabilities=[PlaywrightBrowser(block_private_addresses=block_private_addresses)],
+        )
+        await agent.run('screenshot the page')
+        proxy = {'server': IsStr(regex=r'socks5://127\.0\.0\.1:\d+'), 'bypass': '<-loopback>'}
+        assert cm.driver.chromium.proxies == ([proxy] if block_private_addresses else [None])
+
+    async def test_a_retried_launch_reuses_the_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        cm = _install_fake_driver(monkeypatch, _FakePage(), launch_error=PlaywrightError('no display'))
+        async with PlaywrightBrowserSession() as session:
+            for _ in range(2):
+                with pytest.raises(PlaywrightError, match='no display'):
+                    await session.ensure_page()
+        first, second = cm.driver.chromium.proxies
+        assert first is not None and first == second
+
+    async def test_the_proxy_dials_what_the_guard_checked_and_closes_with_the_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The guard's lookup answers with a public address and every later one with loopback, as a rebinding name can.
+
+        The proxy dials the address the guard checked for the name it already looked up, and refuses a name whose
+        lookup answers with loopback. Ending the session closes the connection it relayed.
+        """
+        cm = _install_fake_driver(monkeypatch, _FakePage())
+        answers = iter([(PUBLIC_ADDRESS,)])
+
+        async def rebinding(host: str) -> tuple[str, ...]:
+            return next(answers, ('127.0.0.1',))
+
+        monkeypatch.setattr(egress_module, 'getaddrinfo', rebinding)
+        dialed = dial_public_on_loopback(monkeypatch)
+        async with serve_echo() as echo:
+            async with PlaywrightBrowserSession() as session:
+                await session.ensure_page()
+                proxy = cm.driver.chromium.proxies[-1]
+                assert proxy is not None and 'server' in proxy
+                port = int(proxy['server'].rsplit(':', 1)[1])
+                checked = await session.decide(
+                    EgressRequest(url=f'http://rebind.example:{echo.port}/', kind='navigation')
+                )
+                reader, writer, relayed = await socks_connect(port, socks_name('rebind.example', echo.port))
+                _, refused_writer, refused = await socks_connect(port, socks_name('private.example', echo.port))
+                refused_writer.close()
+                await refused_writer.wait_closed()
+            assert await reader.read() == b''
+            writer.close()
+            await writer.wait_closed()
+        assert (checked, relayed[:2], refused[:2], dialed) == (None, b'\x05\x00', b'\x05\x02', [PUBLIC_ADDRESS])
+
+
 class TestMessageRedaction:
     async def test_a_console_message_loses_its_credentials(self) -> None:
         page = _FakePage()
@@ -4485,6 +4561,7 @@ class _HangingContextChromium(_FakeChromium):
         chromium_sandbox: bool = False,
         timeout: int | None = None,
         args: Sequence[str] | None = None,
+        proxy: ProxySettings | None = None,
     ) -> _FakePlaywrightBrowser:
         return _HangingContextBrowser(self._page)
 

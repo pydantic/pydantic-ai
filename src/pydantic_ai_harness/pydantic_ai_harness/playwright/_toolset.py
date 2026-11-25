@@ -128,7 +128,7 @@ import sys
 import warnings
 from collections import deque
 from collections.abc import Awaitable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from dataclasses import dataclass, replace
 from functools import partial
 from time import monotonic
@@ -153,6 +153,7 @@ from pydantic_ai_harness._browser_egress import (
     refusal_reason,
     request_kind,
 )
+from pydantic_ai_harness._browser_proxy import PRIVATE_ADDRESS_BLOCK, socks_proxy
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN
 
 try:
@@ -179,6 +180,7 @@ if TYPE_CHECKING:
         BrowserContext as PlaywrightBrowserContext,
         Page as PlaywrightPage,
         Playwright as PlaywrightDriver,
+        ProxySettings,
         Request as PlaywrightRequest,
         Route as PlaywrightRoute,
         StorageState,
@@ -904,6 +906,8 @@ class PlaywrightBrowserSession:
         self._driver_entered = False
         self._browser: PlaywrightBrowserHandle | None = None
         self._context: PlaywrightBrowserContext | None = None
+        self._proxy_stack = AsyncExitStack()
+        self._proxy: ProxySettings | None = None
         self._event_tasks: set[asyncio.Task[None]] = set()
         self._launch_lock = anyio.Lock(fast_acquire=True)
         # The policy is fixed for the session, so a document's verdict depends only on its URL
@@ -1294,7 +1298,8 @@ class PlaywrightBrowserSession:
         and the sandbox is what keeps a compromised renderer inside the browser.
         A browser reached over `cdp_url` is already running, so its own
         configuration decides this. Under an enforced policy, a launched browser also
-        gets `_ENFORCED_POLICY_LAUNCH_ARGS`.
+        gets `_ENFORCED_POLICY_LAUNCH_ARGS`, and with the private-address block on it
+        connects through `_launch_proxy`.
         """
         if self._cdp_url is None and self._cdp_url_function is not None:
             endpoint = self._cdp_url_function()
@@ -1314,6 +1319,7 @@ class PlaywrightBrowserSession:
                 chromium_sandbox=self._chromium_sandbox,
                 timeout=self._launch_timeout_ms,
                 args=_ENFORCED_POLICY_LAUNCH_ARGS if self.policy.enforced() else (),
+                proxy=await self._launch_proxy(),
             )
         # Binary genuinely absent: raise a clear install hint, or fetch it when
         # opted in. A launch failure with the binary present (sandbox, missing
@@ -1327,6 +1333,21 @@ class PlaywrightBrowserSession:
             # the failed operation. Neither reaches a developer reading a terminal.
             warnings.warn(self.launch_error, BrowserUnavailableWarning, stacklevel=2)
         return browser
+
+    async def _launch_proxy(self) -> ProxySettings | None:
+        """The proxy a launched Chromium connects through, started on first use, or `None` without the address block.
+
+        The proxy applies the private-address block to every address it dials, so a name that resolved to a public
+        address for the route guard cannot reach a private one when Chromium connects. `<-loopback>` is passed
+        explicitly, so loopback and link-local hosts go through the proxy whatever
+        `PLAYWRIGHT_DISABLE_FORCED_CHROMIUM_PROXIED_LOOPBACK` says.
+        """
+        if not self.policy.block_private_addresses:
+            return None
+        if self._proxy is None:
+            port = await self._proxy_stack.enter_async_context(socks_proxy(PRIVATE_ADDRESS_BLOCK))
+            self._proxy = {'server': f'socks5://127.0.0.1:{port}', 'bypass': '<-loopback>'}
+        return self._proxy
 
     async def _install_and_retry(self, pw: PlaywrightDriver) -> PlaywrightBrowserHandle | None:
         """Fetch Chromium and relaunch once.
@@ -1342,6 +1363,7 @@ class PlaywrightBrowserSession:
                 chromium_sandbox=self._chromium_sandbox,
                 timeout=self._launch_timeout_ms,
                 args=_ENFORCED_POLICY_LAUNCH_ARGS if self.policy.enforced() else (),
+                proxy=await self._launch_proxy(),
             )
         self.launch_error = f'{_CHROMIUM_MISSING_MESSAGE}\nAuto-install failed:\n{install_output[-300:]}'
         return None
@@ -1554,7 +1576,7 @@ class PlaywrightBrowserSession:
         """Release everything the session started, without masking the run's own failure.
 
         Page-event tasks are cancelled first so none outlives the browser it acts
-        on. A `close()` failure still exits the driver, and when the run is
+        on. A `close()` failure still exits the driver and stops the proxy, and when the run is
         already unwinding the teardown error is dropped: the exception the caller
         is carrying is the one worth reporting.
 
@@ -1591,6 +1613,9 @@ class PlaywrightBrowserSession:
             except Exception:
                 if exc_type is None:
                     raise
+            finally:
+                self._proxy = None
+                await self._proxy_stack.aclose()
 
 
 class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):

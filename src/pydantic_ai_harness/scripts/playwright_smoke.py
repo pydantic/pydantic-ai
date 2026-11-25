@@ -7,9 +7,10 @@ it after installing the browser binary to verify the real integration end to end
     playwright install chromium
     uv run python scripts/playwright_smoke.py
 
-It exercises the public `PlaywrightBrowser` surface and checks fifteen things:
+It exercises the public `PlaywrightBrowser` surface and checks sixteen things:
 
-- lazy launch plus a real navigation to https://example.com (prints the title),
+- lazy launch plus a real navigation to https://example.com (prints the title), through the
+  connection proxy the private-address block routes a launched browser through,
 - the allowlist bounce (a disallowed host returns an error result, not content),
 - the private-address block against a real local server, including the decimal
   spelling of an IP (which only Chromium's canonicalization resolves) and an
@@ -17,6 +18,9 @@ It exercises the public `PlaywrightBrowser` surface and checks fifteen things:
 - the private-name block: a hostname resolving to loopback through a public
   wildcard DNS service is refused, which needs real DNS and so cannot be checked
   by the mocked suite,
+- the connection proxy against a rebinding-shaped name: its lookup answers a public address
+  for the route guard and loopback when Chromium connects, and the local server behind it is
+  never reached, with an opt-out control that reaches it,
 - a `storage_state` round-trip: a cookie captured from a real context is visible
   to the agent after relaunching the capability with that state,
 - embedded content: text inside a real cross-origin iframe reaches the model, a
@@ -73,6 +77,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai_harness import _browser_egress as egress_module, _browser_proxy as proxy_module
 from pydantic_ai_harness.playwright import EgressPolicy, PlaywrightBrowser
 
 _COOKIE = 'smoke_session=abc123'
@@ -228,6 +233,50 @@ async def _check_private_name_block() -> None:
         )
         assert _SECRET in open_nav, f'control failed, server unreachable: {open_nav}'
         print('private-name navigation blocked ok (control reached the server)')
+
+
+async def _check_rebinding_name() -> None:
+    """A name that answers a public address for the guard and loopback when Chromium connects reaches nothing.
+
+    The route guard's lookups are answered with a public address, and the proxy's lookup goes to the real
+    resolver, which answers `127.0.0.1.nip.io` with loopback. Chromium itself would get loopback too, so a
+    direct connection would reach the server.
+    """
+    try:
+        await asyncio.get_running_loop().getaddrinfo('127.0.0.1.nip.io', None)
+    except OSError:  # pragma: no cover - network-dependent
+        print('rebinding name SKIPPED (127.0.0.1.nip.io did not resolve)')
+        return
+    real_getaddrinfo = egress_module.getaddrinfo
+
+    async def public_for_the_guard(host: str) -> tuple[str, ...]:
+        return ('93.184.216.34',)
+
+    async def real_answer_at_connect(host: str) -> tuple[str, ...] | None:
+        try:
+            return await real_getaddrinfo(host)
+        except OSError:
+            return None
+
+    server, port = await _serve_secret()
+    async with server:
+        name_url = f'http://127.0.0.1.nip.io:{port}/'
+        # An earlier check's real answer would otherwise reach the guard from the cache.
+        egress_module.resolution_cache.clear()
+        egress_module.getaddrinfo = public_for_the_guard
+        proxy_module.resolve_host = real_answer_at_connect  # pyright: ignore[reportPrivateImportUsage]
+        try:
+            (blocked,) = await _run_tools(PlaywrightBrowser[object](), [('navigate', {'url': name_url})])
+        finally:
+            egress_module.getaddrinfo = real_getaddrinfo
+            proxy_module.resolve_host = egress_module.resolve_host  # pyright: ignore[reportPrivateImportUsage]
+            egress_module.resolution_cache.clear()
+        assert _SECRET not in blocked, blocked
+        (open_nav,) = await _run_tools(
+            PlaywrightBrowser[object](block_private_addresses=False), [('navigate', {'url': name_url})]
+        )
+        assert _SECRET in open_nav, f'control failed, server unreachable: {open_nav}'
+        print(f'rebinding name never reached the server ok ({blocked.splitlines()[0]}; control reached it)')
 
 
 async def _serve_page(html: str) -> tuple[asyncio.Server, int]:
@@ -818,6 +867,7 @@ async def _main() -> None:
     await _check_allowlist_bounce()
     await _check_private_address_block()
     await _check_private_name_block()
+    await _check_rebinding_name()
     await _check_blocked_redirect_message()
     await _check_page_request_egress()
     await _check_storage_state_round_trip()

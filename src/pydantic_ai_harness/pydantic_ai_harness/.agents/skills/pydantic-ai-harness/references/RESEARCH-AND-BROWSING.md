@@ -400,6 +400,9 @@ Gotchas:
   `resolved_addresses`, as above.
 - `policy` together with `allowed_domains` or `block_private_addresses=False` raises `UserError`; put
   those on the `EgressPolicy` instead. A wildcard entry like `'*.example.com'` raises.
+- With `block_private_addresses=True`, a launched Chromium connects through a local proxy that applies the
+  private-address block to the address it dials, so DNS rebinding cannot reach a private address and a `refuse`
+  override cannot admit one. A browser reached over `cdp_url` gets no proxy.
 - Chromium starts lazily on the first browser tool call. At run end a local browser closes and a CDP
   connection disconnects; runs using `cdp_context='default'` on one browser share its pages. A missing
   binary returns an install hint as the tool result and emits `BrowserUnavailableWarning`.
@@ -436,7 +439,9 @@ Fields: `headless=True`, `chrome_path=None` (`CHROME_PATH`, then the usual insta
 - Commands outside `allowed_methods`, non-http(s) `Page.navigate` URLs, URLs the egress policy refuses,
   protocol errors and commands that time out (`timeout=30` covers the command and `wait_for_event`) are retries.
 - The egress policy applies to every request of the tab, its frames, popups and workers through CDP `Fetch`
-  interception, including navigations page scripts start. DNS rebinding on HTTP requests is not covered.
+  interception, including navigations page scripts start. With `block_private_addresses=True`, `http` and `https`
+  connections go through a local proxy that applies the private-address block to the address it dials, so DNS
+  rebinding cannot reach a private address; the domain lists stay with the `Fetch` guard.
 - `Page.captureScreenshot` returns image content (5 MB cap). Dialogs are dismissed; downloads are denied.
 - WebSocket connections go through a local proxy that applies the egress policy to their host and port.
 - Set `chrome_sandbox=False` only where Chrome's sandbox cannot start (it exits with "No usable sandbox!").

@@ -2,7 +2,8 @@
 
 `PlaywrightBrowser` and `CDPBrowser` enforce the same `EgressPolicy` through different transports: a Playwright
 route guard, and the Chrome DevTools Protocol's `Fetch` interception. Keeping the policy, the address checks and
-the resolver here gives both one vocabulary and one verdict for the same request.
+the resolver here gives both one vocabulary and one verdict for the same request. A browser either one launches also
+connects through the proxy in `_browser_proxy`, which applies the address checks to what it dials.
 """
 
 from __future__ import annotations
@@ -79,8 +80,10 @@ def is_blocked_address(host: str) -> bool:
     `localhost` / `*.localhost`; a name pointing at a private address is caught by
     the capability's guard resolving it first and passing the answers to
     `refuse`.
-    Neither is rebinding-proof, since Chromium resolves the name again before it
-    connects (https://github.com/pydantic/pydantic-ai/issues/9204).
+    A browser the capabilities launch connects through `_browser_proxy`, which
+    applies this check to the address it dials, so a name that changes after the
+    guard's lookup cannot reach a private one. A browser reached over `cdp_url`
+    resolves the name again itself before it connects, so there it can.
     A trailing dot is stripped so the fully-qualified spelling gets the same
     verdict, and an IPv4-mapped IPv6 literal is classified by its embedded IPv4
     address. The named category flags are checked alongside `is_global` because
@@ -129,10 +132,11 @@ async def resolve_host(host: str) -> tuple[str, ...] | None:
     empty or over-long label (`a..com`), and that is a verdict, not a crash the
     caller should carry.
 
-    The cache is a duplicate of one Chromium keeps anyway, so it is kept short and
-    small. It cannot make the block airtight: Chromium resolves the name a second
-    time, and a record that changes between the two lookups is the DNS-rebinding
-    case that only a proxy or pinned resolver closes.
+    The cache is kept short and small. The proxy in `_browser_proxy` resolves
+    through it too, so a launched browser connects to the addresses the guard
+    checked. A browser reached over `cdp_url` resolves the name a second time
+    itself, and a record that changes between the two lookups gets past the
+    block there.
 
     The lookup is bounded because of where it runs: ahead of the operation whose
     deadline it would otherwise escape, and inside the route guard, which holds the
@@ -275,7 +279,11 @@ class EgressPolicy:
     allowlist_reach: frozenset[RequestKind] = DEFAULT_ALLOWLIST_REACH
     """Which kinds `allowed_domains` bounds. `frozenset(get_args(RequestKind))` locks down everything."""
     resolved_kinds: frozenset[RequestKind] = DEFAULT_RESOLVED_KINDS
-    """Which kinds have their host resolved so `block_private_addresses` can see where a name points."""
+    """Which kinds have their host resolved so `block_private_addresses` can see where a name points.
+
+    This sets what the request guards look up. The proxy a launched browser connects through checks every name it
+    connects to, whatever this holds.
+    """
 
     def __post_init__(self) -> None:
         for field_name in ('allowed_domains', 'blocked_domains'):

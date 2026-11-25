@@ -106,10 +106,11 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
     Egress: by default the agent can reach any public host; `allowed_domains`
     bounds that, and `block_private_addresses` (on by default) refuses private,
     loopback, link-local and other reserved addresses even under open egress.
-    Neither is a general security boundary: an unanswered DNS lookup is refused
-    but Chromium resolves the name again before it connects, so rebinding is not
-    closed, and a proxy-based enforcement mode is tracked in
-    https://github.com/pydantic/pydantic-ai/issues/9204. Set
+    With the block on, a launched browser connects through a local proxy that
+    resolves each name and connects only to addresses that pass it, so DNS
+    rebinding cannot reach a private address. A browser reached over `cdp_url`
+    resolves names itself, so there a record that changes after the check still
+    gets through. Neither field is a general security boundary. Set
     `allowed_domains` when the agent may act on untrusted input.
 
     The first browser-tool call launches Chromium or connects through CDP. At

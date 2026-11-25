@@ -1,9 +1,14 @@
-"""A loopback SOCKS5 proxy that applies the egress policy to every WebSocket Chrome opens.
+"""A loopback SOCKS5 proxy the browser capabilities send Chromium's connections through.
 
-CDP `Fetch` does not pause a WebSocket handshake, and Chrome has no command that does, so the guard sits on the
-connection. Chrome's proxy rules send `ws` and `wss` to their `socks` entry while `http` and `https` stay direct, and
-`<-loopback>` removes its implicit exemption for loopback and link-local hosts. Chrome has no fallback to a direct
-connection, so a socket the proxy does not relay fails. `scripts/cdp_browser_smoke.py` checks this on a real Chrome.
+A request guard resolves a name to classify it, but Chromium resolves the name again before it connects, so a
+record that changes between the two lookups would reach an address the guard never saw. Through a SOCKS5 proxy,
+Chromium sends the name instead of resolving it. The proxy resolves it through the cache the guard's lookup filled,
+and connects only to the addresses the policy checked.
+
+A listener applying `PRIVATE_ADDRESS_BLOCK` carries the traffic the request guards also see. A connection names
+only its host and port, and Chromium shares one across requests of different kinds to the same host, so the domain
+rules, which depend on the kind, stay with the guards. `CDPBrowser` also sends its WebSockets, which CDP `Fetch`
+never pauses, through a listener applying the run's whole policy.
 """
 
 from __future__ import annotations
@@ -26,17 +31,12 @@ READ_SIZE = 65_536
 REPLY_CONNECTED = b'\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00'
 REPLY_NOT_ALLOWED = b'\x05\x02\x00\x01\x00\x00\x00\x00\x00\x00'
 
-
-def proxy_args(port: int) -> list[str]:
-    """The Chrome flags that send every WebSocket, and nothing else, through the proxy on `port`."""
-    return [
-        f'--proxy-server=http=direct://;https=direct://;socks=socks5://127.0.0.1:{port}',
-        '--proxy-bypass-list=<-loopback>',
-    ]
+PRIVATE_ADDRESS_BLOCK = EgressPolicy()
+"""The policy a listener for traffic the request guards see applies: the private-address block alone, on every name."""
 
 
 @asynccontextmanager
-async def websocket_proxy(policy: EgressPolicy) -> AsyncGenerator[int]:
+async def socks_proxy(policy: EgressPolicy) -> AsyncGenerator[int]:
     """Serve the proxy on a loopback port for the lifetime of the block, and yield the port."""
     connections: set[asyncio.Task[None]] = set()
     stopping = False
@@ -45,7 +45,7 @@ async def websocket_proxy(policy: EgressPolicy) -> AsyncGenerator[int]:
         if stopping:
             writer.close()
             return
-        task = asyncio.create_task(relay(policy, reader, writer), name='cdp-websocket-relay')
+        task = asyncio.create_task(relay(policy, reader, writer), name='browser-proxy-relay')
         connections.add(task)
         task.add_done_callback(connections.discard)
         task.add_done_callback(lambda _: writer.is_closing() or writer.transport.abort())
@@ -135,9 +135,10 @@ async def open_destination(
 ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter] | None:
     """Connect to `host` if the policy allows it, or return `None`.
 
-    A socket is asked about as `data`, the kind `fetch` is. The lookup is made here rather than in `refusal_reason` so
-    the connection goes to the addresses the policy checked. A host that holds a NUL or does not parse back to itself
-    cannot be classified, so it is refused.
+    A connection is asked about as a WebSocket, `data` to `ws://host:port/`, the one kind of connection whose whole
+    policy a listener applies; `PRIVATE_ADDRESS_BLOCK` reads neither the kind nor the scheme. The lookup is made here
+    rather than in `refusal_reason` so the connection goes to the addresses the policy checked. A host that holds a
+    NUL or does not parse back to itself cannot be classified, so it is refused.
     """
     if '\0' in host:
         return None

@@ -11,14 +11,11 @@ there is no provider request for a cassette to record. The agents run on `Functi
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import json
 import shutil
 import socket
 import sys
 from collections.abc import AsyncIterator, Callable
-from contextlib import suppress
-from dataclasses import dataclass
 from pathlib import Path
 
 import anyio
@@ -40,7 +37,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness import CDPBrowser, _browser_egress as egress_module
+from pydantic_ai_harness import CDPBrowser, _browser_egress as egress_module, _browser_proxy as proxy_module
 from pydantic_ai_harness.cdp_browser import (
     DEFAULT_ALLOWED_CDP_METHODS,
     CDPBrowserToolset,
@@ -48,13 +45,23 @@ from pydantic_ai_harness.cdp_browser import (
     EgressRequest,
     _client as client_module,
     _toolset as toolset_module,
-    _websocket_proxy as proxy_module,
 )
 from tests._ports import reserve_loopback_port
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
+from tests.harness._socks_client import (
+    PUBLIC_ADDRESS,
+    EchoServer,
+    dial_public_on_loopback,
+    ipv4,
+    ipv6,
+    name,
+    serve_echo,
+    socks_connect,
+    socks_handshake,
+)
 
-from ._fake_chrome import PAGE_SESSION, FakeChrome, pause_expression
+from ._fake_chrome import PAGE_SESSION, FakeChrome, is_object_dict, pause_expression
 
 
 def calls_then_reply(*calls: dict[str, object]) -> FunctionModel:
@@ -683,45 +690,18 @@ class TestCDPBrowserLaunch:
         assert chrome.launches[0][0] == '/env/chrome'
 
 
+def proxy_server(chrome: FakeChrome) -> str:
+    return next(arg for arg in chrome.launches[-1] if arg.startswith('--proxy-server='))
+
+
 def proxy_port(chrome: FakeChrome) -> int:
-    return int(next(arg for arg in chrome.launches[-1] if arg.startswith('--proxy-server=')).rsplit(':', 1)[1])
+    """The port of the proxy Chrome sends WebSockets to, its `socks` entry."""
+    return int(proxy_server(chrome).rsplit(':', 1)[1])
 
 
-def ipv4(host: str, port: int) -> bytes:
-    return b'\x01' + ipaddress.IPv4Address(host).packed + port.to_bytes(2)
-
-
-def ipv6(host: str, port: int) -> bytes:
-    return b'\x04' + ipaddress.IPv6Address(host).packed + port.to_bytes(2)
-
-
-def name(host: str, port: int) -> bytes:
-    return b'\x03' + bytes([len(host)]) + host.encode() + port.to_bytes(2)
-
-
-async def socks_connect(
-    port: int, destination: bytes, *, greeting: bytes = b'\x05\x01\x00', command: int = 1
-) -> tuple[asyncio.StreamReader, asyncio.StreamWriter, bytes]:
-    """Speak SOCKS5 to the proxy as Chrome does; the reply is empty when the proxy closes without answering."""
-    reader, writer = await asyncio.open_connection('127.0.0.1', port)
-    return reader, writer, await socks_handshake(reader, writer, destination, greeting=greeting, command=command)
-
-
-async def socks_handshake(
-    reader: asyncio.StreamReader,
-    writer: asyncio.StreamWriter,
-    destination: bytes,
-    *,
-    greeting: bytes = b'\x05\x01\x00',
-    command: int = 1,
-) -> bytes:
-    writer.write(greeting)
-    await writer.drain()
-    if await reader.read(2) != b'\x05\x00':
-        return b''
-    writer.write(bytes([5, command, 0]) + destination)
-    await writer.drain()
-    return await reader.read(10)
+def http_proxy_port(chrome: FakeChrome) -> int:
+    """The port of the proxy Chrome sends `http` and `https` to."""
+    return int(proxy_server(chrome).split(';')[0].rsplit(':', 1)[1])
 
 
 def small_receive_buffer() -> socket.socket:
@@ -739,12 +719,6 @@ def stalling_listener() -> socket.socket:
     return listener
 
 
-@dataclass
-class EchoServer:
-    port: int
-    connections: list[asyncio.StreamWriter]
-
-
 class AllowsEverything(EgressPolicy):
     """A policy override, whose hosts are still resolved so the proxy has addresses to connect to."""
 
@@ -754,32 +728,160 @@ class AllowsEverything(EgressPolicy):
 
 @pytest.fixture
 async def echo_server() -> AsyncIterator[EchoServer]:
-    connections: list[asyncio.StreamWriter] = []
+    async with serve_echo() as server:
+        yield server
 
-    async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        connections.append(writer)
-        with suppress(ConnectionError):
-            while data := await reader.read(1024):
-                writer.write(data)
-                await writer.drain()
-        writer.close()
 
-    server = await asyncio.start_server(echo, '127.0.0.1', 0)
-    yield EchoServer(server.sockets[0].getsockname()[1], connections)
-    server.close()
-    await server.wait_closed()
+def private_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer every lookup with loopback."""
+
+    async def loopback(host: str) -> tuple[str, ...]:
+        return ('127.0.0.1',)
+
+    monkeypatch.setattr(egress_module, 'getaddrinfo', loopback)
+
+
+async def guard_verdict(toolset: CDPBrowserToolset[None], url: str, resource_type: str = 'Document') -> object:
+    """Have the fake page request `url`, and return what the egress guard answered."""
+    expression = pause_expression(url, resource_type=resource_type)
+    result = await toolset.browser_cdp('Runtime.evaluate', {'expression': expression, 'returnByValue': True})
+    assert is_object_dict(result)
+    value = result['result']
+    assert is_object_dict(value)
+    return value['value']
+
+
+async def socks_reply(port: int, destination: bytes) -> bytes:
+    """The proxy's answer to a CONNECT, with the connection closed again."""
+    _, writer, reply = await socks_connect(port, destination)
+    writer.close()
+    await writer.wait_closed()
+    return reply[:2]
+
+
+class TestConnectionGuard:
+    """With the private-address block on, Chrome sends `http` and `https` to a proxy that checks what it dials."""
+
+    @pytest.mark.parametrize('block_private_addresses', [True, False], ids=['block', 'no-block'])
+    async def test_chrome_is_launched_with_its_connections_on_the_proxies(
+        self, chrome: FakeChrome, block_private_addresses: bool
+    ):
+        async with CDPBrowserToolset[None](policy=EgressPolicy(block_private_addresses=block_private_addresses)):
+            socket = f'socks5://127.0.0.1:{proxy_port(chrome)}'
+            http = f'socks5://127.0.0.1:{http_proxy_port(chrome)}' if block_private_addresses else 'direct://'
+            assert http != socket
+            assert [arg for arg in chrome.launches[-1] if 'proxy' in arg] == [
+                f'--proxy-server=http={http};https={http};socks={socket}',
+                '--proxy-bypass-list=<-loopback>',
+            ]
+
+    @pytest.mark.parametrize(
+        ('address', 'host'),
+        [
+            pytest.param(ipv4, '127.0.0.1', id='ipv4'),
+            pytest.param(ipv6, '::1', id='ipv6'),
+            pytest.param(name, 'private.example', id='name-resolving-to-a-private-address'),
+        ],
+    )
+    async def test_a_private_destination_is_refused_at_dial_time(
+        self,
+        chrome: FakeChrome,
+        echo_server: EchoServer,
+        monkeypatch: pytest.MonkeyPatch,
+        address: Callable[[str, int], bytes],
+        host: str,
+    ):
+        private_address(monkeypatch)
+        async with CDPBrowserToolset[None]():
+            reply = await socks_reply(http_proxy_port(chrome), address(host, echo_server.port))
+        assert reply == b'\x05\x02'
+        assert echo_server.connections == []
+
+    @pytest.mark.parametrize(
+        ('ttl', 'reply', 'dialed'),
+        [
+            pytest.param(30.0, b'\x05\x00', [PUBLIC_ADDRESS], id='within-the-cache'),
+            pytest.param(0.0, b'\x05\x02', [], id='looked-up-again'),
+        ],
+    )
+    async def test_a_name_that_rebinds_reaches_only_an_address_the_policy_checked(
+        self,
+        chrome: FakeChrome,
+        echo_server: EchoServer,
+        monkeypatch: pytest.MonkeyPatch,
+        ttl: float,
+        reply: bytes,
+        dialed: list[str],
+    ):
+        """The guard's lookup answers with a public address and every later one with loopback, as a rebinding name can.
+
+        While the guard's answer is cached, the proxy dials the address the guard checked. Once it has expired, the
+        proxy looks the name up again and refuses the private answer it gets.
+        """
+        answers = iter([(PUBLIC_ADDRESS,)])
+
+        async def rebinding(host: str) -> tuple[str, ...]:
+            return next(answers, ('127.0.0.1',))
+
+        monkeypatch.setattr(egress_module, 'getaddrinfo', rebinding)
+        monkeypatch.setattr(egress_module, 'RESOLUTION_TTL_SECONDS', ttl)
+        connections = dial_public_on_loopback(monkeypatch)
+        async with CDPBrowserToolset[None]() as toolset:
+            verdict = await guard_verdict(toolset, f'http://rebind.example:{echo_server.port}/', 'Fetch')
+            got = await socks_reply(http_proxy_port(chrome), name('rebind.example', echo_server.port))
+        assert (verdict, got, connections) == ('continue', reply, dialed)
+
+    async def test_a_passive_subresource_of_an_allowlisted_page_still_loads(
+        self, chrome: FakeChrome, echo_server: EchoServer, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The allowlist leaves an image on another host alone, and the proxy applies no domain rule to its connection.
+
+        A `fetch` to that host is refused by the guard, and a WebSocket to it by the socket proxy, which applies the
+        whole policy.
+        """
+        connections = dial_public_on_loopback(monkeypatch)
+        image = f'http://cdn.other.test:{echo_server.port}/logo.png'
+        async with CDPBrowserToolset[None](policy=EgressPolicy(allowed_domains=['allowed.test'])) as toolset:
+            verdicts = [await guard_verdict(toolset, image, 'Image'), await guard_verdict(toolset, image, 'Fetch')]
+            reader, writer, reply = await socks_connect(
+                http_proxy_port(chrome), name('cdn.other.test', echo_server.port)
+            )
+            writer.write(b'ping')
+            await writer.drain()
+            assert await reader.readexactly(4) == b'ping'
+            writer.close()
+            await writer.wait_closed()
+            socket_reply = await socks_reply(proxy_port(chrome), name('cdn.other.test', echo_server.port))
+        assert verdicts == ['continue', 'fail']
+        assert (reply[:2], socket_reply) == (b'\x05\x00', b'\x05\x02')
+        assert connections == [PUBLIC_ADDRESS]
+
+    async def test_an_override_that_admits_a_private_address_reaches_it_only_over_a_websocket(
+        self, chrome: FakeChrome, echo_server: EchoServer, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The address block on `http` and `https` connections reads no override; the socket proxy asks the policy."""
+        private_address(monkeypatch)
+        async with CDPBrowserToolset[None](policy=AllowsEverything()) as toolset:
+            verdict = await guard_verdict(toolset, f'http://intranet.example:{echo_server.port}/')
+            http_reply = await socks_reply(http_proxy_port(chrome), name('intranet.example', echo_server.port))
+            socket_reply = await socks_reply(proxy_port(chrome), name('intranet.example', echo_server.port))
+        assert (verdict, http_reply, socket_reply) == ('continue', b'\x05\x02', b'\x05\x00')
+
+    async def test_a_kind_resolved_kinds_leaves_out_is_still_checked_at_dial_time(
+        self, chrome: FakeChrome, echo_server: EchoServer, monkeypatch: pytest.MonkeyPatch
+    ):
+        """The guard lets an image through without a lookup, and the proxy still resolves the name it dials."""
+        private_address(monkeypatch)
+        policy = EgressPolicy(resolved_kinds=frozenset({'navigation', 'subframe', 'data'}))
+        async with CDPBrowserToolset[None](policy=policy) as toolset:
+            verdict = await guard_verdict(toolset, f'http://private.example:{echo_server.port}/logo.png', 'Image')
+            reply = await socks_reply(http_proxy_port(chrome), name('private.example', echo_server.port))
+        assert (verdict, reply) == ('continue', b'\x05\x02')
+        assert echo_server.connections == []
 
 
 class TestWebSocketGuard:
     """Chrome sends every WebSocket to the proxy; these tests speak to it directly, as Chrome does."""
-
-    async def test_chrome_is_launched_with_only_websockets_on_the_proxy(self, chrome: FakeChrome):
-        async with CDPBrowserToolset[None]():
-            port = proxy_port(chrome)
-            assert [arg for arg in chrome.launches[-1] if 'proxy' in arg] == [
-                f'--proxy-server=http=direct://;https=direct://;socks=socks5://127.0.0.1:{port}',
-                '--proxy-bypass-list=<-loopback>',
-            ]
 
     async def test_an_allowed_socket_is_relayed(self, chrome: FakeChrome, echo_server: EchoServer):
         async with CDPBrowserToolset[None](policy=EgressPolicy(block_private_addresses=False)):
