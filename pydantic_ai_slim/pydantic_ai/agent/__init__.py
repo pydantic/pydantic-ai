@@ -501,7 +501,8 @@ class _RunSuccess:
         self.run_ctx = run_ctx
 
     async def __call__(self, exc_type: type[BaseException] | None, *_: object) -> None:
-        if exc_type is not None:
+        # A run whose capabilities don't define the hook ends exactly as it did before the hook existed.
+        if exc_type is not None or not self.run_capability._has_on_run_success:  # pyright: ignore[reportPrivateUsage]
             return
         # Bound before the run's body starts, and nothing before that point can exit the stack cleanly.
         assert self.agent_run is not None and self.run_ctx is not None
@@ -522,7 +523,7 @@ async def _dispatch_run_success(
 
     `None` is a run the caller left before it produced a result, which didn't succeed.
     """
-    if result is None:
+    if result is None or not run_capability._has_on_run_success:  # pyright: ignore[reportPrivateUsage]
         return
     # A cancellation requested or delivered as the run finished, even one a toolset's exit absorbed, still ends the
     # run cancelled, so nothing is committed for it. `CombinedCapability` checks again before each capability's hook.

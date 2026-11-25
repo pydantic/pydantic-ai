@@ -255,6 +255,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return any(c._has_on_node_run_error for c in self._dispatch)
 
     @property
+    def _has_on_run_success(self) -> bool:
+        return any(c._has_on_run_success for c in self._dispatch)
+
+    @property
     def _has_wrap_model_request(self) -> bool:
         return any(c._has_wrap_model_request for c in self._dispatch)
 
@@ -669,6 +673,8 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         result: AgentRunResult[Any],
     ) -> None:
         for capability in reversed(self._dispatch):
+            if not capability._has_on_run_success:
+                continue
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 # A hook that absorbed the run's cancellation doesn't let the next one commit.
                 await raise_if_run_cancelled(ctx.__dict__.get('_cancellation'))

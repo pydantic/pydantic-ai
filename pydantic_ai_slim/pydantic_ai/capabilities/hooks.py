@@ -942,6 +942,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return type(self).on_node_run_error is not Hooks.on_node_run_error or bool(self._get('on_node_run_error'))
 
     @property
+    def _has_on_run_success(self) -> bool:
+        return type(self).on_run_success is not Hooks.on_run_success or bool(self._get('on_run_success'))
+
+    @property
     def _has_wrap_model_request(self) -> bool:
         return type(self).wrap_model_request is not Hooks.wrap_model_request or bool(self._get('wrap_model_request'))
 

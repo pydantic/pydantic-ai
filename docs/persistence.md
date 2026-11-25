@@ -179,7 +179,7 @@ async def main():
     #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
 
-A save that raises, like a [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict], fails the run, which then returns no result. A save can still outlive the run: another capability's `on_run_success`, or the run's `timeout=`, can fail the run after it. Saving a failed turn from [`error.conversation`][pydantic_ai.exceptions.AgentRunError.conversation], as above, stays with the code that catches the error.
+A save that raises, like a [`ConversationConflict`][pydantic_ai.conversation_store.ConversationConflict], fails the run, which then returns no result. A save can still outlive the run: another capability's `on_run_success`, or the run's `timeout=`, can fail the run after it. Under [durable execution](durable_execution/overview.md), save through a durable operation, such as a Temporal activity; adding one to an agent whose runs are already in progress changes their steps, so deploy it as you would any other workflow change. Saving a failed turn from [`error.conversation`][pydantic_ai.exceptions.AgentRunError.conversation], as above, stays with the code that catches the error.
 
 ## Recording what each run did
 

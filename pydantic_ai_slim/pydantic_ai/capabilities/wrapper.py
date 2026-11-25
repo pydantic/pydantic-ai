@@ -187,6 +187,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         )
 
     @property
+    def _has_on_run_success(self) -> bool:
+        return type(self).on_run_success is not WrapperCapability.on_run_success or self.wrapped._has_on_run_success
+
+    @property
     def _has_wrap_model_request(self) -> bool:
         return (
             type(self).wrap_model_request is not WrapperCapability.wrap_model_request

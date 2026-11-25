@@ -2824,6 +2824,34 @@ class TestRunSuccessHooks:
 
         assert log == ['recorder:after_run', 'toolset:absorbed']
 
+    async def test_a_run_without_the_hook_ends_as_before(self):
+        """Without an `on_run_success` hook, a cancellation a toolset's exit absorbed still lets the run return."""
+        token = CancellationToken()
+
+        class AbsorbingToolset(FunctionToolset[Any]):
+            async def __aexit__(self, *args: Any) -> bool | None:
+                await super().__aexit__(*args)
+                token.cancel()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    pass
+                return None
+
+        @dataclass
+        class AfterRunOnly(AbstractCapability[Any]):
+            async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+                return result
+
+        agent = Agent(
+            TestModel(custom_output_text='done'),
+            capabilities=[AfterRunOnly(), Hooks[Any]()],
+            toolsets=[AbsorbingToolset(tools=[])],
+        )
+        result = await agent.run('hello', cancellation_token=token)
+
+        assert result.output == 'done'
+
     async def test_a_hook_that_absorbs_the_cancellation_does_not_let_the_next_one_commit(self):
         log: list[str] = []
 
