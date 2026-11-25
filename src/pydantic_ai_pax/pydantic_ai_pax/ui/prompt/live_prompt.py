@@ -24,7 +24,6 @@ from pydantic_ai_pax.config.input_bindings import (
     InputAction,
     InputBindings,
     KeyboardLabels,
-    QuestionSubmit,
     canonical_key,
 )
 from pydantic_ai_pax.ui import telemetry
@@ -93,8 +92,6 @@ class LivePrompt:
         keyboard_labels: Callable[[], KeyboardLabels] = lambda: 'neutral',
         busy_delivery: Callable[[], BusyDelivery] = lambda: 'after-turn',
         remember_busy_delivery: Callable[[BusyDelivery], object] = lambda _: None,
-        question_preference: Callable[[], QuestionSubmit] = lambda: 'ask',
-        remember_question_preference: Callable[[QuestionSubmit], object] = lambda _: None,
         queue_in_toolbar: Callable[[], bool] | None = None,
         full_screen: bool = False,
     ) -> None:
@@ -130,9 +127,8 @@ class LivePrompt:
         self.busy_delivery = busy_delivery
         self.remember_busy_delivery = remember_busy_delivery
         self.key_test: KeyTest | None = None
-        self.questions = PromptQuestions(
-            paint=self.paint, preference=question_preference, remember=remember_question_preference
-        )
+        # A shell's `SessionRuntime.bind` replaces this with the shown session's questions and preference.
+        self.questions = PromptQuestions(paint=self.paint, preference=lambda: 'ask', remember=lambda _: None)
         self.queue_in_toolbar = queue_in_toolbar
         self.ctrl_enter_steers = ctrl_enter_steers()
         """Whether Ctrl+Enter (and Ctrl+J, which older terminals send for it) steers, as Alt+Enter does.
@@ -205,10 +201,11 @@ class LivePrompt:
         """Every text the editor may still send, whose image attachments must stay.
 
         That is the draft, the one Esc restores while a queued prompt is edited, the one Down restores during a
-        recall walk, and the queued prompts.
+        recall walk of the draft or of the composer a queue edit set aside, and the queued prompts.
         """
         shelved = (self._shelved_draft,) if self._editing is not None else ()
-        walked = (self.buffer.saved_draft,) if self.buffer.history_index is not None else ()
+        composers = (self.buffer,) if self._action_draft is None else (self.buffer, self._action_draft)
+        walked = tuple(composer.saved_draft for composer in composers if composer.history_index is not None)
         action_draft = (self._action_draft.text,) if self._action_draft is not None else ()
         return (self.buffer.text, *shelved, *walked, *action_draft, *(entry.text for entry in self._pending()))
 
@@ -368,6 +365,13 @@ class LivePrompt:
         if self.queue_key(key, data):
             self.paint()
             return
+        width, height = self.console.size
+        if self.questions.menu is not None and (key == 'f2' or self.questions.focused) and min(width, height) < 6:
+            # Below six rows a focused question cannot show its choice, so no key may choose one unseen.
+            self.questions.focused = False
+            self.notice = 'Enlarge the terminal to review the question; nothing was chosen.'
+            self.paint()
+            return
         if self.questions.feed(
             key, data, draft=self.buffer, bindings=self.bindings(), queue=lambda: self.accept(follow_up=True)
         ):
@@ -493,8 +497,10 @@ class LivePrompt:
         if self._editing is not None:
             self.stop_editing()
         self.questions.focused = self.questions.routing = False
-        self._action_draft = self.buffer
-        self._shelved_draft = self.buffer.text
+        # A history search can end an edit and leave the composer set aside; a second edit keeps that composer.
+        if self._action_draft is None:
+            self._action_draft = self.buffer
+        self._shelved_draft = self._action_draft.text
         self._edit(entry)
         self.buffer = PromptBuffer(history=self.buffer.history)
         self.buffer.replace(entry.text)
@@ -992,6 +998,13 @@ class LivePrompt:
             )[: max(1, height - 2)]
         if self._delivery_choice:
             return self.delivery_frame(width=width, height=height)
+        if self.questions.focused:
+            rows = self.questions.rows(
+                width=width, height=height, send_label=self.key_label('send'), newline_label=self.key_label('newline')
+            )
+            # A focused question the composer frame would cut takes the frame, so its chosen row stays visible.
+            if len(rows) > height - 6 - (self._editing is not None):
+                return rows[: max(1, height - 2)]
         if not self._queue_open:
             return None
         entry = self._queue_selected

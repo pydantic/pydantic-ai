@@ -176,10 +176,6 @@ class Terminal(Generic[DepsT, OutputT]):
             keyboard_labels=lambda: self._shown().context.settings.keyboard_labels,
             busy_delivery=lambda: self._shown().context.settings.busy_delivery,
             remember_busy_delivery=lambda mode: self._shown().context.set_setting(['input.busy_delivery', mode]),
-            question_preference=lambda: self._shown().context.settings.question_submit,
-            remember_question_preference=lambda preference: self._shown().context.set_setting(
-                ['input.question_submit', preference]
-            ),
             queue_in_toolbar=lambda: 'queued' in self._shown().context.settings.footer_fields,
             full_screen=self._shown().context.settings.full_screen,
         )

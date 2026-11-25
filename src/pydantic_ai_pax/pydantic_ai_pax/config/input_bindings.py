@@ -1,6 +1,6 @@
 """Composer bindings expressed as decoded keys, not keyboard or server detection."""
 
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -8,6 +8,9 @@ InputAction = Literal['send', 'steer', 'newline']
 KeyboardLabels = Literal['unset', 'neutral', 'mac', 'pc']
 QuestionSubmit = Literal['ask', 'answer', 'follow-up']
 BusyDelivery = Literal['after-turn', 'next-checkpoint']
+KEYBOARD_LABELS: tuple[KeyboardLabels, ...] = get_args(KeyboardLabels)
+QUESTION_SUBMITS: tuple[QuestionSubmit, ...] = get_args(QuestionSubmit)
+BUSY_DELIVERIES: tuple[BusyDelivery, ...] = get_args(BusyDelivery)
 
 # The editor treats these reports as one key (`LivePrompt.effective_key`). Changing
 # their action separately would promise a distinction the editor does not make.

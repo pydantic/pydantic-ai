@@ -209,11 +209,11 @@ class PromptQuestions:
             return f'{send_label}: queue | F2 review approval'
         preference = self.preference()
         action = (
-            'answer or follow-up'
+            'queue follow-up'
+            if preference == 'follow-up'
+            else 'answer or follow-up'
             if preference == 'ask' or not self._reviewed
             else 'answer question'
-            if preference == 'answer'
-            else 'queue follow-up'
         )
         return f'{send_label}: {action} | F2 choices | {newline_label} newline'
 

@@ -1,5 +1,6 @@
 """Input requirements exercised through the composer, decoder and shared settings store."""
 
+import io
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 from pydantic import ValidationError
+from rich.console import Console
 from rich.text import Text
 
 from pydantic_ai import Agent
@@ -29,14 +31,18 @@ from pydantic_ai_pax.config.input_bindings import BusyDelivery, InputBindings, K
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins.menus import CloseMenu
 from pydantic_ai_pax.runtime.permissions import decision
+from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session import Session
+from pydantic_ai_pax.ui.menus import dialogs
 from pydantic_ai_pax.ui.menus.input_menu import input_menu
 from pydantic_ai_pax.ui.prompt.input_setup import KeyTest
 from pydantic_ai_pax.ui.prompt.prompt_keys import PromptKeys
 from tests.conftest import no_leaked_tasks
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs
+from tests.pax.menu_script import Script, pick
 from tests.pax.test_live_prompt import editor
 from tests.pax.test_permissions import request as permission_request
+from tests.pax.test_session_runtime import runtime_over
 from tests.pax.test_steering import running
 
 
@@ -158,6 +164,46 @@ async def test_setup_actions_save_reset_and_cancel(tmp_path: Path) -> None:
     assert menu.source.reset(rows['test']) == 'No captured key is saved.'
 
 
+async def test_input_command_resets_every_input_setting_and_hands_key_tests_to_the_composer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    process = ClaiProcess.open(SettingsStore(tmp_path / 'config.db'))
+    runtime, _ = runtime_over(process, tmp_path / 'project')
+    chosen = {
+        'input.bindings': '{"send": "ctrl-s"}',
+        'input.keyboard_labels': 'mac',
+        'input.question_submit': 'answer',
+        'input.busy_delivery': 'next-checkpoint',
+    }
+    for key, value in chosen.items():
+        runtime.context.set_setting([key, value])
+    assert {key for key in process.store.overrides() if key.startswith('input.')} == chosen.keys()
+    assert await runtime.commands.execute_async('/input reset') == '\n'.join(f'Reset {key}. Applied.' for key in chosen)
+    assert not any(key.startswith('input.') for key in process.store.overrides())
+    settings = runtime.context.settings
+    assert (settings.input_bindings, settings.keyboard_labels, settings.question_submit, settings.busy_delivery) == (
+        InputBindings(),
+        'unset',
+        'ask',
+        'after-turn',
+    )
+    with pytest.raises(ValueError, match=r'^Usage: /input \[test\|reset\]$'):
+        await runtime.commands.execute_async('/input reset now')
+    with pytest.raises(ValueError, match='Key testing needs the terminal composer'):
+        await runtime.commands.execute_async('/input test')
+    # The bare command opens setup, whose Test row hands capture to the same composer.
+    monkeypatch.setattr(dialogs, 'RUNNERS', Script(lists=[pick('test')], choices=[], texts=[]).runners)
+    async with editor() as (live, _, _):
+        runtime.editor = live
+        assert await runtime.commands.execute_async('/input test') == 'Test a key now. Ctrl+G closes.'
+        assert live.key_test is not None
+        live.end_calibration()
+        assert await runtime.commands.execute_async('/input') == (
+            'Test a key now. Ctrl+G closes; Ctrl+J is the newline fallback.'
+        )
+        assert live.key_test is not None
+
+
 def test_input_preferences_roundtrip_and_unknown_settings_survive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -182,12 +228,17 @@ def test_input_preferences_roundtrip_and_unknown_settings_survive(
     assert reopened.overrides() == saved
     # An older build knows none of these names but must preserve their stored values.
     older = {key: field for key, field in config.SETTING_FIELDS.items() if not key.startswith('input.')}
-    monkeypatch.setattr(config, 'SETTING_FIELDS', older)
-    reopened.set('display.thinking', True)
-    reopened.reset('display.thinking')
-    assert {key: value for key, value in reopened.overrides().items() if key.startswith('input.')} == {
-        key: value for key, value in saved.items() if key.startswith('input.')
-    }
+    with monkeypatch.context() as build:
+        build.setattr('pydantic_ai_pax.config.SETTING_FIELDS', older)
+        build.setattr('pydantic_ai_pax.config.settings_store.SETTING_FIELDS', older)
+        older_store = SettingsStore(store.path)
+        assert older_store.overrides() == previous
+        older_store.set('display.thinking', True)
+        older_store.reset('display.thinking')
+        assert older_store.overrides() == {}
+    inputs = {key: value for key, value in saved.items() if key.startswith('input.')}
+    assert len(inputs) == 4
+    assert SettingsStore(store.path).overrides() == inputs
 
 
 def question_request(*, batch: bool = False) -> AskUserRequest:
@@ -286,6 +337,7 @@ async def test_remembered_follow_up_queues_the_draft_without_routing() -> None:
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(ask)
             await anyio.wait_all_tasks_blocked()
+            assert live.input_hint().startswith('Enter: queue follow-up |')
             live.feed('paste', 'next step')
             live.feed('enter')
             assert not live.questions.routing
@@ -454,6 +506,24 @@ async def test_explicit_focused_approval_still_authorizes_only_its_current_call(
         assert not decision(responses[0]).remember
 
 
+async def test_composer_declines_a_hidden_sessions_questions_and_leaves_a_closed_editors_to_the_picker() -> None:
+    async with editor() as (live, _, _):
+        # A session the terminal does not show prints to its own console, never to the editor's.
+        hidden = TerminalAnswerer(full_screen=live.suspended, console=Console(file=io.StringIO()))
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await hidden(question_request()))
+            responses.append(await hidden.ask_approval(permission_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            assert live.questions.menu is None
+            assert responses == [AskUserResponse(cancelled=True)] * 2
+    assert await live.ask_question(question_request(), live.console) is None
+
+
 async def test_cancelled_question_keeps_images_and_queue_action_draft_inventory() -> None:
     async with editor() as (live, _, _):
         image = BinaryContent(data=b'image bytes', media_type='image/png')
@@ -548,6 +618,16 @@ async def test_physical_enter_labels_follow_effective_bindings(keyboard: Keyboar
                 send_label=live.key_label('send'), newline_label=live.key_label('newline')
             )
             tasks.cancel_scope.cancel()
+
+
+async def test_first_run_hint_offers_keyboard_setup_until_labels_are_chosen() -> None:
+    async with editor() as (live, _, _):
+        live.keyboard_labels = lambda: 'unset'
+        newline = live.key_label('newline')
+        assert live.input_hint() == f'Keyboard setup: /input | {newline} newline'
+        assert live.input_hint() in [Text.from_ansi(row).plain for row in live.frame()]
+        live.keyboard_labels = lambda: 'pc'
+        assert live.input_hint() == f'Enter: send | F4 Delivery | {newline} newline | /input'
 
 
 async def test_editing_is_not_pending_and_cancel_preserves_reserved_id_and_images() -> None:
@@ -1084,3 +1164,67 @@ async def test_mixed_checkpoint_choice_remains_explicit_between_turns() -> None:
         assert live.queued_messages == ('older', 'new direction')
         assert await live.read() == 'older'
         assert await live.read() == 'new direction'
+
+
+async def test_short_terminal_never_chooses_an_unseen_approval() -> None:
+    async with editor() as (live, _, _):
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console)
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await answerer.ask_approval(permission_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            live.console.size = (40, 5)
+            live.feed('f2')
+            assert not live.questions.focused and 'Enlarge the terminal' in live.notice
+            # Six rows leave the composer frame no room, so the focused approval takes the frame.
+            live.console.size = (40, 6)
+            live.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            assert live.questions.focused
+            assert any(row.startswith('> 1.') for row in Text.from_ansi('\n'.join(live.frame())).plain.splitlines())
+            live.console.size = (40, 5)
+            live.feed('enter')
+            assert responses == [] and not live.questions.focused
+            live.console.size = (80, 24)
+            live.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            live.feed('ctrl-c')
+        assert not decision(responses[0]).approved
+
+
+async def test_queue_edit_during_a_history_walk_keeps_the_walked_draft_images() -> None:
+    async with editor() as (live, _, _):
+        image = BinaryContent(data=b'walked image', media_type='image/png')
+        marker = live.images.attach([image])
+        live.submit('queued')
+        (entry,) = live.queued_prompts()
+        live.buffer.history.append('older prompt')
+        live.buffer.insert('draft ' + marker)
+        walking = live.buffer
+        walking.recall(backwards=True)
+        assert walking.text == 'older prompt'
+        live.edit_queue_entry(entry)
+        live.images.retain(live.drafts)
+        assert live.images.resolve(walking.saved_draft)[1] == [image]
+
+
+async def test_second_queue_edit_after_history_search_keeps_the_original_composer() -> None:
+    async with editor() as (live, _, _):
+        live.submit('a')
+        live.submit('b')
+        first, second = live.queued_prompts()
+        live.buffer.history.append('alpha')
+        live.buffer.insert('original')
+        original = live.buffer
+        live.edit_queue_entry(first)
+        live.feed('ctrl-r')
+        live.feed('l')  # The match is a new prompt, so the search ends the edit.
+        assert live.queued_prompts() == [first, second]
+        live.edit_queue_entry(second)
+        live.feed('escape')
+        assert live.buffer is original and live.buffer.text == 'original'
+        assert live.queued_prompts() == [first, second]

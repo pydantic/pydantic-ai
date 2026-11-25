@@ -6,6 +6,7 @@ from pydantic_ai.models import known_model_names
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import SETTING_FIELDS, TOOL_CALL_DISPLAYS, UPDATE_CHANNELS, Settings
 from pydantic_ai_pax.config.api_keys import set_api_key
+from pydantic_ai_pax.config.input_bindings import BUSY_DELIVERIES, KEYBOARD_LABELS, QUESTION_SUBMITS
 from pydantic_ai_pax.plugins.menus import SettingsMenu
 from pydantic_ai_pax.ui.menus.dialogs import run_settings_menu
 from pydantic_ai_pax.ui.menus.field_menu import ChoicePreview, FieldMenu, FieldRow, first_error, shown
@@ -31,6 +32,7 @@ class SettingsSource:
         `run.instructions` is left to `/system_prompt`: a one-line input would lose its line breaks.
         """
         rows: list[FieldRow] = []
+        defaults = Settings().model_dump(mode='json')
         for key, field in SETTING_FIELDS.items():
             if key == 'run.instructions' or (self._keys and key not in self._keys):
                 continue
@@ -51,18 +53,18 @@ class SettingsSource:
                 case 'updates.channel':
                     choices = UPDATE_CHANNELS
                 case 'input.keyboard_labels':
-                    choices = ('unset', 'neutral', 'mac', 'pc')
+                    choices = KEYBOARD_LABELS
                 case 'input.busy_delivery':
-                    choices = ('after-turn', 'next-checkpoint')
+                    choices = BUSY_DELIVERIES
                 case 'input.question_submit':
-                    choices = ('ask', 'answer', 'follow-up')
+                    choices = QUESTION_SUBMITS
                 case _:
                     choices = ()
             rows.append(
                 FieldRow(
                     key=key,
                     description=info.description or '',
-                    default=shown(Settings().model_dump(mode='json')[field]),
+                    default=shown(defaults[field]),
                     choices=choices,
                     note='project' if self._context.from_project(key) else '',
                     preview=preview,
