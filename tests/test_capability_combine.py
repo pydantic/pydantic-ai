@@ -127,16 +127,25 @@ def test_a_declared_id_merges_without_an_override() -> None:
     assert (merged.effort, merged.budget) == ('low', 10)
 
 
+@pytest.mark.parametrize('deferred_first', [True, False], ids=['deferred_first', 'always_on_first'])
 @pytest.mark.parametrize('deferred_alone', [False, True], ids=['inside_a_deferred_group', 'deferred_itself'])
-def test_a_deferred_capability_does_not_combine_with_an_always_on_one(deferred_alone: bool) -> None:
-    """The combined capability is built with the agent, so it can't take a deferred one's settings only once loaded."""
+def test_a_deferred_capability_does_not_combine_with_an_always_on_one(
+    deferred_alone: bool, deferred_first: bool
+) -> None:
+    """The combined capability is built with the agent, so it can't take a deferred one's settings only once loaded.
+
+    A regression test: combining them anyway took the place of whichever came last. With the always-on one last,
+    the deferred group silently disappeared, `load_capability` with it, so its setting never applied; with the
+    deferred one last, the always-on setting was silently off until the group loaded.
+    """
     deferred = (
-        Thinking(effort='low', defer_loading=True)
+        Thinking(effort='high', defer_loading=True)
         if deferred_alone
-        else CombinedCapability[Any]([Thinking(effort='low')], id='reasoning', defer_loading=True)
+        else CombinedCapability[Any]([Thinking(effort='high')], id='reasoning', defer_loading=True)
     )
+    always_on = Thinking(effort='low')
     with pytest.raises(UserError, match="share the id 'thinking'") as raised:
-        Agent(TestModel(), capabilities=[deferred, Thinking(effort='high')])
+        Agent(TestModel(), capabilities=[deferred, always_on] if deferred_first else [always_on, deferred])
     assert ('inside deferred capability' in str(raised.value)) is not deferred_alone
     assert 'give one of them its own `id`' in str(raised.value)
 
