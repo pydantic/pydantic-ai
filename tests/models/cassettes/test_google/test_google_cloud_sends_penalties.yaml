@@ -1,0 +1,68 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai/locations/global/publishers/google/models/gemini-2.5-flash-lite:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "179"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: "Reply with just: ok"
+          role: user
+        generationConfig:
+          presencePenalty: 0.5
+          frequencyPenalty: 0.5
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            role: model
+            parts:
+            - text: ok
+          finishReason: STOP
+        usageMetadata:
+          promptTokenCount: 5
+          candidatesTokenCount: 1
+          totalTokenCount: 6
+          trafficType: ON_DEMAND
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 5
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 1
+        modelVersion: gemini-2.5-flash-lite
+        createTime: 2026-11-04T00:36:27.516760Z
+        responseId: C37qapjFH5qL3dAPjO_YqQY
+  recorded_at: 2026-11-04T00:36:27.832161+00:00

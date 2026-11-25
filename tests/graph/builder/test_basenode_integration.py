@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
+from importlib import import_module
+from pathlib import Path
 from typing import Annotated, Any
 
+import pytest
+
 from pydantic_graph import BaseNode, End, GraphBuilder, GraphRunContext, StepContext, StepNode
+from pydantic_graph.exceptions import GraphBuildingError, GraphSetupError
 from pydantic_graph.join import JoinNode, reduce_list_append
+from pydantic_graph.step import NodeStep
 
 from ..._inline_snapshot import snapshot
 
@@ -14,6 +21,9 @@ from ..._inline_snapshot import snapshot
 @dataclass
 class IntegrationState:
     log: list[str] = field(default_factory=list[str])
+
+
+ReachableStepAlias = int
 
 
 async def test_basenode_in_builder_graph():
@@ -281,3 +291,419 @@ async def test_match_node_with_base_node():
     # This test is simplified to document match_node usage
     # The actual line coverage is achieved through internal graph construction
     pass
+
+
+async def test_add_reachable_chain():
+    @dataclass
+    class First(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Second:
+            return Second(self.value * 2)
+
+    @dataclass
+    class Second(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> End[int]:
+            return End(self.value + 1)
+
+    g = GraphBuilder(input_type=First, output_type=int)
+    g.add_reachable()
+    g.add_reachable(First, Second, First)
+    g.add_reachable(First)
+    assert str(g.build(validate_graph_structure=False)) == snapshot("""\
+stateDiagram-v2
+  First
+  Second
+
+  First --> Second
+  Second --> [*]\
+""")
+    g.add(g.edge_from(g.start_node).to(First))
+    assert await g.build().run(inputs=First(3)) == 7
+
+
+async def test_add_reachable_diamond_and_cycles():
+    @dataclass
+    class Root(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Left | Right:
+            return Left(self.value) if self.value % 2 else Right(self.value)
+
+    @dataclass
+    class Left(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Finish:
+            return Finish(self.value)
+
+    @dataclass
+    class Right(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Finish:
+            return Finish(self.value)
+
+    @dataclass
+    class Finish(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Root | Finish | End[int]:
+            if self.value < 2:
+                return Root(self.value + 1)
+            if self.value == 2:
+                return Finish(3)
+            return End(self.value)
+
+    g = GraphBuilder(input_type=Root, output_type=int)
+    g.add_reachable(Root, Left, Root)
+    g.add_reachable(Root, Finish)
+    g.add(g.edge_from(g.start_node).to(Root))
+    graph = g.build()
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  Root
+  state decision <<choice>>
+  Left
+  Right
+  Finish
+  state decision_2 <<choice>>
+
+  [*] --> Root
+  Root --> decision
+  decision --> Left
+  decision --> Right
+  Left --> Finish
+  Right --> Finish
+  Finish --> decision_2
+  decision_2 --> Root
+  decision_2 --> Finish
+  decision_2 --> [*]\
+""")
+    assert await graph.run(inputs=Root(0)) == 3
+    assert await graph.run(inputs=Root(1)) == 3
+
+
+async def test_add_reachable_preserves_configured_paths():
+    @dataclass
+    class Root(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> BaseNode[None, None, int]:
+            return Finish()
+
+    @dataclass
+    class Finish(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> End[int]:
+            return End(42)
+
+    class Unrelated(Root):
+        pass
+
+    g = GraphBuilder(input_type=Root, output_type=int)
+
+    @g.step
+    async def unused(ctx: StepContext[None, None, None]) -> int:  # pragma: no cover
+        return 0
+
+    g.add(g.edge_from(NodeStep(Root)).label('configured').to(Finish), g.edge_from(unused).to(Unrelated))
+    g.add_reachable(Root)
+    graph = g.build(validate_graph_structure=False)
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  Finish
+  Root
+  Unrelated
+  unused
+
+  Finish --> [*]
+  Root --> Finish: configured
+  unused --> Unrelated\
+""")
+    g.add(g.edge_from(g.start_node).to(Root))
+    assert await g.build(validate_graph_structure=False).run(inputs=Root()) == 42
+
+
+async def test_add_reachable_configured_bridges():
+    g = GraphBuilder(input_type=int, output_type=list[int])
+    collect = g.join(reduce_list_append, initial_factory=list[int])
+
+    @g.step
+    async def values(ctx: StepContext[None, None, int]) -> list[int]:
+        return [ctx.inputs, ctx.inputs + 1]
+
+    @dataclass
+    class Root(BaseNode[None, None, list[int]]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Annotated[StepNode[None, None], values]:
+            return values.as_node(self.value)
+
+    @dataclass
+    class Process(BaseNode[None, None, list[int]]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Annotated[JoinNode[None, None], collect]:
+            return collect.as_node(self.value * 2)
+
+    @dataclass
+    class Finish(BaseNode[None, None, list[int]]):
+        values: list[int]
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> End[list[int]]:
+            return End(sorted(self.values))
+
+    decision = g.decision().branch(g.match(int).transform(lambda ctx: Process(ctx.inputs)).to(Process))
+    g.add(
+        g.edge_from(g.start_node).transform(lambda ctx: Root(ctx.inputs)).to(Root),
+        g.edge_from(values).broadcast(lambda edge: [edge.map().to(decision)]),
+        g.edge_from(collect).transform(lambda ctx: Finish(ctx.inputs)).to(Finish),
+    )
+    g.add_reachable(Root)
+    assert await g.build().run(inputs=2) == [4, 6]
+
+
+@pytest.mark.parametrize('use_second', [False, True])
+async def test_add_reachable_shared_step(use_second: bool):
+    g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=int)
+
+    @dataclass
+    class Finish(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[int]:
+            ctx.state.log.append('finish')
+            return End(self.value)
+
+    @g.step
+    async def shared(ctx: StepContext[IntegrationState, None, int]) -> Finish:
+        return Finish(ctx.inputs)
+
+    @dataclass
+    class First(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(
+            self, ctx: GraphRunContext[IntegrationState, None]
+        ) -> Annotated[StepNode[IntegrationState, None], shared]:
+            return shared.as_node(self.value)
+
+    @dataclass
+    class Second(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(
+            self, ctx: GraphRunContext[IntegrationState, None]
+        ) -> Annotated[StepNode[IntegrationState, None], shared]:
+            return shared.as_node(self.value)
+
+    g.add_reachable(First, Second, First)
+    g.add_reachable(First, Second)
+    root_type = Second if use_second else First
+    g.add(g.edge_from(g.start_node).transform(lambda ctx: root_type(ctx.inputs)).to(root_type))
+    graph = g.build(validate_graph_structure=False)
+    state = IntegrationState()
+    assert await graph.run(state=state, inputs=7) == 7
+    assert state.log == ['finish']
+
+
+async def test_add_reachable_preserves_step_paths():
+    g = GraphBuilder(state_type=IntegrationState, input_type=int, output_type=int)
+
+    @dataclass
+    class Finish(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[IntegrationState, None]) -> End[int]:  # pragma: no cover
+            ctx.state.log.append('finish')
+            return End(self.value)
+
+    @g.step
+    async def shared(ctx: StepContext[IntegrationState, None, int]) -> Finish:
+        return Finish(ctx.inputs)
+
+    @dataclass
+    class Root(BaseNode[IntegrationState, None, int]):
+        value: int
+
+        async def run(
+            self, ctx: GraphRunContext[IntegrationState, None]
+        ) -> Annotated[StepNode[IntegrationState, None], shared]:
+            return shared.as_node(self.value)
+
+    def configured(ctx: StepContext[IntegrationState, None, Finish]) -> int:
+        ctx.state.log.append('configured')
+        return ctx.inputs.value
+
+    g.add(g.edge_from(shared).transform(configured).to(g.end_node))
+    g.add_reachable(Root)
+    g.add(g.edge_from(g.start_node).transform(lambda ctx: Root(ctx.inputs)).to(Root))
+    graph = g.build()
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  Root
+  shared
+
+  [*] --> Root
+  Root --> shared
+  shared --> [*]\
+""")
+    state = IntegrationState()
+    assert await graph.run(state=state, inputs=7) == 7
+    assert state.log == ['configured']
+
+
+async def test_add_reachable_visits_new_step_path():
+    g = GraphBuilder(input_type=int, output_type=int)
+
+    # The step's return is valid both as the initial scalar alias and as the later node alias.
+    class Finish(int, BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> End[int]:
+            return End(self)
+
+    @g.step
+    async def shared(ctx: StepContext[None, None, int]) -> ReachableStepAlias:
+        return Finish(ctx.inputs)
+
+    @dataclass
+    class Later(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Annotated[StepNode[None, None], shared]:
+            return shared.as_node(self.value)
+
+    @dataclass
+    class Root(BaseNode[None, None, int]):
+        value: int
+
+        async def run(self, ctx: GraphRunContext[None, None]) -> Later:
+            return Later(self.value)
+
+    # Discovery visits shared before Later; Later's inferred edge then reaches shared again.
+    g.add(g.edge_from(NodeStep(Root)).transform(lambda ctx: 7).to(shared, Later))
+    ReachableStepAlias = Finish
+    g.add_reachable(Root)
+    g.add(g.edge_from(g.start_node).transform(lambda ctx: Root(ctx.inputs)).to(Root))
+    graph = g.build()
+    assert str(graph) == snapshot("""\
+stateDiagram-v2
+  Root
+  state broadcast <<fork>>
+  Later
+  shared
+  Finish
+
+  [*] --> Root
+  Root --> broadcast
+  broadcast --> Later
+  broadcast --> shared
+  Later --> shared
+  shared --> Finish
+  Finish --> [*]\
+""")
+    assert await graph.run(inputs=ReachableStepAlias(7)) == 7
+
+
+@pytest.mark.parametrize('recursive', [False, True])
+async def test_nested_step_local_annotations(recursive: bool):
+    g = GraphBuilder(output_type=int)
+
+    class Finish(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> End[int]:
+            return End(42)
+
+    @g.step
+    async def inner(ctx: StepContext[None, None, None]) -> Finish:
+        return Finish()
+
+    @g.step
+    async def outer(ctx: StepContext[None, None, None]) -> Annotated[StepNode[None, None], inner]:
+        return inner.as_node(None)
+
+    class Root(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> Annotated[StepNode[None, None], outer]:
+            return outer.as_node(None)
+
+    if not recursive:
+        with pytest.raises(NameError, match="name 'Finish' is not defined"):
+            g.add(g.edge_from(g.start_node).to(outer))
+    else:
+        g.add_reachable(Root)
+        g.add(g.edge_from(g.start_node).transform(lambda ctx: Root()).to(Root))
+        assert await g.build().run() == 42
+
+
+@pytest.mark.parametrize('recursive', [False, True])
+async def test_add_reachable_module_qualified_cycle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recursive: bool):
+    package_name = f'reachable_nodes_{int(recursive)}'
+    package = tmp_path / package_name
+    package.mkdir()
+    (package / '__init__.py').write_text('')
+    (package / 'first.py').write_text("""\
+from __future__ import annotations
+from dataclasses import dataclass
+from pydantic_graph import BaseNode, GraphRunContext
+from . import second
+
+@dataclass
+class First(BaseNode[None, None, int]):
+    value: int
+
+    async def run(self, ctx: GraphRunContext[None, None]) -> second.Second:
+        return second.Second(self.value)
+""")
+    (package / 'second.py').write_text("""\
+from __future__ import annotations
+from dataclasses import dataclass
+from pydantic_graph import BaseNode, End, GraphRunContext
+from . import first
+
+@dataclass
+class Second(BaseNode[None, None, int]):
+    value: int
+
+    async def run(self, ctx: GraphRunContext[None, None]) -> first.First | End[int]:
+        return first.First(self.value + 1) if self.value < 2 else End(self.value)
+""")
+    monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
+    try:
+        first = import_module(f'{package_name}.first')
+        g = GraphBuilder(input_type=int, output_type=int)
+        if recursive:
+            g.add_reachable(first.First)
+        else:
+            g.add(g.node(first.First), g.node(first.second.Second))
+        g.add(g.edge_from(g.start_node).transform(lambda ctx: first.First(ctx.inputs)).to(first.First))
+        assert await g.build().run(inputs=0) == 2
+    finally:
+        for name in (package_name, f'{package_name}.first', f'{package_name}.second'):
+            sys.modules.pop(name, None)
+
+
+def test_add_reachable_errors():
+    class Broad(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> BaseNode[None, None, int]:
+            return self  # pragma: no cover
+
+    g = GraphBuilder(output_type=int)
+    with pytest.raises(GraphSetupError, match='plain `BaseNode`'):
+        g.add_reachable(Broad)
+
+    class Unresolved(BaseNode[None, None, int]):
+        async def run(self, ctx: GraphRunContext[None, None]) -> End[int]:
+            return End(0)  # pragma: no cover
+
+    Unresolved.run.__annotations__['return'] = 'MissingNode'
+    with pytest.raises(NameError, match='MissingNode'):
+        g.add_reachable(Unresolved)
+
+    class Duplicate(Broad):
+        pass
+
+    class Other(Broad):
+        pass
+
+    Other.__name__ = 'Duplicate'
+
+    with pytest.raises(GraphBuildingError, match='unique node IDs'):
+        g.add_reachable(Duplicate, Other)

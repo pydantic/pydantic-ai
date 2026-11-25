@@ -1,0 +1,207 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1187"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: show metrics
+        - type: tool_search_call
+          execution: client
+          arguments:
+            queries:
+            - metrics
+          call_id: srvtoolu_1
+          status: completed
+        - name: send_status
+          arguments: "{\"message\":\"searching\"}"
+          call_id: toolu_1
+          type: function_call
+        - type: function_call_output
+          call_id: toolu_1
+          output: sent
+        - type: function_call_output
+          call_id: srvtoolu_1
+          output: The tool call was interrupted before a result was produced.
+        - role: assistant
+          content: Here are the metrics.
+        - role: user
+          content: Reply with just OK.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - type: tool_search
+        - name: send_status
+          parameters:
+            additionalProperties: false
+            properties:
+              message:
+                type: string
+            required:
+            - message
+            type: object
+          type: function
+          description: Send a status update to the user.
+          strict: true
+        - name: get_metrics
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: Get this quarter's revenue metrics.
+          strict: false
+          defer_loading: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1707"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        id: resp_0ed91a096938b1a9006af8aee2b27c87d2aa5984cd159e81ea
+        object: response
+        created_at: 1794682594
+        status: completed
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1794682595
+        error: null
+        frequency_penalty: 0.0
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-2026-03-05
+        moderation: null
+        output:
+        - id: msg_0ed91a096938b1a9006af8aee3e23087d2a35abc029a129523
+          type: message
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: OK
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - type: function
+          description: Send a status update to the user.
+          name: send_status
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              message:
+                type: string
+            required:
+            - message
+            type: object
+          strict: true
+        - type: function
+          defer_loading: true
+          description: Get this quarter's revenue metrics.
+          name: get_metrics
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+        - type: tool_search
+          description: null
+          parameters: null
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 519
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 5
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 524
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-14T18:56:36.408025+00:00

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
 import subprocess
 import sys
+import urllib.request
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from urllib.parse import quote
 
@@ -20,16 +22,38 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import category_classify_opencode
 import douwebot_opencode_run
-from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP, Provider, check_symlinks
+from douwebot_opencode_run import (
+    MODEL_DECLARATIONS,
+    OPENCODE_GO,
+    OPENCODE_ZEN_FREE,
+    ZAI,
+    ZAI_BACKUP,
+    Provider,
+    check_symlinks,
+    read_only_config,
+)
+
+LIMIT = (
+    'OpenCode Go 5 hour usage limit reached. Switch to a free model, '
+    'or turn on Extra Usage on the Go page in OpenCode Console to keep going.'
+)
+WORKSPACE = 'wrk_go_limit'
+
+
+def go_limit_error(metadata: object) -> dict[str, object]:
+    """The `error` OpenCode 2.2.5 writes for an OpenCode Go 429 whose response body carries `metadata`.
+
+    See https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/test/session-error.test.ts
+    """
+    body = {'type': 'error', 'error': {'type': 'GoUsageLimitError', 'message': 'Go usage limit exceeded'}}
+    response = {'body': json.dumps({**body, 'metadata': metadata})}
+    return {'type': 'provider.go-limit', 'message': LIMIT, 'status': 429, 'response': response, 'retryAfterMs': 120_000}
+
 
 # What OpenCode 2.2.5 writes when OpenCode Go's usage limit refuses the first request: a step starts, none finishes.
-LIMIT = 'OpenCode Go weekly usage limit reached. Switch to a free model, or turn on Extra Usage on the Go page.'
 REFUSED: list[dict[str, object]] = [
     {'type': 'step_start', 'part': {'messageID': 'msg_1', 'type': 'step-start'}},
-    {
-        'type': 'error',
-        'error': {'type': 'provider.go-limit', 'message': LIMIT, 'status': 429, 'response': {'body': '{}'}},
-    },
+    {'type': 'error', 'error': go_limit_error({'workspace': WORKSPACE, 'limitName': '5 hour'})},
 ]
 FINISHED = [
     {'type': 'text', 'part': {'messageID': 'msg_1', 'text': '{}'}},
@@ -102,7 +126,58 @@ def review_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('GITHUB_RUN_NUMBER', '3188')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
     monkeypatch.delenv('LOGFIRE_TOKEN', raising=False)
+
+    def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.nullcontext[None]:
+        raise AssertionError('The review exported spans without LOGFIRE_TOKEN')
+
+    monkeypatch.setattr(douwebot_opencode_run.urllib.request, 'urlopen', urlopen)
     return github_output
+
+
+@pytest.fixture
+def exported(review_env: Path, monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
+    """Give the review a Logfire token and its workflow run; return the span each export sends."""
+    environment = {
+        'LOGFIRE_TOKEN': 'logfire-token',
+        'LOGFIRE_URL': 'https://logfire-eu.pydantic.info/',
+        'GITHUB_REPOSITORY': 'pydantic/pydantic-ai',
+        'GITHUB_RUN_ID': '43168376242',
+        'GITHUB_RUN_ATTEMPT': '2',
+        'GITHUB_JOB': 'douwebot-opencode',
+    }
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    exports: list[dict[str, object]] = []
+
+    def urlopen(request: urllib.request.Request, timeout: int) -> contextlib.nullcontext[None]:
+        assert (request.full_url, request.get_header('Authorization'), timeout) == (
+            'https://logfire-eu.pydantic.info/v1/traces',
+            'logfire-token',
+            5,
+        )
+        assert isinstance(request.data, bytes)
+        # Neither the provider's message nor its response body, Go's workspace id included, leaves the job.
+        assert b'Rate limit reached' not in request.data and LIMIT.encode() not in request.data
+        assert WORKSPACE.encode() not in request.data
+        [resource] = json.loads(request.data)['resourceSpans']
+        service = {'key': 'service.name', 'value': {'stringValue': 'opencode-fallback'}}
+        assert resource['resource'] == {'attributes': [service]}
+        [scope] = resource['scopeSpans']
+        [span] = scope['spans']
+        exports.append(span)
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(douwebot_opencode_run.urllib.request, 'urlopen', urlopen)
+    return exports
+
+
+def span_attributes(span: dict[str, object]) -> dict[str, object]:
+    """The span's attributes as plain values."""
+    values: dict[str, object] = {}
+    for attribute in TypeAdapter(list[dict[str, object]]).validate_python(span['attributes']):
+        [value] = TypeAdapter(dict[str, object]).validate_python(attribute['value']).values()
+        values[str(attribute['key'])] = value
+    return values
 
 
 class OpenCodeConfig(BaseModel):
@@ -110,6 +185,7 @@ class OpenCodeConfig(BaseModel):
 
     agents: dict[str, dict[str, object]]
     policies: list[dict[str, str]]
+    providers: dict[str, object] = {}
 
 
 @dataclass
@@ -155,7 +231,8 @@ def fake_opencode(
 
 
 def assert_runs_on(launch: Launch, provider: Provider) -> None:
-    """The run names `provider`'s model, allows only that provider, and holds only its key."""
+    """The run names `provider`'s model, declares it only for a configured link or a Coding Plan account, allows only
+    that provider, and holds only its key."""
     assert launch.args[launch.args.index('--model') + 1] == provider.model
     assert launch.config.agents['title']['model'] == provider.model
     assert launch.config.agents['compaction']['model'] == provider.model
@@ -164,12 +241,30 @@ def assert_runs_on(launch: Launch, provider: Provider) -> None:
         {'action': 'provider.use', 'resource': '*', 'effect': 'deny'},
         {'action': 'provider.use', 'resource': provider.name, 'effect': 'allow'},
     ]
+    model = provider.model.partition('/')[2]
+    declared = {provider.name: {'models': {model: MODEL_DECLARATIONS.get(provider.model, {})}}}
+    assert launch.config.providers == (declared if provider.declares_model else {})
     secrets = {'OPENCODE_API_KEY': 'go-key', 'ZAI_API_KEY': 'zai-key', 'ZAI_BACKUP_API_KEY': 'zai-backup-key'}
     names = {*secrets, OPENCODE_GO.key_variable, ZAI.key_variable}
-    assert {name: value for name, value in launch.env.items() if name in names} == {
-        provider.key_variable: secrets[provider.secret_variable]
-    }
+    assert {name: value for name, value in launch.env.items() if name in names} == (
+        {provider.key_variable: secrets[provider.secret_variable]} if provider.secret_variable else {}
+    )
     assert 'GH_TOKEN' not in launch.env
+
+
+@pytest.mark.parametrize('provider', [ZAI, ZAI_BACKUP])
+def test_coding_plan_runs_declare_glm_5_4_with_its_limits_at_low_effort(provider: Provider) -> None:
+    """OpenCode 2.2.5's catalog lacks GLM-5.4, so each Coding Plan run declares its limits and Z.AI's low effort."""
+    assert read_only_config(agent='reviewer', provider=provider)['providers'] == {
+        'zai-coding-plan': {
+            'models': {
+                'glm-5.4': {
+                    'limit': {'context': 1_000_000, 'output': 131_072},
+                    'settings': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoningEffort': 'low'},
+                }
+            }
+        }
+    }
 
 
 def test_launcher_sends_shared_review_and_restricts_environment(
@@ -201,15 +296,9 @@ def test_launcher_sends_shared_review_and_restricts_environment(
 
 
 def test_logfire_token_tags_each_runs_telemetry_with_its_plan(
-    review_env: Path, monkeypatch: pytest.MonkeyPatch
+    exported: list[dict[str, object]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With `LOGFIRE_TOKEN`, each run exports OpenCode's telemetry, tagged with its workflow run, plan and place."""
-    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
-    monkeypatch.setenv('LOGFIRE_URL', 'https://logfire-eu.pydantic.info/')
-    monkeypatch.setenv('GITHUB_REPOSITORY', 'pydantic/pydantic-ai')
-    monkeypatch.setenv('GITHUB_RUN_ID', '43168376242')
-    monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '2')
-    monkeypatch.setenv('GITHUB_JOB', 'douwebot-opencode')
     invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
     douwebot_opencode_run.main()
     run = 'github.repository=pydantic/pydantic-ai,github.run_id=43168376242,github.run_attempt=2'
@@ -234,13 +323,16 @@ def test_fallback_steps_hand_opencode_the_logfire_token(job: str, step: str) -> 
     assert (env['LOGFIRE_TOKEN'], env['LOGFIRE_URL']) == ('${{ secrets.LOGFIRE_TOKEN }}', '${{ vars.LOGFIRE_URL }}')
 
 
-GO_LIMIT_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.go-limit, status 429.'
+GO_RUN_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go'
+GO_LIMIT_LOG = (
+    f'{GO_RUN_LOG} failed with error type provider.go-limit, status 429, 5 hour limit, retry after 120000 ms.'
+)
 NO_TYPE_LOG = 'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with no error type.'
 TO_ZAI_LOG = (
     'opencode-go/deepseek-v4.1-flash refused the run before its first step; '
-    'retrying on zai-coding-plan/glm-5.3-flash on the primary Coding Plan.'
+    'retrying on zai-coding-plan/glm-5.4 on the primary Coding Plan.'
 )
-ZAI_LOG = 'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan'
+ZAI_LOG = 'OpenCode run on zai-coding-plan/glm-5.4 on the primary Coding Plan'
 # What OpenCode 2.2.5 writes when the Coding Plan's quota refuses the first request: Z.AI code 1308 or 1310.
 PLAN_REFUSED: list[dict[str, object]] = [
     REFUSED[0],
@@ -273,7 +365,7 @@ def test_go_refusal_reruns_the_review_on_the_coding_plan(
     assert capsys.readouterr().out == (
         f'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type {kind}, status 429.\n'
         f'{TO_ZAI_LOG}\n'
-        'OpenCode run served by zai-coding-plan/glm-5.3-flash on the primary Coding Plan.\n'
+        'OpenCode run served by zai-coding-plan/glm-5.4 on the primary Coding Plan.\n'
     )
 
 
@@ -301,7 +393,7 @@ def test_coding_plan_refusal_reruns_the_review_on_the_other_account(
     assert_runs_on(invoked[1], first)
     assert_runs_on(invoked[2], second)
     assert review_env.read_text(encoding='utf-8') == 'engine=opencode-zai\n'
-    model = 'zai-coding-plan/glm-5.3-flash'
+    model = 'zai-coding-plan/glm-5.4'
     assert capsys.readouterr().out == (
         f'{GO_LIMIT_LOG}\n'
         f'opencode-go/deepseek-v4.1-flash refused the run before its first step; retrying on {model} on {first.plan}.\n'
@@ -327,15 +419,7 @@ def test_run_number_and_matrix_place_alternate_the_first_account(
     """Consecutive runs of a workflow, and consecutive checks of one matrix, start on alternate accounts."""
     monkeypatch.setenv('GITHUB_RUN_NUMBER', run_number)
     invoked = fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
-    _, provider = douwebot_opencode_run.run_with_fallback(
-        lambda command, env, stream: subprocess.run(
-            command, input='', text=True, cwd=review_env.parent, env=env, stdout=stream, check=True, timeout=None
-        ),
-        agent='reviewer',
-        output=review_env.parent / 'review.ndjson',
-        matrix_index=matrix_index,
-    )
-    assert provider == first
+    assert review_on(review_env, '', matrix_index) == first
     assert_runs_on(invoked[1], first)
 
 
@@ -413,6 +497,104 @@ RATE_LIMITED_AFTER_A_STEP: list[Mapping[str, object]] = [
 ]
 
 
+RUN = {
+    'github.repository': 'pydantic/pydantic-ai',
+    'github.run_id': '43168376242',
+    'github.run_attempt': '2',
+    'github.job': 'douwebot-opencode',
+}
+
+
+@pytest.mark.parametrize(
+    ('last_run', 'raised', 'failure'),
+    [
+        pytest.param(FINISHED, None, {}, id='served'),
+        pytest.param(
+            RATE_LIMITED_AFTER_A_STEP,
+            subprocess.CalledProcessError,
+            {
+                'opencode_fallback.error_type': 'provider.rate-limit',
+                'opencode_fallback.error_status': '429',
+                'opencode_fallback.error_code': '1302',
+                'opencode_fallback.step_finish': True,
+            },
+            id='failed',
+        ),
+    ],
+)
+def test_logfire_token_exports_a_span_per_run(
+    exported: list[dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+    last_run: list[Mapping[str, object]],
+    raised: type[BaseException] | None,
+    failure: dict[str, object],
+) -> None:
+    """Each run exports a span as it ends, with its plan, place, usage and how it failed, even when the chain raised."""
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    handover = [REFUSED[0], {'type': 'error', 'error': zai_error('provider.rate-limit', '1302')}]
+    fake_opencode(monkeypatch, (REFUSED, refusal), (handover, refusal), (last_run, refusal if raised else None))
+    with pytest.raises(raised) if raised else contextlib.nullcontext():
+        douwebot_opencode_run.main()
+    runs = exported
+    assert [span['name'] for span in runs] == ['OpenCode run'] * 3
+    assert len({span['traceId'] for span in runs}) == 1
+    assert not [span for span in runs if 'parentSpanId' in span]
+    assert [span.get('status') for span in runs] == [{'code': 2}, {'code': 2}, {'code': 2} if raised else None]
+    assert [span_attributes(span) for span in runs] == [
+        {
+            **RUN,
+            'opencode_fallback.plan': 'OpenCode Go',
+            'opencode_fallback.attempt': '1',
+            'opencode_fallback.provider': 'opencode-go',
+            'opencode_fallback.model': 'opencode-go/deepseek-v4.1-flash',
+            'opencode_fallback.steps': '0',
+            'opencode_fallback.tokens': '0',
+            'opencode_fallback.error_type': 'provider.go-limit',
+            'opencode_fallback.error_status': '429',
+            'opencode_fallback.limit_name': '5 hour',
+            'opencode_fallback.retry_after_ms': '120000',
+            'opencode_fallback.step_finish': False,
+        },
+        {
+            **RUN,
+            'opencode_fallback.plan': 'the primary Coding Plan',
+            'opencode_fallback.attempt': '2',
+            'opencode_fallback.provider': 'zai-coding-plan',
+            'opencode_fallback.model': 'zai-coding-plan/glm-5.4',
+            'opencode_fallback.steps': '0',
+            'opencode_fallback.tokens': '0',
+            'opencode_fallback.error_type': 'provider.rate-limit',
+            'opencode_fallback.error_status': '429',
+            'opencode_fallback.error_code': '1302',
+            'opencode_fallback.step_finish': False,
+        },
+        {
+            **RUN,
+            'opencode_fallback.plan': 'the backup Coding Plan',
+            'opencode_fallback.attempt': '3',
+            'opencode_fallback.provider': 'zai-coding-plan',
+            'opencode_fallback.model': 'zai-coding-plan/glm-5.4',
+            'opencode_fallback.steps': '1',
+            'opencode_fallback.tokens': '0',
+            **failure,
+        },
+    ]
+
+
+def test_run_span_counts_steps_and_tokens_past_lines_that_are_not_events(
+    exported: list[dict[str, object]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run's span counts each valid `step_finish` event and every kind of token it reports, skipping other lines."""
+    tokens = {'input': 30, 'output': 4, 'reasoning': 2, 'cache': {'read': 8, 'write': 1}}
+    step = {'type': 'step_finish', 'part': {'messageID': 'msg_1', 'reason': 'stop', 'tokens': tokens}}
+    stream = [b'\xff not an event', step, '{"type": "step_finish", "part": []}', step]
+    fake_opencode(monkeypatch, (REFUSED, subprocess.CalledProcessError(1, 'opencode')), (stream, None))
+    douwebot_opencode_run.main()
+    _, served = exported
+    usage = {key: value for key, value in span_attributes(served).items() if key.endswith(('.steps', '.tokens'))}
+    assert usage == {'opencode_fallback.steps': '2', 'opencode_fallback.tokens': '90'}
+
+
 @pytest.mark.parametrize(
     ('run_number', 'first', 'second'),
     [pytest.param('3188', ZAI, ZAI_BACKUP, id='even-run'), pytest.param('3189', ZAI_BACKUP, ZAI, id='odd-run')],
@@ -449,7 +631,7 @@ def test_coding_plan_rate_limit_after_a_step_restarts_the_review_on_the_other_ac
         (first, 'provider.rate-limit', '1302', True),
         (second, None, None, None),
     ]
-    model = 'zai-coding-plan/glm-5.3-flash'
+    model = 'zai-coding-plan/glm-5.4'
     assert capsys.readouterr().out == (
         f'{GO_LIMIT_LOG}\n'
         f'opencode-go/deepseek-v4.1-flash refused the run before its first step; retrying on {model} on {first.plan}.\n'
@@ -564,6 +746,57 @@ def test_go_failure_stays_on_go(
     ('error', 'described'),
     [
         pytest.param(
+            go_limit_error({'workspace': WORKSPACE, 'limitName': 'monthly'}),
+            'error type provider.go-limit, status 429, monthly limit, retry after 120000 ms',
+            id='monthly',
+        ),
+        pytest.param(
+            go_limit_error({'limitName': 5}),
+            'error type provider.go-limit, status 429, retry after 120000 ms',
+            id='name-not-a-string',
+        ),
+        pytest.param(
+            go_limit_error({'limitName': WORKSPACE}),
+            'error type provider.go-limit, status 429, retry after 120000 ms',
+            id='name-not-shaped-like-a-window',
+        ),
+        pytest.param(
+            go_limit_error(None), 'error type provider.go-limit, status 429, retry after 120000 ms', id='no-metadata'
+        ),
+        pytest.param(
+            {**go_limit_error({'limitName': 'weekly'}), 'retryAfterMs': '120000'},
+            'error type provider.go-limit, status 429, weekly limit',
+            id='retry-after-not-a-number',
+        ),
+        pytest.param(
+            {**go_limit_error({'limitName': 'weekly'}), 'type': 'provider.quota'},
+            'error type provider.quota, status 429',
+            id='not-a-go-limit',
+        ),
+    ],
+)
+def test_go_limit_names_its_window_and_retry_after(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: dict[str, object],
+    described: str,
+) -> None:
+    """A Go limit's job log names its window and retry-after only when each is shaped like one, never its workspace."""
+    monkeypatch.delenv('ZAI_API_KEY')
+    monkeypatch.delenv('ZAI_BACKUP_API_KEY')
+    fake_opencode(
+        monkeypatch, ([REFUSED[0], {'type': 'error', 'error': error}], subprocess.CalledProcessError(1, 'opencode'))
+    )
+    with pytest.raises(subprocess.CalledProcessError):
+        douwebot_opencode_run.main()
+    assert capsys.readouterr().out == f'{GO_RUN_LOG} failed with {described}.\n'
+
+
+@pytest.mark.parametrize(
+    ('error', 'described'),
+    [
+        pytest.param(
             {'type': 'provider.auth', 'message': 'Invalid key', 'status': 401, 'response': {'body': 'Invalid key'}},
             'error type provider.auth, status 401',
             id='type-and-status',
@@ -605,6 +838,154 @@ def test_coding_plan_failure_names_its_error_type(
     assert capsys.readouterr().out == f'{GO_LIMIT_LOG}\n{TO_ZAI_LOG}\n{ZAI_LOG} failed with {described}.\n'
 
 
+GLM = 'zai-coding-plan/glm-5.4'
+# The example value `.github/workflows/AGENTS.md` gives for `PR_REVIEW_MODEL_CHAIN`, so the tests keep it valid.
+HY4_CHAIN = (WORKFLOW.parent / 'AGENTS.md').read_text(encoding='utf-8').partition('```json\n')[2].partition('```')[0]
+GO_DEEPSEEK = replace(OPENCODE_GO, declares_model=True)
+GO_HY4 = replace(OPENCODE_GO, model='opencode-go/hy4-flash-free', declares_model=True)
+ZEN_HY4 = replace(OPENCODE_ZEN_FREE, declares_model=True)
+
+
+def review_on(review_env: Path, configured_chain: str, matrix_index: int = 0) -> Provider:
+    """Run the fallback chain with `configured_chain` and `matrix_index`; return the provider that served."""
+    _, provider = douwebot_opencode_run.run_with_fallback(
+        lambda command, env, stream: subprocess.run(
+            command, input='', text=True, cwd=review_env.parent, env=env, stdout=stream, check=True, timeout=None
+        ),
+        agent='reviewer',
+        output=review_env.parent / 'review.ndjson',
+        matrix_index=matrix_index,
+        configured_chain=configured_chain,
+    )
+    return provider
+
+
+def test_configured_chain_runs_each_link_in_order_and_zen_without_a_key(
+    review_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    exported: list[dict[str, object]],
+) -> None:
+    """Each configured link runs its entry's model, declared in its config, and Zen's free tier runs with no key.
+
+    Each run's span names its model, so the two Go links tell apart.
+    """
+    refusal = subprocess.CalledProcessError(1, 'opencode')
+    plan_refused = [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.quota', 'status': 429}}]
+    invoked = fake_opencode(
+        monkeypatch,
+        (REFUSED, refusal),
+        (plan_refused, refusal),
+        (plan_refused, refusal),
+        (REFUSED, refusal),
+        (FINISHED, None),
+    )
+    assert review_on(review_env, HY4_CHAIN) == ZEN_HY4
+    assert_runs_on(invoked[0], GO_DEEPSEEK)
+    assert_runs_on(invoked[1], replace(ZAI, declares_model=True))
+    assert_runs_on(invoked[2], replace(ZAI_BACKUP, declares_model=True))
+    assert_runs_on(invoked[3], GO_HY4)
+    assert_runs_on(invoked[4], ZEN_HY4)
+    assert [span_attributes(span)['opencode_fallback.model'] for span in exported] == [
+        link.model for link in (GO_DEEPSEEK, ZAI, ZAI_BACKUP, GO_HY4, ZEN_HY4)
+    ]
+    limit = 'failed with error type provider.go-limit, status 429, 5 hour limit, retry after 120000 ms.'
+    go_hy4 = 'opencode-go/hy4-flash-free on OpenCode Go'
+    zen = 'opencode/hy4-flash-free on the OpenCode Zen free tier'
+    assert capsys.readouterr().out == (
+        f'{GO_LIMIT_LOG}\n'
+        f'opencode-go/deepseek-v4.1-flash refused the run before its first step; retrying on {GLM} on {ZAI.plan}.\n'
+        f'OpenCode run on {GLM} on {ZAI.plan} failed with error type provider.quota, status 429.\n'
+        f'{GLM} refused the run before its first step; retrying on {GLM} on {ZAI_BACKUP.plan}.\n'
+        f'OpenCode run on {GLM} on {ZAI_BACKUP.plan} failed with error type provider.quota, status 429.\n'
+        f'{GLM} refused the run before its first step; retrying on {go_hy4}.\n'
+        f'OpenCode run on {go_hy4} {limit}\n'
+        f'opencode-go/hy4-flash-free refused the run before its first step; retrying on {zen}.\n'
+        f'OpenCode run served by {zen}.\n'
+    )
+
+
+@pytest.mark.parametrize('kind', ['provider.free-limit', 'provider.quota', 'provider.rate-limit'])
+def test_zen_free_tier_refusal_hands_the_run_on(review_env: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    """A spent Zen free allowance, which OpenCode types `provider.free-limit`, a quota or a rate limit hands the run on."""
+    zen_refused = [REFUSED[0], {'type': 'error', 'error': {'type': kind, 'status': 429}}]
+    invoked = fake_opencode(monkeypatch, (zen_refused, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None))
+    chain = [{'model': 'opencode/hy4-flash-free', 'secret': None}, {'model': GLM, 'secret': 'ZAI_API_KEY'}]
+    assert review_on(review_env, json.dumps(chain)) == replace(ZAI, declares_model=True)
+    assert_runs_on(invoked[0], ZEN_HY4)
+    assert_runs_on(invoked[1], replace(ZAI, declares_model=True))
+
+
+@pytest.mark.parametrize(('run_number', 'first'), [('3188', ZAI), ('3189', ZAI_BACKUP)])
+def test_configured_chain_alternates_consecutive_links_on_one_model(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, run_number: str, first: Provider
+) -> None:
+    """Consecutive links on one model rotate with the run number, as the default chain's Coding Plan accounts do."""
+    monkeypatch.setenv('GITHUB_RUN_NUMBER', run_number)
+    accounts = [{'model': GLM, 'secret': 'ZAI_API_KEY'}, {'model': GLM, 'secret': 'ZAI_BACKUP_API_KEY'}]
+    invoked = fake_opencode(monkeypatch, (FINISHED, None))
+    assert review_on(review_env, json.dumps(accounts)) == replace(first, declares_model=True)
+    assert_runs_on(invoked[0], replace(first, declares_model=True))
+
+
+INVALID_CHAIN_WARNING = (
+    '::warning::The `PR_REVIEW_MODEL_CHAIN` variable is invalid or names no secret that is set, so this run uses the '
+    'default chain; see `.github/workflows/AGENTS.md` for its format.'
+)
+
+
+def test_configured_chain_leaves_out_a_link_without_its_key(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A link whose secret is empty is left out, even Go's, and a chain with no link left runs the default chain."""
+    monkeypatch.setenv('OPENCODE_API_KEY', '')
+    monkeypatch.delenv('ZAI_API_KEY')
+    plan_refused = [REFUSED[0], {'type': 'error', 'error': {'type': 'provider.quota', 'status': 429}}]
+    invoked = fake_opencode(
+        monkeypatch, (plan_refused, subprocess.CalledProcessError(1, 'opencode')), (FINISHED, None), (FINISHED, None)
+    )
+    assert review_on(review_env, HY4_CHAIN) == ZEN_HY4
+    assert_runs_on(invoked[0], replace(ZAI_BACKUP, declares_model=True))
+    assert_runs_on(invoked[1], ZEN_HY4)
+    assert INVALID_CHAIN_WARNING not in capsys.readouterr().out
+    monkeypatch.setenv('OPENCODE_API_KEY', 'go-key')
+    assert review_on(review_env, json.dumps([{'model': GLM, 'secret': 'ZAI_API_KEY'}])) == OPENCODE_GO
+    assert_runs_on(invoked[2], OPENCODE_GO)
+    assert capsys.readouterr().out.splitlines()[0] == INVALID_CHAIN_WARNING
+
+
+@pytest.mark.parametrize(
+    'entries',
+    [
+        pytest.param('sk-live-pasted-key', id='not-json'),
+        pytest.param([], id='empty'),
+        pytest.param({'model': 'opencode/hy4-flash-free', 'secret': None}, id='not-a-list'),
+        pytest.param([{'model': 'opencode/hy4-flash-free'}], id='no-secret-field'),
+        pytest.param([{'model': 'opencode/hy4-flash-free', 'secret': None, 'key': 'x'}], id='extra-field'),
+        pytest.param([{'model': 'hy4-flash-free', 'secret': None}], id='no-provider'),
+        pytest.param([{'model': 'opencode/Hy4 Flash', 'secret': None}], id='model-shape'),
+        pytest.param([{'model': 'openrouter/hy4', 'secret': 'OPENCODE_API_KEY'}], id='unknown-provider'),
+        pytest.param([{'model': 'opencode-go/hy4-flash-free', 'secret': 'ZAI_API_KEY'}], id='another-providers-key'),
+        pytest.param([{'model': GLM, 'secret': 'OPENCODE_API_KEY'}], id='go-key-to-zai'),
+        pytest.param([{'model': 'opencode-go/hy4-flash-free', 'secret': 'GH_TOKEN'}], id='unlisted-secret'),
+        pytest.param([{'model': 'opencode-go/hy4-flash-free', 'secret': None}], id='keyless-go'),
+        pytest.param([{'model': GLM, 'secret': None}], id='keyless-zai'),
+        pytest.param([{'model': 'opencode/hy4-flash-free', 'secret': 'OPENCODE_API_KEY'}], id='keyed-zen'),
+    ],
+)
+def test_invalid_configured_chain_runs_the_default_chain(
+    review_env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], entries: object
+) -> None:
+    """An entry that is not a known provider with a secret it accepts warns, without the value, and changes nothing."""
+    value = entries if isinstance(entries, str) else json.dumps(entries)
+    invoked = fake_opencode(monkeypatch, (FINISHED, None))
+    assert review_on(review_env, value) == OPENCODE_GO
+    assert_runs_on(invoked[0], OPENCODE_GO)
+    out = capsys.readouterr().out
+    assert out.splitlines()[0] == INVALID_CHAIN_WARNING
+    assert value not in out
+
+
 def classifier_answer(text: str) -> list[dict[str, object]]:
     """The events of a completed OpenCode run whose final message is `text`."""
     return [
@@ -632,6 +1013,7 @@ def classify_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
     monkeypatch.setenv('GITHUB_RUN_NUMBER', '3188')
     monkeypatch.setenv('GH_TOKEN', 'fake-github-token')
+    monkeypatch.delenv('LOGFIRE_TOKEN', raising=False)
     return github_output
 
 

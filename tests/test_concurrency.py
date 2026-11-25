@@ -22,6 +22,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import UsageLimits
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -29,8 +30,6 @@ if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
 logfire_installed = importlib.util.find_spec('logfire') is not None
-
-READINESS_WAIT_TIMEOUT = 5
 
 
 class AsyncBarrier:

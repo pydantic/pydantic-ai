@@ -33,6 +33,7 @@ from pydantic_ai_harness.shell import (
     Shell,
 )
 from pydantic_ai_harness.shell._jobs import Job
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from .._tool_calls import call_tool, call_tools
 
@@ -132,6 +133,20 @@ class SlowReads(LocalWorkspaceBackend):
     ) -> CommandResult:
         self.calls.append('run')
         return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
+class ReadsAfterJobsRemoved(LocalWorkspaceBackend):
+    """Answers each file read (a job's status) only once no job directory is left in `working_dir`."""
+
+    def __init__(self, working_dir: Path) -> None:
+        super().__init__(working_dir)
+        self.jobs = working_dir / '.pydantic-ai-harness' / 'shell'
+
+    async def read_bytes(self, path: str) -> bytes:
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            while await run_sync(lambda: any(self.jobs.iterdir())):
+                await anyio.sleep(0.01)  # pragma: lax no cover
+        return await super().read_bytes(path)
 
 
 class TestToolSelection:
@@ -413,10 +428,19 @@ class TestShellTool:
     async def test_job_files_removed_while_waiting(self, tmp_path: Path) -> None:
         # The model's command can delete the job directory; the call still returns its handles.
         recorder = Recorder()
-        output = await shell(
-            tmp_path,
-            {'command': 'rm -rf .pydantic-ai-harness/shell/*; sleep 0.3', 'timeout': 0.5},
-            capabilities=[recorder],
+        # The command removes the job directory once the launcher and the log watcher have written their last files
+        # there (`handle`, `watch.trapped`): one that lands in the middle of the `rm` keeps the directory. The call's
+        # status reads wait until it's gone, so its wait never ends first.
+        command = (
+            'for job in .pydantic-ai-harness/shell/*; do'
+            ' until [ -e "$job/handle" ] && [ -e "$job/watch.trapped" ]; do sleep 0.01; done;'
+            ' done; rm -rf .pydantic-ai-harness/shell/*; sleep 0.3'
+        )
+        output = await call_tool(
+            [Shell[None](denied_commands=[], allow_interactive=True, tools=['shell']), recorder],
+            'shell',
+            {'command': command, 'timeout': 0.5},
+            workspace=ReadsAfterJobsRemoved(tmp_path),
         )
         assert output.startswith('PID: ')
         assert output.endswith('status.json')

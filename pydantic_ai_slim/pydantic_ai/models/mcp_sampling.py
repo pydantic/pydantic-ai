@@ -76,7 +76,8 @@ class MCPSamplingModel(Model):
         model_settings, _ = self.prepare_request(model_settings, model_request_parameters)
         model_settings = cast(MCPSamplingModelSettings, model_settings or {})
 
-        result = await self.session.create_message(
+        # MCP deprecated sampling (SEP-2577); this model exists to use it.
+        result = await self.session.create_message(  # pyright: ignore[reportDeprecated]
             sampling_messages,
             max_tokens=model_settings.get('max_tokens', self.default_max_tokens),
             system_prompt=system_prompt,
@@ -90,8 +91,8 @@ class MCPSamplingModel(Model):
                 model_name=result.model,
             )
         else:
-            raise exceptions.UnexpectedModelBehavior(
-                f'Unexpected result from MCP sampling, expected "assistant" role, got {result.role}.'
+            raise exceptions.ModelInvalidResponseError(
+                self.model_name, f'Unexpected result from MCP sampling, expected "assistant" role, got {result.role}.'
             )
 
     @asynccontextmanager

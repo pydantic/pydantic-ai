@@ -10,6 +10,7 @@ from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.profiles.zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
@@ -49,6 +50,7 @@ class CerebrasProvider(_OpenAISDKProvider):
             'llama': meta_model_profile,
             'qwen': qwen_model_profile,
             'gpt-oss': harmony_model_profile,
+            'kimi': moonshotai_model_profile,
             # GLM models are served as `zai-glm-*`. Only GLM-5.3's schema fix carries over from Z.AI's profile.
             'zai-': lambda name: _glm_5_3_schema_profile(name.removeprefix('zai-')),
         }

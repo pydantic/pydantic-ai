@@ -43,8 +43,8 @@ async def _render_deferred_capability_catalog(
     #
     # The cost of keeping the list stable is that a loaded capability still appears as
     # "loadable". That is intentional and cheap: the model rarely re-loads something whose
-    # instructions and tools it can already see, and if it does, the loader tool bounces the
-    # redundant call with an "already active" ModelRetry. One occasional wasted retry is
+    # instructions and tools it can already see, and if it does, the loader tool answers the
+    # redundant call with an "already active" no-op return. One occasional wasted call is
     # far cheaper than busting the prefix cache on every load.
     entries = '\n'.join(
         f'- {entry.id}: {entry.description}' if entry.description else f'- {entry.id}' for entry in catalog
@@ -102,7 +102,10 @@ class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
                 continue
             description = capability.get_description()
             if description is not None and not isinstance(description, str):
-                description = await SystemPromptRunner[AgentDepsT](description).run(ctx)
+                # The description function is the capability's code, held to its authority if it enqueues.
+                description = await SystemPromptRunner[AgentDepsT](description).run(
+                    ctx._attributed_to(capability)  # pyright: ignore[reportPrivateUsage]
+                )
             catalog.append(
                 DeferredCapabilityEntry(id=capability_id, description=description, active=capability_id in active)
             )

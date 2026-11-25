@@ -8,15 +8,16 @@ from pydantic_ai_harness._warn import warn_class_renamed
 from pydantic_ai_harness.compaction._clamp_oversized_messages import ClampOversizedMessages
 from pydantic_ai_harness.compaction._clear_tool_results import ClearToolResults
 from pydantic_ai_harness.compaction._compact_on_request import CompactOnRequest
-from pydantic_ai_harness.compaction._context_usage_events import REPORT_CONTEXT_USAGE_EVENTS, ContextUsageMeasuredEvent
 from pydantic_ai_harness.compaction._context_window import (
     DEFAULT_CONTEXT_WINDOW,
     resolve_context_window,
 )
 from pydantic_ai_harness.compaction._deduplicate_file_reads import DeduplicateFileReads
+from pydantic_ai_harness.compaction._events import REPORT_CONTEXT_USAGE_EVENTS, ContextUsageMeasuredEvent
 from pydantic_ai_harness.compaction._fallback_compaction import FallbackCompaction
 from pydantic_ai_harness.compaction._manual import compact_now
-from pydantic_ai_harness.compaction._pinning import is_pinned, pin, reinject_pinned
+from pydantic_ai_harness.compaction._pinning import PinSource, is_pinned, pin, reinject_pinned
+from pydantic_ai_harness.compaction._prune_tool_results import PruneToolResults
 from pydantic_ai_harness.compaction._receipts import TranscriptHandleProvider
 from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
 from pydantic_ai_harness.compaction._report_context_usage import ContextUsage, ReportContextUsage
@@ -30,7 +31,7 @@ from pydantic_ai_harness.compaction._shared import (
 from pydantic_ai_harness.compaction._sliding_window_compaction import SlidingWindowCompaction
 from pydantic_ai_harness.compaction._summarizing_compaction import SummarizingCompaction, drain_summary_events
 from pydantic_ai_harness.compaction._tiered_compaction import TieredCompaction
-from pydantic_ai_harness.compaction._warn_near_limits import WarningKind, WarnNearLimits
+from pydantic_ai_harness.compaction._warn_near_limits import LimitWarningPart, WarningKind, WarnNearLimits
 
 __all__ = [
     'DEFAULT_CONTEXT_WINDOW',
@@ -45,6 +46,9 @@ __all__ = [
     'ReportContextUsage',
     'DeduplicateFileReads',
     'FallbackCompaction',
+    'LimitWarningPart',
+    'PinSource',
+    'PruneToolResults',
     'SlidingWindowCompaction',
     'SummarizingCompaction',
     'SupportsFocus',
