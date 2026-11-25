@@ -320,8 +320,8 @@ class StructuredJudge(Evaluator[object, object, object]):
     each named after its question, so three questions read as three results with one evaluator as their source.
 
     The questions come in one of three shapes. A single question is answered with its `output_type`: a `bool`,
-    the default, is a yes or a no; a `Literal` or `Enum` of strings picks one option; and a `float` from 0 to 1 is
-    a score:
+    the default, is a yes or a no; a `Literal` or `Enum` of strings picks one option; and a `float` is a score,
+    bounded by the type you pass, such as `Annotated[float, Field(ge=0, le=1)]`:
 
     ```python {title="structured_judge_question.py"}
     from typing import Literal

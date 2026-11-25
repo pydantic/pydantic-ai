@@ -62,7 +62,7 @@ dataset = Dataset(
 
 Reach for [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] to grade an output against a rubric and keep the
 judge's reason for its verdict. Reach for [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] to ask
-typed questions — a yes or no, one of a set of options, or a 0-to-1 score — and report the answers themselves,
+typed questions — a yes or no, one of a set of options, or a score — and report the answers themselves,
 several of them in one request; see [Several Measures in One Request](llm-judge.md#several-measures-in-one-request)
 for what sharing a request costs.
 

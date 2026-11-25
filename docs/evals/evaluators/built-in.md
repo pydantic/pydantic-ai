@@ -407,8 +407,9 @@ StructuredJudge(ReplyReview, include_input=True)
 - `questions` (str | Mapping[str, str] | type): One question; a mapping of measure name to rubric; or a
   Pydantic model, dataclass or `TypedDict` whose fields are the questions (required)
 - `output_type`: The type of a single question's answer: `bool` (default), a `Literal` or `Enum` of
-  strings, or a `float` bounded 0 to 1. A rubric is answered yes or no, and a field with its own type, so
-  pass a model of questions as `questions`, not as `output_type`
+  strings, or a `float` bounded by its type, such as `Annotated[float, Field(ge=0, le=1)]`. A rubric is
+  answered yes or no, and a field with its own type, so pass a model of questions as `questions`, not as
+  `output_type`
 - `model` (Model | KnownModelName | None): Model to use (default: `'openai:gpt-5.2'`)
 - `include_input` (bool): Include task inputs in the prompt (default: `False`)
 - `include_expected_output` (bool): Include the expected output in the prompt (default: `False`)
