@@ -61,7 +61,11 @@ from pydantic_ai.messages import (
     _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _sanitize_messages,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import (
+    KnownModelName,
+    Model,
+    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
@@ -753,6 +757,33 @@ def _report_store_failure(action: str, error: Exception) -> None:
         pass
 
 
+@dataclass
+class _ServerSystemPromptReinjector(ReinjectSystemPrompt[AgentDepsT]):
+    """The reinjector `manage_system_prompt='server'` adds, which keeps the server's own system prompts in the history.
+
+    The adapter strips every system prompt from the client's messages, so the ones left in the history a run starts
+    with came from the trusted `message_history` or `conversation_store`. Of those, it replaces the standing prompt
+    that opens the history, which can be a stale copy of the agent's own, and every rendering of a dynamic system
+    prompt, which the agent renders again. A server-authored part in that standing prompt, like context right after
+    the agent's prompt, is replaced with it: nothing tells it apart from a stale prompt.
+    """
+
+    def _spared_history_parts(self, messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
+        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+        standing: Sequence[ModelRequestPart] = (
+            first_request.parts[: _standing_system_prompt_count(first_request)] if first_request else []
+        )
+        return [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart)
+            and part.dynamic_ref is None
+            and not any(part is standing_part for standing_part in standing)
+        ]
+
+
 def pending_tool_calls(message_history: Sequence[ModelMessage]) -> list[ToolCallPart]:
     """The tool calls of `message_history`'s last response that no request after it answers."""
     history = list(message_history)
@@ -848,6 +879,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     requests), and the agent's own system prompt is reinjected at the head of the
     first request via the
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
+    In server-side history, a `message_history` passed to a run method or the
+    [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store]'s, it replaces the
+    system prompt the history opens with, which can be a stale copy of the agent's own, and
+    keeps the history's other system prompts, such as one an earlier run enqueued. A system
+    prompt the server put right after the agent's, in the opening request, is replaced along
+    with it.
     Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
     frontend messages are reset to `None` as well.
 
@@ -1581,11 +1618,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             # `id=None` opts this adapter-owned instance out of the fixed default `id`, so it never
             # occupies the `reinject_system_prompt` slot a user's own reinjector may hold. Keeping the
             # default here would make a user reinjector supplied for this run a hard duplicate-id
-            # error, and silently supersede an agent-level one.
-            # System prompts in `message_history` are trusted: the client input that a run starts
-            # from was already stripped in `sanitize_messages`. So this instance replaces nothing;
-            # it injects the configured prompt only into history that carries none.
-            run_capabilities.append(ReinjectSystemPrompt(replace_existing=False, id=None))
+            # error, and silently supersede an agent-level one. Server mode stays authoritative
+            # either way: this instance always runs, deriving a distinct id when it has to. It replaces
+            # the history's standing prompt and keeps the server's other system prompts, since
+            # `sanitize_messages` already stripped the client's.
+            run_capabilities.append(_ServerSystemPromptReinjector(replace_existing=True, id=None))
         if capabilities:
             run_capabilities.extend(capabilities)
 

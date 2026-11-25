@@ -21,7 +21,7 @@ from ..._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict, is
 from ..._warnings import PydanticAIDeprecationWarning
 from ...capabilities.abstract import AbstractCapability
 from ...computer_use import COMPUTER_KIND
-from ...exceptions import UserError
+from ...exceptions import ModelEmptyResponseError, UserError
 from ...messages import (
     ERROR_OUTCOMES,
     AudioUrl,
@@ -1985,10 +1985,15 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # schemas too.
             # Where the count drops advisor, dropping it here too makes `advisor_active` False so its call/result
             # history blocks are stripped during replay: replaying them without the tool definition would 400.
+            # A `CodeExecutionTool`'s files are cleared here, so the count carries none of the `container_upload`
+            # blocks that upload them: verified 2026-11-18 on `claude-fable-5-2`, the endpoint rejects one with a
+            # 400, "File sources are not supported in the token counting endpoint." (`req_011ChBEaMpfgxJrL826uzmt2`).
+            # They're dropped on every client: the others that send them serve the Claude API's endpoints, or, like
+            # Bedrock Mantle, aren't verified to accept them. The count leaves out the uploaded files' tokens.
             map_parameters = replace(
                 model_request_parameters,
                 native_tools=[
-                    tool
+                    replace(tool, files=None) if isinstance(tool, CodeExecutionTool) else tool
                     for tool in model_request_parameters.native_tools
                     if not isinstance(tool, AdvisorTool) or isinstance(tool, counted_native_tools)
                 ],
@@ -2671,7 +2676,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> AnthropicStreamedResponse:
         first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, BetaRawMessageStartEvent)
 

@@ -2129,7 +2129,7 @@ def conversation_view(messages: Sequence[ModelMessage]) -> list[str]:
 
 
 def server_history_agent(
-    toolsets: Sequence[AbstractToolset[None]] = (),
+    toolsets: Sequence[AbstractToolset[None]] = (), *, system_prompt: str | Sequence[str] = ()
 ) -> tuple[Agent[None, str | DeferredToolRequests], list[list[ModelMessage]], list[str]]:
     """An agent for the UI adapters' server-held history tests, with the model requests and tool runs it records.
 
@@ -2154,6 +2154,7 @@ def server_history_agent(
         deps_type=type(None),
         output_type=[str, DeferredToolRequests],
         toolsets=toolsets,
+        system_prompt=system_prompt,
     )
 
     @agent.tool_plain(requires_approval=True)
@@ -2162,6 +2163,26 @@ def server_history_agent(
         return f'Deleted {path}'
 
     return agent, requests, deleted
+
+
+def history_with_server_system_prompts() -> list[ModelMessage]:
+    """A trusted stored history opening with a stale copy of the agent's prompt, and carrying the server's own after it.
+
+    One system prompt an earlier run enqueued, and server context in a later request.
+    """
+    return [
+        ModelRequest(parts=[SystemPromptPart('Stale prompt'), UserPromptPart('where am I?')]),
+        ModelResponse(parts=[ToolCallPart('get_location', {}, tool_call_id='loc-1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart('get_location', 'Paris', tool_call_id='loc-1'),
+                SystemPromptPart('Enqueued in an earlier run'),
+            ]
+        ),
+        ModelResponse(parts=[TextPart('ok')]),
+        ModelRequest(parts=[SystemPromptPart('Server context'), UserPromptPart('hi')]),
+        ModelResponse(parts=[TextPart('ok')]),
+    ]
 
 
 # endregion

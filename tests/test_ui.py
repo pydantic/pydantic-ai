@@ -1850,53 +1850,6 @@ async def test_reinject_system_prompt_capability_preserves_existing():
     assert [p.content for p in sys_parts] == ['First agent']
 
 
-async def test_reinject_system_prompt_capability_spares_request_only_system_part():
-    """A `SystemPromptPart` another capability added to the current request only is left alone.
-
-    The request messages carry a system prompt but the persistent history doesn't, so the
-    no-op must still fire and the agent's configured prompt must not be prepended.
-    """
-
-    @dataclass
-    class AddRequestPrompt(AbstractCapability[Any]):
-        async def before_model_request(
-            self, ctx: RunContext[Any], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            first_request = message(request_context.messages, ModelRequest)
-            request_context.messages = [
-                ModelRequest(parts=[SystemPromptPart(content='Request-only prompt'), *first_request.parts]),
-                *request_context.messages[1:],
-            ]
-            return request_context
-
-    @dataclass
-    class CaptureRequestPrompts(AbstractCapability[Any]):
-        seen: list[str] = field(default_factory=list[str])
-
-        async def before_model_request(
-            self, ctx: RunContext[None], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            request = message(request_context.messages, ModelRequest)
-            self.seen.extend(p.content for p in request.parts if isinstance(p, SystemPromptPart))
-            return request_context
-
-    capture = CaptureRequestPrompts()
-    agent = Agent(model=TestModel(), system_prompt='Server prompt')
-
-    history: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hi')]),
-        ModelResponse(parts=[TextPart(content='Hello')]),
-    ]
-
-    await agent.run(
-        'Follow up',
-        message_history=history,
-        capabilities=[AddRequestPrompt(), ReinjectSystemPrompt(), capture],
-    )
-
-    assert capture.seen == ['Request-only prompt']
-
-
 async def test_adapter_server_mode_accepts_per_run_reinject_system_prompt():
     """A caller may supply their own reinjector for the run without tripping over the adapter's.
 
@@ -1925,33 +1878,26 @@ async def test_adapter_server_mode_accepts_per_run_reinject_system_prompt():
     assert [p.content for p in sys_parts] == ['Server prompt']
 
 
-async def test_ui_adapter_spares_trusted_history_system_prompts_under_server_mode():
-    """Server mode preserves every trusted system prompt part in explicit history."""
+async def test_adapter_server_mode_with_non_replacing_agent_reinjector():
+    """Server mode stays authoritative when the agent carries a non-replacing reinjector.
+
+    A bare `ReinjectSystemPrompt()` leaves an existing `SystemPromptPart` alone, so if the adapter
+    let it stand in for its own, a stale prompt in the server-side history would win.
+    """
     agent = Agent(model=TestModel(), system_prompt='Server prompt', capabilities=[ReinjectSystemPrompt()])
     adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
 
-    trusted_system_parts = [
-        SystemPromptPart(content='Trusted prompt'),
-        SystemPromptPart(content='Trusted extra prompt'),
-    ]
     history: list[ModelMessage] = [
-        ModelRequest(parts=[trusted_system_parts[0], UserPromptPart('Earlier')]),
-        ModelResponse(parts=[TextPart('Earlier reply')]),
-        ModelRequest(parts=[trusted_system_parts[1], UserPromptPart('Later')]),
-        ModelResponse(parts=[TextPart('Later reply')]),
+        ModelRequest(parts=[SystemPromptPart(content='Stale prompt'), UserPromptPart(content='Earlier')]),
+        ModelResponse(parts=[TextPart(content='Earlier reply')]),
     ]
 
     events = [event async for event in adapter.run_stream_native(message_history=history)]
     run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
 
-    system_parts = [
-        part
-        for history_message in run_result_event.result.all_messages()
-        if isinstance(history_message, ModelRequest)
-        for part in history_message.parts
-        if isinstance(part, SystemPromptPart)
-    ]
-    assert system_parts == trusted_system_parts
+    first_request = message(run_result_event.result.all_messages(), ModelRequest)
+    sys_parts = [p for p in first_request.parts if isinstance(p, SystemPromptPart)]
+    assert [p.content for p in sys_parts] == ['Server prompt']
 
 
 async def test_adapter_server_mode_with_deferred_agent_reinjector():
@@ -2109,9 +2055,185 @@ async def test_adapter_server_mode_keeps_mid_run_system_prompts():
     run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
 
     assert len(requests) == 2
-    assert _contents(requests[1]) == snapshot(['Stale prompt', 'Earlier', 'Go', '<system>Mid-run steering</system>'])
+    assert _contents(requests[1]) == snapshot(['Server prompt', 'Earlier', 'Go', '<system>Mid-run steering</system>'])
     assert _contents(run_result_event.result.all_messages()) == snapshot(
-        ['Stale prompt', 'Earlier', 'Go', 'Mid-run steering']
+        ['Server prompt', 'Earlier', 'Go', 'Mid-run steering']
+    )
+
+
+async def test_adapter_server_mode_fresh_conversation_does_not_duplicate():
+    """On a fresh conversation, server mode sends the agent's prompt once on every step."""
+    agent, requests = _steering_agent()
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Go')]))
+
+    events = [event async for event in adapter.run_stream_native()]
+    run_result_event = next(event for event in events if isinstance(event, AgentRunResultEvent))
+
+    assert [_contents(request) for request in requests] == snapshot(
+        [['Server prompt', 'Go'], ['Server prompt', 'Go', '<system>Mid-run steering</system>']]
+    )
+    assert _contents(run_result_event.result.all_messages()) == snapshot(['Server prompt', 'Go', 'Mid-run steering'])
+
+
+async def test_adapter_server_mode_replaces_dynamic_prompt_anywhere_in_trusted_history():
+    """The agent renders its dynamic system prompt again wherever the history has it, so server mode replaces it there.
+
+    Keeping it where it sits, as the server's other system prompts are, would send it beside the one at the head.
+    """
+    agent, requests = _recording_agent()
+
+    @agent.system_prompt(dynamic=True)
+    def server_prompt() -> str:
+        return 'Dynamic server prompt'
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+        ModelRequest(
+            parts=[UserPromptPart('Again'), SystemPromptPart('Stale', dynamic_ref=server_prompt.__qualname__)]
+        ),
+        ModelResponse(parts=[TextPart('Hello again')]),
+    ]
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Go')]))
+
+    result = await _run(adapter, history)
+
+    assert conversation_view(requests[0]) == snapshot(
+        [
+            'system-prompt: Dynamic server prompt',
+            'user-prompt: Hi',
+            'text: Hello',
+            'user-prompt: Again',
+            'text: Hello again',
+            'user-prompt: Go',
+        ]
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'system-prompt: Dynamic server prompt',
+            'user-prompt: Hi',
+            'text: Hello',
+            'user-prompt: Again',
+            'text: Hello again',
+            'user-prompt: Go',
+            'text: ok',
+        ]
+    )
+
+
+async def test_adapter_server_mode_replaces_appended_dynamic_prompt_statements():
+    """The statements an `on_change='append'` dynamic system prompt left in the trusted history give way to its current one."""
+    version = 1
+    agent, requests = _recording_agent()
+
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def server_prompt() -> str:
+        return f'Prompt v{version}'
+
+    history = (await agent.run('Hi', model=TestModel())).all_messages()
+    version = 2
+    history = (await agent.run('Again', message_history=history, model=TestModel())).all_messages()
+    version = 3
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Go')]))
+
+    result = await _run(adapter, history)
+
+    assert conversation_view(history) == snapshot(
+        [
+            'system-prompt: Prompt v1',
+            'user-prompt: Hi',
+            'text: success (no tool calls)',
+            'system-prompt: Prompt v2',
+            'user-prompt: Again',
+            'text: success (no tool calls)',
+        ]
+    )
+    assert conversation_view(requests[0]) == snapshot(
+        [
+            """\
+system-prompt: <pyai:context id="system_prompt:server_prompt">
+Prompt v3
+</pyai:context>
+A later <pyai:context> element with the same id replaces the earlier one and stays in effect until replaced again.\
+""",
+            'user-prompt: Hi',
+            'text: success (no tool calls)',
+            'user-prompt: Again',
+            'text: success (no tool calls)',
+            'user-prompt: Go',
+        ]
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'system-prompt: Prompt v3',
+            'user-prompt: Hi',
+            'text: success (no tool calls)',
+            'user-prompt: Again',
+            'text: success (no tool calls)',
+            'user-prompt: Go',
+            'text: ok',
+        ]
+    )
+
+
+async def test_adapter_server_mode_replaces_copy_of_configured_prompt_in_trusted_history():
+    """A trusted system prompt repeating the agent's own is that prompt, so it's replaced wherever it sits, not sent twice."""
+    agent, requests = _recording_agent(system_prompt='Server prompt')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart('Stale prompt'), UserPromptPart('Hi')]),
+        ModelResponse(parts=[TextPart('Hello')]),
+        # As in a history that joins two conversations, each opening with the agent's prompt.
+        ModelRequest(parts=[SystemPromptPart('Server prompt'), UserPromptPart('Again')]),
+        ModelResponse(parts=[TextPart('Hello again')]),
+    ]
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Go')]))
+
+    result = await _run(adapter, history)
+
+    assert conversation_view(requests[0]) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: Hi',
+            'text: Hello',
+            'user-prompt: Again',
+            'text: Hello again',
+            'user-prompt: Go',
+        ]
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: Hi',
+            'text: Hello',
+            'user-prompt: Again',
+            'text: Hello again',
+            'user-prompt: Go',
+            'text: ok',
+        ]
+    )
+
+
+async def test_adapter_server_mode_replaces_server_context_in_standing_prompt():
+    """A server-authored part in the standing prompt opening the trusted history is replaced with that prompt.
+
+    Nothing tells it apart from a stale copy of the agent's prompt there without knowing who wrote each part.
+    """
+    agent, requests = _recording_agent(system_prompt='Server prompt')
+    history: list[ModelMessage] = [
+        ModelRequest(
+            parts=[SystemPromptPart('Stale prompt'), SystemPromptPart('Server context'), UserPromptPart('Hi')]
+        ),
+        ModelResponse(parts=[TextPart('Hello')]),
+    ]
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Go')]))
+
+    result = await _run(adapter, history)
+
+    assert conversation_view(requests[0]) == snapshot(
+        ['system-prompt: Server prompt', 'user-prompt: Hi', 'text: Hello', 'user-prompt: Go']
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['system-prompt: Server prompt', 'user-prompt: Hi', 'text: Hello', 'user-prompt: Go', 'text: ok']
     )
 
 
@@ -2146,7 +2268,7 @@ def _with_ui_id(message: ModelMessage, ui_message_id: str) -> ModelMessage:
     return message
 
 
-def _recording_agent() -> tuple[Agent[None, str], list[list[ModelMessage]]]:
+def _recording_agent(system_prompt: str | Sequence[str] = ()) -> tuple[Agent[None, str], list[list[ModelMessage]]]:
     """An agent that answers `ok` and records the history of every model request."""
     requests: list[list[ModelMessage]] = []
 
@@ -2154,7 +2276,7 @@ def _recording_agent() -> tuple[Agent[None, str], list[list[ModelMessage]]]:
         requests.append(messages)
         yield 'ok'
 
-    return Agent(FunctionModel(stream_function=stream_function)), requests
+    return Agent(FunctionModel(stream_function=stream_function), system_prompt=system_prompt), requests
 
 
 async def _run(adapter: DummyUIAdapter[None, str], message_history: list[ModelMessage] | None) -> AgentRunResult[Any]:

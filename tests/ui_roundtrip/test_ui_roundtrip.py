@@ -754,8 +754,9 @@ _NO_OUTPUT_DEMOTED = (
     'user-voice feedback and renders differently; no issue yet'
 )
 _SERVER_SYSTEM_PROMPT = (
-    'a system prompt enqueued in an earlier run is stripped from client history with the rest in '
-    "`manage_system_prompt='server'`, and nothing restores it; #10389 kept only the ones of the current run"
+    "in `manage_system_prompt='server'` a system prompt enqueued in an earlier run doesn't come back with "
+    'client-held history: the stream never sends it to the client, and a dumped copy is stripped with the '
+    "client's other system prompts; server-held history keeps it"
 )
 
 
@@ -771,9 +772,6 @@ _UNANSWERED_STORED_TAIL = (
     "from the client, which merges it with its new message into one request carrying only the new message's UI "
     "id, so `manage_message_history='server'` can't tell it was resubmitted; tracked on #11031"
 )
-_PREFIX_MOVING_GAPS = frozenset({_SERVER_SYSTEM_PROMPT})
-"""Gaps that rewrite history the model already saw, rather than only adding to it."""
-
 _ALL_SERVER_WIRE: tuple[tuple[Property, Path, Protocol], ...] = tuple(
     ('server_wire', path, protocol) for path in PATHS for protocol in PROTOCOLS
 )
@@ -1286,9 +1284,7 @@ def _params(prop: Property) -> list[Any]:
                         gap = scenario.gaps.get((prop, path, protocol, provider), gap)
                     key = '-'.join([scenario.id, path, protocol, *([provider] if provider else [])])
                     values = (scenario, path, protocol) if provider is None else (scenario, path, protocol, provider)
-                    # A gap that rewrites the stored history moves the prompt-cache prefix the autouse check guards.
-                    marks = [pytest.mark.moves_cache_prefix(reason=gap)] if gap in _PREFIX_MOVING_GAPS else []
-                    params.append(pytest.param(*values, Gap(f'{prop}-{key}', gap), id=key, marks=marks))
+                    params.append(pytest.param(*values, Gap(f'{prop}-{key}', gap), id=key))
     return params
 
 
@@ -1557,13 +1553,15 @@ async def test_conversation_store_regenerate_after_reload(protocol: Protocol, js
     assert [len(messages) for messages in seen] == [1, 1]
 
 
-def test_ui_roundtrip_reinject_spares_trusted_server_history_system_prompt() -> None:
-    """Server-held history preserves trusted prompts that client round trips can lose.
+def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
+    """Keeping the history on the server leaves out every loss a client round trip has, but one.
 
-    Client-unsafe records still need server-held history (#11184). The only known server-wire gap
-    is an unanswered request at the end of stored history, which the client sends again (#11031).
-    The enqueued system prompt is preserved by the adapter's non-replacing reinjector; it remains a
-    client-wire gap because client-owned history cannot be trusted to return it.
+    The records a client can't be trusted to send back (#11184) never leave the server in that mode: append-mode
+    instruction records, `no_output` feedback in the system voice, an earlier run's enqueued system prompt, and
+    activity records `@ag-ui/client` drops. So no scenario records a `server_wire` gap except one that the stored
+    history itself causes: an unanswered request the stored history ends with, which the client sends again
+    (tracked on #11031).
+    `test_server_held_history_wire_request` holds every other scenario to the server-only requests.
     """
     client_wire_gaps = {scenario.id for scenario in SCENARIOS for key in scenario.gaps if key[0] == 'wire'}
     server_wire_gaps = {
