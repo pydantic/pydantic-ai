@@ -441,9 +441,10 @@ class SandboxPlugin(Plugin):
     async def _restart_with_desktop(self, sandbox: _Sandbox) -> str:
         """Replace a sandbox whose provider gives a desktop only at create with a new one that has it.
 
-        That is safe only while no turn has run in it, since a turn's history refers to files there.
+        That is safe only while the conversation holds just the `/sandbox` exchange: a turn or a `!` line after it
+        may have made files there.
         """
-        if any(isinstance(message, ModelResponse) and message.parts for message in self.host.conversation.messages):
+        if len(self.host.conversation.messages) > 2:
             raise ValueError(
                 f'{sandbox.provider.title} gives a desktop only to a new sandbox, and this conversation has '
                 f'already worked in this one. Run /new, /computer-use, then /sandbox {sandbox.provider.name}.'

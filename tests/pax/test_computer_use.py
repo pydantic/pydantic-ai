@@ -595,10 +595,19 @@ async def test_computer_use_toggle_upgrade_and_errors(
     assert 'Computer use is on' in await upgrade_plugin.computer_use_command(['on'])
     assert len(desktop_provider.created) == 3
 
+    # A `!` line counts as work in the sandbox too, so it is never replaced after one.
+    shell_plugin = plugin_of(load(work))
+    await shell_plugin.command(['fake'])
+    await shell_plugin.host.conversation.commit_messages(
+        [*shell_plugin.host.conversation.messages, ModelRequest.user_text_prompt('! touch notes.txt')]
+    )
+    with pytest.raises(ValueError, match='already worked in this one'):
+        await shell_plugin.computer_use_command(['on'])
+
     # `desktop_at_create=True` on an ALREADY USED sandbox refuses safely without losing work.
     used_plugin = plugin_of(load(work))
     await used_plugin.command(['fake'])
-    used_ref = WorkspaceRef(provider='fake', id='sbx-4')
+    used_ref = WorkspaceRef(provider='fake', id='sbx-5')
     await used_plugin.host.conversation.commit_messages(
         [
             *used_plugin.host.conversation.messages,
