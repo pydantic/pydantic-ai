@@ -80,8 +80,9 @@ def voice_violations(captured: CapturedRequest, messages: Sequence[ModelMessage]
             if not isinstance(part, CapabilityPart):
                 continue
             authority = effective_authority(part)
+            frames = {tag for tag in (part.rendering.tag, part.kind.rsplit('.', 1)[-1]) if tag is not None}
             for marker in markers(part):
-                voices = captured.voices_of(marker)
+                voices = captured.voices_of(marker, frames)
                 if not voices:
                     violations.append(f'{part.kind} ({authority}) reaches {captured.provider} in no voice: {marker!r}')
                 for voice in voices:
@@ -246,6 +247,11 @@ _PAGE_HISTORY: list[ModelMessage] = [
             ],
             'reaches openai-chat as user',
             id='frame-interrupted-by-another-voice',
+        ),
+        pytest.param(
+            [{'role': 'user', 'content': '<html>the page says hello</html>'}],
+            'reaches openai-chat as user',
+            id='text-that-only-looks-framed',
         ),
         pytest.param([{'role': 'user', 'content': 'hi'}], 'reaches openai-chat in no voice', id='dropped'),
     ],

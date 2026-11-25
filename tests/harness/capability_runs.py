@@ -3,8 +3,8 @@
 `run_native` runs a case's calls as plain tool calls, with every capability it builds lowered to
 `with_authority('none')`, and `typed_history` reads back each part the calls added besides what a call returned:
 its type, source, capability id, authority and frame. The route matrix (C1, `test_capability_routes.py`) compares that
-across the routes a tool call can take; the wire and transformation suites (`test_capability_voice_wire.py`) check it
-reaches each provider in the right voice and survives each transformation of the history.
+across the routes a tool call can take, and the wire suite (`test_capability_voice_wire.py`) sends the history
+`run_native` ends with to each provider.
 """
 
 from __future__ import annotations

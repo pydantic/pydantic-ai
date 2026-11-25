@@ -3,15 +3,15 @@
 `capture` runs a history through a real provider model's `prepare_messages`, then its `request`, answers the HTTP
 request with a 400 so nothing leaves the process, and returns the request body as the model built it. It doesn't
 normalize the history first the way the agent graph does, so pass it a history an agent run ended with.
-`voices` reads that body back as `(voice, text)` pairs in order, so a test can ask which voice a marker string reached
-the model in without knowing each provider's wire format.
+`voices_of` reads that body back, so a test can ask which voice a marker string reached the model in without knowing
+each provider's wire format.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Collection, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, cast
 
@@ -115,49 +115,58 @@ class CapturedRequest:
     provider: CapturedProvider
     body: dict[str, Any]
 
-    def voices(self) -> list[tuple[Voice, str]]:
-        """Every piece of text in the request, in order, with the voice it reaches the model in.
+    def voices_of(self, marker: str, frames: Collection[str] | None = None) -> list[Voice]:
+        """The voices of the pieces of text in the request that contain `marker`.
 
-        Tool call arguments aren't text in a voice, so they're left out.
+        Tool call arguments aren't text in a voice, so they're left out. A model without inline system messages gets
+        the application's voice as a `<system>` frame in the user turn, so text in such a frame counts as `'system'`.
+        Text in another frame in the user turn is `'data'`. Either kind of frame may come in one piece or as an
+        opening tag, the body and a closing tag.
 
-        A model without inline system messages gets the application's voice as a `<system>` frame in the user turn,
-        so text in such a frame counts as `'system'`. Text in another frame in the user turn, including a reserved
-        `pyai:` one, is `'data'`. Either kind of frame may come in one piece or as an opening tag, the body and a
-        closing tag.
+        With `frames`, a piece only counts as `'data'` in one of those frames or a reserved `pyai:` one: text that only
+        looks like a frame, such as a page's own `<html>`, is unframed user text.
         """
-        voices: list[tuple[Voice, str]] = []
+        return [
+            'user' if voice == 'data' and frames is not None and not _expected_frame(frame, frames) else voice
+            for voice, text, frame in self._pieces()
+            if marker in text
+        ]
+
+    def _pieces(self) -> list[tuple[Voice, str, str | None]]:
+        """Every piece of text with its voice and, for framed data, the frame's tag."""
+        pieces: list[tuple[Voice, str, str | None]] = []
         open_frame: str | None = None
         # The pieces of a frame that hasn't closed yet: framed once it closes, unframed user text if it never does.
         pending: list[str] = []
         for voice, text in _VOICE_READERS[self.provider](self.body):
             stripped = text.strip()
             if open_frame is not None and voice != 'user':
-                voices.extend(('user', piece) for piece in pending)
+                pieces.extend(('user', piece, None) for piece in pending)
                 open_frame, pending = None, []
             if open_frame is None and _is_framed(stripped, 'system'):
-                voices.append(('system', text))
+                pieces.append(('system', text, None))
             elif voice != 'user':
-                voices.append((voice, text))
+                pieces.append((voice, text, None))
             elif open_frame is not None:
                 closing = f'</{open_frame}>'
                 if (closes := text.count(closing)) == 0:
                     pending.append(text)
                     continue
-                voices.extend((_frame_voice(open_frame), piece) for piece in pending)
+                pieces.extend((_frame_voice(open_frame), piece, open_frame) for piece in pending)
                 # Text after the closing tag in the same piece isn't framed, so the whole piece counts as unframed.
-                framed = closes == 1 and stripped.endswith(closing)
-                voices.append((_frame_voice(open_frame) if framed else voice, text))
+                if closes == 1 and stripped.endswith(closing):
+                    pieces.append((_frame_voice(open_frame), text, open_frame))
+                else:
+                    pieces.append((voice, text, None))
                 open_frame, pending = None, []
             elif (opened := _FRAME_OPEN.fullmatch(stripped)) is not None:
                 open_frame, pending = opened.group(1), [text]
+            elif (tag := _frame_tag(stripped)) is not None:
+                pieces.append(('data', text, tag))
             else:
-                voices.append(('data' if _is_framed(stripped) else voice, text))
-        voices.extend(('user', piece) for piece in pending)
-        return voices
-
-    def voices_of(self, marker: str) -> list[Voice]:
-        """The voices of the pieces of text that contain `marker`."""
-        return [voice for voice, text in self.voices() if marker in text]
+                pieces.append((voice, text, None))
+        pieces.extend(('user', piece, None) for piece in pending)
+        return pieces
 
 
 async def capture(
@@ -199,12 +208,20 @@ _FRAME_OPEN = re.compile(rf'<({_TAG})(?: [^<>]*)?>')
 _FRAMED = re.compile(rf'<({_TAG})(?: [^<>]*)?>.*</\1>', re.DOTALL)
 
 
-def _is_framed(text: str, tag: str | None = None) -> bool:
-    """Whether all of `text` is one frame, named `tag` if given: an opening tag first, its only closing tag last."""
+def _frame_tag(text: str) -> str | None:
+    """The tag of the one frame all of `text` is, an opening tag first and its only closing tag last, or `None`."""
     framed = _FRAMED.fullmatch(text)
-    if framed is None or (tag is not None and framed.group(1) != tag):
-        return False
-    return text.count(f'</{framed.group(1)}>') == 1
+    if framed is None or text.count(f'</{framed.group(1)}>') != 1:
+        return None
+    return framed.group(1)
+
+
+def _is_framed(text: str, tag: str) -> bool:
+    return _frame_tag(text) == tag
+
+
+def _expected_frame(frame: str | None, frames: Collection[str]) -> bool:
+    return frame is not None and (frame in frames or frame.startswith('pyai:'))
 
 
 def _frame_voice(tag: str) -> Voice:
