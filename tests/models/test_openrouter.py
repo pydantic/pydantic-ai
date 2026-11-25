@@ -49,7 +49,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai._framing import lookalike_note_announcement
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import ModelFallback, NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
@@ -3632,3 +3632,35 @@ async def test_eager_input_streaming_sent_to_openrouter(
     assert ('eager_input_streaming' in tool_param) is expected_eager_key
     if expected_eager_key:
         assert tool_param['eager_input_streaming'] is True
+
+
+async def test_openrouter_empty_error_response_falls_back(allow_model_requests: None) -> None:
+    """An empty response with `finish_reason: "error"` and no top-level `error` falls back in `ModelFallback`.
+
+    Mocked because OpenRouter doesn't end a response with an error on demand.
+    """
+    # Built without validation, as the OpenAI SDK's types don't allow `finish_reason: "error"`.
+    choice = Choice.model_construct(
+        index=0,
+        message=ChatCompletionMessage.model_construct(role='assistant', content=None),
+        finish_reason='error',
+        native_finish_reason='error',
+    )
+    completion = ChatCompletion.model_construct(
+        id='gen-123',
+        choices=[choice],
+        created=1704067200,
+        model='google/gemini-3.5-flash',
+        object='chat.completion',
+        provider='Google',
+    )
+    mock_client = MockOpenAI.create_mock(completion)
+    model = OpenRouterModel('google/gemini-3.5-flash', provider=OpenRouterProvider(openai_client=mock_client))
+    agent = Agent(model, capabilities=[ModelFallback(TestModel(custom_output_text='fallback used'))])
+
+    result = await agent.run('hello')
+
+    assert result.output == 'fallback used'
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == snapshot(
+        [('google/gemini-3.5-flash', 'rejected')]
+    )

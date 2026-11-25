@@ -42,6 +42,7 @@ from pydantic_ai import (
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
+from pydantic_ai.capabilities import ModelFallback
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
@@ -53,6 +54,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import BinaryImage
 from pydantic_ai.models import ModelRequestParameters, ToolDefinition
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
@@ -4523,3 +4525,23 @@ async def test_empty_stream_raises_model_empty_response_error(allow_model_reques
     with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
         async with Agent(model).run_stream('hello'):
             pass
+
+
+async def test_empty_error_response_falls_back(allow_model_requests: None):
+    """An empty response Mistral ended with `finish_reason: "error"` falls back, rather than getting the retry prompt.
+
+    Mocked because Mistral doesn't end a response with an error on demand.
+    """
+    response = completion_message(MistralAssistantMessage(content=''))
+    response.choices[0].finish_reason = 'error'
+    model = MistralModel(
+        'mistral-large-latest', provider=MistralProvider(mistral_client=MockMistralAI.create_mock(response))
+    )
+    agent = Agent(model, capabilities=[ModelFallback(TestModel(custom_output_text='fallback used'))])
+
+    result = await agent.run('hello')
+
+    assert result.output == 'fallback used'
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == snapshot(
+        [('mistral-large-123', 'rejected')]
+    )

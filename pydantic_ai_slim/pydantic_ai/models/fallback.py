@@ -121,13 +121,16 @@ class FallbackModel(Model):
                 refusal: any response with `finish_reason='content_filter'`, empty or with partial text. Naming
                 [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] also rejects any
                 response the output token limit cut off, with `finish_reason='length'`. The agent only raises these
-                errors after a response is accepted, so in `fallback_on` each stands for that response.
+                errors after a response is accepted, so in `fallback_on` each stands for that response. Likewise,
+                naming [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] also rejects an
+                empty response the provider ended with `finish_reason='error'`, which the agent would otherwise send
+                the retry prompt; the default `(ModelAPIError,)` doesn't.
 
                 Response handlers only apply to non-streamed requests. A streamed request accepts
                 the response as is and emits a `UserWarning`. A request is streamed whenever
                 something consumes the run's events, including `run()` with an
-                `event_stream_handler` or an event listener. A streamed refusal or cut-off response is accepted
-                too, without a warning, as a stream's finish reason is only known once it was streamed.
+                `event_stream_handler` or an event listener. A streamed refusal, cut-off or empty error response
+                is accepted too, without a warning, as a stream's finish reason is only known once it was streamed.
         """
         super().__init__()
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]

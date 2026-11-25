@@ -72,7 +72,7 @@ from pydantic_ai import (
 from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import ModelFallback, NativeTool
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
@@ -88,6 +88,7 @@ from pydantic_ai.messages import (
     InstructionPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import (
     FileSearchTool,
     WebFetchTool,
@@ -8033,3 +8034,29 @@ async def test_google_non_json_response_body_raises_model_api_error(
     cause = errors.UnknownApiResponseError if call == 'stream' else json.JSONDecodeError
     assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_google_empty_malformed_function_call_falls_back(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """An empty `MALFORMED_FUNCTION_CALL` response has `finish_reason='error'`, so `ModelFallback` falls back on it.
+
+    Mocked because Gemini doesn't make a malformed function call on demand.
+    """
+    model = GoogleModel('gemini-3.5-flash', provider=google_provider)
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-123',
+            'model_version': 'gemini-3.5-flash',
+            'candidates': [{'finish_reason': GoogleFinishReason.MALFORMED_FUNCTION_CALL, 'content': None}],
+        }
+    )
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+    agent = Agent(model, capabilities=[ModelFallback(TestModel(custom_output_text='fallback used'))])
+
+    result = await agent.run('hello')
+
+    assert result.output == 'fallback used'
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == snapshot(
+        [('gemini-3.5-flash', 'rejected')]
+    )

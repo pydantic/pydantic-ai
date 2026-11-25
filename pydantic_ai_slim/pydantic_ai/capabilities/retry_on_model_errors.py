@@ -22,6 +22,7 @@ from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelConnectionError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelRateLimitError,
     ModelServerError,
@@ -48,15 +49,17 @@ TRANSIENT_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
     ModelUnavailableError,
     ModelServerError,
     ModelConnectionError,
+    ModelEmptyResponseError,
 )
 """The model errors that waiting may fix, which [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors]
 retries by default.
 
 [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError],
 [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] (including an overloaded model),
-[`ModelServerError`][pydantic_ai.exceptions.ModelServerError] and
+[`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
 [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout or an HTTP
-408). Extend it to retry another error too, as in `retry_on=(*TRANSIENT_MODEL_ERRORS, MyError)`, or check an error
+408) and [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError], which in `retry_on` also stands
+for an empty response the provider ended with `finish_reason='error'`. Extend it to retry another error too, as in `retry_on=(*TRANSIENT_MODEL_ERRORS, MyError)`, or check an error
 against it with `isinstance(error, TRANSIENT_MODEL_ERRORS)`.
 """
 # `TRANSIENT_MODEL_ERRORS` by name, for the spec schema.
@@ -65,6 +68,7 @@ _DEFAULT_SPEC_RETRY_ON: tuple[SpecModelError, ...] = (
     'ModelUnavailableError',
     'ModelServerError',
     'ModelConnectionError',
+    'ModelEmptyResponseError',
 )
 
 
@@ -75,9 +79,10 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
     By default, a request is retried when it fails with an error that waiting may fix: a
     [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError], a
     [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] (including an overloaded model), a
-    [`ModelServerError`][pydantic_ai.exceptions.ModelServerError], or a
+    [`ModelServerError`][pydantic_ai.exceptions.ModelServerError], a
     [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout or an
-    HTTP 408):
+    HTTP 408), or a [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError], including an empty
+    response the provider ended with `finish_reason='error'`:
 
     ```python
     from pydantic_ai import Agent
@@ -148,8 +153,10 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
                 - A sequence mixing all of the above: `[ModelRateLimitError, exc_handler, response_handler]`
 
                 Defaults to [`TRANSIENT_MODEL_ERRORS`][pydantic_ai.capabilities.TRANSIENT_MODEL_ERRORS], the
-                transient errors listed above, which leave a refusal, a response with
-                `finish_reason='content_filter'`, to a `ModelFallback`: the same model usually refuses again. Naming
+                transient errors listed above. `ModelEmptyResponseError` there also stands for an empty response
+                the provider ended with `finish_reason='error'`, which the agent would otherwise send the retry
+                prompt. The default leaves a refusal, a response with `finish_reason='content_filter'`, to a
+                `ModelFallback`: the same model usually refuses again. Naming
                 [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] retries a refusal, empty or with
                 partial text, as it falls back from one in `fallback_on`, and naming
                 [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] likewise retries a
@@ -258,7 +265,12 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
         response: ModelResponse,
     ) -> ModelResponse:
         predicates = self._predicates
-        if not predicates.response_handlers and not predicates.content_filter and not predicates.output_token_limit:
+        if not (
+            predicates.response_handlers
+            or predicates.content_filter
+            or predicates.output_token_limit
+            or predicates.empty_error_response
+        ):
             return response
         if request_context.streaming:
             # A streamed response has already reached the consumer, so it's accepted without consulting the
