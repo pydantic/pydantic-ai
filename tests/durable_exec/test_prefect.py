@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -66,7 +66,7 @@ from pydantic_ai import (
     UserPromptPart,
 )
 from pydantic_ai._instrumentation import include_content_ctx
-from pydantic_ai._run_context import get_current_run_context
+from pydantic_ai._run_context import AnchoredEvidence, get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
@@ -81,6 +81,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     SelectModel,
     Toolset,
+    WrapperCapability,
     durable_operation,
 )
 from pydantic_ai.durable_exec import DurabilityEngineSpec
@@ -178,7 +179,6 @@ try:
         PrefectAgentInputs,
         _cacheable_value,  # pyright: ignore[reportPrivateUsage]
         _replace_run_context,  # pyright: ignore[reportPrivateUsage]
-        _strip_cache_excluded_fields,  # pyright: ignore[reportPrivateUsage]
     )
     from pydantic_ai.durable_exec.prefect._mcp_toolset import prefectify_mcp_toolset
     from pydantic_ai.durable_exec.prefect._operation_backend import PrefectOperationConfig
@@ -197,8 +197,9 @@ try:
     from fastmcp.client.transports import StdioTransport
     from fastmcp.server.dependencies import get_http_request
 
-    from pydantic_ai._mcp_compat import is_mcp_sdk_v2
+    from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
@@ -221,7 +222,12 @@ from ..realtime_connections import InferredConnection
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
+from .override_rebind_cases import REBIND_CASES, RebindCase
+from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
+from .span_utils import drop_fastmcp_client_spans
+
+_OPTIONAL_TASK_ROUTING = 'optional_task' if MCP_SDK_V2 else 'optional_sync'
 
 
 def test_durability_codecs() -> None:
@@ -723,6 +729,9 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
             parent_span = basic_spans_by_id[parent_id]
             parent_span.children.append(basic_span)
 
+    assert root_span is not None
+    drop_fastmcp_client_spans(root_span)
+
     assert root_span == snapshot(
         BasicSpan(
             content=IsStr(regex=r'\w+-\w+'),  # Random Prefect flow run name
@@ -1211,11 +1220,15 @@ def test_prefect_mcp_wrappers_of_same_host_servers_keep_their_derived_id() -> No
 
 
 @pytest.mark.subprocess(reason='connects to `tests.mcp_task_server` over stdio')
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     """Effective task routing forwards through Prefect task wrappers end-to-end.
 
     Unlike Temporal/DBOS, Prefect passes live `ToolsetTool` objects through without serializing
-    `ToolDefinition`, so this pins wrapper forwarding rather than serialization round-tripping."""
+    `ToolDefinition`, so this pins wrapper forwarding rather than serialization round-tripping.
+
+    `prefer_tasks=False` is the client's say under FastMCP 3's SEP-1686, so the optional tool runs
+    inline there; FastMCP 4's SEP-2663 hands that decision to the server, which takes it up."""
     agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
         Agent(
             TestModel(call_tools=['required_task_tool', 'optional_task_tool']),
@@ -1235,7 +1248,10 @@ async def test_prefect_mcptoolset_preserves_task_routing() -> None:
     async def run_agent() -> str:
         return (await agent.run('Call both tools')).output
 
-    assert await run_agent() == '{"required_task_tool":"required_completed","optional_task_tool":"optional_sync"}'
+    assert (
+        await run_agent()
+        == f'{{"required_task_tool":"required_completed","optional_task_tool":"{_OPTIONAL_TASK_ROUTING}"}}'
+    )
 
 
 async def test_capability_contributed_toolset_id_from_capability():
@@ -1633,7 +1649,8 @@ async def test_prefect_agent_run_with_runtime_external_toolset() -> None:
     )
 
     assert result.output == DeferredToolRequests(
-        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')]
+        calls=[ToolCallPart('external', {'query': 'runtime'}, tool_call_id='call-1')],
+        validated_args={'call-1': {'query': 'runtime'}},
     )
 
 
@@ -2025,12 +2042,65 @@ async def test_deprecated_agent_executes_identified_dynamic_toolset_task(blockbu
     assert calls[0] is not None
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_deprecated_agent_holds_per_run_step_false_dynamic_toolset_for_the_run(blockbuster_enabled: bool) -> None:
+    """The deprecated wrapper resolves and enters an identified `per_run_step=False` dynamic toolset once per run.
+
+    Its tasks run in the flow's process, so they reuse the toolset the run holds, as under `PrefectDurability`,
+    instead of each building and entering their own.
+    """
+    assert blockbuster_enabled is False
+    counts = {'factory': 0, 'enter': 0}
+
+    class CountingToolset(FunctionToolset[None]):
+        async def __aenter__(self) -> Self:
+            counts['enter'] += 1
+            return await super().__aenter__()
+
+    async def get_price() -> str:
+        return '42'
+
+    def build(ctx: RunContext[None]) -> FunctionToolset[None]:
+        counts['factory'] += 1
+        return CountingToolset([get_price])
+
+    agent = Agent(
+        TestModel(),
+        name='deprecated_run_held_dynamic',
+        deps_type=type(None),
+        toolsets=[DynamicToolset(build, per_run_step=False, id='deprecated_held')],
+    )
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    result = await prefect_agent.run('Get the price')
+
+    assert '42' in str(result.output)
+    assert counts == {'factory': 1, 'enter': 1}
+
+
 # Test cache policies
 async def test_cache_policy_default():
     """Test that the default cache policy is set correctly."""
     assert DEFAULT_PYDANTIC_AI_CACHE_POLICY is not None
     # It's a CompoundCachePolicy instance with policies attribute
     assert hasattr(DEFAULT_PYDANTIC_AI_CACHE_POLICY, 'policies')
+
+
+def projected_cache_inputs(inputs: dict[str, Any]) -> dict[str, Any]:
+    """The projection of `inputs` that `PrefectAgentInputs.compute_key` hands Prefect's `INPUTS` policy to hash.
+
+    Asserting on the projection pins what a key is made of; two digests only show whether they match.
+    """
+    hashed: list[dict[str, Any]] = []
+
+    def record(task_ctx: TaskRunContext, inputs: dict[str, Any], flow_parameters: dict[str, Any], **kwargs: Any) -> str:
+        hashed.append(inputs)
+        return 'key'
+
+    with patch.object(INPUTS, 'compute_key', record):
+        PrefectAgentInputs().compute_key(task_ctx=MagicMock(), inputs=inputs, flow_parameters={})
+    [projected] = hashed
+    return projected
 
 
 async def test_cache_policy_custom():
@@ -2178,7 +2248,14 @@ async def test_cache_policy_per_run_ids_excluded_but_dict_keys_kept():
 
 
 def test_cache_policy_keeps_user_dataclass_fields():
-    """Cache projection preserves user dependency fields that share internal context names."""
+    """Cache projection preserves user dependency fields that share internal context names.
+
+    A dataclass class, unlike an instance, is kept as is rather than expanded into its fields.
+    """
+
+    @dataclass
+    class CacheOutput:
+        answer: str
 
     @dataclass
     class CacheDeps:
@@ -2186,6 +2263,7 @@ def test_cache_policy_keeps_user_dataclass_fields():
         run_id: str
         conversation_id: str
         tool_call_id: str
+        output_type: type[CacheOutput] = CacheOutput
 
     deps = CacheDeps(
         timestamp='user-time',
@@ -2196,13 +2274,14 @@ def test_cache_policy_keeps_user_dataclass_fields():
     )
     ctx = RunContext(deps=deps, model=TestModel(), usage=RunUsage())
 
-    projected = _strip_cache_excluded_fields(_replace_run_context({'ctx': ctx}))
+    projected = projected_cache_inputs({'ctx': ctx})
 
     assert projected['ctx']['deps'] == {
         'timestamp': 'user-time',
         'run_id': 'user-run',
         'conversation_id': 'user-conversation',
         'tool_call_id': 'pyd_ai_user_value',
+        'output_type': CacheOutput,
     }
 
 
@@ -2678,15 +2757,45 @@ def test_cache_policy_excludes_non_serializable_deps():
     assert key_for(['acme', threading.Lock()]) == key_for(['acme', threading.Lock()])
     assert key_for(('acme', threading.Lock())) != key_for(('globex', threading.Lock()))
 
+    all_deps = [
+        CacheDeps(tenant='acme'),
+        CacheModelDeps(tenant='acme'),
+        threading.Lock(),
+        ['acme', threading.Lock()],
+        ('acme', threading.Lock()),
+    ]
+    projected = [
+        projected_cache_inputs({'ctx': RunContext(deps=deps, model=TestModel(), usage=RunUsage())})['ctx']['deps']
+        for deps in all_deps
+    ]
+    assert projected == snapshot(
+        [
+            {'tenant': 'acme', 'lock': '<non-serializable>'},
+            {'tenant': 'acme', 'lock': '<non-serializable>'},
+            '<non-serializable>',
+            ['acme', '<non-serializable>'],
+            ('acme', '<non-serializable>'),
+        ]
+    )
 
-def test_cache_policy_projects_nested_run_context_and_tool():
+
+@pytest.mark.parametrize('container', ['tuple', 'list', 'dict'])
+def test_cache_policy_projects_nested_run_context_and_tool(container: Literal['tuple', 'list', 'dict']):
     """The projection reaches a `RunContext`/`ToolsetTool` nested in a container, not just a top-level one.
 
     `PrefectOperationBackend` passes an operation's logical inputs as a single `*args` tuple
     (so nothing caps how many inputs an operation may have), which means neither ever
     arrives as a top-level bound parameter. Without recursion the raw `RunContext` is hashed and
     `compute_key` raises `Unable to create hash` for any agent whose `deps` hold a live resource.
+    A list or dict nests them the same way, and a nested `RunContext` is projected as a top-level one is.
     """
+
+    def nest(items: tuple[object, ...]) -> object:
+        if container == 'tuple':
+            return items
+        if container == 'list':
+            return list(items)
+        return dict(zip(('tool_name', 'args', 'ctx', 'tool'), items))
 
     @dataclass
     class CacheDeps:
@@ -2706,7 +2815,7 @@ def test_cache_policy_projects_nested_run_context_and_tool():
         )
         return cache_policy.compute_key(
             task_ctx=mock_task_ctx,
-            inputs={'unit_name': 'unit', 'args': (tool_name, {}, ctx, tool)},
+            inputs={'unit_name': 'unit', 'args': nest((tool_name, {}, ctx, tool))},
             flow_parameters={},
         )
 
@@ -2716,6 +2825,11 @@ def test_cache_policy_projects_nested_run_context_and_tool():
     # And still discriminating through the container.
     assert key_for('acme', 'tool') != key_for('globex', 'tool')
     assert key_for('acme', 'tool') != key_for('acme', 'other')
+
+    ctx = RunContext(deps=CacheDeps(tenant='acme'), model=TestModel(), usage=RunUsage())
+    assert projected_cache_inputs({'args': nest(('tool', {}, ctx))}) == {
+        'args': nest(('tool', {}, projected_cache_inputs({'ctx': ctx})['ctx']))
+    }
 
 
 def test_cache_policy_projects_a_bare_tool_definition_in_the_inputs():
@@ -2863,9 +2977,85 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'projection (if it should fork the cache key) or to `cache_irrelevant` (with a reason).'
     )
     # A context that doesn't set them hashes as it did before they were projected.
-    assert projected.isdisjoint(projected_only_when_set)
-    deadline = datetime(2030, 1, 1, tzinfo=UTC)
-    assert _replace_run_context({'ctx': replace(ctx, deadline=deadline)})['ctx']['deadline'] == deadline
+    assert projected.isdisjoint(projected_only_when_set | projected_via_derived_key)
+
+    # Each field set to its own value, so a projection that reads, transforms or drops the wrong one shows here.
+    populated = RunContext(
+        deps={'tenant': 'acme'},
+        model=TestModel(),
+        usage=RunUsage(),
+        _model_id='test:model-id',
+        usage_limits=UsageLimits(request_limit=7),
+        deadline=datetime(2030, 1, 1, tzinfo=UTC),
+        agent=Agent(name='agent-name'),
+        prompt='the prompt',
+        messages=[ModelRequest(parts=[UserPromptPart('hi')])],
+        validation_context={'lang': 'en'},
+        retries={'tool': 2},
+        tool_call_id='call-id',
+        tool_name='tool',
+        retry=1,
+        max_retries=3,
+        run_step=4,
+        tool_call_approved=True,
+        tool_call_metadata={'approved_by': 'ops'},
+        metadata={'trace': 'abc'},
+        model_settings={'temperature': 0.5},
+        workspace=ref_workspace(WorkspaceRef(provider='fake', id='ws')),
+        loaded_capability_ids={'cap-b', 'cap-a'},
+        discovered_tool_names={'tool-b', 'tool-a'},
+        _anchored_evidence=AnchoredEvidence(
+            discovered_tool_names=frozenset({'anchored-tool'}), loaded_capability_ids=frozenset({'anchored-cap'})
+        ),
+        _tool_name_path=('prefix_',),
+    )
+    assert projected_cache_inputs({'ctx': populated}) == snapshot(
+        {
+            'ctx': {
+                'deps': {'tenant': 'acme'},
+                'agent': 'agent-name',
+                'model': 'test:test',
+                '_model_id': 'test:model-id',
+                'retries': {'tool': 2},
+                'tool_call_id': 'call-id',
+                'tool_name': 'tool',
+                'prompt': 'the prompt',
+                'metadata': {'trace': 'abc'},
+                'validation_context': {'lang': 'en'},
+                'model_settings': {'temperature': 0.5},
+                'messages': [
+                    {
+                        'parts': [{'content': 'hi', 'part_kind': 'user-prompt'}],
+                        'instructions': None,
+                        'kind': 'request',
+                        'metadata': None,
+                        'state': 'complete',
+                    }
+                ],
+                'tool_call_approved': True,
+                'tool_call_metadata': {'approved_by': 'ops'},
+                'retry': 1,
+                'max_retries': 3,
+                'run_step': 4,
+                'loaded_capability_ids': ['cap-a', 'cap-b'],
+                'discovered_tool_names': ['tool-a', 'tool-b'],
+                '_anchored_evidence': (['anchored-tool'], ['anchored-cap']),
+                'usage_limits': {
+                    'cost_limit': None,
+                    'request_limit': 7,
+                    'tool_calls_limit': None,
+                    'input_tokens_limit': None,
+                    'output_tokens_limit': None,
+                    'total_tokens_limit': None,
+                    'per_request_input_tokens_limit': None,
+                    'count_tokens_before_request': False,
+                },
+                'workspace': {'provider': 'fake', 'id': 'ws'},
+                '_tool_name_path': ('prefix_',),
+                'deadline': datetime(2030, 1, 1, tzinfo=UTC),
+            }
+        }
+    )
 
 
 async def test_repeated_run_hits_cache():
@@ -3997,6 +4187,62 @@ async def test_prefect_durability_allows_overridden_toolsets_outside_flow() -> N
     assert result.output == 'Echo: Hello outside'
 
 
+async def test_prefect_durability_override_capabilities_follow_the_per_run_rules() -> None:
+    """Stacking keeps the bound `PrefectDurability`, and a flow treats what the override adds like a per-run capability.
+
+    A hook-only capability runs inside the flow, and one that contributes an executing toolset is rejected there. A list
+    without the bound `PrefectDurability` is refused wherever the override is entered, as Prefect carries an override
+    entered outside a flow into it.
+    """
+    events: list[str] = []
+
+    class RecordingCapability(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            events.append('before_run')
+
+    agent = Agent(_durability_fn_model, name='durability_override_capabilities', capabilities=[PrefectDurability()])
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Hello')).output
+
+    with agent.override(capabilities=[*agent.root_capability.capabilities, RecordingCapability()]):
+        assert await run_agent() == snapshot('Echo: Hello')
+    assert events == ['before_run']
+
+    with agent.override(
+        capabilities=[*agent.root_capability.capabilities, Toolset(FunctionToolset(id='override_added'))]
+    ):
+        with pytest.raises(UserError, match=r'FunctionToolset .*cannot be added at runtime'):
+            await run_agent()
+
+    with pytest.raises(UserError, match='holds the bound `PrefectDurability`'):
+        with agent.override(capabilities=[RecordingCapability()]):
+            pass
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in REBIND_CASES])
+async def test_prefect_durability_override_capabilities_refuses_a_list_that_would_bind_it_again(
+    case: RebindCase,
+) -> None:
+    """The bound `PrefectDurability` held other than by an item of `root_capability.capabilities` is refused unbound.
+
+    Nested in a new container, wrapped again, or taken from `from_agent()` out of its wrapper, it would go through
+    `for_agent` again and bind the agent's tasks a second time.
+    """
+    durability = PrefectDurability()
+    agent = Agent(
+        _durability_fn_model,
+        name=f'durability_override_{case.id}',
+        capabilities=[WrapperCapability(wrapped=durability) if case.wrap_durability else durability],
+    )
+    bound = PrefectDurability.from_agent(agent)
+    assert bound is not None
+    with pytest.raises(UserError, match='must keep, unchanged, the item'):
+        with agent.override(capabilities=case.capabilities(agent, bound)):
+            pass
+
+
 async def test_prefect_durability_rejects_runtime_toolset_reusing_registered_id() -> None:
     agent = Agent(
         _durability_fn_model,
@@ -4088,6 +4334,28 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
     assert calls == ['called']
     assert len(task_run_names) == 1
     assert task_run_names[0].startswith('Call Tool: dynamic_tool')
+
+
+@pytest.mark.parametrize('variant', VARIANTS)
+async def test_prefect_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
+    variant: Variant,
+) -> None:
+    """Parallel tool-call tasks list and call their tools through the toolset prepared once for the step.
+
+    `FunctionModel` drives it rather than a cassette: the race is between the tool-call tasks, after the model
+    response that requests both calls.
+    """
+    state = StepState()
+    agent = parallel_calls_agent(f'prefect_parallel_run_held_dynamic_{variant}', variant, state, PrefectDurability())
+
+    @flow(name=f'prefect_parallel_run_held_dynamic_{variant}')
+    async def run_agent() -> str:
+        return (await agent.run('go')).output
+
+    assert await run_agent() == 'done'
+    assert state.listed.keys() == {'call-a', 'call-b'}
+    assert state.called == state.listed
+    assert len(set(state.listed.values())) == 1
 
 
 async def test_prefect_durability_task_name_assembly_sequence() -> None:
@@ -6062,7 +6330,7 @@ async def test_prefect_mcp_auth_function_connects_each_run_as_its_own_user(block
     # A `localhost` URL keeps the module's VCR cassettes from intercepting the in-process requests.
     # Each run of the CI matrix installs one FastMCP generation, so it covers only one of the branches.
     client: httpx.AsyncClient | httpx2.AsyncClient
-    if is_mcp_sdk_v2():
+    if MCP_SDK_V2:
         client = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app))  # pragma: lax no cover
     else:
         client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app))  # pragma: lax no cover
@@ -6119,7 +6387,7 @@ async def test_prefect_mcp_server_keeps_one_session_per_flow(blockbuster_enabled
         return (await agent.run('go')).output
 
     assert await run_flow() == 'done'
-    assert counts == snapshot({'initialize': 1, 'tools/list': 1, 'tools/call': 2})
+    assert counts == snapshot({'handshake': 1, 'tools/list': 1, 'tools/call': 2})
     # The run closed the session it held; nothing keeps the server connected between runs.
     assert not toolset.is_running
 

@@ -267,7 +267,7 @@ files not in `accepted` keep the workspace's level. Files are compared when
 
 The lower level changes what reaches the model only in capabilities that check
 `authority_of` (see
-[Files you didn't write](https://pydantic.dev/docs/ai/core-concepts/workspace/#workspace-authority)).
+[Marking who wrote the files](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority)).
 `RepoContext`, `Skills` and `SubAgents` don't check it yet, so on their own they
 still load a changed file as before.
 

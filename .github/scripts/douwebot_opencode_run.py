@@ -12,6 +12,7 @@ import subprocess
 import tempfile
 import time
 import urllib.request
+from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -74,24 +75,38 @@ CODING_PLAN_HANDOVER_ERRORS = frozenset({'provider.quota', 'provider.rate-limit'
 # The GLM Coding Plan, on its own coding endpoint. OpenCode 2.2.5 reads its key from `ZHIPU_API_KEY` only.
 ZAI = Provider(
     'zai-coding-plan',
-    'zai-coding-plan/glm-5.3-flash',
+    'zai-coding-plan/glm-5.4',
     'ZHIPU_API_KEY',
     'ZAI_API_KEY',
     'the primary Coding Plan',
     'opencode-zai',
     CODING_PLAN_HANDOVER_ERRORS,
     restart_on_rate_limit=True,
+    declares_model=True,
 )
 ZAI_BACKUP = Provider(
     'zai-coding-plan',
-    'zai-coding-plan/glm-5.3-flash',
+    'zai-coding-plan/glm-5.4',
     'ZHIPU_API_KEY',
     'ZAI_BACKUP_API_KEY',
     'the backup Coding Plan',
     'opencode-zai',
     CODING_PLAN_HANDOVER_ERRORS,
     restart_on_rate_limit=True,
+    declares_model=True,
 )
+# The entry a run's config declares for a model, when its provider declares the model. OpenCode 2.2.5's bundled catalog
+# lacks GLM-5.4 and gives a declared model it lacks a 200,000-token context and a 32,000-token output limit, so this
+# entry restores the limits https://models.dev/api.json lists for `zai-coding-plan/glm-5.4`. Its settings are the ones
+# OpenCode 2.2.5 spells for the `low` variant of a Coding Plan model (`zaiChat` in packages/core/src/variant.ts), which
+# send Z.AI `reasoning_effort: "low"`. Set on the model rather than chosen as a variant, they also reach the agents
+# that title, compact and summarize the run.
+MODEL_DECLARATIONS: dict[str, dict[str, object]] = {
+    'zai-coding-plan/glm-5.4': {
+        'limit': {'context': 1_000_000, 'output': 131_072},
+        'settings': {'thinking': {'type': 'enabled', 'clear_thinking': False}, 'reasoningEffort': 'low'},
+    },
+}
 # OpenCode Zen's free models, with no key: OpenCode 2.2.5 then sends Zen the key `public`. Zen reports a spent free
 # allowance as `FreeUsageLimitError`, which OpenCode 2.2.5 types `provider.free-limit`: `toSessionError` in
 # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/to-session-error.ts
@@ -151,8 +166,8 @@ class Attempt:
     """Whether the failed run's stream holds a `step_finish` event; `None` while the run has not failed."""
 
 
-def step_tokens(line: str) -> int | None:
-    """Return the tokens a `step_finish` event reports, or None for any other event."""
+def step_tokens(line: str) -> Counter[str] | None:
+    """Return the tokens a `step_finish` event reports by kind, such as `input` or `cache.read`, or None otherwise."""
     try:
         event = _EVENT.validate_json(line)
         if event.get('type') != 'step_finish':
@@ -162,10 +177,13 @@ def step_tokens(line: str) -> int | None:
     except ValidationError:
         # A validation error repeats its input, a stream line can hold model text, and job logs are public.
         raise ValueError('OpenCode wrote an invalid stream event') from None
-    total = 0.0
-    for value in tokens.values():
-        total += sum(value.values()) if isinstance(value, dict) else value
-    return int(total)
+    kinds: Counter[str] = Counter()
+    for kind, value in tokens.items():
+        if isinstance(value, dict):
+            kinds.update({f'{kind}.{name}': int(count) for name, count in value.items()})
+        else:
+            kinds[kind] += int(value)
+    return kinds
 
 
 def logfire_endpoint() -> str:
@@ -282,7 +300,8 @@ def read_only_config(*, agent: str, provider: Provider, steps: int | None = None
     }
     if provider.declares_model:
         # An empty entry leaves a model the catalog already has as it is.
-        config['providers'] = {provider.name: {'models': {provider.model.partition('/')[2]: {}}}}
+        declaration = MODEL_DECLARATIONS.get(provider.model, {})
+        config['providers'] = {provider.name: {'models': {provider.model.partition('/')[2]: declaration}}}
     return config
 
 
@@ -296,14 +315,14 @@ def _stream_usage(output: Path) -> tuple[int, int]:
             continue
         if step is not None:
             steps += 1
-            tokens += step
+            tokens += step.total()
     return steps, tokens
 
 
 def _export_run(
     token: str, attempt: Attempt, resource: Mapping[str, str], *, trace_id: str, parent_id: str | None, served: bool
 ) -> None:
-    """Export the `OpenCode run` span of one ended run, with its provider, usage and how it failed, if `token` is set."""
+    """Export the `OpenCode run` span of one ended run, with its model, usage and how it failed, if `token` is set."""
     if not token:
         return
     fields = {
@@ -319,6 +338,7 @@ def _export_run(
     values = {
         **resource,
         'opencode_fallback.provider': attempt.provider.name,
+        'opencode_fallback.model': attempt.provider.model,
         **{f'opencode_fallback.{key}': value for key, value in fields.items() if value is not None},
     }
     span = otlp_span(

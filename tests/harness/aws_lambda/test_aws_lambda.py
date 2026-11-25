@@ -65,13 +65,12 @@ from pydantic_ai_harness.aws_lambda import (
     durable_agent_handler,
     run_durable,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from .._background_job import BackgroundJobModel
 from .conftest import FakeDurableContext
 from .test_aws_lambda_mcp import FakeMCPToolset
-
-_READINESS_WAIT_TIMEOUT = 5.0
 
 
 def tool_then_text(tool_name: str = 'act', args: dict[str, Any] | None = None) -> FunctionModel:
@@ -939,7 +938,7 @@ def shutdown(loop: asyncio.AbstractEventLoop, owner: threading.Thread | None = N
         except RuntimeError:
             assert loop.is_closed()
     if owner is not None:
-        owner.join(timeout=_READINESS_WAIT_TIMEOUT)
+        owner.join(timeout=READINESS_WAIT_TIMEOUT)
         assert not owner.is_alive()
     if not loop.is_closed():
         loop.close()
@@ -961,7 +960,7 @@ def hold_cancel_until_unwinding(
 
     def hold(callback: Callable[..., object], *args: Any) -> asyncio.Handle:
         if callback.__name__ == 'cancel_and_notify':
-            assert unwinding.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            assert unwinding.wait(timeout=READINESS_WAIT_TIMEOUT)
             held.set()
         return schedule(callback, *args)
 
@@ -990,12 +989,12 @@ class TestBridgeFailureModes:
             if close_first:
                 close()
             closing.set()
-            assert release_close.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            assert release_close.wait(timeout=READINESS_WAIT_TIMEOUT)
             if not close_first:
                 close()
 
         def join_after_close_starts(timeout: float | None = None) -> None:
-            assert closing.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            assert closing.wait(timeout=READINESS_WAIT_TIMEOUT)
             release_close.set()
             join(timeout=timeout)
 
@@ -1003,13 +1002,13 @@ class TestBridgeFailureModes:
         monkeypatch.setattr(thread, 'join', join_after_close_starts)
         try:
             loop.call_soon_threadsafe(loop.stop)
-            assert closing.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            assert closing.wait(timeout=READINESS_WAIT_TIMEOUT)
             shutdown(loop, owner=thread)
             assert not thread.is_alive()
             assert loop.is_closed()
         finally:
             release_close.set()
-            join(timeout=_READINESS_WAIT_TIMEOUT)
+            join(timeout=READINESS_WAIT_TIMEOUT)
 
     def test_shutdown_handles_the_owner_closing_before_the_stop_request(self, monkeypatch: pytest.MonkeyPatch) -> None:
         loops = _bridge._AgentLoop()  # pyright: ignore[reportPrivateUsage]
@@ -1020,7 +1019,7 @@ class TestBridgeFailureModes:
 
         def request_stop_after_close(callback: Callable[[], None]) -> asyncio.Handle:
             request_stop(loop.stop)
-            thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+            thread.join(timeout=READINESS_WAIT_TIMEOUT)
             assert not thread.is_alive()
             assert loop.is_closed()
             return request_stop(callback)
@@ -1210,7 +1209,7 @@ class TestBridgeFailureModes:
             # it: a loop thread descheduled for longer than the grace would stop the loop before the
             # run's `finally` starts. Retire once the cleanup is running, as a handler thread that
             # lags the loop does.
-            assert cleanup_reached.wait(timeout=_READINESS_WAIT_TIMEOUT)
+            assert cleanup_reached.wait(timeout=READINESS_WAIT_TIMEOUT)
             retire(loop, task)
 
         monkeypatch.setattr(loops, 'retire', retire_once_cleaning_up)
@@ -1226,7 +1225,7 @@ class TestBridgeFailureModes:
         assert replacement is not abandoned
 
         # The thread closes the loop and then exits, so wait for the exit rather than the close.
-        abandoned_thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+        abandoned_thread.join(timeout=READINESS_WAIT_TIMEOUT)
         assert not abandoned_thread.is_alive()
         assert abandoned.is_closed()
         # The cleanup was still refusing to finish, so the grace deadline is what stopped the loop.
@@ -1288,7 +1287,7 @@ class TestBridgeFailureModes:
             run_durable(run_with_slow_cleanup, context=SuspendingContext(), cancel_timeout=0.01)
 
         assert cancel_held.is_set()
-        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+        thread.join(timeout=READINESS_WAIT_TIMEOUT)
         assert not thread.is_alive()
         assert retired.is_closed()
         assert cleanup_threads == [thread]
@@ -1330,10 +1329,10 @@ class TestBridgeFailureModes:
         cancel_held = hold_cancel_until_unwinding(warm, unwinding, monkeypatch)
 
         with pytest.raises(Suspend):
-            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=_READINESS_WAIT_TIMEOUT)
+            run_durable(run_with_quick_cleanup, context=SuspendingContext(), cancel_timeout=READINESS_WAIT_TIMEOUT)
 
         assert cancel_held.is_set()
-        assert cleanup_finished.wait(timeout=_READINESS_WAIT_TIMEOUT)
+        assert cleanup_finished.wait(timeout=READINESS_WAIT_TIMEOUT)
         # The unwind beat the budget, so the loop is still the one the next invocation gets.
         assert loops.get() is warm
         assert not warm.is_closed()
@@ -1392,8 +1391,8 @@ class TestBridgeFailureModes:
             run_durable(abandoned_run, context=SuspendingContext(), cancel_timeout=0.01)
 
         assert cancel_held.is_set()
-        assert cleanup_finished.wait(timeout=_READINESS_WAIT_TIMEOUT)
-        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+        assert cleanup_finished.wait(timeout=READINESS_WAIT_TIMEOUT)
+        thread.join(timeout=READINESS_WAIT_TIMEOUT)
         assert retired.is_closed()
         assert not thread.is_alive()
 
@@ -1417,11 +1416,11 @@ class TestBridgeFailureModes:
         # nothing else references can be garbage-collected, running its `finally`, before the
         # retirement gets to cancel it.
         loop.call_soon_threadsafe(lambda: tasks.append(loop.create_task(pending_work())))
-        assert task_started.wait(timeout=_READINESS_WAIT_TIMEOUT)
+        assert task_started.wait(timeout=READINESS_WAIT_TIMEOUT)
 
         loops.retire(loop, None)
 
-        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+        thread.join(timeout=READINESS_WAIT_TIMEOUT)
         assert task_cancelled.is_set()
         assert tasks[0].cancelled()
         assert loop.is_closed()
@@ -1524,7 +1523,7 @@ class TestBridgeFailureModes:
             cancelled_others.append(len(others))
 
         loop.call_soon_threadsafe(lambda: task_holder.append(loop.create_task(cancel_every_other_task())))
-        assert task_started.wait(timeout=_READINESS_WAIT_TIMEOUT)
+        assert task_started.wait(timeout=READINESS_WAIT_TIMEOUT)
         schedule = loop.call_soon_threadsafe
 
         def release_after(callback: Callable[..., object], *args: Any) -> asyncio.Handle:
@@ -1538,7 +1537,7 @@ class TestBridgeFailureModes:
 
         loops.retire(loop, task_holder[0])
 
-        thread.join(timeout=_READINESS_WAIT_TIMEOUT)
+        thread.join(timeout=READINESS_WAIT_TIMEOUT)
         assert cancelled_others == [1]
         assert task_holder[0].done()
         assert loop.is_closed()

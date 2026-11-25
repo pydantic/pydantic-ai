@@ -578,7 +578,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._prepare_run_context",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::durable_operation.decorate.decorated",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::durable_operation_dispatch",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field"
@@ -1153,6 +1153,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::RunHeldToolset.stepped",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_replace_run_context"
       ]
     },
@@ -2565,6 +2566,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::RejectWorkspaceInContainer._safe_at_runtime"
       ]
     },
+    "AbstractCapability._validate_override_capabilities": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_override_capabilities"
+      ]
+    },
     "AbstractCapability._validate_runtime_capabilities": {
       "engines": [
         "durable_exec"
@@ -3236,6 +3248,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_override_capabilities",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.from_agent",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_has_retry_on_model_errors.visit"
       ]
@@ -3665,6 +3678,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
     },
@@ -3756,6 +3770,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::_encode"
+      ]
+    },
+    "_TokenCountingUnavailableError": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
       ]
     }
   },
@@ -7054,6 +7079,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableDynamicToolset.for_run_step",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableToolsetBase.for_run_step",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::RunHeldToolset.stepped",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::TemporalWrapperToolset.for_run_step"
       ]
     },

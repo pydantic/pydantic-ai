@@ -218,6 +218,31 @@ A tool's [`args_validator`](../tools-advanced.md#args-validator) runs in a `vali
 
 Each activity derives its typed arguments independently, so schema validators must be idempotent. A Pydantic validation context is rebuilt from the `validation_context` configured on [`Agent`][pydantic_ai.agent.Agent]; a callable context builder runs again with the activity's own run context.
 
+Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's schema, which reads each field's alias. Pydantic models and Pydantic dataclasses, and the values nested in them, cross by alias. A `TypedDict` or standard-library dataclass outside one crosses by Python name, so the second validation reads none of its aliased fields: a required one fails, and an optional one is left out or takes its default. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
+
+```python
+from typing import Annotated
+
+from pydantic import ConfigDict, Field, with_config
+from typing_extensions import TypedDict
+
+
+@with_config(ConfigDict(validate_by_name=True))
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+```
+
+A field whose serialization alias is not a name it validates by crosses under a name the second validation doesn't read, with the same result. That covers a `serialization_alias` alone, a `validation_alias` that differs from it, an `alias_generator` that sets only serialization aliases, and any alias under `validate_by_alias=False`. Keep `validate_by_alias` on, and add the serialization alias to the names the field validates by, next to the ones it already has:
+
+```python
+from pydantic import AliasChoices, BaseModel, Field
+
+
+class Room(BaseModel):
+    room: str = Field(serialization_alias='roomOut', validation_alias=AliasChoices('room', 'roomOut'))
+    floor: int = Field(validation_alias=AliasChoices('floorIn', 'floorOut'), serialization_alias='floorOut')
+```
+
 ### Agent Run Context and Dependencies
 
 As workflows and activities run in separate processes, any values passed between them need to be serializable. As these payloads are stored in the workflow execution event history, Temporal limits their size to 2MB by default — see [Large Payloads](#large-payloads) for what that budget actually buys you.
@@ -263,8 +288,7 @@ secrets as workflow-side arguments; use a [payload codec](#large-payloads) to pr
 ### Harness Workspace Capabilities {#harness-workspace-capabilities}
 
 [Harness](../harness/index.md) workspace capabilities such as `Coder`, `Shell` and `FileSystem` work in a
-Temporal workflow; the [workspace guide](../workspace.md#harness-workspace-capabilities) shows what works
-on each engine. Three things are specific to Temporal.
+Temporal workflow, as they do on DBOS and Prefect. Three things are specific to Temporal.
 
 **Live events.** Tools that write files ask for approval and report the write from the workflow, so
 `FileChangeRequestedEvent`, `FileWrittenEvent`, `FileEditedEvent` and `DirectoryCreatedEvent` reach your
@@ -321,6 +345,8 @@ running.
 Attach [capabilities](../capabilities/overview.md) when the agent is constructed, so `TemporalDurability.for_agent()` can register their activities before the worker starts. Passing `agent.run(capabilities=[...])` inside a workflow raises a `UserError`: a capability added that late has no registered activities for the toolsets it contributes or for its own [`@durable_operation`][pydantic_ai.capabilities.durable_operation] methods.
 
 Capabilities that only observe the run are safe to attach per-run: their hooks read run state but don't contribute tools, toolsets, or durable operations. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] is the built-in example and is exempt from the restriction. The current restriction is more conservative because third-party capabilities can't yet declare that they only observe the run. Deriving this from the hooks a capability overrides is tracked in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477); if you need a per-run capability inside a workflow, please share your use case there. Outside a workflow the durability capability is transparent, so per-run capabilities are fine there.
+
+[`agent.override(capabilities=...)`][pydantic_ai.agent.AbstractAgent.override] replaces the agent's capabilities, so build its list from `agent.root_capability.capabilities` to keep the bound [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]: a list without it raises a [`UserError`][pydantic_ai.exceptions.UserError]. Inside a workflow, the capabilities the list adds are held to the same rule as `agent.run(capabilities=[...])`.
 
 ### Large Payloads
 
@@ -654,7 +680,7 @@ The deadline bounds the agent run, not the workflow: a workflow's `execution_tim
 
 ### Counting Tokens Before a Request
 
-With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count calls the provider in an `agent__{name}__model_count_tokens` activity ahead of each model request activity, configured like the model request activities. A model that can't count raises `NotImplementedError`, and a request it can't count raises [`UserError`][pydantic_ai.exceptions.UserError], in workflow code, without the activity being retried. Any other error from the count, a subclass of `UserError` included, fails the activity as it would fail a model request activity. A history recorded by an earlier version, which counted in workflow code, replays the same way: a `workflow.patched()` marker tells the two apart.
+With [`count_tokens_before_request=True`](../agent.md#usage-limits), the token count calls the provider in an `agent__{name}__model_count_tokens` activity ahead of each model request activity, configured like the model request activities. A model that can't count raises `NotImplementedError`, and a request it can't count raises [`UserError`][pydantic_ai.exceptions.UserError], in workflow code, without the activity being retried. `openai-codex:` and `openai-chatgpt:` models raise a `UserError` that is also a `NotImplementedError`, and it reaches workflow code as a `UserError`. Any other error from the count, another subclass of `UserError` included, fails the activity as it would fail a model request activity. A history recorded by an earlier version, which counted in workflow code, replays the same way: a `workflow.patched()` marker tells the two apart.
 
 ### Suspended Turns and Background Mode
 
@@ -1055,7 +1081,7 @@ An exception a tool raises reaches workflow code as Temporal's `ActivityError`, 
 
 A model error is different: with [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability], a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] a model request raises, such as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], reaches workflow code as itself, with its fields, rather than as an `ActivityError`. A field value that isn't JSON-serializable, like an unusual response body, crosses as its string form. This applies to Pydantic AI's own error classes: a subclass you define still arrives as an `ActivityError`. That's what lets `on_model_request_error` hooks and other workflow-side code that handles model errors work the same with and without Temporal. Temporal still retries the failed activity according to its retry policy before the error reaches the workflow, and the original `ActivityError` is the rebuilt error's `__cause__`.
 
-A retry policy and workflow code see a model error differently. Workflow code and capabilities get the [error category](../models/overview.md#handling-model-api-errors) class, so `except ModelTimeoutError` or `except ModelRateLimitError` works in a workflow. A retry policy's `non_retryable_error_types` only sees the error's `ApplicationError` type, which is `ModelHTTPError` for an error that has an HTTP status and `ModelAPIError` for any other category, the class it's raised as apart from its category. So a policy that names a category, like `'ModelRateLimitError'`, matches nothing. A policy that names `'ModelHTTPError'` or `'ModelAPIError'` matches what it did before the categories existed, except for errors that now get the HTTP status the provider uses for the same error, and so are now also raised as a `ModelHTTPError`: Bedrock `ConverseStream` exception events (e.g. a throttling event as a 429), error objects inside an OpenAI-compatible or OpenAI Responses stream, Hugging Face Text Generation Inference's in-stream `OverloadedError`, and xAI's `INVALID_ARGUMENT` (as a 400). These now report `ModelHTTPError` instead of `ModelAPIError`.
+A retry policy and workflow code see a model error differently. Workflow code and capabilities get the [error category](../models/overview.md#handling-model-api-errors) class, so `except ModelTimeoutError` or `except ModelRateLimitError` works in a workflow. A retry policy's `non_retryable_error_types` only sees the error's `ApplicationError` type, which is `ModelHTTPError` for an error that has an HTTP status and `ModelAPIError` for any other category, the class it's raised as apart from its category. So a policy that names a category, like `'ModelRateLimitError'`, matches nothing. A policy that names `'ModelHTTPError'` or `'ModelAPIError'` matches what it did before the categories existed, except for errors that now get the HTTP status the provider uses for the same error, and so are now also raised as a `ModelHTTPError`: Bedrock `ConverseStream` exception events (e.g. a throttling event as a 429), error objects inside an OpenAI-compatible or OpenAI Responses stream, Hugging Face Text Generation Inference's in-stream `OverloadedError`, and xAI's `INVALID_ARGUMENT` (as a 400). These now report `ModelHTTPError` instead of `ModelAPIError`. A [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] or [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError] reports `UnexpectedModelBehavior`, which every retry policy treats as non-retryable, so Temporal fails the activity on its first attempt and leaves the response the model couldn't use to workflow code, like a [`ModelFallback`](../capabilities/model-fallback.md) capability.
 
 Temporal doesn't retry a model error that another attempt at the same request can't fix. By default, `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] lists:
 

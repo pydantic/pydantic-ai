@@ -348,8 +348,8 @@ that emit them inline.
 ## Large tool outputs
 
 `ToolOutputLimits` measures and reduces a tool return after the tool task run returns to its parent run.
-Configure `resolve_tool_options` to return `False` for its `read_tool_result` helper so the helper reads from the
-same task that stored the result.
+Configure `resolve_tool_options` to return `False` for its `read_tool_result` and `grep_tool_result` helpers so they
+read from the same task that stored the result.
 
 In `Spill` mode, the capability stores the full payload and gives the model a handle for a later `read_tool_result`
 call. A store backed by the parent run's local filesystem works within that run, but a retried entry task run or another
@@ -376,7 +376,7 @@ from pydantic_ai_harness import RenderWorkflows
 
 
 def resolve_tool_options(operation_id, _tool, tool_name):
-    if tool_name in {'delegate_task', 'read_tool_result', 'read_local_cache'}:
+    if tool_name in {'delegate_task', 'read_tool_result', 'grep_tool_result', 'read_local_cache'}:
         return False
     if isinstance(operation_id, (ToolsetCallToolId, ToolsetValidateToolArgumentsId)):
         if operation_id.toolset_id == 'research_tools':
@@ -412,6 +412,41 @@ An async function tool with the engine-neutral [`durable=False`](https://pydanti
 runs inside the calling task run, whatever the resolver returns for it. Registration only sees `durable` set on
 the tool itself, so for a tool opted out by a `prepare` function or `PrepareTools` instead, have the resolver
 return `False` or the toolset's options.
+
+## Tool arguments
+
+Function tool arguments cross into the chained task run as JSON, and the task run validates them again with the tool's schema,
+which reads each field's alias. Pydantic models and Pydantic dataclasses, and the values nested in them, cross
+by alias. A `TypedDict` or standard-library dataclass outside one crosses by Python name, so the second
+validation reads none of its aliased fields: a required one fails, and an optional one is left out or takes its
+default. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
+
+```python
+from typing import Annotated
+
+from pydantic import ConfigDict, Field, with_config
+from typing_extensions import TypedDict
+
+
+@with_config(ConfigDict(validate_by_name=True))
+class Venue(TypedDict):
+    room: Annotated[str, Field(alias='roomName')]
+```
+
+A field whose serialization alias is not a name it validates by crosses under a name the second validation
+doesn't read, with the same result. That covers a `serialization_alias` alone, a `validation_alias` that differs
+from it, an `alias_generator` that sets only serialization aliases, and any alias under `validate_by_alias=False`.
+Keep `validate_by_alias` on, and add the serialization alias to the names the field validates by, next to the
+ones it already has:
+
+```python
+from pydantic import AliasChoices, BaseModel, Field
+
+
+class Room(BaseModel):
+    room: str = Field(serialization_alias='roomOut', validation_alias=AliasChoices('room', 'roomOut'))
+    floor: int = Field(validation_alias=AliasChoices('floorIn', 'floorOut'), serialization_alias='floorOut')
+```
 
 ## Execution limits
 

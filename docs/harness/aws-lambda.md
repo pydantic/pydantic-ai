@@ -341,6 +341,11 @@ execution's traces show only the work that invocation did, and costs are counted
   served another step's recorded result, which usually fails to decode but can return the wrong
   data. Either way, deploy under a new published version and let in-flight executions drain on the
   old one.
+- **A held dynamic toolset is built outside any step.** A `DynamicToolset` built with
+  `per_run_step=False` is resolved once per run and held for its steps. Its factory, and the
+  `for_run` of the toolset it returns (for an `MCPToolset`, its `auth` or `headers` function), run in
+  the handler on every invocation, so keep them deterministic given the run's `deps` and leave their
+  I/O to the steps.
 - **Step results must survive the SDK serializer.** Results are checkpointed through the Lambda
   SDK's serializer. Tool results are encoded by Pydantic first, so structured returns such as
   `ToolReturn` and `BinaryContent` round-trip; a value Pydantic cannot serialize does not.

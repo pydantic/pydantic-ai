@@ -57,15 +57,35 @@ jobs:
                   typeof owner !== 'string' || !owner || typeof run.head_branch !== 'string' || !run.head_branch) {
                 throw new Error('Invalid workflow head identity');
               }
-              // Fork runs may omit pull_requests. Ask the base repository for the
-              // server's PR associations, then require the exact head identity.
-              const pulls = await github.paginate(github.rest.pulls.list, {
-                ...context.repo, state: 'open', head: `${owner}:${run.head_branch}`, per_page: 100
-              });
-              const matches = pulls.filter(pull => pull.state === 'open' &&
-                pull.head.sha === head && pull.head.repo?.id === repository);
+              let matches;
+              if (['pull_request_review', 'pull_request_review_comment'].includes(run.event)) {
+                // A review run reports the base repository as its head repository, even for a
+                // fork PR. Match the open PRs from the observed branch of any repository by SHA,
+                // and take the head repository from the PR.
+                const {repository: {pullRequests: pulls}} = await github.graphql(`
+                  query($owner: String!, $name: String!, $branch: String!) {
+                    repository(owner: $owner, name: $name) {
+                      pullRequests(states: OPEN, headRefName: $branch, first: 100) {
+                        pageInfo { hasNextPage }
+                        nodes { number state headRefOid headRepository { databaseId } }
+                      }
+                    }
+                  }`, {owner: context.repo.owner, name: context.repo.repo, branch: run.head_branch});
+                if (pulls.pageInfo.hasNextPage) throw new Error('Too many open PRs share the observed head branch');
+                matches = pulls.nodes.filter(pull => pull.state === 'OPEN' && pull.headRefOid === head)
+                  .map(pull => ({number: pull.number, repository: pull.headRepository?.databaseId}));
+              } else {
+                // Fork runs may omit pull_requests. Ask the base repository for the
+                // server's PR associations, then require the exact head identity.
+                const pulls = await github.paginate(github.rest.pulls.list, {
+                  ...context.repo, state: 'open', head: `${owner}:${run.head_branch}`, per_page: 100
+                });
+                matches = pulls.filter(pull => pull.state === 'open' &&
+                  pull.head.sha === head && pull.head.repo?.id === repository)
+                  .map(pull => ({number: pull.number, repository}));
+              }
               if (matches.length !== 1) throw new Error('Requires one open PR at the observed workflow head');
-              number = matches[0].number;
+              ({number, repository} = matches[0]);
             } else {
               throw new Error('Unrecognized review gate event');
             }

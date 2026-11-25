@@ -50,7 +50,10 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import (
+    UserError,
+    _TokenCountingUnavailableError,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.external_events import _refuse_unsupported_external_events  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -105,6 +108,7 @@ from ._operation import (
     DynamicToolsetCallToolParams,
     EventStreamHandlerId,
     EventStreamHandlerParams,
+    IdentityParameterTransport,
     ModelCancelSuspendedResponseId,
     ModelCancelSuspendedResponseParams,
     ModelCompactMessagesId,
@@ -908,6 +912,30 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
         )
 
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        """Validate what `override(capabilities=...)` keeps of the agent's own capabilities.
+
+        `capabilities` are the leaves of the list's items taken unchanged from `root_capability.capabilities`.
+        A durability capability refuses a list that doesn't pass its bound copy through: dropping it would run
+        the agent without durability, and reaching it any other way, as a copy you constructed or inside
+        another capability, would bind it again and register this engine's durable units a second time.
+        Checked wherever the override is entered, inside or outside a durable container, because DBOS and
+        Prefect carry an override entered outside a workflow or flow into it.
+        """
+        for capability in capabilities:
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if capability is self:
+                return
+        name = type(self).__name__
+        raise UserError(
+            "`override(capabilities=...)` replaces the agent's capabilities, so the list must keep, unchanged, "
+            f'the item of `agent.root_capability.capabilities` that holds the bound `{name}` the agent registered '
+            f'its durable {self.durable_unit_plural} with. A `{name}` you construct, or the bound one inside '
+            'another capability, would be bound again. Build the list from `agent.root_capability.capabilities`, '
+            'for example `agent.override(capabilities=[*agent.root_capability.capabilities, extra])`.'
+        )
+
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         # A `CancellationToken` is a same-process handle that cannot cross the durable execution
         # boundary, and firing it inside a workflow/flow would cancel the durable task out of band
@@ -1568,6 +1596,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             resolve_tool_config=resolve_tool_config,
             resolve_validation_config=resolve_validation_config,
             lifecycle=self.engine_spec.toolset_lifecycles['dynamic'],
+            # Identity transports hand every unit the run's own `RunContext`, so the units reach a
+            # toolset the run holds. Transports that carry the context in another form mean the
+            # units run elsewhere and resolve their own.
+            units_share_run_context=all(
+                isinstance(operation.parameter_transport, IdentityParameterTransport)
+                for operation in (get_tools.operation, call_operation)
+            ),
             durable_registrations=self._bound_operation_registrations(get_tools, call_tool, validate_args),
             durable_config=base_config,
         )
@@ -2050,6 +2085,11 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     params.messages, params.model_settings, params.model_request_parameters
                 )
             except NotImplementedError as error:
+                # A provider that serves no token counting raises a `UserError` that is also a `NotImplementedError`:
+                # it's recorded as the `UserError` it's documented as, so it fails the run instead of being retried.
+                # Any other error with both bases is recorded as a `NotImplementedError`.
+                if isinstance(error, _TokenCountingUnavailableError):
+                    return CountTokensResult(error=('UserError', str(error)))
                 return CountTokensResult(error=('NotImplementedError', str(error)))
             except UserError as error:
                 # A subclass carries more than its message, so it fails the unit as the engine fails any error.

@@ -6,18 +6,22 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES
+from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.openai import (
+    _GPT_6_2_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     OpenAIJsonSchemaTransformer,
     OpenAIModelProfile,
     # Keep the provider-specific specialization private; the provider only selects it.
     _OpenAIJsonSchemaTransformer,  # pyright: ignore[reportPrivateUsage]
+    is_openai_computer_use_model,
     openai_model_profile,
     openai_realtime_model_profile,
 )
 from pydantic_ai.providers import missing_api_key_error
+from pydantic_ai.providers._model_deprecations import OPENAI_MODEL_DEPRECATIONS
 
 if TYPE_CHECKING:
     from pydantic_ai.realtime import RealtimeModelProfile
@@ -85,6 +89,12 @@ class OpenAIProvider(_OpenAISDKProvider):
         # OpenAI-compatible endpoints (Azure, OpenRouter, vLLM, ...) that speak the Responses API without
         # necessarily implementing this item — the same reasoning `openai_supports_phase` documents.
         profile = openai_model_profile(model_name)
+        supported_native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
+        if is_openai_computer_use_model(model_name):
+            # Added here, not in `openai_model_profile`, because the native computer tool is unverified on the other
+            # OpenAI-compatible servers that use that profile. `OpenAIChatModel` never sends it.
+            # https://developers.openai.com/api/docs/guides/tools-computer-use
+            supported_native_tools = supported_native_tools | {ComputerTool}
         return merge_profile(
             profile,
             OpenAIModelProfile(
@@ -149,12 +159,20 @@ class OpenAIProvider(_OpenAISDKProvider):
                 openai_responses_tool_choice_accepts_additional_tools=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                # `gpt-6.2-sol` and `gpt-6.2-astra` put the top-level `instructions` after `input` and bill them at
+                # the uncached rate, and OpenAI recommends leading input messages for reusable instructions
+                # (measured live: https://github.com/pydantic/pydantic-ai/pull/14095). Set here rather than in
+                # `openai_model_profile` because OpenAI-compatible endpoints that share it may render instructions
+                # differently.
+                # https://developers.openai.com/api/docs/guides/latest-model
+                openai_responses_stable_instructions_as_input=model_name.startswith(_GPT_6_2_MODEL_PREFIXES),
                 # GPT-5.6 and later, the models with explicit cache breakpoints, accept `reasoning.effort='max'`
                 # (verified live). Set here rather than in `openai_model_profile` because `max` is unverified on
                 # the OpenAI-compatible endpoints that share it.
                 openai_responses_supports_max_reasoning_effort=bool(
                     profile.get('openai_supports_prompt_cache_breakpoints')
                 ),
+                supported_native_tools=supported_native_tools,
                 # Set here rather than in `openai_model_profile` because OpenAI-compatible Chat Completions APIs
                 # don't all honor it: OpenRouter and xAI silently ignore it, and OpenRouter rejects it for Claude.
                 # A server reached through a custom `base_url` that doesn't honor it opts out in the model's profile.
@@ -171,6 +189,16 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # `ModelRequestRejectedError` before sending. Set here rather than in `openai_model_profile` because the
                 # restriction is unverified on the OpenAI-compatible endpoints that share it.
                 openai_chat_function_tools_require_reasoning_off=model_name.startswith(_GPT_6_MODEL_PREFIXES),
+                # Gemini's OpenAI-compatible endpoint repeats the running usage across streamed chunks: see
+                # `test_gemini_stream_usage_replaces_running_totals` and the live check across Gemini model families
+                # on https://github.com/pydantic/pydantic-ai/pull/14285. Set here rather than in
+                # `openai_model_profile`, which OpenAI-compatible hosts share without this being verified on them.
+                openai_chat_streaming_repeats_usage_totals=model_name.startswith('gemini'),
+                # Gemini's OpenAI-compatible endpoint counts thinking tokens in `total_tokens` but not in
+                # `completion_tokens`: see `test_gemini_usage_counts_thinking_tokens_left_out_of_completion_tokens` and
+                # the live probe on https://github.com/pydantic/pydantic-ai/issues/14291. Set here rather than in
+                # `openai_model_profile` for the same reason as the key above.
+                openai_chat_completion_tokens_omit_reasoning=model_name.startswith('gemini'),
                 # The Batch API is OpenAI's own: set here rather than in `openai_model_profile`, which OpenAI-compatible
                 # providers share without necessarily serving `/v1/batches`. `OpenAIResponsesModel` turns it off for an
                 # Azure OpenAI client.
@@ -182,6 +210,10 @@ class OpenAIProvider(_OpenAISDKProvider):
                 rejects_unpaired_tool_calls=True,
             ),
             special_token_route_profile('openai', model_name),
+            # The OpenAI models drop it for an Azure OpenAI client, as Azure retires models on its own schedule.
+            OpenAIModelProfile()
+            if (deprecation := OPENAI_MODEL_DEPRECATIONS.get(model_name)) is None
+            else OpenAIModelProfile(deprecation=deprecation),
         )
 
     @staticmethod
