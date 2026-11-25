@@ -27,6 +27,7 @@ from pydantic_ai import AgentStreamEvent, CapabilityEvent
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.sub_agents._parent_message import TaskAuthority
 
 SUB_AGENTS_EVENTS = 'sub_agents'
 
@@ -234,6 +235,12 @@ class TaskRequestEvent(ParentMessageEvent, abstract=True):
 
     can_ask_questions: bool = True
     """Whether the sub-agent gets an `ask_parent` tool."""
+
+    task_authority: TaskAuthority = 'none'
+    """How much authority `prompt` carries with the sub-agent, as `SubAgent.task_authority`, and on a worker the
+    messages that steer the run too.
+
+    A listener can change it, such as to `'user'` for a prompt the application sends on the user's behalf."""
 
     forward_events: bool = False
     """Whether the sub-agent's stream events are forwarded as `TaskProgressEvent`s."""

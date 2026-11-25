@@ -28,7 +28,6 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -46,6 +45,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness import DenyUnanswered, HarnessDeprecationWarning
 from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
 from pydantic_ai_harness.sub_agents import ModelOption, SubAgent, SubAgents, SubAgentToolset
+from tests.harness.sub_agents._sent import sent_texts
 
 from ...batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from .._deferred_tools import asking_agent, deferring_agent, pending_agent
@@ -1293,9 +1293,7 @@ class TestNameValidation:
 
 def _prompt(messages: list[ModelMessage]) -> str:
     """The prompt the current run started from, which tells a shared model function which run it is serving."""
-    part = messages[0].parts[-1]
-    assert isinstance(part, UserPromptPart)
-    return str(part.content)
+    return sent_texts(messages[:1])[-1]
 
 
 def _delegate_to_self(task: str) -> ModelResponse:

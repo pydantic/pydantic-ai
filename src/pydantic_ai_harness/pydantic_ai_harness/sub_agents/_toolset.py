@@ -77,6 +77,7 @@ from pydantic_ai_harness.sub_agents._control import (
     TaskControl,
     TaskTelemetry,
     default_factory,
+    operator_factory,
     reporting_settlement,
     run_owned,
     run_remote,
@@ -110,6 +111,7 @@ from pydantic_ai_harness.sub_agents._events import (
     bounded_text,
 )
 from pydantic_ai_harness.sub_agents._models import ModelOption, validate_restriction
+from pydantic_ai_harness.sub_agents._parent_message import DelegatedTask, TaskAuthority, task_message
 from pydantic_ai_harness.sub_agents._tasks import (
     NOT_BACKGROUNDABLE,
     RESUME_DIRECTORY_MISMATCH,
@@ -318,10 +320,27 @@ class SubAgent(Generic[AgentDepsT]):
     output validation and can be text the child rejected, so leave this off for a child whose guardrails keep content
     from its parent."""
 
+    task_authority: TaskAuthority = dataclass_field(default='none', kw_only=True)
+    """How much authority the parent model's task and messages carry with the sub-agent.
+
+    `'none'`: each reaches it as a `ParentMessagePart`, data with a note that the agent that delegated the task wrote
+    it, not the user or the application, so a claim in it such as "the user approved this" grants nothing. `'user'`:
+    each is a plain user prompt, which the sub-agent reads as its user's own words. Either way the sub-agent's
+    instructions say its task comes from another agent."""
+
     @property
     def resolved_name(self) -> str | None:
         """The delegate's name: `name` if set, else the agent's own `name`."""
         return self.name or self.agent.name
+
+
+@dataclass(frozen=True)
+class _CreatedSubAgent(SubAgent[AgentDepsT]):
+    """A sub-agent the model created with `create_agent`."""
+
+    instructions: str | None = dataclass_field(default=None, kw_only=True)
+    """The instructions the model wrote for it, delivered as the parent's message at the start of each conversation,
+    or `None` when its agent has them as its own (`DynamicAgents.instructions_authority='operator'`)."""
 
 
 @dataclass
@@ -1033,13 +1052,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if remote is not None:
             if model is not None:
                 raise ModelRetry(f"Sub-agent {agent_name!r} runs on its worker's model; omit `model`.")
-            resumable, can_ask = remote.resumable, remote.can_ask_questions
+            resumable, can_ask, task_authority = remote.resumable, remote.can_ask_questions, remote.task_authority
         else:
             sub_agent = self._resolve_agent(ctx, agent_name)
             key = self._resolve_model_key(agent_name, sub_agent, model)
             if (exhausted := self._call_budget_message(ctx, agent_name, sub_agent)) is not None:
                 return exhausted
             resumable, can_ask = _local_abilities(ctx, sub_agent)
+            task_authority = sub_agent.task_authority
         self._check_running_limit(ctx, owner, agent_name, conversation_id)
         task_id = resume or _new_task_id(ctx, owner)
         start_type = TaskAssignedEvent if previous is None else TaskResumedEvent
@@ -1058,6 +1078,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     depth=_depth.get() + 1,
                     # The delegating model can only answer from the background.
                     can_ask_questions=can_ask and backgroundable,
+                    task_authority=task_authority,
                     forward_events=self._forward_events,
                     usage_limits=ctx.usage_limits,
                 ),
@@ -1171,6 +1192,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         workspace: Workspace,
     ) -> str:
         """Run a local task and report how it settled as task events."""
+        # A listener may have changed how much authority the task carries, such as for text the user sent.
+        sub_agent = replace(sub_agent, task_authority=start.task_authority)
         link = LocalTaskLink(
             owner=owner, record=record, can_ask=start.can_ask_questions, telemetry=self._telemetry(ctx)
         )
@@ -1298,8 +1321,10 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if record.agent_name in self._remote:
             assert self._transport is not None
             await self._transport.send(event)
-        elif not owner.steer(task_id, event.message):
-            return f'Task {task_id} finished before the message reached it.'
+        else:
+            authority = self._resolve_agent(ctx, record.agent_name).task_authority
+            if not owner.steer(task_id, task_message(event.message, authority)):
+                return f'Task {task_id} finished before the message reached it.'
         return f'Message sent to task {task_id}.'
 
     async def _resume_by_message(self, ctx: RunContext[AgentDepsT], record: DelegationTask, message: str) -> object:
@@ -1451,8 +1476,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         assert dynamic is not None, 'Agents are only created with `dynamic_agents` set.'
         # Without a model, it runs on the delegating run's: `()` allows no menu key either.
         models = () if spec.model is None else [spec.model]
-        return SubAgent(
-            (dynamic.factory or default_factory)(spec), name=spec.name, description=spec.description, models=models
+        operator = dynamic.instructions_authority == 'operator'
+        factory = dynamic.factory or (operator_factory if operator else default_factory)
+        return _CreatedSubAgent(
+            factory(spec),
+            name=spec.name,
+            description=spec.description,
+            models=models,
+            task_authority=dynamic.task_authority,
+            instructions=None if operator else spec.instructions,
         )
 
     async def _run_delegation(
@@ -1662,6 +1694,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         `resume` continues the child from its history with answers to the deferred calls it stopped on.
         """
         prompt, message_history, deferred_tool_results = _child_inputs(task, record, resume)
+        instructions: str | None = None
+        if isinstance(sub_agent, _CreatedSubAgent) and not message_history:
+            # The instructions the model wrote for an agent it created start each of its conversations.
+            instructions = sub_agent.instructions
+        delegated = DelegatedTask(prompt, authority=sub_agent.task_authority, instructions=instructions)
+        # First, so the capabilities after it see the task as the sub-agent reads it.
+        capabilities = [delegated, *capabilities]
         attempted = False
 
         async def start(limits: UsageLimits | None) -> AgentRunResult[Any]:

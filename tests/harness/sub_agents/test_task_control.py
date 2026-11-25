@@ -101,6 +101,7 @@ from pydantic_ai_harness.sub_agents import (
     serialize_message,
 )
 from tests.harness._rendering import sent_messages
+from tests.harness.sub_agents._sent import AGENT_TASK_INSTRUCTIONS, sent_texts
 
 from .._deferred_tools import pending_agent
 from .._recording_durability import RecordingDurability
@@ -189,13 +190,7 @@ def task_texts(messages: Sequence[ModelMessage]) -> list[str]:
 
 
 def user_texts(messages: Sequence[ModelMessage]) -> list[str]:
-    return [
-        part.content
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
-    ]
+    return sent_texts(messages)
 
 
 def task_id_in(receipt: str) -> str:
@@ -543,7 +538,7 @@ class TestSubAgentsTaskControl:
             result = await parent.run('Go.')
         assert tool_returns(result.all_messages())[1].startswith('Message sent to task ')
         assert seen[-1] == 'Focus on y.'
-        assert instructions[-1].endswith('That agent may send you further messages about it while you work.')
+        assert instructions[-1].endswith(AGENT_TASK_INSTRUCTIONS)
 
     async def test_cancel_task_stops_a_running_task(self) -> None:
         gate = Gate()
@@ -3764,7 +3759,7 @@ class TestDelegationTasksConcurrency:
         owner = DelegationTasks()
         older: list[str] = []
         newer: list[str] = []
-        steered: list[str] = []
+        steered: list[ModelRequestPart] = []
         delivered = anyio.Event()
 
         def enqueue(into: list[str]) -> Callable[[TaskOutputPart | TaskQuestionPart], str]:
@@ -3802,7 +3797,7 @@ class TestDelegationTasksConcurrency:
                     conversation_id='root', parent_id=record.id, enqueue=enqueue([]), steer=steered.append
                 ):
                     inner = owner.receiving(
-                        conversation_id='root', parent_id=record.id, enqueue=enqueue([]), steer=lambda text: None
+                        conversation_id='root', parent_id=record.id, enqueue=enqueue([]), steer=lambda part: None
                     )
                     inner.__enter__()
                     inner.__exit__(None, None, None)
@@ -3819,7 +3814,9 @@ class TestDelegationTasksConcurrency:
                 run=steered_run,
             )
             assert 'done' in receipt
-            assert steered == ['go on']
+            # Text steered through the owner, such as from an application's UI, is the user's own.
+            [part] = steered
+            assert isinstance(part, UserPromptPart) and part.content == 'go on'
 
     async def test_a_report_queued_on_an_ended_receiver_goes_to_the_one_still_receiving(self) -> None:
         owner = DelegationTasks()

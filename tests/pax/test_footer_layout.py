@@ -49,6 +49,7 @@ from pydantic_ai_pax.ui.menus.footer_menu import FOOTER_SETTING, FooterSource, f
 from pydantic_ai_pax.ui.menus.set_menu import settings_menu
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.status import TEXT_TIME, Status, StatusLine
+from tests.harness.sub_agents._sent import sent_texts
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs
 from tests.pax.test_live_prompt import editor
 
@@ -401,7 +402,7 @@ async def test_child_text_never_refreshes_the_main_clock_or_borrows_it(tmp_path:
         nonlocal now
         request = messages[0]
         assert isinstance(request, ModelRequest)
-        prompt = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        prompt = sent_texts([request])[0]
         if prompt == 'child':
             now = 150
             yield 'child text'

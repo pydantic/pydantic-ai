@@ -42,6 +42,7 @@ from pydantic_ai_pax.runtime.task_prompts import TaskPrompt
 from pydantic_ai_pax.runtime.tasks import Tasks, resume_prompt
 from pydantic_ai_pax.ui.rendering.status import Status
 from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.harness.sub_agents._sent import sent_texts
 from tests.pax.test_tasks import task
 
 
@@ -69,7 +70,7 @@ def fresh_watcher() -> None:
 def first_prompt(messages: list[ModelMessage]) -> str:
     request = messages[0]
     assert isinstance(request, ModelRequest)
-    prompt = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+    prompt = sent_texts([request])[0]
     assert isinstance(prompt, str)
     return prompt
 

@@ -24,6 +24,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.sub_agents import AgentOverride, SubAgent, SubAgents
 from pydantic_ai_harness.sub_agents._disk import ParsedAgent, parse_agent_markdown
+from tests.harness.sub_agents._sent import AGENT_TASK_INSTRUCTIONS
 
 
 def _delegate_then_finish(agent_name: str) -> FunctionModel:
@@ -241,7 +242,8 @@ class TestCodexDiskLoading:
         parent: Agent[object, str] = Agent(_recording_model(seen, delegate_to='researcher'), capabilities=[cap])
         await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert seen[0][0] is not None and '- researcher: Researches topics' in seen[0][0]
-        assert seen[1][0] == 'Research carefully.\nReport sources.'
+        # The operator's definition stays the sub-agent's instructions, followed by the line every sub-agent gets.
+        assert seen[1][0] == f'Research carefully.\nReport sources.\n\n{AGENT_TASK_INSTRUCTIONS}'
         assert resolved == ['search', 'Read']
         assert toolset in _built(cap)['researcher'].toolsets
         assert _built(cap)['researcher'].model is None

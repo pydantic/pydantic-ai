@@ -15,7 +15,7 @@ from pydantic_ai import AgentStreamEvent, CancellationToken, RunContext
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import WrapRunHandler
 from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded, UserError
-from pydantic_ai.messages import ModelMessage, UserPromptPart
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness._sub_agent_output import (
@@ -43,6 +43,7 @@ from pydantic_ai_harness.sub_agents._events import (
     agent_mailbox,
     task_mailbox,
 )
+from pydantic_ai_harness.sub_agents._parent_message import DelegatedTask, task_message
 from pydantic_ai_harness.sub_agents._tasks import CANCELLED_ANSWER, enqueue_while_open
 from pydantic_ai_harness.sub_agents._toolset import delegation_level
 from pydantic_ai_harness.sub_agents._transport import SubAgentTransport
@@ -51,14 +52,6 @@ _STOP_REPORT_SECONDS = 5.0
 """How long a stopping worker tries to report each task it was running."""
 
 _logger = logging.getLogger(__name__)
-
-
-def _steer(ctx: RunContext[Any], message: str) -> None:
-    """Queue the delegating agent's message on the task's run, as it was sent.
-
-    A run that has read its last queued messages drops it, as a local task does.
-    """
-    enqueue_while_open(ctx, UserPromptPart(message), priority='asap')
 
 
 class _WorkerLink(TaskLink):
@@ -90,10 +83,17 @@ class _WorkerLink(TaskLink):
         await answered.wait()
         return answer[0]
 
+    def steer(self, ctx: RunContext[Any], message: str) -> None:
+        """Queue the delegating agent's message on the task's run, with the task's authority.
+
+        A run that has read its last queued messages drops it, as a local task does.
+        """
+        enqueue_while_open(ctx, task_message(message, self.start.task_authority), priority='asap')
+
     async def wrap_run(self, ctx: RunContext[Any], *, handler: WrapRunHandler) -> Any:
         self._ctx = ctx
         for message in self._pending_messages:
-            _steer(ctx, message)
+            self.steer(ctx, message)
         self._pending_messages.clear()
         try:
             return await handler()
@@ -121,7 +121,7 @@ class _WorkerLink(TaskLink):
         if self._ctx is None:
             self._pending_messages.append(message.message)
         else:
-            _steer(self._ctx, message.message)
+            self.steer(self._ctx, message.message)
 
     def _handle_answer(self, message: TaskAnsweredEvent) -> None:
         if (waiter := self._answers.pop(message.question_id, None)) is not None:
@@ -293,6 +293,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
                 return TaskFailedEvent(
                     task_id=task_id, agent_name=agent_name, error='This worker has no conversation to resume.'
                 )
+        delegated = DelegatedTask(start.prompt, authority=start.task_authority)
         # Every attempt adds to one usage, so the usage limits and the reported usage cover them all.
         usage = RunUsage()
         attempt = 0
@@ -306,7 +307,7 @@ class SubAgentWorker(Generic[AgentDepsT]):
                     deps=self.deps,
                     usage=usage,
                     usage_limits=start.usage_limits,
-                    capabilities=[link, serving_model],
+                    capabilities=[delegated, link, serving_model],
                     cancellation_token=link.token,
                 )
             except RunCancelled as exc:

@@ -49,7 +49,7 @@ from pydantic_ai_harness.file_system import (
 )
 from pydantic_ai_harness.permissions import PermissionAction
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_ai_harness.sub_agents import DelegationOutcome
+from pydantic_ai_harness.sub_agents import DelegationOutcome, ParentMessagePart
 from pydantic_ai_pax.config import PermissionMode
 from pydantic_ai_pax.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_ai_pax.runtime.eager_timing import NESTED_CALL
@@ -1248,6 +1248,9 @@ def _add_request_entries(history: _HistoryEntriesContext, request: ModelRequest,
                     user_item(part, id=f'h{len(history.entries)}', image_ids=history.image_ids, run_id=run_id)
                 )
                 run_id = None
+            case ParentMessagePart():
+                # A task's message from the agent that delegated it, shown where the prompt it stands for was.
+                history.entries.append(Item(id=f'h{len(history.entries)}', kind='user', text=part.content))
             case ToolReturnPart():
                 _join_tool_result(history, part)
             case _:

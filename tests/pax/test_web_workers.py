@@ -33,6 +33,7 @@ from pydantic_ai_pax.builtin_plugins.web.workers import Workers
 from pydantic_ai_pax.config import PluginSettings
 from pydantic_ai_pax.plugins import TaskInfo, TaskProgress
 from pydantic_ai_pax.runtime.tasks import resume_prompt
+from tests.harness.sub_agents._sent import sent_texts
 from tests.pax.test_web import TOKEN, WIRE, MakeWeb, Web, make_web, receive_until
 
 __all__ = ['make_web']
@@ -44,13 +45,8 @@ ORIGIN = {'origin': 'http://testserver'}
 
 
 def prompts(messages: list[ModelMessage]) -> list[str]:
-    return [
-        part.content
-        for message in messages
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
-    ]
+    """What a task was sent: its task from the delegating agent, and what the user sent it since."""
+    return sent_texts(messages)
 
 
 def delegate(task: str, *, background: bool = False) -> DeltaToolCalls:

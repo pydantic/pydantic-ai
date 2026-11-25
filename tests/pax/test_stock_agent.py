@@ -15,7 +15,7 @@ from pydantic import JsonValue
 from pydantic_ai import DeferredToolRequests
 from pydantic_ai.capabilities import Capability, LocalWorkspace, Thinking
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ToolReturnPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -28,6 +28,7 @@ from pydantic_ai_pax.config import PluginSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.models.resolver import ModelResolver
 from pydantic_ai_pax.plugins.loader import PluginSettingsError
+from tests.harness.sub_agents._sent import sent_texts
 
 
 def _answered(messages: list[ModelMessage]) -> str | None:
@@ -194,7 +195,7 @@ async def test_capabilities_reach_delegated_tasks(tmp_path: Path) -> None:
         if (answer := _answered(messages)) is not None:
             yield answer
             return
-        prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
+        prompt = sent_texts([messages[0]])[0]
         caller = 'parent' if prompt == 'parent' else 'child'
         tools[caller] = {tool.name for tool in info.function_tools}
         if caller == 'parent':

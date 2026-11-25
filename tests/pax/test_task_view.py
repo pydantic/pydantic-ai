@@ -14,13 +14,14 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSource,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai_harness.sub_agents import DelegationOutcome, DelegationTask
+from pydantic_ai_harness.sub_agents import DelegationOutcome, DelegationTask, ParentMessagePart
 from pydantic_ai_pax.runtime.tasks import Tasks
 from pydantic_ai_pax.ui.menus.task_view import Action, TaskView, perform, task_rows, transcript_blocks
 from tests.pax.live_script import frame, press
@@ -220,6 +221,16 @@ def test_transcript_blocks_escape_terminal_control_and_show_the_directory() -> N
     record.working_directory = '/policy'
     record.messages = [ModelResponse(parts=[TextPart('safe\x1b[2Jtext')])]
     assert transcript_blocks(record) == ['*Directory: /policy*', '> inspect a', 'safe\\x1b[2Jtext']
+
+
+def test_transcript_blocks_quote_what_the_delegating_agent_and_the_user_sent() -> None:
+    record = task()
+    record.messages = [
+        ModelRequest(parts=[ParentMessagePart(content='inspect the registry', source=ModelSource('delegating agent'))]),
+        ModelResponse(parts=[TextPart('done')]),
+        ModelRequest(parts=[UserPromptPart('and the docs?')]),
+    ]
+    assert transcript_blocks(record) == ['> inspect the registry', 'done', '> and the docs?']
 
 
 def test_enter_steers_a_running_task_and_prompts_a_finished_one() -> None:
