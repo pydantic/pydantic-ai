@@ -17,7 +17,6 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     ModelSource,
-    SystemPromptPart,
     TextContent,
     TextPart,
     ToolReturnPart,
@@ -63,9 +62,7 @@ def rendered(messages: list[ModelMessage]) -> list[tuple[str, str]]:
     """The requests a model was sent, part by part: who each part speaks for, and its text."""
     sent: list[tuple[str, str]] = []
     for part in (part for message in messages if isinstance(message, ModelRequest) for part in message.parts):
-        if isinstance(part, SystemPromptPart):
-            sent.append(('system', part.content))
-        elif isinstance(part, UserPromptPart):
+        if isinstance(part, UserPromptPart):
             content = part.content
             if not isinstance(content, str):
                 content = ''.join(item.content for item in content if isinstance(item, TextContent))
