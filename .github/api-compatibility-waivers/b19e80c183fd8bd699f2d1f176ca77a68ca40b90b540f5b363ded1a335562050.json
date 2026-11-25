@@ -1,5 +1,5 @@
 {
-  "against": "v2.71.0",
-  "reason": "Adds `cost_limit` and `timeout` to the limits `WrapUpAtLimits` reports, now that it wraps up at them (#14163); existing values are unchanged.",
+  "against": "v2.74.0",
+  "reason": "`LimitName` gains `'cost_limit'` and `'timeout'`, the new limits `WrapUpAtLimits` wraps up at (#14164); existing values are unchanged.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14164"
 }
