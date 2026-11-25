@@ -855,24 +855,13 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     async def load_conversation(self, conversation_id: str, *, deps: AgentDepsT) -> Conversation | None:
         """Return the conversation a run given only its `conversation_id` continues, or `None` to start it empty.
 
-        Called before the run is assembled, for a run started with `conversation_id=` and none of
-        `conversation=`, `message_history=` or `usage=`. `conversation_id='new'` isn't loaded. The run
-        uses the returned conversation as if it were passed as `conversation=`: its messages, usage and
-        pending deferred tool requests continue, and its revision is carried to the result, so a
-        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] can check the next save.
-        Return the conversation with that `conversation_id`; any other raises `UserError`. When several
-        capabilities return one, the last in the effective capability order wins. By default a capability
-        passed to the run comes after the agent's, so it takes precedence.
-
-        `deps` are the run's dependencies: scope the load to the user they authorize, since a
-        `conversation_id` can come from a client. Like [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model],
-        it isn't asked of a deferred capability. Like every hook called before the run is assembled, it
-        isn't asked of a capability that only `for_run()` or a
-        [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] returns, and it runs before the run's
-        `timeout=` starts and its cancellation token is watched. Not called for a realtime session. Under
-        [durable execution](../durable_execution/overview.md) it runs where the run starts (in a Temporal
-        workflow, inside the workflow) and can't be a durable operation, so load through the engine's own
-        durable step.
+        Asked before the run is assembled, for a run given `conversation_id=` (other than `'new'`) and none
+        of `conversation=`, `message_history=` or `usage=`. The run continues the result as if it were
+        passed as `conversation=`. Return the conversation with that `conversation_id`. The last answer in
+        capability order wins, so by default a capability passed to the run takes precedence; like
+        [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], a deferred capability isn't
+        asked. A `conversation_id` can come from a client, so scope the load to the user `deps` authorize.
+        It can't be a durable operation; see [Loading from a capability](../persistence.md#loading-from-a-capability).
         """
         return None
 

@@ -494,9 +494,7 @@ async def _continue_loaded_conversation(
         or conversation_id == _agent_graph.NEW_CONVERSATION
     ):
         return inputs
-    # Without the context of a run this one was started from, so what the load calls doesn't dispatch through it.
-    with set_current_run_context(None):
-        conversation = await capability.load_conversation(conversation_id, deps=deps)
+    conversation = await capability.load_conversation(conversation_id, deps=deps)
     if conversation is None:
         return inputs
     if conversation.conversation_id != conversation_id:
@@ -1666,10 +1664,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        message_history, usage, conversation_id, conversation_revision, conversation_unsaved, conversation_unchecked = (
-            _agent_graph.resolve_conversation(
+        conversation_inputs = _ConversationInputs(
+            *_agent_graph.resolve_conversation(
                 conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
-            )
+            ),
+            conversation.deferred_tool_requests if conversation else None,
         )
 
         if infer_name and self.name is None:
@@ -1678,13 +1677,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         prepared = await self._prepare_run(
             user_prompt,
             output_type=output_type,
-            message_history=message_history,
+            conversation_inputs=conversation_inputs,
             deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            conversation_revision=conversation_revision,
-            conversation_unsaved=conversation_unsaved,
-            conversation_unchecked=conversation_unchecked,
-            conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
             run_id=run_id,
             model=model,
             instructions=instructions,
@@ -1693,7 +1687,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             cancellation_token=cancellation_token,
             timeout=timeout,
-            usage=usage,
             metadata=metadata,
             retries=retries,
             toolsets=toolsets,
@@ -1709,13 +1702,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[Any] | None = None,
-        message_history: Sequence[_messages.ModelMessage] | None = None,
+        conversation_inputs: _ConversationInputs,
         deferred_tool_results: DeferredToolResults | None = None,
-        conversation_id: str | None = None,
-        conversation_revision: str | None = None,
-        conversation_unsaved: list[_messages.ModelMessage] | None = None,
-        conversation_unchecked: bool = False,
-        conversation_deferred_tool_requests: DeferredToolRequests | None = None,
         run_id: str | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         instructions: AgentInstructions[AgentDepsT] = None,
@@ -1724,7 +1712,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         cancellation_token: CancellationToken | None = None,
         timeout: float | None = None,
-        usage: _usage.RunUsage | None = None,
         metadata: AgentMetadata[AgentDepsT] | None = None,
         retries: int | AgentRetries | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -1832,19 +1819,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_unsaved,
             conversation_unchecked,
             conversation_deferred_tool_requests,
-        ) = await _continue_loaded_conversation(
-            bootstrap_capability,
-            deps,
-            _ConversationInputs(
-                message_history,
-                usage,
-                conversation_id,
-                conversation_revision,
-                conversation_unsaved,
-                conversation_unchecked,
-                conversation_deferred_tool_requests,
-            ),
-        )
+        ) = await _continue_loaded_conversation(bootstrap_capability, deps, conversation_inputs)
         usage = usage or _usage.RunUsage()
         resolved_models_by_selection: dict[tuple[int, str], models.Model] = {}
         # Models this run built from a name, which it enters so their HTTP clients close when it ends.
