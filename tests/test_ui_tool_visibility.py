@@ -54,15 +54,24 @@ if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPAppToolResult
 
 with try_import() as imports_successful:
-    from ag_ui.core import CustomEvent, RunAgentInput, UserMessage
+    from ag_ui.core import CustomEvent, Message, RunAgentInput, UserMessage
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
-    from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, DEFAULT_AG_UI_VERSION, parse_ag_ui_version
+    from pydantic_ai.ui.ag_ui._utils import (
+        ACTIVITY_EVENTS_VERSION,
+        DEFAULT_AG_UI_VERSION,
+        INTERRUPT_ID_PREFIX,
+        parse_ag_ui_version,
+    )
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
     from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
     from pydantic_ai.ui.vercel_ai.response_types import DataChunk
+
+with try_import() as interrupts_imports_successful:
+    # AG-UI interrupts, which approve a call from the client, came with ag-ui-protocol 0.1.19.
+    from ag_ui.core import ResumeEntry
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='ag-ui-protocol or starlette not installed')
 
@@ -123,11 +132,14 @@ async def run_adapter(
     agent: Agent[None, Any],
     *,
     manage_message_history: Literal['client', 'server'] = 'server',
+    ag_ui_version: str = DEFAULT_AG_UI_VERSION,
+    approving: Sequence[ModelMessage] | None = None,
     **adapter_kwargs: Any,
 ) -> Run:
     """Run `agent` through the protocol's adapter for one user message, decoding the SSE wire it writes.
 
-    The history is held on the server, as non-public tools need it to be.
+    The history is held on the server, as non-public tools need it to be. With `approving`, the request instead
+    carries that paused history the way a client holding it sends it back, approving `call_0`.
     """
     adapter_kwargs['manage_message_history'] = manage_message_history
     messages: list[ModelMessage] = []
@@ -136,16 +148,24 @@ async def run_adapter(
         messages.extend(result.all_messages())
 
     if protocol == 'ag_ui':
+        client_messages: list[Message] = [UserMessage(id='msg_1', content='Where is my order?')]
+        resume: dict[str, Any] = {}
+        if approving is not None:
+            client_messages = AGUIAdapter.dump_messages(approving, ag_ui_version=ag_ui_version)
+            resume['resume'] = [
+                ResumeEntry(interrupt_id=f'{INTERRUPT_ID_PREFIX}call_0', status='resolved', payload={'approved': True})
+            ]
         run_input = RunAgentInput(
             thread_id='thread_1',
             run_id='run_1',
-            messages=[UserMessage(id='msg_1', content='Where is my order?')],
+            messages=client_messages,
             state={},
             tools=[],
             context=[],
             forwarded_props={},
+            **resume,
         )
-        ag_ui_adapter = AGUIAdapter(agent, run_input=run_input, **adapter_kwargs)
+        ag_ui_adapter = AGUIAdapter(agent, run_input=run_input, ag_ui_version=ag_ui_version, **adapter_kwargs)
         wire = [
             chunk async for chunk in ag_ui_adapter.encode_stream(ag_ui_adapter.run_stream(on_complete=keep_history))
         ]
@@ -155,6 +175,18 @@ async def run_adapter(
             id='chat_1',
             messages=[UIMessage(id='msg_1', role='user', parts=[TextUIPart(text='Where is my order?')])],
         )
+        if approving is not None:
+            client_history = [
+                message.model_dump(mode='json', by_alias=True, exclude_none=True)
+                for message in VercelAIAdapter.dump_messages(approving, sdk_version=6)
+            ]
+            for part in (part for message in client_history for part in message['parts']):
+                if part.get('toolCallId') == 'call_0':
+                    approval_id = part.get('approval', {}).get('id', 'call_0')
+                    part.update(state='approval-responded', approval={'id': approval_id, 'approved': True})
+            request = SubmitMessage.model_validate(
+                {'trigger': 'submit-message', 'id': 'chat_1', 'messages': client_history}
+            )
         vercel_adapter = VercelAIAdapter(agent, run_input=request, sdk_version=6, **adapter_kwargs)
         wire = [
             chunk async for chunk in vercel_adapter.encode_stream(vercel_adapter.run_stream(on_complete=keep_history))
@@ -457,6 +489,84 @@ async def test_denied_redacted_tool_sends_the_placeholder_for_the_denial(protoco
     assert SECRET not in run.wire
     assert run.tool_events() == EXPECTED_DENIED_EVENTS[protocol]
     assert SECRET not in dump(protocol, run.messages)
+
+
+CLIENT_APPROVALS: dict[str, tuple[ToolUIVisibility | None, bool]] = {
+    'requires_approval_redacted': ('redacted', False),
+    'requires_approval_private': ('private', False),
+    'approval_required_at_runtime_private': ('private', True),
+    'requires_approval_unset': (None, False),
+}
+"""Each way a tool asks for approval: its `ui_visibility`, and whether it raises `ApprovalRequired` itself."""
+
+
+def approving_agent(setup: str) -> Agent[None, Any]:
+    """An agent whose `refund` tool asks for approval as `setup` says, and returns the secret once approved."""
+    ui_visibility, at_runtime = CLIENT_APPROVALS[setup]
+    agent = Agent(
+        calling(('refund', '{"order_id": "o_1"}')), deps_type=type(None), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool(requires_approval=not at_runtime, ui_visibility=ui_visibility)
+    def refund(ctx: RunContext[None], order_id: str) -> str:
+        if at_runtime and not ctx.tool_call_approved:
+            raise ApprovalRequired()
+        return SECRET
+
+    return agent
+
+
+EXPECTED_CLIENT_APPROVED_EVENTS: dict[ProtocolName, Any] = {
+    'ag_ui': snapshot([{'type': 'TOOL_CALL_RESULT', 'toolCallId': 'call_0', 'content': '[REDACTED]'}]),
+    'vercel_ai': snapshot(
+        [
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'refund',
+                'input': {'order_id': 'o_1'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'call_0', 'output': '[REDACTED]'},
+        ]
+    ),
+}
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+@pytest.mark.parametrize('setup', [setup for setup, (ui_visibility, _) in CLIENT_APPROVALS.items() if ui_visibility])
+async def test_call_approved_from_a_client_held_history_is_stamped_before_it_runs(protocol: ProtocolName, setup: str):
+    """A history the client sends back has no stamps, so the approved call is stamped from its tool before it runs.
+
+    An approved `'private'` call is `'redacted'`, as it was shown to be approved, so its result is the placeholder.
+    """
+    if protocol == 'ag_ui' and not interrupts_imports_successful():
+        pytest.skip('this ag-ui-protocol has no interrupts')  # pragma: lax no cover
+    agent = approving_agent(setup)
+    paused = await run_adapter(protocol, agent, ag_ui_version='0.1.19')
+    with pytest.warns(UserWarning, match="`manage_message_history='server'`"):
+        run = await run_adapter(
+            protocol, agent, manage_message_history='client', ag_ui_version='0.1.19', approving=paused.messages
+        )
+
+    assert SECRET not in run.wire
+    assert run.tool_events() == EXPECTED_CLIENT_APPROVED_EVENTS[protocol]
+    assert stamps(run.messages)[-1] == ('tool-return', 'refund', 'redacted')
+    assert SECRET not in dump(protocol, run.messages)
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_call_approved_from_a_client_held_history_without_a_setting_is_unchanged(protocol: ProtocolName):
+    """A tool with no `ui_visibility` stays unstamped when its approved call runs, and its result is sent."""
+    if protocol == 'ag_ui' and not interrupts_imports_successful():
+        pytest.skip('this ag-ui-protocol has no interrupts')  # pragma: lax no cover
+    agent = approving_agent('requires_approval_unset')
+    paused = await run_adapter(protocol, agent, ag_ui_version='0.1.19')
+    run = await run_adapter(
+        protocol, agent, manage_message_history='client', ag_ui_version='0.1.19', approving=paused.messages
+    )
+
+    assert SECRET in run.wire
+    assert {stamp for *_, stamp in stamps(run.messages)} == {None}
 
 
 DeferralName = Literal['CallDeferred', 'ApprovalRequired', 'question']

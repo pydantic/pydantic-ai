@@ -41,6 +41,7 @@ from ._utils import generate_tool_call_id as _generate_tool_call_id
 
 if TYPE_CHECKING:
     from .models import ModelRequestParameters
+    from .tools import ToolDefinition
 
 VendorId = Hashable
 """
@@ -48,24 +49,29 @@ Type alias for a vendor identifier, which can be any hashable type (e.g., a stri
 """
 
 
-def ui_visibility_stamps(model_request_parameters: ModelRequestParameters) -> dict[str, ToolUIVisibility]:
-    """The `ui_visibility` a call to each function or output tool is stamped with, for the tools that set one.
+def tool_def_ui_visibility(tool_def: ToolDefinition) -> ToolUIVisibility | None:
+    """The `ui_visibility` a call to `tool_def` is stamped with, or `None` when the tool sets none.
 
     A tool's own [`ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility], except that an external tool's
     result comes from the client and an output tool's arguments are the run's answer, so both are `'public'`, and a
     `'private'` tool that needs approval is `'redacted'`, since the user can't approve a call they can't see.
-    A tool without a setting is left out, so its calls stay unstamped and a UI adapter applies its own default.
     """
-    stamps: dict[str, ToolUIVisibility] = {}
-    for tool_def in model_request_parameters.tool_defs.values():
-        if (visibility := tool_def.ui_visibility) is None:
-            continue
-        if tool_def.kind in ('external', 'output'):
-            visibility = 'public'
-        elif tool_def.kind == 'unapproved' and visibility == 'private':
-            visibility = 'redacted'
-        stamps[tool_def.name] = visibility
-    return stamps
+    if (visibility := tool_def.ui_visibility) is None:
+        return None
+    if tool_def.kind in ('external', 'output'):
+        return 'public'
+    if tool_def.kind == 'unapproved' and visibility == 'private':
+        return 'redacted'
+    return visibility
+
+
+def ui_visibility_stamps(model_request_parameters: ModelRequestParameters) -> dict[str, ToolUIVisibility]:
+    """The `ui_visibility` a call to each function or output tool is stamped with, for the tools that set one."""
+    return {
+        name: visibility
+        for name, tool_def in model_request_parameters.tool_defs.items()
+        if (visibility := tool_def_ui_visibility(tool_def)) is not None
+    }
 
 
 def stamp_and_type_call_part(

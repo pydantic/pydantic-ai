@@ -92,7 +92,7 @@ from pydantic_ai.realtime.codec import (
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
-from pydantic_ai.tools import RunContext, Tool, ToolDefinition
+from pydantic_ai.tools import RunContext, Tool, ToolDefinition, ToolUIVisibility
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.toolsets._deferred_capability_loader import LOAD_CAPABILITY_ALREADY_ACTIVE_MESSAGE_TEMPLATE
 from tests._timeouts import READINESS_WAIT_TIMEOUT
@@ -297,6 +297,61 @@ async def test_capability_toolset_reaches_session() -> None:
     await _drain(agent, model, capabilities=[ToolsetCap()])
     assert model.tools is not None
     assert any(t.name == 'greet' for t in model.tools)
+
+
+async def test_session_stamps_tool_parts_like_a_run() -> None:
+    """A session stamps each tool call and return with the tool's `ui_visibility`, as a standard run does.
+
+    The parity test the realtime rules ask for: a UI adapter's `dump_messages` reads these stamps, so a session's
+    history has to carry the ones a run's would.
+    """
+    visibilities: dict[str, ToolUIVisibility | None] = {
+        'private_tool': 'private',
+        'redacted_tool': 'redacted',
+        'unset_tool': None,
+    }
+    names = list(visibilities)
+
+    def tool() -> str:
+        return 'result'
+
+    agent = Agent(
+        tools=[Tool(tool, name=name, ui_visibility=ui_visibility) for name, ui_visibility in visibilities.items()]
+    )
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(name, {}, tool_call_id=f'tc_{name}') for name in names])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    run = await agent.run('Hi', model=FunctionModel(answer))
+    model = _RecordingModel(
+        connection_events=[
+            *(ToolCall(tool_call_id=f'tc_{name}', tool_name=name, args='{}') for name in names),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(model).session() as session:
+        async for _ in session:  # pragma: no branch
+            pass
+
+    def stamps(messages: Sequence[ModelMessage]) -> list[tuple[str, str, ToolUIVisibility | None]]:
+        return sorted(
+            (part.part_kind, part.tool_name, part.ui_visibility)
+            for message in messages
+            for part in message.parts
+            if isinstance(part, (ToolCallPart, ToolReturnPart))
+        )
+
+    assert stamps(session.all_messages()) == stamps(run.all_messages())
+    assert stamps(run.all_messages()) == [
+        ('tool-call', 'private_tool', 'private'),
+        ('tool-call', 'redacted_tool', 'redacted'),
+        ('tool-call', 'unset_tool', None),
+        ('tool-return', 'private_tool', 'private'),
+        ('tool-return', 'redacted_tool', 'redacted'),
+        ('tool-return', 'unset_tool', None),
+    ]
 
 
 @pytest.mark.parametrize('contribution', ['tools', 'native_tools'])
