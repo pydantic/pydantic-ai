@@ -6,6 +6,7 @@ CPython's own `_call_connection_lost` runs on a stand-in socket, since only Wind
 from __future__ import annotations
 
 import asyncio
+import socket
 import sys
 from asyncio import proactor_events
 from typing import cast
@@ -21,19 +22,31 @@ def _reset(winerror: int) -> ConnectionResetError:
     return error
 
 
-class _Socket:
-    def __init__(self, error: BaseException) -> None:
-        self.error = error
+class _Pipe:
+    """A subprocess pipe handle, which has no `shutdown`."""
+
+    def __init__(self) -> None:
         self.closed = False
 
     def fileno(self) -> int:
         return 3
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _Socket(socket.socket):
+    def __init__(self, error: BaseException) -> None:
+        super().__init__()
+        self.error = error
+        self.closed = False
 
     def shutdown(self, how: int) -> None:
         raise self.error
 
     def close(self) -> None:
         self.closed = True
+        super().close()
 
 
 class _Protocol(asyncio.BaseProtocol):
@@ -53,7 +66,9 @@ class _Server:
         self.detached = True
 
 
-def _teardown(sock: _Socket, protocol: _Protocol, *, calls: int = 1) -> tuple[list[BaseException], dict[str, object]]:
+def _teardown(
+    sock: _Socket | _Pipe, protocol: _Protocol, *, calls: int = 1
+) -> tuple[list[BaseException], dict[str, object]]:
     """Run the transport's connection-lost callback on an event loop; return the loop's errors and the end state."""
     transport_class = cast(type[object], vars(proactor_events)['_ProactorBasePipeTransport'])
     transport: object = object.__new__(transport_class)
@@ -68,8 +83,9 @@ def _teardown(sock: _Socket, protocol: _Protocol, *, calls: int = 1) -> tuple[li
         loop.run_until_complete(asyncio.sleep(0))
     finally:
         loop.close()
-    state: dict[str, object] = {**vars(transport), 'detached': server.detached}
+    state: dict[str, object] = {**vars(transport), 'detached': server.detached, 'closed': sock.closed}
     vars(transport)['_sock'] = None
+    sock.close()
     return errors, state
 
 
@@ -80,11 +96,10 @@ def windows(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.usefixtures('windows')
 def test_reset_on_shutdown_finishes_teardown_quietly() -> None:
-    sock = _Socket(_reset(10054))
     with quiet_proactor_resets():
-        errors, state = _teardown(sock, _Protocol(), calls=2)
+        errors, state = _teardown(_Socket(_reset(10054)), _Protocol(), calls=2)
     assert errors == []
-    assert sock.closed
+    assert state['closed']
     assert state['_sock'] is None
     assert state['detached']
     assert state['_called_connection_lost']
@@ -103,15 +118,24 @@ def test_other_socket_errors_still_reach_the_loop(error: OSError) -> None:
 @pytest.mark.usefixtures('windows')
 def test_protocol_reset_still_reaches_the_loop() -> None:
     error = _reset(10054)
-    sock = _Socket(_reset(10054))
     with quiet_proactor_resets():
-        errors, state = _teardown(sock, _Protocol(error))
+        errors, state = _teardown(_Socket(_reset(10054)), _Protocol(error))
     assert errors == [error]
-    assert sock.closed
+    assert state['closed']
     assert state['_called_connection_lost']
 
 
-def test_other_platforms_are_untouched() -> None:
+@pytest.mark.usefixtures('windows')
+def test_pipes_still_close() -> None:
+    with quiet_proactor_resets():
+        errors, state = _teardown(_Pipe(), _Protocol())
+    assert errors == []
+    assert state['closed']
+    assert state['_called_connection_lost']
+
+
+def test_other_platforms_are_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, 'platform', 'linux')
     transport_class = cast(type[object], vars(proactor_events)['_ProactorBasePipeTransport'])
     original = vars(transport_class)['_call_connection_lost']
     with quiet_proactor_resets():

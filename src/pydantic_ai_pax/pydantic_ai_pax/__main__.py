@@ -77,8 +77,8 @@ def quiet_proactor_resets() -> Generator[None]:
 
     def call_connection_lost(self: object, exc: BaseException | None) -> None:
         state = vars(self)
-        sock: socket.socket | None = state['_sock']
-        if sock is not None:
+        sock: object = state['_sock']
+        if isinstance(sock, socket.socket):
             state['_sock'] = _ResetTolerantSocket(sock)
         try:
             original(self, exc)
