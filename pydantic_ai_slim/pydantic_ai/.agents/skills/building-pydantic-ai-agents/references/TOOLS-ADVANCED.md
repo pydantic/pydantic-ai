@@ -265,6 +265,7 @@ def check_stock(args: LookupArgs) -> LookupResult:
 - A run raises `UserError` for a kind that isn't defined, or when the tool's parameters don't fit `args` or its return type doesn't fit `content` (a required field missing or optional, or a mismatched JSON type). Type checkers check the return type already.
 - Call and return parts are promoted whenever a `ModelResponse` / `ModelRequest` is built, so hooks and history processors can use `isinstance(part, LookupCallPart)`.
 - A history whose kind isn't defined still loads, as base parts that keep their `tool_kind`.
+- `allowed_callers={'direct'}` on a kind means only the model may call its tools (`'programmatic'` is code the model wrote, as in harness `CodeMode`, which keeps such tools native). The default `None` allows every caller. `ToolKind.get(kind_id)` returns the kind defined with an id, or `None`.
 
 See [Typed tool parts](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts).
 

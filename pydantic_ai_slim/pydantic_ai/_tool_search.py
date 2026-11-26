@@ -122,9 +122,11 @@ class ToolSearchReturnContent(TypedDict):
 
 
 TOOL_SEARCH_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]
-    'tool-search', args=ToolSearchArgs, content=ToolSearchReturnContent
+    'tool-search', args=ToolSearchArgs, content=ToolSearchReturnContent, allowed_callers={'direct'}
 )
-"""The kind of tool search, run natively by the provider or locally by the `search_tools` tool."""
+"""The kind of tool search, run natively by the provider or locally by the `search_tools` tool.
+
+Only the model may call it: what it finds is revealed to the model, not returned to code."""
 
 
 @dataclass(repr=False)

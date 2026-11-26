@@ -46,6 +46,7 @@ from pydantic_ai import (
     RunContext,
     Tool,
     ToolDefinition,
+    ToolKind,
     capture_run_messages,
 )
 from pydantic_ai.agent.spec import AgentSpec
@@ -2045,6 +2046,49 @@ class TestCodeMode:
         assert 'async def get_user' in description
         assert 'async def computer' not in description
         assert tools['computer'].tool_def.tool_kind == COMPUTER_KIND.id
+
+    async def test_a_kind_only_the_model_may_call_stays_native(self) -> None:
+        """A kind defined outside core keeps its tools out of `run_code` by leaving `'programmatic'` out of its callers."""
+        model_only = ToolKind('test_code_mode', 'model_only', allowed_callers={'direct'})
+        any_caller = ToolKind('test_code_mode', 'any_caller', allowed_callers={'direct', 'programmatic'})
+        static = _StaticToolset(
+            [
+                _make_address_tool_def('get_user', 'Get a user.', 'street'),
+                ToolDefinition(name='look', description='Look at the screen.', tool_kind=model_only),
+                ToolDefinition(
+                    name='fetch', description='Fetch a page.', return_schema={'type': 'string'}, tool_kind=any_caller
+                ),
+            ]
+        )
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        assert sorted(tools) == ['look', 'run_code']
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def get_user' in description
+        assert 'async def fetch' in description
+        assert 'async def look' not in description
+
+    async def test_a_tool_whose_kind_is_not_defined_is_sandboxed(self) -> None:
+        """A kind id with no `ToolKind` in this process, such as one from a stored definition, has no caller limit."""
+        td = ToolDefinition(
+            name='lookup',
+            description='Look up an item.',
+            return_schema={'type': 'string'},
+            tool_kind='test_code_mode.not_defined',
+        )
+        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(_StaticToolset([td]))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        assert sorted(tools) == ['run_code']
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        assert 'async def lookup' in description
 
     async def test_code_execution_tool_not_sandboxed(self) -> None:
         """A tool that is itself a code sandbox (carries `code_arg_name` metadata) stays native.

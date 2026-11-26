@@ -337,9 +337,16 @@ class ComputerResult(TypedDict):
 
 
 COMPUTER_KIND = ToolKind(
-    'computer_use', 'computer', args=ComputerArgs, content=ComputerContent, metadata=ComputerResult
+    'computer_use',
+    'computer',
+    args=ComputerArgs,
+    content=ComputerContent,
+    metadata=ComputerResult,
+    allowed_callers={'direct'},
 )
 """The tool kind that marks a tool as the `computer` tool.
+
+Only the model may call it, as the model has to see the screenshot it returns.
 
 When a request includes a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool], the provider's own computer tool is
 sent to the model in place of the tool of this kind, which still runs the calls.

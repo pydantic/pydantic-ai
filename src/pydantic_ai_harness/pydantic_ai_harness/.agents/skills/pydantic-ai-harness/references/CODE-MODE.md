@@ -80,7 +80,7 @@ agent = Agent(
 ```
 
 Non-matching tools remain regular tool calls. Some tools always stay native even with `tools='all'`:
-framework control tools, undiscovered deferred (`defer_loading=True`) tools, `requires_approval=True` and external tools, native fallbacks, and other
+tools whose `ToolKind.allowed_callers` leaves out `'programmatic'` (tool search, capability loading, the `computer` tool), undiscovered deferred (`defer_loading=True`) tools, `requires_approval=True` and external tools, native fallbacks, and other
 code-execution tools (any tool with `code_arg_name` metadata) -- including `Shell`'s `run_command`, `start_command`, and `shell`, and `CapabilityCreation`'s
 `author_capability`. `Shell`'s `check_command`/`stop_command` and all `FileSystem` tools are folded in.
 Provider-native tools (`native=True`) execute server-side and never reach `run_code`.

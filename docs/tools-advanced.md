@@ -1187,6 +1187,34 @@ A kind can also declare, with `metadata=`, the shape of the `metadata` its tool 
 
 A typed subclass may only add properties; adding a field of its own raises `UserError` when the class is defined. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't define (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is defined.
 
+### Who may call a tool {#tool-callers}
+
+A kind can say who may call its tools with `allowed_callers`, a set of [`ToolCaller`][pydantic_ai.messages.ToolCaller] values:
+
+- `'direct'`: the model, in its response.
+- `'programmatic'`: code the model wrote, whether it runs in a local sandbox or in a provider's code execution.
+
+The default, `None`, allows every caller. Restrict a kind to `{'direct'}` when the model itself has to see the tool's result, for example a screenshot, or when the tool drives the run rather than returning data. Core's tool search and capability loading kinds and the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind are defined this way. [Code Mode](harness/code-mode.md) and [IPython Code Mode](harness/ipython-code-mode.md) keep a tool whose kind leaves out `'programmatic'` out of the code they run, as a regular tool call.
+
+A [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] stores only the kind's id. [`ToolKind.get`][pydantic_ai.messages.ToolKind.get] returns the kind defined with an id, or `None` when the module defining it isn't imported, in which case the tool has no caller restriction:
+
+```python {title="model_only_tool_kind.py"}
+from pydantic_ai import ToolKind
+
+screenshot = ToolKind('browser', 'screenshot', allowed_callers={'direct'})
+
+print(screenshot)
+#> ToolKind('browser', 'screenshot', allowed_callers={'direct'})
+print(ToolKind.get('browser.screenshot') is screenshot)
+#> True
+print(screenshot.allowed_callers)
+#> frozenset({'direct'})
+print(ToolKind.get('browser.unknown'))
+#> None
+```
+
+Defining a kind again with different `allowed_callers` raises `UserError`, as with different shapes.
+
 ### Superseding a tool by kind {#unless-tool-kind}
 
 A capability sometimes offers its own tool for something a more general tool on the agent can also do, such as a tool that reads the notes it keeps in the workspace when the agent can read files anyway. Setting [`ToolDefinition.unless_tool_kind`][pydantic_ai.tools.ToolDefinition.unless_tool_kind] to a kind makes the tool step aside whenever another tool in the run step has that kind, whatever that tool is called. It's the counterpart of [`unless_native`][pydantic_ai.tools.ToolDefinition.unless_native], which does the same for a native tool the model supports.

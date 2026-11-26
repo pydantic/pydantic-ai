@@ -910,7 +910,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     Some tools always stay native rather than being sandboxed:
 
-    - Framework control tools (`tool_kind` of `'tool-search'` or `'capability-load'`).
+    - Tools whose kind's `allowed_callers` leaves out `'programmatic'`, such as tool search, capability
+      loading and the `computer` tool.
     - `defer_loading=True` tools, until tool search or capability loading reveals them.
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.

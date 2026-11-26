@@ -24,7 +24,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, Tool, ToolReturn
+from pydantic_ai import Agent, RunContext, Tool, ToolKind, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ToolSearch
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -462,6 +462,26 @@ def book(*, trip: Trip, travellers: int) -> str:
         await agent.run('Hi')
         assert sorted(tool.name for tool in seen[0].function_tools) == ['outside', 'run_code']
         assert 'def inside()' in (seen[0].function_tools[-1].description or '')
+
+    async def test_a_kind_only_the_model_may_call_stays_native(self, kernel: IPythonKernel) -> None:
+        def inside() -> str:
+            return 'inside'  # pragma: no cover
+
+        def look() -> str:
+            return 'screen'  # pragma: no cover
+
+        model_only = ToolKind('test_ipython_code_mode', 'model_only', allowed_callers={'direct'})
+        seen: list[AgentInfo] = []
+        agent = Agent(
+            _scripted(seen=seen),
+            capabilities=[IPythonCodeMode(kernel=kernel)],
+            tools=[Tool(inside), Tool(look, tool_kind=model_only)],
+        )
+        await agent.run('Hi')
+        assert sorted(tool.name for tool in seen[0].function_tools) == ['look', 'run_code']
+        run_code = next(tool for tool in seen[0].function_tools if tool.name == 'run_code')
+        assert 'def inside()' in (run_code.description or '')
+        assert 'def look()' not in (run_code.description or '')
 
     async def test_a_failed_tool_call_raises_in_the_kernel(self, kernel: IPythonKernel) -> None:
         def flaky() -> str:

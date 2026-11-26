@@ -11,7 +11,7 @@ import re
 import sys
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence, Set as AbstractSet
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import KW_ONLY, InitVar, dataclass, field, replace
@@ -2037,6 +2037,16 @@ tool's call and return parts.
 """
 
 
+ToolCaller: TypeAlias = Literal['direct', 'programmatic']
+"""Who may call a tool of a [`ToolKind`][pydantic_ai.messages.ToolKind], as listed in its
+[`allowed_callers`][pydantic_ai.messages.ToolKind.allowed_callers].
+
+- `'direct'`: the model, in its response.
+- `'programmatic'`: code the model wrote, whether it runs in a local sandbox like the harness's `CodeMode` or in a
+  provider's code execution.
+"""
+
+
 def _tool_kind_id(value: ToolKindLike | None) -> ToolPartKind | None:  # pyright: ignore[reportUnusedFunction]
     """The id of the kind a tool declares, given as a [`ToolKind`][pydantic_ai.messages.ToolKind] or its id."""
     return value.id if isinstance(value, ToolKind) else value
@@ -2093,6 +2103,7 @@ class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
         args: type[ArgsT_co] | None = None,
         content: type[ContentT_co] | None = None,
         metadata: type[MetadataT_co] | None = None,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
     ) -> None:
         """Define a tool kind.
 
@@ -2108,12 +2119,14 @@ class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
                 [`ToolReturn`][pydantic_ai.messages.ToolReturn], typically a `TypedDict`. Typed return parts read it
                 as [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata], which is `None` for
                 metadata that doesn't fit. Such metadata doesn't stop a return part from becoming its typed part.
+            allowed_callers: Who may call a tool of this kind (see [`ToolCaller`][pydantic_ai.messages.ToolCaller]),
+                like `{'direct'}` for a tool only the model may call. `None`, the default, allows every caller.
         """
         if not namespace or not all(namespace.split('.')):
             raise UserError(f"A tool kind needs a namespace, e.g. `ToolKind('my_capability', {name!r})`.")
         if not name:
             raise UserError(f'Tool kind in namespace {namespace!r} has an empty name.')
-        self._define(namespace, name, args, content, metadata)
+        self._define(namespace, name, args, content, metadata, allowed_callers)
 
     def _define(
         self,
@@ -2121,7 +2134,8 @@ class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
         name: str,
         args: type[Any] | None,
         content: type[Any] | None,
-        metadata: type[Any] | None = None,
+        metadata: type[Any] | None,
+        allowed_callers: AbstractSet[ToolCaller] | None,
     ) -> None:
         self._namespace = namespace
         self._name = name
@@ -2129,11 +2143,13 @@ class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
         self._args = args
         self._content = content
         self._metadata = metadata
+        self._allowed_callers = frozenset(allowed_callers) if allowed_callers is not None else None
         existing = _TOOL_KINDS.get(self._id)
         if existing is not None and not (
             _same_shape(existing._args, args)
             and _same_shape(existing._content, content)
             and _same_shape(existing._metadata, metadata)
+            and existing._allowed_callers == self._allowed_callers
         ):
             raise UserError(f'Tool kind {self._id!r} is already defined as {existing!r}.')
         # A Temporal workflow sandbox re-executes application modules; its copy must not displace the host's.
@@ -2170,23 +2186,47 @@ class ToolKind(Generic[ArgsT_co, ContentT_co, MetadataT_co]):
         """The shape of the `metadata` the tool returns, or `None` if the kind doesn't declare one."""
         return self._metadata
 
+    @property
+    def allowed_callers(self) -> frozenset[ToolCaller] | None:
+        """Who may call a tool of this kind, or `None` if every caller may."""
+        return self._allowed_callers
+
+    @classmethod
+    def get(cls, kind_id: ToolPartKind) -> ToolKind | None:
+        """The kind defined with the id `kind_id`, or `None` if no kind with that id is defined in this process.
+
+        A [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] and a part's `tool_kind` store
+        only the id; this gets the kind back, for example to read its
+        [`allowed_callers`][pydantic_ai.messages.ToolKind.allowed_callers]. A kind whose defining module isn't
+        imported isn't found.
+        """
+        return _TOOL_KINDS.get(kind_id)
+
     def __repr__(self) -> str:
         shapes = ''.join(
             f', {label}={_shape_name(shape)}'
             for label, shape in (('args', self._args), ('content', self._content), ('metadata', self._metadata))
             if shape is not None
         )
+        if self._allowed_callers is not None:
+            callers = ', '.join(repr(caller) for caller in sorted(self._allowed_callers))
+            shapes += f', allowed_callers={{{callers}}}'
         if self._namespace is None:
             return f'ToolKind({self._name!r}{shapes})'
         return f'ToolKind({self._namespace!r}, {self._name!r}{shapes})'
 
     @classmethod
     def _core(
-        cls, name: str, *, args: type[_CoreArgsT], content: type[_CoreContentT]
+        cls,
+        name: str,
+        *,
+        args: type[_CoreArgsT],
+        content: type[_CoreContentT],
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
     ) -> ToolKind[_CoreArgsT, _CoreContentT]:
         """Define one of core's own kinds, which predate namespaces and stay un-namespaced."""
         kind: ToolKind[_CoreArgsT, _CoreContentT] = object.__new__(ToolKind)
-        kind._define(None, name, args, content)
+        kind._define(None, name, args, content, None, allowed_callers)
         return kind
 
     @cached_property

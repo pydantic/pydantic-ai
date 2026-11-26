@@ -119,7 +119,7 @@ CodeMode(tools=lambda ctx, td: td.name != 'dangerous_tool')
 CodeMode(tools={'code_mode': True})
 ```
 
-Framework control tools, undiscovered deferred tools, `requires_approval=True` and external tools, native fallbacks, and other code-execution tools stay native, including `Shell`'s `run_command` and `start_command` (so the model never quotes shell inside Python) and `CapabilityCreation`'s `author_capability` (its argument is a whole module); their other tools, such as `read_file`, are folded in. To fold a code-execution tool anyway, set `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from `pydantic_ai_harness.code_mode`) to `True` in its metadata, for example from `prepare_tools`; it keeps its `code_arg_name`, so instrumentation and other capabilities still treat it as code.
+A tool whose [kind](../tools-advanced.md#tool-callers) only the model may call (its `allowed_callers` leaves out `'programmatic'`) stays native, such as tool search, capability loading and the `computer` tool. Undiscovered deferred tools, `requires_approval=True` and external tools, native fallbacks, and other code-execution tools stay native too, including `Shell`'s `run_command` and `start_command` (so the model never quotes shell inside Python) and `CapabilityCreation`'s `author_capability` (its argument is a whole module); their other tools, such as `read_file`, are folded in. To fold a code-execution tool anyway, set `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from `pydantic_ai_harness.code_mode`) to `True` in its metadata, for example from `prepare_tools`; it keeps its `code_arg_name`, so instrumentation and other capabilities still treat it as code.
 
 ### Metadata-based selection
 

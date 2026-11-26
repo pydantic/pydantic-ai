@@ -18,6 +18,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool, ToolKind, tools
+from pydantic_ai._deferred_capabilities import CAPABILITY_LOAD_KIND
 from pydantic_ai._event_registry import set_replay_isolation_guard
 from pydantic_ai._tool_search import TOOL_SEARCH_KIND
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -28,6 +29,7 @@ from pydantic_ai.capabilities import (
     ValidatedToolArgs,
     WrapToolExecuteHandler,
 )
+from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ToolFailed, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -132,8 +134,37 @@ def test_a_kind_is_namespaced_and_carries_its_shapes() -> None:
     assert repr(lookup_kind) == "ToolKind('test', 'lookup', args=LookupArgs, content=LookupResult)"
     assert repr(audit_kind) == "ToolKind('test', 'audit')"
     assert (TOOL_SEARCH_KIND.namespace, TOOL_SEARCH_KIND.id) == (None, 'tool-search')
-    assert repr(TOOL_SEARCH_KIND) == "ToolKind('tool-search', args=ToolSearchArgs, content=ToolSearchReturnContent)"
+    assert repr(TOOL_SEARCH_KIND) == (
+        "ToolKind('tool-search', args=ToolSearchArgs, content=ToolSearchReturnContent, allowed_callers={'direct'})"
+    )
     assert repr(ToolKind('test', 'list-args', args=list[int])) == "ToolKind('test', 'list-args', args=list[int])"
+
+
+def test_a_kind_can_restrict_its_callers() -> None:
+    assert lookup_kind.allowed_callers is None
+    model_only = ToolKind('test', 'model-only', allowed_callers={'direct'})
+    assert model_only.allowed_callers == frozenset({'direct'})
+    assert repr(model_only) == "ToolKind('test', 'model-only', allowed_callers={'direct'})"
+    both = ToolKind('test', 'any-caller', args=LookupArgs, allowed_callers={'programmatic', 'direct'})
+    assert repr(both) == "ToolKind('test', 'any-caller', args=LookupArgs, allowed_callers={'direct', 'programmatic'})"
+    # The callers are part of the kind, like its shapes: defining it again needs the same set.
+    assert ToolKind('test', 'model-only', allowed_callers=frozenset({'direct'})).allowed_callers == {'direct'}
+    with pytest.raises(UserError, match=r"Tool kind 'test\.model-only' is already defined as "):
+        ToolKind('test', 'model-only')
+    with pytest.raises(UserError, match=r"Tool kind 'test\.lookup' is already defined as "):
+        ToolKind('test', 'lookup', args=LookupArgs, content=LookupResult, allowed_callers={'direct'})
+
+
+def test_core_kinds_only_the_model_may_call() -> None:
+    assert TOOL_SEARCH_KIND.allowed_callers == {'direct'}
+    assert CAPABILITY_LOAD_KIND.allowed_callers == {'direct'}
+    assert COMPUTER_KIND.allowed_callers == {'direct'}
+
+
+def test_a_kind_is_looked_up_by_its_id() -> None:
+    assert ToolKind.get('test.lookup') is lookup_kind
+    assert ToolKind.get('tool-search') is TOOL_SEARCH_KIND
+    assert ToolKind.get('test.unknown') is None
 
 
 def test_the_kind_becomes_the_default() -> None:
