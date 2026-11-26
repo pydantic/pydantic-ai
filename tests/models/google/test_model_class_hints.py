@@ -138,13 +138,30 @@ def test_interactions_computer_tool_without_google_model_support(model_name: str
         model.prepare_request(None, ModelRequestParameters(native_tools=[ComputerTool(display_size=DISPLAY_SIZE)]))
 
 
-def test_interactions_optional_computer_tool_is_left_out():
-    """An optional `ComputerTool`, as the harness's `ComputerUse` capability sends, is still left out.
+@pytest.mark.parametrize(
+    'params',
+    [
+        pytest.param(
+            ModelRequestParameters(native_tools=[ComputerTool(display_size=DISPLAY_SIZE, optional=True)]),
+            id='optional',
+        ),
+        pytest.param(
+            ModelRequestParameters(
+                native_tools=[ComputerTool(display_size=DISPLAY_SIZE)],
+                function_tools=[
+                    ToolDefinition(name='computer', unless_native=ComputerTool(display_size=DISPLAY_SIZE).unique_id)
+                ],
+            ),
+            id='local-fallback',
+        ),
+    ],
+)
+def test_interactions_computer_tool_without_error(params: ModelRequestParameters):
+    """An optional `ComputerTool`, as the harness's `ComputerUse` capability sends, or one with a local fallback, is
+    left out as before rather than raising.
 
     Not a VCR test: the tool is resolved in `prepare_request`, before any request is built.
     """
     model = GoogleInteractionsModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='mock-api-key'))
-    _, params = model.prepare_request(
-        None, ModelRequestParameters(native_tools=[ComputerTool(display_size=DISPLAY_SIZE, optional=True)])
-    )
-    assert params.native_tools == []
+    _, prepared = model.prepare_request(None, params)
+    assert prepared.native_tools == []
