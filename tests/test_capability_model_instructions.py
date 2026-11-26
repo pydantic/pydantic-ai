@@ -7,6 +7,7 @@ model classes report, which needs no request.
 
 from __future__ import annotations
 
+import inspect
 import re
 import warnings
 from collections.abc import Sequence
@@ -142,7 +143,10 @@ async def test_routes(model_id: str, expected: str, monkeypatch: pytest.MonkeyPa
         monkeypatch.setenv(name, value)
     capability = ModelInstructions[None]({'openai:gpt-6*': 'OpenAI', 'azure:*': 'Azure', 'gpt-6*': 'GPT-6'})
     ctx = RunContext(deps=None, model=infer_model(model_id), usage=RunUsage())
-    part = await capability._instruction(ctx)  # pyright: ignore[reportPrivateUsage]
+    instructions = capability.get_instructions()
+    assert inspect.iscoroutinefunction(instructions)
+    part = await instructions(ctx)
+    assert isinstance(part, InstructionPart)
     assert part.content == expected
 
 
