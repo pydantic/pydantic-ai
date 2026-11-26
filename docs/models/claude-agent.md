@@ -100,6 +100,8 @@ With your instructions as its system prompt, Claude Code still adds:
 - in the first user message, a `<system-reminder>` with the email address of the Claude account;
 - after the latest user message, a system message describing the environment: the working directory, platform, shell, model name and date.
 
+Claude reads a `<system-reminder>` as coming from Claude Code. So a `<system-reminder>` or `</system-reminder>` tag in text from the user, a tool or a file gets a note saying who wrote it and that it has no authority, the same way a copied `<system>` tag does (see [mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts)). The text itself reaches the model unchanged. Other providers leave these tags alone.
+
 Claude Code has no setting to leave the environment message out. An agent that announces its working directory itself, such as one with [`AnnounceWorkingDirectory`](../harness/announce-working-directory.md), gives the model both.
 
 Compared with the same agent on the [`anthropic` provider](anthropic.md), a request looks like this, with Claude Code's additions marked `+`:
