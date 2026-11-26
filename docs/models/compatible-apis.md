@@ -683,3 +683,32 @@ agent = Agent(model)
 ```
 
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sends a `system` message, as OpenAI's API accepts one at any position, also when you give it another server's `base_url`. If that server rejects it, use [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] as in [Other endpoints](#other-endpoints), or set the flag to `False`.
+
+### Gateways that keep only the first system message
+
+Some self-hosted gateways and proxies that translate between APIs forward only the first system message and silently drop every other one, with no error. On such a route, nothing in the response shows that the model never saw part of its prompt:
+
+- a framing announcement or a dynamic system prompt sent as a leading system message of its own takes the place of your system prompt, which is dropped;
+- a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts) that goes out as a `system` message never reaches the model.
+
+If your gateway does this, use [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider], which sends mid-conversation system prompts as `<system>` blocks in user turns, and set [`honors_only_first_system_message=True`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message] in the model's profile, so the system prompts, the framing announcement and the instructions go out as one leading system message:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+model = OpenAIChatModel(
+    'model_name',
+    provider=OpenAICompatibleProvider(
+        'my-gateway',
+        base_url='https://<your-gateway>/v1',
+        api_key='your-api-key',
+    ),
+    profile=ModelProfile(honors_only_first_system_message=True),
+)
+agent = Agent(model, instructions='Be concise.')
+```
+
+Each request then has exactly one system message, at the start. How closely a model follows a `<system>` block in a user turn varies by model; see [what each rendering gives up](../message-history.md#what-each-rendering-gives-up).
