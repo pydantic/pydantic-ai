@@ -66,6 +66,7 @@ from ..native_tools import (
     ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
+    MCPServerTool,
     WebFetchTool,
     WebSearchTool,
 )
@@ -483,6 +484,15 @@ def _http_error(
     suggested_model_id = None
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    hint = None
+    # The Gemini API rejects a model it serves only through Interactions, like `gemini-omni-1.1-flash`, with
+    # `400 INVALID_ARGUMENT`: "This model only supports Interactions API." (verified live 2026-11-26).
+    if (
+        status == 'INVALID_ARGUMENT'
+        and isinstance(message, str)
+        and 'only supports interactions api' in message.lower()
+    ):
+        hint = 'Use `GoogleInteractionsModel`, with the `google-interactions:` prefix, for this model.'
     return _model_errors.google_status_error(
         model_name,
         status_code=status_code,
@@ -491,6 +501,7 @@ def _http_error(
         body=body,
         headers=headers,
         suggested_model_id=suggested_model_id,
+        hint=hint,
         in_stream=in_stream,
     )
 
@@ -801,6 +812,16 @@ class GoogleModel(Model[Client]):
             raise UserError(
                 f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
                 "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
+            )
+        # Likewise, a remote MCP server points at the Interactions API, which serves it.
+        fallback_ids = {t.unless_native for t in model_request_parameters.function_tools if t.unless_native}
+        if any(
+            isinstance(t, MCPServerTool) and not t.optional and t.unique_id not in fallback_ids
+            for t in model_request_parameters.native_tools
+        ):
+            raise UserError(
+                '`MCPServerTool` is not supported by `GoogleModel`. Use `GoogleInteractionsModel`, with the '
+                '`google-interactions:` prefix, or `MCP(local=True)` for a local fallback.'
             )
         # Count only native tools this model supports, including the settings set on them.
         # `Model.prepare_request` swaps an unsupported one for its local fallback, drops it when

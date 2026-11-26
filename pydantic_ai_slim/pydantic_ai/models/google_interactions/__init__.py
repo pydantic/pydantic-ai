@@ -50,6 +50,7 @@ from ...messages import (
 from ...native_tools import (
     AbstractNativeTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -60,6 +61,7 @@ from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.google import GoogleModelProfile, google_interactions_model_profile
 from ...providers import Provider, infer_provider
 from ...settings import ModelSettings, ThinkingEffort
+from ...usage import RequestUsage
 from .. import (
     Model,
     ModelRequestParameters,
@@ -279,6 +281,43 @@ class GoogleInteractionsModel(Model[Client]):
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return all of `native_tool`'s restricting settings, as Interactions' native tools apply none of them."""
         return native_tool.restricting_settings
+
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # Check before base validation so a computer use model points at `GoogleModel`, which sends the tool on the
+        # Gemini API, not the generic error.
+        fallback_ids = {t.unless_native for t in model_request_parameters.function_tools if t.unless_native}
+        if (
+            self.profile.get('google_supports_computer_use', False)
+            and not self.client.vertexai
+            and any(
+                isinstance(t, ComputerTool) and not t.optional and t.unique_id not in fallback_ids
+                for t in model_request_parameters.native_tools
+            )
+        ):
+            raise UserError(
+                '`ComputerTool` is not supported by `GoogleInteractionsModel`. Use `GoogleModel`, with the `google:` '
+                f'prefix, for computer use with {self.model_name!r}.'
+            )
+        return super().prepare_request(model_settings, model_request_parameters)
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        raise NotImplementedError(
+            'Token counting ahead of the request is not supported by `GoogleInteractionsModel`, as the Interactions '
+            'API has no token-counting endpoint. Use `GoogleModel` to count tokens.'
+        )
+
+    def _no_batch_api_message(self) -> str:
+        return (
+            f'`GoogleInteractionsModel` {self.model_name!r} has no batch API: batch it with `GoogleModel` through the '
+            'Gemini API, with the `google:` provider.'
+        )
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         overrides: list[str] = []

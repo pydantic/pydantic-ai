@@ -370,6 +370,7 @@ def google_status_error(
     body: object,
     headers: Mapping[str, str] | None,
     suggested_model_id: str | None = None,
+    hint: str | None = None,
     in_stream: bool = False,
 ) -> ModelHTTPError:
     """The error for a Google API error response, in the category its `status` and `body`'s details name.
@@ -383,6 +384,7 @@ def google_status_error(
         body=body,
         headers=headers,
         suggested_model_id=suggested_model_id,
+        hint=hint,
         provider_error_code=status,
         in_stream=in_stream,
     )
