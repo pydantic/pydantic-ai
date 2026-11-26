@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
-from opentelemetry.baggage import set_baggage as _otel_set_baggage
+from opentelemetry.baggage import get_baggage as _otel_get_baggage, set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode, get_current_span
 from pydantic_core import ValidationError, to_json
@@ -16,7 +16,9 @@ from pydantic_ai import _usage_attribution
 from pydantic_ai._cache_health import CacheHealthDetector, CollapseReason, ConversationCacheMarkStore
 from pydantic_ai._durable_replay import start_as_current_span
 from pydantic_ai._instrumentation import (
+    CONVERSATION_ID_BAGGAGE_KEY,
     DEFAULT_INSTRUMENTATION_VERSION,
+    ROOT_CONVERSATION_ID_BAGGAGE_KEY,
     InstrumentationNames,
     MessageJsonCache,
     get_agent_run_baggage_attributes,
@@ -290,6 +292,13 @@ class Instrumentation(AbstractCapability[Any]):
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
+        # A run started inside another run, such as a sub-agent, still sees the outer run's baggage
+        # here. Sub-agents get a conversation of their own, so recording the outermost one lets cost
+        # be summed per conversation across them.
+        outer = _otel_get_baggage(ROOT_CONVERSATION_ID_BAGGAGE_KEY) or _otel_get_baggage(CONVERSATION_ID_BAGGAGE_KEY)
+        root_conversation_id = outer if outer and outer != ctx.conversation_id else None
+        if root_conversation_id:
+            span_attributes[ROOT_CONVERSATION_ID_BAGGAGE_KEY] = root_conversation_id
 
         if (workspace_ref := ctx.workspace.ref) is not None:
             span_attributes['pydantic_ai.workspace.provider'] = workspace_ref.provider
@@ -316,6 +325,8 @@ class Instrumentation(AbstractCapability[Any]):
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
+            if root_conversation_id:
+                otel_ctx = _otel_set_baggage(ROOT_CONVERSATION_ID_BAGGAGE_KEY, root_conversation_id, context=otel_ctx)
             token = _otel_attach(otel_ctx)
             result: AgentRunResult[Any] | None = None
             try:

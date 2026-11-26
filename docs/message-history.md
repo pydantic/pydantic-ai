@@ -639,6 +639,8 @@ result = agent.run_sync('Tell me a joke.', run_id='run-from-api-42')
 assert result.run_id == 'run-from-api-42'
 ```
 
+An agent run started inside another run, such as a sub-agent called from a tool, usually has a `conversation_id` of its own, so its cost isn't counted when you group spans by `gen_ai.conversation.id`. Its spans also carry `pydantic_ai.root_conversation_id`, the conversation of the outermost run. To get the full cost of a conversation, sub-agents included, group by `pydantic_ai.root_conversation_id` and fall back to `gen_ai.conversation.id` on spans that don't have it.
+
 To override or fork `conversation_id`:
 
 - Pass `conversation_id='<your-id>'` to use an ID from your own application (e.g. a chat thread ID stored in your database).

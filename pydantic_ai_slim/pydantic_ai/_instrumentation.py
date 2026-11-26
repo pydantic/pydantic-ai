@@ -45,6 +45,8 @@ DEFAULT_INSTRUMENTATION_VERSION = 5
 AGENT_NAME_BAGGAGE_KEY = 'gen_ai.agent.name'
 RUN_ID_BAGGAGE_KEY = 'gen_ai.agent.call.id'
 CONVERSATION_ID_BAGGAGE_KEY = 'gen_ai.conversation.id'
+ROOT_CONVERSATION_ID_BAGGAGE_KEY = 'pydantic_ai.root_conversation_id'
+"""The conversation of the outermost run, set only on runs started inside another run (such as sub-agents)."""
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
@@ -268,7 +270,7 @@ unsupported (see `MessageHistoryMutatedWarning`).
 
 
 def get_agent_run_baggage_attributes() -> dict[str, Any]:
-    """Read agent name, run ID, and conversation ID from OTel baggage and return as span attributes."""
+    """Read agent name, run ID, and conversation IDs from OTel baggage and return as span attributes."""
     attrs: dict[str, Any] = {}
     agent_name = get_baggage(AGENT_NAME_BAGGAGE_KEY)
     if agent_name is not None:
@@ -279,6 +281,9 @@ def get_agent_run_baggage_attributes() -> dict[str, Any]:
     conversation_id = get_baggage(CONVERSATION_ID_BAGGAGE_KEY)
     if conversation_id is not None:
         attrs[CONVERSATION_ID_BAGGAGE_KEY] = conversation_id
+    root_conversation_id = get_baggage(ROOT_CONVERSATION_ID_BAGGAGE_KEY)
+    if root_conversation_id is not None:
+        attrs[ROOT_CONVERSATION_ID_BAGGAGE_KEY] = root_conversation_id
     return attrs
 
 

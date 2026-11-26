@@ -5217,6 +5217,60 @@ async def test_nested_delegation_spans_sum_to_the_runs_total(capfire: CaptureLog
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_sub_agent_cost_rolls_up_to_the_root_conversation(capfire: CaptureLogfire) -> None:
+    """Grouping chat spans by root conversation counts every sub-agent's cost under the outer chat.
+
+    Each delegate run here gets a conversation of its own, as `SubAgents` gives each child, so
+    grouping by `gen_ai.conversation.id` alone misses their tokens. Spans of nested runs also carry
+    the outermost conversation, and top-level spans don't, so the documented query falls back to
+    `gen_ai.conversation.id` for them.
+    """
+
+    def leaf_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('leaf')], usage=RequestUsage(input_tokens=1))
+
+    leaf = Agent(FunctionModel(leaf_fn), name='leaf', capabilities=[Instrumentation()])
+
+    def delegating_fn(tool_name: str, tokens: int):
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            usage = RequestUsage(input_tokens=tokens)
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name, {})], usage=usage)
+            return ModelResponse(parts=[TextPart('done')], usage=usage)
+
+        return fn
+
+    middle = Agent(FunctionModel(delegating_fn('ask_leaf', 10)), name='middle', capabilities=[Instrumentation()])
+
+    @middle.tool_plain
+    async def ask_leaf() -> str:
+        return (await leaf.run('x', conversation_id='leaf-conversation')).output
+
+    top = Agent(FunctionModel(delegating_fn('ask_middle', 100)), name='top', capabilities=[Instrumentation()])
+
+    @top.tool_plain
+    async def ask_middle() -> str:
+        return (await middle.run('x', conversation_id='middle-conversation')).output
+
+    await top.run('go', conversation_id='chat')
+
+    cost_by_chat: dict[str, int] = {}
+    for span in capfire.exporter.exported_spans_as_dict():
+        attributes = span['attributes']
+        if attributes.get('gen_ai.operation.name') == 'chat':
+            chat = attributes.get('pydantic_ai.root_conversation_id', attributes['gen_ai.conversation.id'])
+            cost_by_chat[chat] = cost_by_chat.get(chat, 0) + attributes['gen_ai.usage.input_tokens']
+    assert cost_by_chat == snapshot({'chat': 221})
+
+    root_by_run = {
+        span['attributes']['gen_ai.agent.name']: span['attributes'].get('pydantic_ai.root_conversation_id')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+    }
+    assert root_by_run == snapshot({'leaf': 'chat', 'middle': 'chat', 'top': None})
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
 def test_model_request_exception_events_honor_include_content(capfire: CaptureLogfire, include_content: bool) -> None:
     """The model request span follows the same rule as the tool and agent run spans.
