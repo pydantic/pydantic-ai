@@ -1,0 +1,308 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "470"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: auto
+        input:
+        - content:
+          - text: Use city_temperature to find the temperature in Paris.
+            type: text
+          type: user_input
+        store: false
+        stream: true
+        tools:
+        - description: Look up the current temperature in the requested city.
+          name: city_temperature
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=2393
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"Eq8CCqwCAWkUfRPbQgYpmzwG9jP7swepKU3k5cnHSSXRhD802eZZ2ENHibmqEEWuZ6BGHrEKrCk74r94SOw2ZOOS1W4x2XBSbuHVa1eJHeHc0xaDhphpXRiT2l6ufGQT0t7sf8QPrhQQOx1wY/wCmSQLs9ldcJWE9/JqN0qJya4q5qC/i3o7s+BGbxV66PWs/Wg4NZNOmkUccPmCcHnn56nqDWaE3N5ePIDH9MGRfybJj8DXQMUNKtt6LyvUYSx+jA0qNppel0pwM0c50LsUEUBVuDXnBeqhFqWrSe4nE5IvAoiIAk76j/kwl6+AG6qUnCpyeqzMOBXPV56EPevZy5j+5gKMnjwWOpBbWJYAFyidGKA82sFeVhhqecK4yjR6cG9AX+VI7WOA3hI/oaAstfOb","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"id":"call_391632","type":"function_call","name":"city_temperature","arguments":{}},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"arguments":"{\"city\":\"Paris\"}","type":"arguments_delta"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"requires_action","usage":{"total_tokens":113,"total_input_tokens":59,"input_tokens_by_modality":[{"modality":"text","tokens":59}],"total_cached_tokens":0,"total_output_tokens":16,"total_tool_use_tokens":0,"total_thought_tokens":38,"initial_input_tokens":38},"created":"2026-11-05T15:00:29Z","updated":"2026-11-05T15:00:29Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T15:00:29.763426+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - text/event-stream
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1127"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: auto
+        input:
+        - content:
+          - text: Use city_temperature to find the temperature in Paris.
+            type: text
+          type: user_input
+        - signature: >-
+            Eq8CCqwCAWkUfRPbQgYpmzwG9jP7swepKU3k5cnHSSXRhD802eZZ2ENHibmqEEWuZ6BGHrEKrCk74r94SOw2ZOOS1W4x2XBSbuHVa1eJHeHc0xaDhphpXRiT2l6ufGQT0t7sf8QPrhQQOx1wY/wCmSQLs9ldcJWE9/JqN0qJya4q5qC/i3o7s+BGbxV66PWs/Wg4NZNOmkUccPmCcHnn56nqDWaE3N5ePIDH9MGRfybJj8DXQMUNKtt6LyvUYSx+jA0qNppel0pwM0c50LsUEUBVuDXnBeqhFqWrSe4nE5IvAoiIAk76j/kwl6+AG6qUnCpyeqzMOBXPV56EPevZy5j+5gKMnjwWOpBbWJYAFyidGKA82sFeVhhqecK4yjR6cG9AX+VI7WOA3hI/oaAstfOb
+          type: thought
+        - arguments:
+            city: Paris
+          id: call_391632
+          name: city_temperature
+          type: function_call
+        - call_id: call_391632
+          result:
+          - text: "21"
+            type: text
+          name: city_temperature
+          type: function_result
+        store: false
+        stream: true
+        tools:
+        - description: Look up the current temperature in the requested city.
+          name: city_temperature
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=1625
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        event: interaction.created
+        data: {"interaction":{"object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.created"}
+
+        event: interaction.status_update
+        data: {"status":"in_progress","event_type":"interaction.status_update"}
+
+        event: step.start
+        data: {"index":0,"step":{"type":"thought"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":0,"delta":{"signature":"EskBCsYBAWkUfRPnEsX4RmdwUYBUS/UpRwXhieYjG5AcbI+X8f4m9ihsPpa8FS85K3EvqMCCe8gMXSKhlP/4gGlw9aV60taXr2kfLWahDkR/rbPzT1vkB/hqGBcC/IflXlqHK6Zy1BnyvI8AktSnNaJwteaDZkJLurxRVGkKBWoyEGxAYYAtr0HAHOnr+rk6nQl8fAPwBjHFZ/rCS+sJXyrfNFV7SHtkoqoM5Ie7a4X4IbLH3A4HwFnUYbi9VrvwCy7XZznu5HymqxY1","type":"thought_signature"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":0,"event_type":"step.stop"}
+
+        event: step.start
+        data: {"index":1,"step":{"type":"model_output"},"event_type":"step.start"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"text":"The current temperature in","type":"text"},"event_type":"step.delta"}
+
+        event: step.delta
+        data: {"index":1,"delta":{"text":" Paris is 21°C.","type":"text"},"event_type":"step.delta"}
+
+        event: step.stop
+        data: {"index":1,"event_type":"step.stop"}
+
+        event: interaction.completed
+        data: {"interaction":{"status":"completed","usage":{"total_tokens":151,"total_input_tokens":121,"input_tokens_by_modality":[{"modality":"text","tokens":121}],"total_cached_tokens":0,"total_output_tokens":12,"total_tool_use_tokens":0,"total_thought_tokens":18,"initial_input_tokens":97},"created":"2026-11-05T15:00:31Z","updated":"2026-11-05T15:00:31Z","service_tier":"standard","object":"interaction","model":"gemini-3.8-flash"},"event_type":"interaction.completed"}
+
+        event: done
+        data: [DONE]
+
+  recorded_at: 2026-11-05T15:00:31.659780+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1634"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice: auto
+        input:
+        - content:
+          - text: Use city_temperature to find the temperature in Paris.
+            type: text
+          type: user_input
+        - signature: >-
+            Eq8CCqwCAWkUfRPbQgYpmzwG9jP7swepKU3k5cnHSSXRhD802eZZ2ENHibmqEEWuZ6BGHrEKrCk74r94SOw2ZOOS1W4x2XBSbuHVa1eJHeHc0xaDhphpXRiT2l6ufGQT0t7sf8QPrhQQOx1wY/wCmSQLs9ldcJWE9/JqN0qJya4q5qC/i3o7s+BGbxV66PWs/Wg4NZNOmkUccPmCcHnn56nqDWaE3N5ePIDH9MGRfybJj8DXQMUNKtt6LyvUYSx+jA0qNppel0pwM0c50LsUEUBVuDXnBeqhFqWrSe4nE5IvAoiIAk76j/kwl6+AG6qUnCpyeqzMOBXPV56EPevZy5j+5gKMnjwWOpBbWJYAFyidGKA82sFeVhhqecK4yjR6cG9AX+VI7WOA3hI/oaAstfOb
+          type: thought
+        - arguments:
+            city: Paris
+          id: call_391632
+          name: city_temperature
+          type: function_call
+        - call_id: call_391632
+          result:
+          - text: "21"
+            type: text
+          name: city_temperature
+          type: function_result
+        - signature: >-
+            EskBCsYBAWkUfRPnEsX4RmdwUYBUS/UpRwXhieYjG5AcbI+X8f4m9ihsPpa8FS85K3EvqMCCe8gMXSKhlP/4gGlw9aV60taXr2kfLWahDkR/rbPzT1vkB/hqGBcC/IflXlqHK6Zy1BnyvI8AktSnNaJwteaDZkJLurxRVGkKBWoyEGxAYYAtr0HAHOnr+rk6nQl8fAPwBjHFZ/rCS+sJXyrfNFV7SHtkoqoM5Ie7a4X4IbLH3A4HwFnUYbi9VrvwCy7XZznu5HymqxY1
+          type: thought
+        - content:
+          - text: The current temperature in Paris is 21°C.
+            type: text
+          type: model_output
+        - content:
+          - text: Repeat that temperature without calling a tool.
+            type: text
+          type: user_input
+        store: false
+        tools:
+        - description: Look up the current temperature in the requested city.
+          name: city_temperature
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=3381
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 200
+          total_input_tokens: 161
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 161
+          total_cached_tokens: 0
+          total_output_tokens: 11
+          total_tool_use_tokens: 0
+          total_thought_tokens: 28
+          initial_input_tokens: 135
+        created: 2026-11-05T15:00:35Z
+        updated: 2026-11-05T15:00:35Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EvQBCvEBAWkUfRO3QSZf3kbT3ZRjfHPhMmjsedgYgZJ06GOeAQ5zvBijVQyT58MOzbH2hMU3lEk5A8JzYQ47KvFm7uZrzXdkIKngMFGeDqXOOQqUT7hvZGZqGQaXkkMjKUrsysym2Yiv3wGYn41Vr/r8wWcpvUeDmh8Oo7WErPy+fVTdyPVd5Hb0ZuEjTJSK5Bq/Fsxuheo8p7Xc8kqGyV1wCG58pEuN4jps5M2z45BD5rp54TqYbNaSv+IJwQOoCPkOI7ouGSs7tXf3PvFXRBNlH7N0wLBH8t5vhqBXDXrObdaocOlH+meYWD64trpvu/uA1mbBFg==
+          type: thought
+        - content:
+          - text: The temperature in Paris is 21°C.
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T15:00:35.252716+00:00

@@ -109,6 +109,9 @@ class Script:
     """Made on the fleet's event loop, which runs the turns and serves the page; the test sets it through the portal."""
     answered: anyio.Event
     """Set when the server answers a Changes request for this session; made anew as a turn gives its answer."""
+    next_turn_shown: anyio.Event
+    """Set once the page shows the turn after an unheld write running. Until then the server holds each Changes answer
+    that has the write, as a slow one can, so a panel must take an answer that arrives after the next turn starts."""
 
 
 @dataclass
@@ -177,15 +180,25 @@ def panels_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
     turns = PluginSettings(id='turns', factory=f'{__name__}:Turns')
     with pytest.MonkeyPatch.context() as patch, start_blocking_portal() as portal:
         scripts = {
-            folder(*case): Script(case[1] != 'opened mid-turn', portal.call(anyio.Event), portal.call(anyio.Event))
+            folder(*case): Script(
+                case[1] != 'opened mid-turn',
+                portal.call(anyio.Event),
+                portal.call(anyio.Event),
+                portal.call(anyio.Event),
+            )
             for case in CASES
         }
 
         async def answer(
             messages: Sequence[ModelMessage], workspace: Path, *, scope: ChangeScope, diffs: bool = True
         ) -> Changes:
+            script = scripts[workspace.name]
+            if not script.hold_after_write and any(
+                isinstance(part, ToolReturnPart) for message in messages for part in message.parts
+            ):
+                await script.next_turn_shown.wait()
             changes = await session_changes(messages, workspace, scope=scope, diffs=diffs)
-            scripts[workspace.name].answered.set()
+            script.answered.set()
             return changes
 
         agents = {
@@ -205,6 +218,7 @@ def panels_ui(tmp_path_factory: pytest.TempPathFactory, serve: Serve) -> Iterato
             for script in scripts.values():
                 portal.call(script.released.set)
                 portal.call(script.answered.set)
+                portal.call(script.next_turn_shown.set)
             fleet.exit()
 
 
@@ -246,6 +260,7 @@ async def run_moment(
         await expect(activity).to_have_text('ready')
         await send(page, HOLD)
         await expect(activity).not_to_have_text('ready')
+        panels_ui.fleet.portal.call(script.next_turn_shown.set)
         await open_panel()
     else:
         await open_panel()
