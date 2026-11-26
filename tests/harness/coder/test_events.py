@@ -6,7 +6,7 @@ import pytest
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, on_event
-from pydantic_ai_harness.filesystem import FileChangeRequestedEvent
+from pydantic_ai_harness.file_system import FileChangeRequestedEvent
 
 from .test_tools import call
 

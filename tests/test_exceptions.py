@@ -10,7 +10,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai import Conversation, ModelRequest, ModelRetry, ToolFailed
 from pydantic_ai._json_schema import InlinedSchemaTooLargeError
 from pydantic_ai._model_errors import transport_phase
 from pydantic_ai._output import build_retried_tool_return
@@ -25,7 +25,9 @@ from pydantic_ai.exceptions import (
     ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
@@ -36,6 +38,7 @@ from pydantic_ai.exceptions import (
     ModelTimeoutError,
     ModelUnavailableError,
     OutputTokenLimitExceeded,
+    RunCancelled,
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
@@ -81,6 +84,8 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: ModelRateLimitError('model', 'test message'),
         lambda: ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model'),
         lambda: ModelRequestTimeout('model', 30),
+        lambda: ModelEmptyResponseError('model', 'test message'),
+        lambda: ModelInvalidResponseError('model', 'test message', body={'choices': None}),
         lambda: IncompleteToolCall('test'),
         lambda: OutputTokenLimitExceeded('test'),
         lambda: ToolRetryError(ToolReturnPart(tool_name='test', content='test', outcome='retried')),
@@ -99,6 +104,8 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'ModelRateLimitError',
         'ModelHTTPError-ModelRateLimitError',
         'ModelRequestTimeout',
+        'ModelEmptyResponseError',
+        'ModelInvalidResponseError',
         'IncompleteToolCall',
         'OutputTokenLimitExceeded',
         'ToolRetryError',
@@ -255,6 +262,14 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
         (lambda: OutputTokenLimitExceeded('cut off'), {'message': 'cut off', 'body': None}),
         (
+            lambda: ModelEmptyResponseError('gpt-4', 'Streamed response ended without content or tool calls'),
+            {'model_name': 'gpt-4', 'message': 'Streamed response ended without content or tool calls', 'body': None},
+        ),
+        (
+            lambda: ModelInvalidResponseError('gpt-4', 'Invalid response', body={'choices': None}),
+            {'model_name': 'gpt-4', 'message': 'Invalid response', 'body': {'choices': None}},
+        ),
+        (
             lambda: InlinedSchemaTooLargeError("The JSON schema of tool 'x'", 'Leave it out.'),
             {'subject': "The JSON schema of tool 'x'", 'remedy': 'Leave it out.'},
         ),
@@ -288,6 +303,8 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-ModelNotFoundError-with-model-suggestion',
         'IncompleteToolCall',
         'OutputTokenLimitExceeded',
+        'ModelEmptyResponseError',
+        'ModelInvalidResponseError',
         'InlinedSchemaTooLargeError',
     ],
 )
@@ -300,6 +317,36 @@ def test_exceptions_pickle_round_trip(exc_factory: Callable[[], Exception], chec
     assert str(restored) == str(exc)
     for attr, expected in check_attrs.items():
         assert getattr(restored, attr) == expected
+
+
+@pytest.mark.parametrize(
+    'make_error',
+    [
+        pytest.param(lambda: AgentRunError('failed'), id='AgentRunError'),
+        pytest.param(lambda: UsageLimitExceeded('limit'), id='UsageLimitExceeded'),
+        pytest.param(lambda: RunCancelled('cancelled'), id='RunCancelled'),
+        pytest.param(lambda: UnexpectedModelBehavior('odd', '{"a": 1}'), id='UnexpectedModelBehavior'),
+        pytest.param(lambda: ContentFilterError('filtered'), id='ContentFilterError'),
+        pytest.param(lambda: OutputTokenLimitExceeded('cut off'), id='OutputTokenLimitExceeded'),
+        pytest.param(lambda: ModelAPIError('model', 'down'), id='ModelAPIError'),
+        pytest.param(lambda: ModelTimeoutError('model', 'slow'), id='ModelTimeoutError'),
+        pytest.param(lambda: ModelRequestTimeout('model', 5.0), id='ModelRequestTimeout'),
+        pytest.param(lambda: ModelHTTPError(500, 'model', 'oops'), id='ModelHTTPError'),
+        pytest.param(
+            lambda: ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name='model'),
+            id='ModelRateLimitError',
+        ),
+    ],
+)
+def test_a_failed_runs_conversation_survives_pickling(make_error: Callable[[], AgentRunError]):
+    """Durable engines like DBOS pickle a workflow's error, so the conversation a failed run gives it must survive."""
+    error = make_error()
+    conversation = Conversation(messages=[ModelRequest.user_text_prompt('Hello')])
+    error._pydantic_ai_conversation = conversation  # pyright: ignore[reportPrivateUsage]
+
+    restored = pickle.loads(pickle.dumps(error))
+
+    assert restored.conversation == conversation
 
 
 def test_categorized_http_error_reads_as_its_category():
@@ -864,6 +911,7 @@ _HTTP_CATEGORIES = [
     ModelUnavailableError,
     ModelOverloadedError,
     ModelServerError,
+    ModelTimeoutError,
     ModelContextWindowExceededError,
     ModelRequestRejectedError,
     ModelAuthenticationError,
@@ -929,9 +977,7 @@ def test_model_http_error_for_category_rejects_a_non_http_category():
         )
 
 
-@pytest.mark.parametrize(
-    'category', [*_HTTP_CATEGORIES, ModelConnectionError, ModelTimeoutError], ids=lambda c: c.__name__
-)
+@pytest.mark.parametrize('category', [*_HTTP_CATEGORIES, ModelConnectionError], ids=lambda c: c.__name__)
 def test_model_error_categories_pickle_round_trip(category: type[ModelAPIError]):
     error = category('gpt-4', 'failed', body={'error': 'x'}, provider_error_code='code', in_stream=True)
     restored = pickle.loads(pickle.dumps(error))
@@ -948,3 +994,16 @@ def test_model_error_categories_pickle_round_trip(category: type[ModelAPIError])
 def test_model_overloaded_error_is_unavailable():
     assert issubclass(ModelOverloadedError, ModelUnavailableError)
     assert not issubclass(ModelUnavailableError, ModelOverloadedError)
+
+
+@pytest.mark.parametrize('error_type', [ModelEmptyResponseError, ModelInvalidResponseError])
+def test_model_response_errors_are_model_api_errors_and_unexpected_model_behavior(
+    error_type: type[ModelEmptyResponseError | ModelInvalidResponseError],
+):
+    """A response the model layer couldn't use is a model error, and still an `UnexpectedModelBehavior` too."""
+    error = error_type('gpt-4', 'Unusable response', body='<html>Bad gateway</html>')
+    assert isinstance(error, ModelAPIError)
+    assert isinstance(error, UnexpectedModelBehavior)
+    assert (error.model_name, error.message, error.body) == ('gpt-4', 'Unusable response', '<html>Bad gateway</html>')
+    assert str(error) == 'Unusable response'
+    assert str(error_type('gpt-4', 'Unusable response')) == 'Unusable response'

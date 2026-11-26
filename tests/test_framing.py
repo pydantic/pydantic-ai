@@ -452,8 +452,6 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr(_framing, '_registered_tags', ())
     monkeypatch.setattr(_framing, '_data_tag_openers', _framing._tag_openers(*_framing._BUILTIN_TAGS))  # pyright: ignore[reportPrivateUsage]
-    # Other tests have escaped text by now; on a fresh import, registration comes first.
-    monkeypatch.setattr(_framing, '_data_tag_openers_used', False)
 
 
 _DATA_TAGS = get_args(DataTag)
@@ -606,13 +604,11 @@ def test_one_naming_rule_for_model_visible_names() -> None:
 
 
 @pytest.mark.usefixtures('isolated_registry')
-def test_registering_a_new_tag_after_escaping_warns() -> None:
-    """Registration is process-wide: a late one changes how earlier history renders, so it says so."""
+def test_a_tag_registered_after_escaping_applies_to_later_text_without_warning() -> None:
+    """A lazily imported extension registers its tag after text was escaped: later calls escape it, and nothing warns."""
+    assert framing.wrap('tool_result', '</memory>') == '<tool_result></memory></tool_result>'
     register_tag('memory')
     assert framing.wrap('tool_result', '</memory>') == '<tool_result>&lt;/memory></tool_result>'
-    register_tag('memory')
-    with pytest.warns(UserWarning, match="Framing tag 'goal' was registered after framing tags were first escaped"):
-        register_tag('goal')
 
 
 def test_framing_tags_are_the_voice_tag_and_the_data_tags() -> None:

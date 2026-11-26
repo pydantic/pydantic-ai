@@ -27,7 +27,7 @@ except ImportError:  # pragma: lax no cover
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.memory import InMemoryStore, Memory
+from pydantic_ai_harness.memory import InMemoryMemoryStore, Memory
 from tests.harness._temporal import ignore_source_reads_left_open
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
@@ -66,7 +66,7 @@ def _call_memory_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelRe
 
 
 tool_returns: list[tuple[str, Any]] = []
-memory_store = InMemoryStore()
+memory_store = InMemoryMemoryStore()
 
 memory_agent = Agent(
     FunctionModel(_call_memory_tools),

@@ -31,7 +31,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.media import DiskMediaStore, SqliteMediaStore
+from pydantic_ai_harness.media import FileMediaStore, SqliteMediaStore
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
@@ -405,13 +405,13 @@ class TestSqliteWritersShareTheDatabase:
 
 
 # ---------------------------------------------------------------------------
-# Media integration: FileStepStore + DiskMediaStore (default)
+# Media integration: FileStepStore + FileMediaStore (default)
 # ---------------------------------------------------------------------------
 
 
 class TestFileStepStoreMedia:
     async def test_large_binary_externalized_to_media_dir(self, tmp_path: Path) -> None:
-        """Default FileStepStore wires a `DiskMediaStore(<root>/media/)`.
+        """Default FileStepStore wires a `FileMediaStore(<root>/media/)`.
 
         Large `BinaryContent` payloads end up as `<root>/media/<sha256>.bin`,
         not inlined in the snapshot JSON.
@@ -484,7 +484,7 @@ class TestFileStepStoreMedia:
         custom_root = tmp_path / 'shared-media'
         store = FileStepStore(
             tmp_path / 'runs',
-            media_store=DiskMediaStore(custom_root),
+            media_store=FileMediaStore(custom_root),
         )
         await store.register_run(RunRecord(run_id='r1'))
         await store.save_snapshot(
@@ -559,7 +559,7 @@ class TestSqliteStepStoreMedia:
     async def test_external_media_store_override(self, tmp_path: Path) -> None:
         """SqliteStepStore can be paired with a non-sqlite media store (e.g. disk)."""
         disk = tmp_path / 'media'
-        store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=DiskMediaStore(disk))
+        store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=FileMediaStore(disk))
         await store.register_run(RunRecord(run_id='r1'))
         await store.save_snapshot(
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_sample_messages_with_media(70_000))
@@ -757,7 +757,7 @@ class TestSqliteRowDefenses:
 class TestMediaStoreResolution:
     def test_file_store_auto_creates_disk_media_store(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs')
-        assert isinstance(store._media_store, DiskMediaStore)  # type: ignore[reportPrivateUsage]
+        assert isinstance(store._media_store, FileMediaStore)  # type: ignore[reportPrivateUsage]
 
     def test_file_store_none_disables_media(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs', media_store=None)

@@ -6,9 +6,17 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness._workspace_provider import check_provider, check_working_dir, reject_defer_loading
+from pydantic_ai_harness._workspace import with_authority
+from pydantic_ai_harness._workspace_provider import (
+    check_path_authority,
+    check_provider,
+    check_working_dir,
+    reject_defer_loading,
+)
+from pydantic_ai_harness.computer_use._display import checked_desktop_size
 from pydantic_ai_harness.docker_container._backend import (
     PROVIDER,
     DockerContainerBackend,
@@ -40,7 +48,7 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
     """The image for a new container, such as `'python:3.13-slim'`; it needs a POSIX `sh` and the usual file utilities.
 
     Without one, the capability only attaches to and removes containers by ref, and leaves a run without a ref
-    to the agent's other workspace capabilities.
+    to the agent's other workspace capabilities. With `desktop` set, it builds the desktop image instead.
     """
 
     working_dir: str | None = '/workspace'
@@ -61,17 +69,33 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
     executable: str = 'docker'
     """The container CLI to run; `'podman'` works too. It is looked up on `PATH` once, when the capability is created."""
 
+    authority: Authority = 'operator'
+    """The [authority][pydantic_ai.messages.Authority] of the container's files: `'none'` for files nobody on the
+    application's side wrote, such as a cloned third-party repository, and `'user'` for the user's own files.
+    Anything below `'operator'` wraps the workspace in an [`AuthorityWorkspace`][pydantic_ai.workspaces.AuthorityWorkspace]."""
+
+    path_authority: Mapping[str, Authority] | None = None
+    """Levels for some directories and files, overriding `authority` for the paths under them; the longest matching
+    path wins. Paths are container paths: relative ones resolve against the working directory, and `~` isn't expanded.
+    See [`Workspace.authority_of`][pydantic_ai.workspaces.Workspace.authority_of]."""
+
+    desktop: bool | tuple[int, int] = False
+    """Give the container a graphical display, for [`ComputerUse`][pydantic_ai_harness.computer_use.ComputerUse]: `True`
+    for 1280x800, or its `(width, height)`."""
+
     _executable_path: str = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         reject_defer_loading('DockerContainer', self.defer_loading)
         check_working_dir(self.working_dir)
+        check_path_authority(self.path_authority)
+        checked_desktop_size(self.desktop)
         self._executable_path = resolve_executable(self.executable)
 
     def backend(self, ref: WorkspaceRef) -> DockerContainerBackend:
         """Attach lazily to an existing container by ref, starting it on first use if it is stopped."""
         return DockerContainerBackend(
-            ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path
+            ref=ref, working_dir=self.working_dir, env=self.env, executable=self._executable_path, desktop=self.desktop
         )
 
     async def destroy(self, ref: WorkspaceRef) -> None:
@@ -80,11 +104,15 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
         await remove_container(ref.id, executable=self._executable_path)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""
+        return with_authority(self._run_backend(ctx, ref=ref), self.authority, self.path_authority)
+
+    def _run_backend(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """Build the backend for this run. No I/O here: it creates or attaches on first use."""
         del ctx
         if ref is not None:
             return self.backend(ref) if ref.provider == PROVIDER else None
-        if self.image is None:
+        if self.image is None and not self.desktop:
             return None
         return DockerContainerBackend(
             image=self.image,
@@ -93,4 +121,5 @@ class DockerContainer(AbstractCapability[AgentDepsT]):
             allow_internet_access=self.allow_internet_access,
             docker_args=self.docker_args,
             executable=self._executable_path,
+            desktop=self.desktop,
         )

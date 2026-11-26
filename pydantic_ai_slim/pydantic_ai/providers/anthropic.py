@@ -8,15 +8,18 @@ from typing import TypeAlias, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
+from pydantic_ai.native_tools import ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import (
     _COUNTING_STRICT_SCHEMAS,  # pyright: ignore[reportPrivateUsage]
     _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
+    AnthropicComputerToolVersion,
     AnthropicModelProfile,
     anthropic_model_profile,
 )
 from pydantic_ai.providers import Provider, missing_api_key_error
 from pydantic_ai.providers._bedrock_model_names import split_bedrock_model_id
+from pydantic_ai.providers._model_deprecations import ANTHROPIC_MODEL_DEPRECATIONS
 
 from .._json_schema import JsonSchema, JsonSchemaTransformer
 
@@ -123,6 +126,50 @@ and Microsoft Foundry are documented as supported, but weren't reachable with ou
 """
 
 
+_COMPUTER_TOOLSET_MODEL_PREFIXES = (
+    'claude-fable-5',
+    'claude-mythos-5',
+    'claude-opus-5',
+    'claude-sonnet-5',
+    'claude-haiku-5',
+    'claude-opus-4-8',
+)
+"""The models that take Anthropic's `computer_toolset_20260801`."""
+
+
+def _computer_tool_version(model_name: str) -> AnthropicComputerToolVersion | None:
+    """The model's computer use tool from Anthropic's compatibility table, or `None` if it gets the function tool.
+
+    Claude 5.5 and later take only the toolset. Retired and retiring models (Opus 4 and 4.1, Sonnet 4 and 4.5) get the
+    function tool.
+    https://platform.claude.com/docs/en/agents-and-tools/tool-use/computer-use-tool#earlier-tool-versions
+    """
+    if model_name.startswith(_COMPUTER_TOOLSET_MODEL_PREFIXES):
+        return 'computer_toolset_20260801'
+    if model_name.startswith(('claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-opus-4-5')):
+        return 'computer_20251124'
+    if model_name.startswith('claude-haiku-4-5'):
+        return 'computer_20250124'
+    return None
+
+
+def _computer_use_profile(model_name: str, profile: ModelProfile | None) -> AnthropicModelProfile:
+    """The computer use facts to merge onto `profile`, the model's profile from `anthropic_model_profile()`.
+
+    Only `AnthropicProvider` adds these, since the tool is part of Anthropic's own request format. The Bedrock Converse
+    API and OpenAI-compatible gateways that share `anthropic_model_profile()` get the `computer` function tool.
+    """
+    computer_tool_version = _computer_tool_version(model_name)
+    if computer_tool_version is None:
+        return AnthropicModelProfile()
+    # `anthropic_model_profile()` always sets `supported_native_tools`, so the empty fallback is never used.
+    supported_native_tools = (profile or {}).get('supported_native_tools', frozenset())
+    return AnthropicModelProfile(
+        supported_native_tools=supported_native_tools | {ComputerTool},
+        anthropic_computer_tool_version=computer_tool_version,
+    )
+
+
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
 
@@ -146,6 +193,8 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
+        # The Claude API's deprecations are looked up by the unstripped name, so a Bedrock id never matches one.
+        deprecation = ANTHROPIC_MODEL_DEPRECATIONS.get(model_name)
         # When the underlying client is `AsyncAnthropicBedrock`/`AsyncAnthropicBedrockMantle`, the model
         # name carries a Bedrock `anthropic.` provider segment (and, on the legacy InvokeModel API, a
         # `-v<n>(:<m>)?` version suffix and optional cross-region geo prefix), e.g.
@@ -194,12 +243,15 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(
                 anthropic_supports_on_demand_compaction=model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
             ),
+            _computer_use_profile(model_name, profile),
             AnthropicModelProfile(
                 # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
                 # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
                 # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
                 default_cache_retention=timedelta(minutes=5)
             ),
+            # `AnthropicModel` drops it for the clients of platforms that retire Claude models on their own schedule.
+            AnthropicModelProfile() if deprecation is None else AnthropicModelProfile(deprecation=deprecation),
         )
 
     @overload

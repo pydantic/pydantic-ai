@@ -99,7 +99,21 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     openai_user: str
     """A unique identifier representing the end-user, which can help OpenAI monitor and detect abuse.
 
-    See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
+    OpenAI is replacing the `user` field with `safety_identifier`, mapped to
+    [`openai_safety_identifier`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_safety_identifier],
+    and `prompt_cache_key`, mapped to
+    [`openai_prompt_cache_key`][pydantic_ai.models.openai.OpenAIChatModelSettings.openai_prompt_cache_key].
+
+    See [OpenAI's safety best practices](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers) for more details.
+    """
+
+    openai_safety_identifier: str
+    """A stable identifier representing the end-user, which can help OpenAI detect users who may be violating its usage policies.
+
+    Supported by both the Chat Completions API and the Responses API. Nothing is sent when it is unset. Hash the
+    end-user's ID, such as their username or email address, so that no identifying information is sent to OpenAI.
+
+    See [OpenAI's safety best practices](https://developers.openai.com/api/docs/guides/safety-best-practices#implement-safety-identifiers) for more details.
     """
 
     openai_moderation: Moderation
@@ -177,11 +191,16 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
 
     On the Responses API the top-level `instructions` field cannot carry a breakpoint, so the
     instructions are sent as leading input messages instead. That only happens on requests that
-    don't continue server-side state: when `openai_previous_response_id` or `openai_conversation_id`
-    is set, or the history has been compacted, this setting leaves the instructions where they would
-    otherwise go (normally the top-level field) and adds no breakpoint. That includes
+    don't use server-side state: when `openai_previous_response_id` (as `openai_transport='websocket'`
+    does by default) or `openai_conversation_id` is set, or the history has been compacted, this
+    setting leaves the instructions where they would otherwise go (normally the top-level field) and
+    adds no breakpoint. That includes
     `openai_previous_response_id='auto'` on the first request of a chain: a stored response keeps
     its input, so relocated instructions would be replayed alongside every later request's own.
+    On `gpt-6.2-sol` and `gpt-6.2-astra`, which put the top-level field after the input, the dynamic
+    instructions that rewrite the prefix stay there, and an `openai_previous_response_id='auto'` chain sends the
+    others as leading input, with this breakpoint after the static ones, when it starts or resends the history (see
+    [`openai_responses_stable_instructions_as_input`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_responses_stable_instructions_as_input]).
 
     No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
     per-request content would sit inside the cached prefix and miss the cache on every run, nor when
@@ -231,6 +250,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """The provided OpenAI built-in tools to use.
 
     See [OpenAI's built-in tools](https://platform.openai.com/docs/guides/tools?api-mode=responses) for more details.
+
+    For the computer tool, use Pydantic AI Harness's `ComputerUse`, which sends it for you. Don't also pass a
+    `ComputerToolParam` here, or the request declares the tool twice.
     """
 
     openai_reasoning_mode: Literal['standard', 'pro']
@@ -294,6 +316,9 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     so disabling this also stops them from being sent back entirely. Hosted tool-search items are the exception:
     they carry their state (the query and discovered tools) inline, so they are still replayed with the IDs
     omitted, and previously discovered tools stay callable.
+
+    A local `search_tools` call replayed as a `tool_search_call` item never carries a function call (`fc_*`) ID,
+    even with this enabled: the API rejects that ID on a tool-search item.
     """
 
     openai_truncation: Literal['disabled', 'auto']
@@ -362,6 +387,12 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     are omitted from the input, since OpenAI reconstructs them from the server-side conversation. So
     changes to those messages, by a history processor or compaction for instance, don't reach the
     model: it continues from the conversation as OpenAI stored it.
+
+    OpenAI adds a response to its conversation only once the response completes. When the response found was
+    streamed and its stream dropped or was cancelled before it finished, Pydantic AI first lists the conversation's
+    items to check whether OpenAI completed it anyway, if the response has output items to look for. If it didn't,
+    or the response has none, that response is sent again, with the messages since the last response the
+    conversation holds. Counting tokens for such a request makes the same check, so it counts the same input.
 
     `'auto'` trusts the message history for this ID, which
     [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] keeps as sent. With history from a client, pass a

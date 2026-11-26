@@ -37,15 +37,22 @@ flowchart TB
 
 ## Install
 
+<span id="platforms"></span>
+
 ```bash
 pip/uv-add "pydantic-ai-harness[coder,boxlite,anthropic]"
 ```
 
-The `boxlite` extra installs [BoxLite's Python SDK](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python), which embeds the BoxLite runtime: there is no daemon to run. The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra, and set `ANTHROPIC_API_KEY` for the examples.
+The `boxlite` extra installs [BoxLite's Python SDK](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python), which runs VMs in your process, with no daemon. It needs Python 3.14 or older on one of:
 
-BoxLite ships wheels for macOS 14 or newer on Apple silicon and for Linux on x86_64 and aarch64 (glibc 2.28 or newer), for Python up to 3.14. On Linux, the user running the agent needs read and write access to `/dev/kvm`. See [Platforms](#platforms).
+- macOS 14 or newer on Apple silicon.
+- Linux on x86_64 or aarch64 with glibc 2.28 or newer. The user running the agent needs read and write access to `/dev/kvm`.
+
+The examples also use `Coder` and an Anthropic model, hence the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`; swap them for your own tools and model provider.
 
 ## Quick start
+
+<span id="choose-the-tools"></span>
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -56,13 +63,20 @@ agent = Agent('{{ anthropic:large }}', capabilities=[BoxLiteSandbox(image='pytho
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 ```
 
-`Coder`'s shell and file tools now run in a VM with its own kernel and filesystem, not on your machine. The box boots on the run's first use of the workspace; with `Coder`, `RepoContext` uses it when the run starts, so use `Coder(repo_context=False)` to boot only when a tool needs it.
+`Coder`'s shell and file tools now run in a VM with its own kernel and filesystem. For a narrower agent, use [`Shell`](shell.md), [`FileSystem`](filesystem.md) or your own tools on [`ctx.workspace`](../workspace.md#using-the-workspace-in-tools).
 
-An `image` is any OCI image; BoxLite pulls it on this machine the first time. Without one, the box runs BoxLite's default, Alpine Linux, which has BusyBox but no Python, git, or ripgrep. Commands run as the image's user, which is `root` in both, and start in `/workspace`, which is created if it's missing.
-
-A new box has no network access. Pass `allow_internet_access=True` to let the agent install packages or clone repositories, and `allowed_hosts` to let it reach only the hosts it needs; see [Network access](#network-access).
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- Its disk stays in BoxLite's home directory after the run. The box stops when your process exits, but nothing deletes it. See [Clean up](#clean-up).
+- It has no network access. Pass `allow_internet_access=True`, and `allowed_hosts` to reach only what it needs. See [Network access](#network-access).
+- Commands run as the image's user, usually `root`, in `/workspace`, which is created if missing.
+- Without an `image`, the box runs Alpine Linux, which has BusyBox but no Python, git or ripgrep. An `image` is any OCI image with a POSIX `/bin/sh`; BoxLite pulls it the first time.
+- One process at a time can use BoxLite's home directory (`~/.boxlite`, or `BOXLITE_HOME`). Another process gets `WorkspaceUnavailableError` until the first one exits.
 
 ## Continue in the same box
+
+<span id="reattach-later"></span>
+
+Pass the message history, and the next run works in the same box, booting it again if stopped:
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -73,95 +87,12 @@ agent = Agent('{{ anthropic:large }}', capabilities=[BoxLiteSandbox(image='pytho
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 
 followup = agent.run_sync('Now make it print the first 100.', message_history=result.all_messages())
+ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-The follow-up run finds the box in the message history and works in it, so the script is still there. Without the history, a run creates a new box. If the box has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one.
+`result.workspace.ref` is a `WorkspaceRef` holding the box's name. Store it to continue later or to delete the box.
 
-## Choose the tools
-
-For a narrower agent, use [`Shell`](shell.md) and [`FileSystem`](filesystem.md) instead of `Coder`, or write your own tool:
-
-```python {names="defined"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
-from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.shell import Shell
-
-agent = Agent('{{ anthropic:large }}', capabilities=[BoxLiteSandbox(image='python:3.12-slim'), Shell(), FileSystem()])
-
-
-@agent.tool
-async def run_python(ctx: RunContext, code: str) -> str:
-    """Run a Python snippet in the box."""
-    result = await ctx.workspace.run(['python', '-c', code], timeout=10)
-    return result.stdout + result.stderr
-```
-
-See [Workspaces](../workspace.md) for more.
-
-## Network access
-
-```python {names="defined"}
-from pydantic_ai import Agent
-from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
-from pydantic_ai_harness.coder import Coder
-
-sandbox = BoxLiteSandbox(
-    image='python:3.12-slim',
-    allow_internet_access=True,
-    allowed_hosts=['pypi.org', 'files.pythonhosted.org'],
-)
-agent = Agent('{{ anthropic:large }}', capabilities=[sandbox, Coder()])
-result = agent.run_sync('Install requests and check that it imports.')
-```
-
-With `allow_internet_access=True` alone, the box can connect anywhere this machine can, including your local network and services and a cloud metadata endpoint, not only the internet. `allowed_hosts` limits it to the hostnames, IP addresses and CIDR ranges you list; see BoxLite's [network options](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python#boxliteboxoptions) for how it matches them.
-
-## Reattach later
-
-To come back to the box without the message history, store the run's workspace ref and pass it back as `workspace=`:
-
-```python {names="defined"}
-from pydantic_ai import Agent
-from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
-from pydantic_ai_harness.coder import Coder
-
-agent = Agent('{{ anthropic:large }}', capabilities=[BoxLiteSandbox(image='python:3.12-slim'), Coder()])
-
-result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
-ref = result.workspace.ref  # store this, e.g. in your database
-
-later = agent.run_sync('Now make it print the first 100.', workspace=ref)
-```
-
-Pass `workspace='new'` to create a fresh box even when the message history names one. `image`, `cpus`, `memory_mb`, the network settings and `box_options` only shape a new box, so a box created with network access keeps it when you reattach; `working_dir` and `env` apply to every command.
-
-A box stops when nothing in this process uses it any more, or when the process exits, and keeps its disk. The next use of its ref boots it again, in this process or in a later one. Only one process at a time can use a BoxLite home directory (`~/.boxlite`, or `BOXLITE_HOME`): another process that tries gets `WorkspaceUnavailableError` until the first one exits.
-
-Already have a `boxlite.Box` from `boxlite.Boxlite.default()`? Pass `workspace=BoxLiteSandboxBackend(sandbox=box)` to the run, with `BoxLiteSandboxBackend` from `pydantic_ai_harness.boxlite_sandbox`, or `BoxLiteSandboxBackend(ref=WorkspaceRef(provider='boxlite', id=...))` with the box's name, or its id if it has none. `BoxLiteSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend. The backend never deletes the box. See [Which boxes a run can use](#which-boxes-a-run-can-use) for what each way accepts.
-
-## Other BoxLite options
-
-`box_options` passes any other [`boxlite.BoxOptions`](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python#boxliteboxoptions) argument to a new box. This one mounts the current directory into the box read-only:
-
-```python {names="defined"}
-from pathlib import Path
-
-from pydantic_ai import Agent
-from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
-from pydantic_ai_harness.coder import Coder
-
-sandbox = BoxLiteSandbox(
-    image='python:3.12-slim',
-    box_options={'volumes': [(str(Path.cwd()), '/project', True)]},
-)
-agent = Agent('{{ anthropic:large }}', capabilities=[sandbox, Coder()])
-result = agent.run_sync('Summarize what the code in /project does.')
-```
-
-Other common ones are `ports` to reach a server the agent starts, `secrets` for BoxLite to add credentials to the box's HTTPS requests to the hosts you name, `disk_size_gb`, and `user`. `BoxLiteSandbox`'s own settings own `image`, `cpus`, `memory_mib`, `network`, `working_dir`, `env` and `auto_delete` (and its deprecated `auto_remove`), so passing one of those in `box_options` raises `UserError`.
-
-Runtime-wide settings, such as private registry logins or BoxLite's home directory, go to `boxlite.Boxlite.init_default(boxlite.Options(...))`, called before the first box is used.
+If the box has been deleted, the run raises `WorkspaceUnavailableError`. Pass `workspace='new'` to start over. [Workspaces](../workspace.md#continuing-in-the-same-workspace) covers how runs find their workspace.
 
 ## Prepare a box before the run
 
@@ -202,11 +133,25 @@ if __name__ == '__main__':
     asyncio.run(main())
 ```
 
-The `finally` deletes the box even when setup or the run fails. To keep it instead, store `backend.ref` and pass it as `workspace=` to reattach later. `BoxLiteSandbox`'s settings don't apply to a backend you pass as `workspace=`; give the backend its own. `backend.get_sandbox()` returns the SDK's `boxlite.Box`, for BoxLite features the workspace API doesn't cover, such as `copy_in`, `snapshot` or `stop`.
+The `finally` deletes the box even when setup or the run fails. To keep it, store `backend.ref` instead.
+
+`BoxLiteSandbox`'s settings don't apply to a backend you pass as `workspace=`. Give the backend its own.
+
+For features the workspace API doesn't cover, such as `copy_in`, `snapshot` or `stop`, `backend.get_sandbox()` returns the SDK's `boxlite.Box`.
+
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](computer-use.md):
+`capabilities=[BoxLiteSandbox(desktop=True, allow_internet_access=True), ComputerUse()]`. The screen is 1280x800;
+pass a size such as `desktop=(1440, 900)` for another.
+
+Without an `image`, a new box runs `debian:bookworm-slim`, and its first start installs [the display's programs](computer-use.md#what-the-display-needs), with no web browser. That needs `allow_internet_access=True` ([what that lets the box reach](#network-access)), with `deb.debian.org` in any `allowed_hosts`. Creating a new box without it raises `UserError`; for a box without network access, pass an `image` that has the programs. To install a browser, pass `box_options={'disk_size_gb': 4}`: the default disk is too small.
+
+The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
 
 ## Clean up
 
-A run never deletes its box, and a box keeps its disk in BoxLite's home directory until it is deleted. Delete it with the ref you stored:
+Delete a box and its disk with the ref you stored. A box that is already gone returns quietly:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -217,65 +162,151 @@ async def delete_box(ref: WorkspaceRef) -> None:
     await BoxLiteSandbox().destroy(ref)
 ```
 
-Deleting a box that is already gone returns quietly. Once started, a deletion finishes even if its caller is cancelled. `BoxLiteSandbox.backend(ref)` builds an attached backend without booting anything.
+A failed run returns no result, so delete its box in an `on_run_error` hook:
 
-Nothing deletes a box for you. Creating one logs its id (see [Telemetry](#telemetry)), so you can find one left behind without a stored ref, for example by a durable execution worker that crashed after creating it, with `await boxlite.Boxlite.default().list_info()`.
+```python
+from typing import Any
 
-`backend.ref` is set as soon as the box starts being created, so the `finally` in [Prepare a box before the run](#prepare-a-box-before-the-run) deletes the box whatever ends the run. A run cancelled before its box has booted deletes that box itself, before the cancellation ends the run. A failed run returns no result, so there is no ref to store: delete the box in an `on_run_error` hook, as shown for [E2B](e2b-sandbox.md#clean-up), or create the backend yourself as in [Prepare a box before the run](#prepare-a-box-before-the-run).
+import anyio
 
-## How commands run
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
+from pydantic_ai_harness.coder import Coder
 
-Every command runs through the box's `/bin/sh`, in a session of its own when the image has `setsid`, as BusyBox and util-linux images do. A missing program gives exit code 127, and a program killed by a signal 128 plus its number. A `shell=True` string runs under `/bin/sh -c`. Custom images need a POSIX `/bin/sh`.
+hooks = Hooks()
 
-On a timeout or cancellation, the backend kills the command and the processes it started, and returns the output so far on `WorkspaceTimeoutError`. Jobs that outlive the command that started them, like a [Shell](shell.md) background job, keep running; the command returns at most two seconds after it exits, even if such a job still holds its output open. In an image without `setsid`, only the command itself is killed, and a program named like a shell builtin, such as `echo`, runs the builtin.
 
-If the combined output passes 10 MiB, the backend stops the command and raises `WorkspaceOutputLimitError`, with the first 65,536 characters of each stream in `stdout` and `stderr`; redirect large output to a file instead. Output BoxLite fails to deliver whole raises `WorkspaceError` rather than come back cut short. The backend's own `mkdir -p` and `pwd -P` time out after 60 seconds, so a broken image can't hang the run.
+@hooks.on.run_error
+async def delete_failed_run_box(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
+    if ctx.workspace.ref is not None:
+        # Shielded so a deadline around the run can't cut the delete short, bounded so a hung call can't hang it.
+        with anyio.move_on_after(30, shield=True):
+            await BoxLiteSandbox().destroy(ctx.workspace.ref)
+    raise error
 
-File operations run as shell commands in the box, 64 KiB per command (see [Writing a backend](../workspace.md#writing-a-backend)), so images need the usual file utilities, which Alpine's BusyBox has.
 
-A deleted box raises `WorkspaceUnavailableError`, and so does a command that a stop or a deletion ended; the next command boots a stopped box again. A `working_dir` that was removed raises `WorkspaceError`. Other BoxLite failures propagate as `boxlite.BoxliteError`, for durable execution engines to retry. The BoxLite SDK returns asyncio futures, so the backend needs the asyncio event loop: under Trio, operations raise `UserError`.
+agent = Agent('{{ anthropic:large }}', capabilities=[BoxLiteSandbox(image='python:3.12-slim'), Coder(), hooks])
+```
+
+### Find a lost box
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the box is left behind. To find it:
+
+- List boxes with `await boxlite.Boxlite.default().list_info()`.
+- Or search your logs for `Creating BoxLite box <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+
+Then delete it: `await BoxLiteSandbox().destroy(WorkspaceRef(provider='boxlite', id='<id>'))`.
+
+## Network access
+
+```python {names="defined"}
+from pydantic_ai import Agent
+from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
+from pydantic_ai_harness.coder import Coder
+
+sandbox = BoxLiteSandbox(
+    image='python:3.12-slim',
+    allow_internet_access=True,
+    allowed_hosts=['pypi.org', 'files.pythonhosted.org'],
+)
+agent = Agent('{{ anthropic:large }}', capabilities=[sandbox, Coder()])
+result = agent.run_sync('Install requests and check that it imports.')
+```
+
+With `allow_internet_access=True` alone, the box can connect anywhere this machine can, including your local network and services and a cloud metadata endpoint.
+
+`allowed_hosts` limits it to the hostnames, IP addresses and CIDR ranges you list. BoxLite's [network options](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python#boxliteboxoptions) describe how it matches them.
+
+## Other BoxLite options
+
+`box_options` passes any other [`boxlite.BoxOptions`](https://github.com/boxlite-ai/boxlite/tree/main/sdks/python#boxliteboxoptions) argument to a new box. This one mounts the current directory into the box read-only:
+
+```python {names="defined"}
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.boxlite_sandbox import BoxLiteSandbox
+from pydantic_ai_harness.coder import Coder
+
+sandbox = BoxLiteSandbox(
+    image='python:3.12-slim',
+    box_options={'volumes': [(str(Path.cwd()), '/project', True)]},
+)
+agent = Agent('{{ anthropic:large }}', capabilities=[sandbox, Coder()])
+result = agent.run_sync('Summarize what the code in /project does.')
+```
+
+Other common ones:
+
+- `ports`, to reach a server the agent starts.
+- `secrets`, for BoxLite to add credentials to the box's HTTPS requests to the hosts you name.
+- `disk_size_gb` and `user`.
+
+`BoxLiteSandbox` sets `image`, `cpus`, `memory_mib`, `network`, `working_dir`, `env`, `auto_delete` and the deprecated `auto_remove` itself. Passing one of those in `box_options` raises `UserError`.
+
+Runtime-wide settings, such as private registry logins or BoxLite's home directory, go to `boxlite.Boxlite.init_default(boxlite.Options(...))`, called before the first box is used.
+
+## Use a box you already have
+
+Pass one of these as `workspace=`:
+
+- `BoxLiteSandboxBackend(sandbox=box)`, with a `boxlite.Box` from `boxlite.Boxlite.default()`.
+- `BoxLiteSandboxBackend(ref=WorkspaceRef(provider='boxlite', id=...))`, with the box's name, or its id if it has none.
+
+Give the backend its own `working_dir=` and `env=`. The backend never deletes the box.
 
 ## Security model
 
-The VM is the boundary: it has its own kernel and filesystem, and unless `box_options` adds `volumes` or `ports`, nothing from this machine is mounted into it, no ports are published, and none of your environment variables reach it. Inside, commands run as the image's user, `root` on most images, so anything the agent runs can change anything in the box.
+The VM is the boundary. It has its own kernel and filesystem. Unless `box_options` adds `volumes` or `ports`, nothing from this machine is mounted into it and no ports are published. None of your environment variables reach it. Commands run as the image's user, `root` on most images, so anything the agent runs can change anything in the box.
 
 - The BoxLite runtime runs in your process with your OS user's permissions, and keeps its state in its home directory.
 - `image` is pulled by tag; pin a digest, such as `python:3.12-slim@sha256:...`, to get the same image every time.
-- `cpus` and `memory_mb` cap a box; nothing limits how many boxes a process creates.
+- `cpus` and `memory_mb` cap one box. Nothing limits how many boxes a process creates.
 
 ### Which boxes a run can use
 
-Whoever passes a ref runs commands in the box it names. BoxLite can open any box on this machine by name, including boxes other tools made with your folders mounted. So what's accepted depends on where the box comes from:
+Whoever passes a ref runs commands in the box it names. BoxLite can open any box on this machine by name, including ones other tools made with your folders mounted. So:
 
-| Where the box comes from | What's accepted |
-| --- | --- |
-| `BoxLiteSandbox`: a ref in the message history, `workspace=ref`, `backend(ref)` or `destroy(ref)` | Only boxes `BoxLiteSandbox` created, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError` before anything runs. |
-| `BoxLiteSandboxBackend(sandbox=box)` or `BoxLiteSandboxBackend(ref=...)`, built by your code | Any box of this process's default BoxLite runtime, including one with mounts or published ports, because your code chose it. A box from another runtime raises `UserError`: configure the default one with `boxlite.Boxlite.init_default(...)` instead. |
-
-- A run in a box you passed in writes that box's name into the message history. A later run given only that history raises `ValueError`; it doesn't open the box or create a new one. Pass the backend again, or `workspace='new'` for a fresh box.
-- Durable execution rebuilds the workspace from its ref, so it only works with boxes `BoxLiteSandbox` created.
-- The name doesn't prove where a box came from: any program running as your OS user can create a box with such a name. Only pass refs your application stored itself, and don't build `BoxLiteSandboxBackend(ref=...)` from user input.
+- **Refs reaching `BoxLiteSandbox`** (message history, `workspace=ref`, `backend(ref)`, `destroy(ref)`) only open boxes `BoxLiteSandbox` created, named `pydantic-ai-` and 32 hex digits. Any other name raises `ValueError`. Durable execution rebuilds the workspace from its ref, so it only works with boxes `BoxLiteSandbox` created.
+- **`BoxLiteSandboxBackend(...)` built by your code** opens any box of this process's default BoxLite runtime, because your code chose it. A box from another runtime raises `UserError`. A later run given only its message history raises `ValueError`; pass the backend again, or `workspace='new'`.
+- **The name doesn't prove origin**: any program running as your OS user can create a box with such a name. Only pass refs your application stored itself, and don't build `BoxLiteSandboxBackend(ref=...)` from user input.
 
 ## Configuration
 
 | Option | What it does |
 | --- | --- |
-| `image` | OCI image for a new box. Default: `None`, BoxLite's default, Alpine Linux. |
+| `image` | OCI image for a new box. Default: `None`, BoxLite's default, Alpine Linux, or `debian:bookworm-slim` with `desktop`. |
 | `cpus` | vCPUs for a new box. Default: `None`, BoxLite's default. |
 | `memory_mb` | Memory for a new box in MiB. Default: `None`, BoxLite's default. |
 | `allow_internet_access` | Whether a new box has outbound network access, from this machine's network. Default: `False`. |
 | `allowed_hosts` | With `allow_internet_access`, the only hostnames, IP addresses and CIDR ranges a new box can connect to. Default: `None`, any. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`; `None` uses the box's own (`/` on Alpine). |
-| `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the box, and `env` is kept out of the capability's `repr`, but the agent's commands can read it. |
-| `box_options` | Other `boxlite.BoxOptions` arguments for a new box, such as `volumes`, `ports`, `secrets` or `disk_size_gb`. Default: `None`. Kept out of the capability's `repr`. |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against, created if missing. Default: `/workspace`. `None` uses the box's own, `/` on Alpine. |
+| `env` | Environment variables every command gets, on top of the image's. Default: `None`. Nothing from your machine's environment reaches the box. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `authority` | Who wrote the box's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](../workspace-custom.md#workspace-authority) than this. Default: `'operator'`, files you wrote. |
+| `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are box paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+| `box_options` | Other `boxlite.BoxOptions` arguments for a new box, such as `volumes`, `ports`, `secrets` or `disk_size_gb`. Default: `None`. |
+| `desktop` | Give the box a graphical display for [`ComputerUse`](computer-use.md): `True` for 1280x800, or its `(width, height)`. The size applies when the display first starts. Default: `False`. |
 
-## Platforms
+`image`, `cpus`, `memory_mb`, the network settings and `box_options` only shape a new box. `working_dir` and `env` apply to every command, including after you reattach.
 
-BoxLite runs VMs with Apple's Hypervisor framework on macOS and with KVM on Linux, so it runs on macOS 14 or newer on Apple silicon and on Linux on x86_64 and aarch64 with glibc 2.28 or newer. On other platforms, and on Python 3.15, the `boxlite` extra installs nothing and importing `pydantic_ai_harness.boxlite_sandbox` raises `ImportError`. On Linux, check `ls -l /dev/kvm` before the first run: a host that can't run VMs raises `WorkspaceUnavailableError` when the run first uses the box. On Ubuntu 24.04, AppArmor stops the bubblewrap that BoxLite runs its VM engine under from creating user namespaces, so boxes fail to start until you install `bubblewrap` and the AppArmor profile from BoxLite's [troubleshooting guide](https://github.com/boxlite-ai/boxlite/blob/main/docs/guides/troubleshooting.md); newer Ubuntu releases ship that profile.
+## Limits
+
+<span id="how-commands-run"></span>
+
+- On an unsupported platform, or Python 3.15, importing `pydantic_ai_harness.boxlite_sandbox` raises `ImportError`.
+- A host that can't run VMs raises `WorkspaceUnavailableError` on first use. On Linux, check `ls -l /dev/kvm` first.
+- On Ubuntu 24.04, AppArmor stops BoxLite's VM engine from starting until you install `bubblewrap` and the AppArmor profile from BoxLite's [troubleshooting guide](https://github.com/boxlite-ai/boxlite/blob/main/docs/guides/troubleshooting.md).
+- Files move 64 KiB per command, so large files are slow.
+- Images need the usual file utilities, which BusyBox has.
+- A command whose output passes 10 MiB is stopped with `WorkspaceOutputLimitError`. Redirect large output to a file.
+- On a timeout, the command and the processes it started are killed. Jobs that outlive their command, like a [Shell](shell.md) background job, keep running. In an image without `setsid`, only the command itself is killed.
+- The BoxLite SDK needs asyncio. Under Trio, operations raise `UserError`.
 
 ## Telemetry
 
-`BoxLiteSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records the box on the agent run span as `pydantic_ai.workspace.provider` (`boxlite`) and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span. Creating a box also logs `Creating BoxLite box <id>` at INFO on the `pydantic_ai_harness.boxlite_sandbox` logger before the creation starts, so the id is on record even if the run ends before it is stored.
+`BoxLiteSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records `pydantic_ai.workspace.provider` (`boxlite`) and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
 
 ## API reference
 

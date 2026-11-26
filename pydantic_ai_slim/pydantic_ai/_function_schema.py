@@ -8,7 +8,7 @@ from __future__ import annotations as _annotations
 import warnings
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from functools import partial
+from functools import cached_property, partial
 from inspect import Parameter, Signature, signature
 from typing import TYPE_CHECKING, Any, Concatenate, Literal, Self, cast, get_args, get_origin
 
@@ -52,6 +52,12 @@ class FunctionSchema:
     json_schema: ObjectJsonSchema
     takes_ctx: bool
     is_async: bool
+    parameter_fields: dict[str, core_schema.TypedDictField] = field(
+        default_factory=dict[str, core_schema.TypedDictField]
+    )
+    """The parameters' fields in the cleaned core schema of `validator`. Empty for a model-like single arg."""
+    definitions: list[core_schema.CoreSchema] = field(default_factory=list[core_schema.CoreSchema])
+    """The definitions the cleaned core schema keeps for `parameter_fields` to refer to."""
     # if not None, the function takes a single by that name (besides potentially `info`)
     single_arg_name: str | None = None
     single_field_name: str | None = None
@@ -73,6 +79,31 @@ class FunctionSchema:
     var_positional_field: str | None = None
     return_schema: ObjectJsonSchema = field(default_factory=dict[str, Any])
     """JSON schema for the function's return type. At minimum `{}` (equivalent to `Any`)."""
+    revalidator: SchemaValidator | None = None
+    """`validator` reading the top-level arguments by Python name only, set when one of them has an alias."""
+
+    @cached_property
+    def parameter_names(self) -> dict[str, str]:
+        """Map each JSON schema property named after a parameter's validation alias to that parameter's Python name.
+
+        Each aliased field's JSON schema is generated on its own, on first access, so Pydantic names its property and
+        leaves out a field the JSON schema hides, like one marked `SkipJsonSchema`. A property named after a
+        parameter's Python name is left out.
+        """
+        parameter_names: dict[str, str] = {}
+        for name, td_field in self.parameter_fields.items():
+            if 'validation_alias' not in td_field:
+                continue
+            field_schema = core_schema.definitions_schema(
+                core_schema.typed_dict_schema({name: td_field}), self.definitions
+            )
+            for alias in GenerateJsonSchema().generate(field_schema).get('properties', {}):
+                # A property named after a parameter's Python name names only that parameter, even when it is another
+                # one's alias and `validator` gives both the value. Pydantic accepts the clash; remapping or rejecting
+                # it would change runs that succeed: https://github.com/pydantic/pydantic-ai/issues/13438
+                if alias not in self.parameter_fields:
+                    parameter_names[alias] = name
+        return parameter_names
 
     def revalidate(self, args_dict: dict[str, Any], *, context: Any = None) -> dict[str, Any]:
         """Validate arguments that `validator` already produced, after they crossed a boundary as JSON.
@@ -80,10 +111,20 @@ class FunctionSchema:
         For a single model-like argument they're the `{name: value}` envelope, which `validator` reads as
         unwrapped input when the model also has a field called `name` that accepts a dict. Here the
         envelope's content is validated as the model's input, which is what the first validation produced.
+
+        Otherwise they're keyed by Python name, while `validator` reads a parameter's alias. When that reading
+        fails, `revalidator` reads them by name.
         """
-        if self.single_arg_name is None:
+        if self.single_arg_name is not None:
+            return self.validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
+        try:
             return self.validator.validate_python(args_dict, context=context)
-        return self.validator.validate_python(_Revalidated(args_dict[self.single_arg_name]), context=context)
+        except ValidationError:
+            # Not the `revalidator` up front: where a parameter's alias is another parameter's name, reading
+            # by name would change arguments the alias reading accepts.
+            if self.revalidator is None:
+                raise
+            return self.revalidator.validate_python(args_dict, context=context)
 
     async def call(self, args_dict: dict[str, Any], ctx: RunContext[Any]) -> Any:
         args, kwargs = self._call_args(args_dict, ctx)
@@ -122,6 +163,7 @@ def function_schema(
     takes_ctx: bool | None = None,
     docstring_format: DocstringFormat = 'auto',
     require_parameter_descriptions: bool = False,
+    attribute_docstrings: bool = True,
 ) -> FunctionSchema:
     """Build a Pydantic validator and JSON schema from a tool function.
 
@@ -132,11 +174,12 @@ def function_schema(
         docstring_format: The docstring format to use.
         require_parameter_descriptions: Whether to require descriptions for all tool function parameters.
         schema_generator: The JSON schema generator class to use.
+        attribute_docstrings: Whether a field's attribute docstring becomes its description in the JSON schema.
 
     Returns:
         A `FunctionSchema` instance.
     """
-    config = ConfigDict(title=function.__name__, use_attribute_docstrings=True)
+    config = ConfigDict(title=function.__name__, use_attribute_docstrings=attribute_docstrings)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
     errors: list[str] = []
@@ -151,7 +194,9 @@ def function_schema(
 
     type_hints = get_type_hints(original_func, include_extras=True)
 
-    description, field_descriptions = doc_descriptions(original_func, docstring_format=docstring_format)
+    description, field_descriptions = doc_descriptions(
+        original_func, docstring_format=docstring_format, has_return_annotation='return' in type_hints
+    )
     schema_context = _FunctionSchemaContext(
         gen_schema=gen_schema,
         type_hints=type_hints,
@@ -184,19 +229,10 @@ def function_schema(
         schema_context.fields, schema_context.var_kwargs_schema, core_config
     )
     schema = gen_schema.clean_schema(schema)
-    # noinspection PyUnresolvedReferences
-    schema_validator = create_schema_validator(
-        schema,
-        function,
-        function.__module__,
-        function.__qualname__,
-        'validate_call',
-        core_config,
-        config_wrapper.plugin_settings,
-    )
-    # PluggableSchemaValidator is api compatible with SchemaValidator
-    schema_validator = cast(SchemaValidator, schema_validator)
+    parameter_fields, definitions = _cleaned_fields(schema)
+    schema_validator = _schema_validator(schema, function, core_config, config_wrapper.plugin_settings)
     json_schema = schema_generator().generate(schema)
+    revalidator = _by_name_revalidator(schema, function, core_config, config_wrapper.plugin_settings)
 
     if single_arg_keys is not None:
         # For a single model-like arg the tool's JSON schema *is* the model's, so its property names
@@ -239,6 +275,8 @@ def function_schema(
         description=description,
         validator=schema_validator,
         json_schema=checked_json_schema,
+        parameter_fields=parameter_fields,
+        definitions=definitions,
         single_arg_name=single_arg_name,
         single_field_name=single_field_name,
         positional_fields=schema_context.positional_fields,
@@ -247,7 +285,74 @@ def function_schema(
         is_async=is_async_callable(function),
         function=function,
         return_schema=return_schema,
+        revalidator=revalidator,
     )
+
+
+def _cleaned_fields(
+    schema: core_schema.CoreSchema,
+) -> tuple[dict[str, core_schema.TypedDictField], list[core_schema.CoreSchema]]:
+    """Return the fields of a cleaned parameters schema and the definitions it keeps for them."""
+    match schema:
+        case {'type': 'definitions', 'schema': {'type': 'typed-dict', 'fields': fields}, 'definitions': definitions}:
+            return fields, definitions
+        case {'type': 'typed-dict', 'fields': fields}:
+            return fields, []
+        case _:
+            return {}, []
+
+
+def _schema_validator(
+    schema: core_schema.CoreSchema,
+    function: Callable[..., Any],
+    core_config: core_schema.CoreConfig,
+    plugin_settings: dict[str, object] | None,
+) -> SchemaValidator:
+    """A validator for `function`'s arguments `schema`, which installed pydantic plugins observe."""
+    # noinspection PyUnresolvedReferences
+    validator = create_schema_validator(
+        schema,
+        function,
+        function.__module__,
+        function.__qualname__,
+        'validate_call',
+        core_config,
+        plugin_settings,
+    )
+    # PluggableSchemaValidator is api compatible with SchemaValidator
+    return cast(SchemaValidator, validator)
+
+
+def _by_name_revalidator(
+    schema: core_schema.CoreSchema,
+    function: Callable[..., Any],
+    core_config: core_schema.CoreConfig,
+    plugin_settings: dict[str, object] | None,
+) -> SchemaValidator | None:
+    """Build `FunctionSchema.revalidator` from the validated arguments' `schema`."""
+    by_name_schema = _read_arguments_by_name(schema)
+    if by_name_schema is None:
+        return None
+    return _schema_validator(by_name_schema, function, core_config, plugin_settings)
+
+
+def _read_arguments_by_name(schema: core_schema.CoreSchema) -> core_schema.CoreSchema | None:
+    """`schema` reading its top-level arguments by Python name only, or `None` when none of them has an alias.
+
+    Only the arguments' own config changes: nested models, dataclasses and `TypedDict`s keep theirs, which read aliases.
+    """
+    if schema['type'] == 'definitions':
+        by_name_arguments = _read_arguments_by_name(schema['schema'])
+        if by_name_arguments is None:
+            return None
+        by_name_definitions = schema.copy()
+        by_name_definitions['schema'] = by_name_arguments
+        return by_name_definitions
+    if schema['type'] != 'typed-dict' or not any('validation_alias' in f for f in schema['fields'].values()):
+        return None
+    by_name_arguments = schema.copy()
+    by_name_arguments['config'] = {**schema.get('config', {}), 'validate_by_alias': False, 'validate_by_name': True}
+    return by_name_arguments
 
 
 @dataclass(kw_only=True)
