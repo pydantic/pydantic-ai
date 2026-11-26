@@ -176,8 +176,9 @@ def current_span(ctx: RunContext[Any] | RunTelemetry | None, /) -> Span:
     In a tool hook that is the call's `execute_tool` span, and in `before_model_request` the request's
     `chat` span. Unlike `opentelemetry.trace.get_current_span()`, it returns a span only inside the run's
     own `agent run` span, where the run publishes its telemetry, so a run doesn't write to a span it
-    doesn't own: it returns `INVALID_SPAN` when the run isn't traced, in `for_run`, and in a `wrap_run`
-    ordered outside `Instrumentation`. A sub-agent's `for_run` runs inside its parent's tool call and sees
+    doesn't own: it returns `INVALID_SPAN` when the run isn't traced, in `for_run`, in a `wrap_run`
+    ordered outside `Instrumentation`, and in a durable unit that runs out of process, such as a Temporal
+    activity. A sub-agent's `for_run` runs inside its parent's tool call and sees
     its parent's telemetry, so it gets the parent's span when its tracer and content setting are the parent's.
     """
     if (telemetry := _telemetry_of(ctx)) is None or _telemetry_of(_current.get()) != telemetry:

@@ -400,7 +400,8 @@ What to record, and where:
   listed before an explicit `Instrumentation`, they do nothing. Don't call `opentelemetry.trace.get_current_span()` directly: in an
   uninstrumented run it returns whatever span the application has open, such as its request span.
 - `current_span(ctx)` in a tool's own body, including a toolset's `call_tool`, is also that call's
-  `execute_tool` span, not only the span seen by tool hooks.
+  `execute_tool` span, not only the span seen by tool hooks, except in a durable unit that runs out of
+  process, such as a Temporal activity, where it is `INVALID_SPAN`.
 - Take `current_span(ctx)` before or after nested work, never while a child span may be current in
   another task.
 - A durable-unit context that did not carry the tracer makes every telemetry helper a no-op: the unit
