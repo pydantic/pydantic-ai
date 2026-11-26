@@ -87,7 +87,7 @@ from .._instructions import AgentInstructions, lowered_block_id
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
 from .._run_conversation import failed_run_conversation
-from .._telemetry import publish_run_telemetry
+from .._telemetry import publish_run_telemetry, run_telemetry_scope
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -1638,32 +1638,35 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        prepared = await self._prepare_run(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            conversation_revision=conversation_revision,
-            conversation_unsaved=conversation_unsaved,
-            conversation_unchecked=conversation_unchecked,
-            conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
-            run_id=run_id,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            cancellation_token=cancellation_token,
-            timeout=timeout,
-            usage=usage,
-            metadata=metadata,
-            retries=retries,
-            toolsets=toolsets,
-            capabilities=capabilities,
-            workspace=workspace,
-            spec=spec,
-        )
+        # Setup, including `for_run` hooks, runs in the caller's context, such as a parent run's tool call.
+        # With no telemetry published, code there without a `ctx` can't trace onto the parent.
+        with run_telemetry_scope(None):
+            prepared = await self._prepare_run(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                conversation_revision=conversation_revision,
+                conversation_unsaved=conversation_unsaved,
+                conversation_unchecked=conversation_unchecked,
+                conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
+                run_id=run_id,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
+                timeout=timeout,
+                usage=usage,
+                metadata=metadata,
+                retries=retries,
+                toolsets=toolsets,
+                capabilities=capabilities,
+                workspace=workspace,
+                spec=spec,
+            )
         async with prepared.open() as agent_run:
             yield agent_run
 
@@ -4331,7 +4334,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_toolsets=resolved_caps.toolsets,
             run_capability=run_capability,
         )
-        toolset = await toolset.for_run(run_context)
+        with run_telemetry_scope(None):
+            toolset = await toolset.for_run(run_context)
 
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.
