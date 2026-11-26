@@ -9,7 +9,7 @@ import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, TextOutput
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -270,12 +270,26 @@ async def _echo(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[
 
 async def _fail(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
     raise RuntimeError('model is down')
-    yield  # pragma: no cover -- makes this an async generator.
+    # Makes this an async generator.
+    yield  # pragma: no cover
+
+
+class Opaque:
+    """An output that JSON can't serialize, so it prints as its `str()`."""
+
+    def __str__(self) -> str:
+        return 'opaque'
+
+
+def _opaque(text: str) -> object:
+    """Annotated `object`, since an output function's return type needs a schema and `Opaque` has none."""
+    return Opaque()
 
 
 _AGENTS: dict[str, Agent[None, object]] = {
     'echo': Agent(FunctionModel(stream_function=_echo)),
     'city': Agent(TestModel(), output_type=City),
+    'opaque': Agent(FunctionModel(stream_function=_echo), output_type=TextOutput(_opaque)),
     'fail': Agent(FunctionModel(stream_function=_fail)),
 }
 
@@ -327,7 +341,8 @@ def test_cli_words_after_double_dash_are_prompt_text_not_options(
 def test_cli_subcommand_is_not_a_prompt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    async def run_headless(**_: object) -> int:  # pragma: no cover -- the assertion is that it never runs.
+    # The assertion is that it never runs.
+    async def run_headless(**_: object) -> int:  # pragma: no cover
         raise AssertionError('`pax config` ran a prompt')
 
     monkeypatch.setattr(headless, 'run_headless', run_headless)
@@ -344,6 +359,27 @@ def test_cli_prompt_from_stdin(
     assert run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', *args)[:2] == (0, 'echo: from stdin\n')
 
 
+class _Terminal(io.StringIO):
+    """Stdin attached to a terminal, which a test fails on if it is read."""
+
+    def isatty(self) -> bool:
+        return True
+
+    def read(self, size: int | None = -1) -> str:  # pragma: no cover
+        raise AssertionError('read the prompt from a terminal')
+
+
+@pytest.mark.parametrize('args', [['-'], ['-p']])
+def test_cli_prompt_from_terminal_stdin_fails_fast(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    """With nothing piped in, waiting on stdin would look like a hang."""
+    monkeypatch.setattr('sys.stdin', _Terminal())
+    code, out, err = run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', *args)
+    assert (code, out) == (2, '')
+    assert err.endswith('reads the prompt from stdin; pipe it in or give TEXT\n')
+
+
 @pytest.mark.parametrize(
     ('args', 'expected'),
     [
@@ -351,6 +387,8 @@ def test_cli_prompt_from_stdin(
         (['-a', 'city', '--output-format', 'text', 'go'], {'name': 'a', 'population': 0}),
         (['-a', 'city', '--output-format', 'json', 'go'], {'output': {'name': 'a', 'population': 0}}),
         (['-a', 'echo', '--output-format', 'json', 'go'], {'output': 'echo: go'}),
+        (['-a', 'opaque', 'go'], 'opaque'),
+        (['-a', 'opaque', '--output-format', 'json', 'go'], {'output': 'opaque'}),
     ],
 )
 def test_cli_prints_json(

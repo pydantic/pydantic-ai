@@ -9,7 +9,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypeAlias, get_args
 
 from pydantic_ai_pax.runtime.launch import launch_session_id
 from pydantic_ai_pax.ui.rendering.splash import Splash
@@ -24,6 +24,8 @@ if TYPE_CHECKING:
     from pydantic_ai_pax.config.settings_store import SettingsStore
     from pydantic_ai_pax.runtime.worktrees import Worktree
 
+OutputFormat: TypeAlias = Literal['text', 'json']
+"""How a headless run prints its answer; here rather than in the heavier `headless` module, which `--output-format` needs."""
 _SUBCOMMANDS = ('config', 'plugins', 'sessions', 'update')
 """First positional arguments that name a subcommand; any other first positional starts a prompt."""
 _RELAUNCH_WORKTREE = 'CLAI_RELAUNCH_WORKTREE'
@@ -112,7 +114,7 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument(
         '--output-format',
-        choices=('text', 'json'),
+        choices=get_args(OutputFormat),
         help=(
             'With a prompt, print the answer as text (the default; output that is not a string prints as JSON) '
             'or as a JSON object with an "output" key'
@@ -703,6 +705,8 @@ def _validate_prompt_args(args: argparse.Namespace, parser: argparse.ArgumentPar
     if args.resume == '':
         parser.error('--prompt requires an explicit --resume SESSION-ID')
     if args.prompt == '-':
+        if sys.stdin.isatty():
+            parser.error('-p without TEXT, or the prompt -, reads the prompt from stdin; pipe it in or give TEXT')
         args.prompt = sys.stdin.read()
     if not args.prompt.strip():
         parser.error('--prompt requires non-empty text')

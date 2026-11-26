@@ -4,7 +4,6 @@ import os
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Literal
 
 from anyio import CancelScope
 from pydantic_core import to_json
@@ -13,6 +12,7 @@ from rich.console import Console
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_stock_agent as create_agent
+from pydantic_ai_pax.cli.cli import OutputFormat
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
@@ -49,7 +49,7 @@ async def run_headless(
     agent: AbstractAgent[None, object] | None = None,
     session_id: str | None = None,
     fork_session: bool = False,
-    output_format: Literal['text', 'json'] = 'text',
+    output_format: OutputFormat = 'text',
 ) -> int:
     """Print only the final answer; preserve sessions and report failures on stderr.
 
@@ -124,11 +124,11 @@ async def run_headless(
     return 0
 
 
-def _answer(output: object, output_format: Literal['text', 'json']) -> str:
+def _answer(output: object, output_format: OutputFormat) -> str:
     """What stdout holds: scripts can parse a structured output, where `str()` would print its repr."""
     if output_format == 'json':
-        return to_json({'output': output}).decode()
-    return output if isinstance(output, str) else to_json(output).decode()
+        return to_json({'output': output}, fallback=str).decode()
+    return output if isinstance(output, str) else to_json(output, fallback=str).decode()
 
 
 async def _load_plugins(loader: SessionPlugins[None]) -> None:
