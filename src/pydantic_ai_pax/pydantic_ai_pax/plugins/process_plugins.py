@@ -1,4 +1,4 @@
-"""The plugins of one CLAI process: declarations, the changes `/plugins` makes, imports, and process-scoped plugins.
+"""The plugins of one Pax process: declarations, the changes `/plugins` makes, imports, and process-scoped plugins.
 
 Each live session's `SessionPlugins` (`loader.py`) joins the process's one `ProcessPlugins`. A change
 made from one session, such as `/plugins disable NAME`, runs there under the process's change lock;
@@ -225,7 +225,7 @@ class LiveRuntime:
         return self._user_waits.start(reason)
 
     def setting(self, key: str, /) -> JsonValue:
-        """The effective value of a CLAI setting in the session."""
+        """The effective value of a Pax setting in the session."""
         return self._host.setting(key)
 
     def command_menu(self, name: str, /) -> SettingsMenu | None:
@@ -298,7 +298,7 @@ class LiveRuntime:
         return await self._host.complete(text)
 
 
-_CURRENT: ContextVar[LiveRuntime | None] = ContextVar('clai2_live_session', default=None)
+_CURRENT: ContextVar[LiveRuntime | None] = ContextVar('pax_live_session', default=None)
 """The session whose moment, command, or run is being handled, for `LiveSessions.current`."""
 
 
@@ -363,7 +363,7 @@ class JoinedSessions:
                 _LOGGER.exception('A live sessions listener failed')
 
 
-_OPENS_NONE = 'This CLAI opens no other live sessions.'
+_OPENS_NONE = 'This Pax opens no other live sessions.'
 
 
 class ProcessPlugins(Generic[DepsT]):
@@ -374,7 +374,7 @@ class ProcessPlugins(Generic[DepsT]):
     """
 
     def __init__(self, *, store: SettingsStore, builtin: Sequence[PluginSettings] = ()) -> None:
-        """`builtin` ships with CLAI; the store overrides it, as it does each session's project declarations."""
+        """`builtin` ships with Pax; the store overrides it, as it does each session's project declarations."""
         self.store = store
         self.builtin = canonical_plugin_declarations(builtin)
         self.staged: dict[str, PluginSettings] = {}
@@ -421,7 +421,7 @@ class ProcessPlugins(Generic[DepsT]):
     def upgrade(self, saved: PluginSettings) -> PluginSettings:
         """Resolve moved plugin paths and retired harness built-ins in stored declarations.
 
-        Preserve custom settings when a local database uses an old CLAI module path.
+        Preserve custom settings when a local database uses an old Pax module path.
         """
         old = saved
         factory = MOVED_FACTORIES.get(saved.factory)
@@ -433,7 +433,7 @@ class ProcessPlugins(Generic[DepsT]):
         return saved
 
     def stored(self, name: str) -> PluginSettings | None:
-        """The stored declaration as it is now: another CLAI process may have replaced it."""
+        """The stored declaration as it is now: another Pax process may have replaced it."""
         return next((saved for saved in self.store.plugins() if saved.id == name), None)
 
     def ensure_plugins_dir(self, console: Console) -> None:
@@ -491,7 +491,7 @@ class ProcessPlugins(Generic[DepsT]):
         """Approve the contents the declaration's `project_files` have now; none, if one of them cannot be read."""
         digests = {path: file_sha256(path) for path in self.project_files(name, declaration)}
         if unreadable := [str(path) for path, digest in digests.items() if not digest]:
-            raise ValueError(f'Cannot approve {name}: {", ".join(unreadable)} is missing or not a file CLAI can read.')
+            raise ValueError(f'Cannot approve {name}: {", ".join(unreadable)} is missing or not a file Pax can read.')
         if digests:
             self.store.approve_files(digests)
 
@@ -507,7 +507,7 @@ class ProcessPlugins(Generic[DepsT]):
                 # Saved approvals are shared by every repository, so a relative path would run whatever
                 # file sits at it under the launch directory. Project files are anchored before approval.
                 raise ValueError(
-                    f'{path} is relative, so it would load from whichever directory CLAI starts in. '
+                    f'{path} is relative, so it would load from whichever directory Pax starts in. '
                     f'Use /plugins remove {name} and approve it again, or give it an absolute path.'
                 )
             if not self.project_files(name, declaration):

@@ -27,7 +27,8 @@ With `ReplStates`, the session's REPL outlives the run: `CodeMode` restores it o
 the guidance says so only to runs whose state is kept.
 """
 
-from collections.abc import Callable, Mapping, Sequence
+from collections import deque
+from collections.abc import AsyncIterable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, TypeAlias, TypeGuard
 
@@ -60,6 +61,7 @@ from pydantic_ai_harness.permissions import Permissions
 from pydantic_ai_harness.sub_agents import DelegationTasks
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 from pydantic_ai_pax.clai_docs import ClaiDocs
+from pydantic_ai_pax.pax_docs import PaxDocs
 from pydantic_ai_pax.runtime.eager_timing import NESTED_CALL, EagerExecutionCompletedEvent, EagerTiming
 from pydantic_ai_pax.runtime.repl_state import ReplStates
 from pydantic_ai_pax.runtime.sandbox_calls import (
@@ -80,16 +82,18 @@ SPECULATIVE_TOOLS: Mapping[str, type[object]] = {
     'grep': FileSystem,
     'search_clai_docs': ClaiDocs,
     'read_clai_docs': ClaiDocs,
+    'search_pax_docs': PaxDocs,
+    'read_pax_docs': PaxDocs,
 }
 """Tools that are pure with respect to the workspace, so safe to start early, re-run, or discard,
 keyed to the capability that must provide them.
 
 A plugin or MCP tool can share one of these names when `Coder` is off, so the name alone does not
-vouch for it. CLAI's docs tools only read files shipped inside the installed packages.
+vouch for it. Pax's docs tools only read files shipped inside the installed packages.
 """
 
 NATIVE_TOOLS = frozenset({'write_file', 'edit_file'})
-"""CLAI's equivalents of Code Puppy's native `create_file` and `replace_in_file`."""
+"""Pax's equivalents of Code Puppy's native `create_file` and `replace_in_file`."""
 
 FOLDED_CODE_TOOLS = frozenset({'shell'})
 """Tools marked `code_arg_name` that fold in anyway, as Code Puppy's shell tool does.
@@ -428,7 +432,7 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
     """The run's `Permissions`, one or several; any of them in `read-only` mode mounts the directory read-only, as the guidance then says."""
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
-        """Code Puppy's guidance, with CLAI's tool and argument names, the run's actual mount, and its REPL's lifetime."""
+        """Code Puppy's guidance, with Pax's tool and argument names, the run's actual mount, and its REPL's lifetime."""
 
         def describe(ctx: RunContext[AgentDepsT]) -> str:
             local = self.mount is None or _is_local(ctx.workspace)
@@ -476,6 +480,10 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     snippet claims it; an evicted launch is dropped unseen. The result is always held by then:
     harness `SpeculationCoordinator.adopt` awaits the launch, which runs this hook to completion,
     before it emits `SpeculativeCallClaimedEvent`, even when the launch was not ready at the claim.
+
+    `on_event` emits the claimed reports when the stream reaches the claim, which can be after the
+    snippet started later calls whose reports are already queued. Listeners receive them there;
+    the stream wrapper moves them up to the claim, so stream consumers see calls in code order.
     """
 
     _launched: dict[str, tuple[ToolCallPart, ToolReturnPart]] = field(
@@ -483,6 +491,8 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     )
     _evicted: set[str] = field(default_factory=set[str], init=False, repr=False)
     """Launches evicted while still running, whose late result must not be held."""
+    _reported: set[str] = field(default_factory=set[str], init=False, repr=False)
+    """Claiming call ids `on_event` reported, whose reports the stream moves up to their claim."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> 'ShowSandboxCalls[AgentDepsT]':
         """Keep held launches per run."""
@@ -546,8 +556,56 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         elif isinstance(event, SpeculativeCallClaimedEvent) and event.launch_id in self._launched:
             call, result = self._launched.pop(event.launch_id)
             call_id = event.nested_tool_call_id
+            self._reported.add(call_id)
             await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=replace(call, tool_call_id=call_id)))
             await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id)))
+
+    async def wrap_run_event_stream(
+        self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterable[AgentStreamEvent]:
+        """Hold the sandbox call reports after a reported claim until its two reports arrive, then yield those first.
+
+        Listeners run before this wrapper sees an event, so a reported claim's reports are already
+        queued behind it. Other events pass straight through.
+        """
+        held: deque[AgentStreamEvent | list[AgentStreamEvent]] = deque()
+        slots: dict[str, list[AgentStreamEvent]] = {}
+        async for event in stream:
+            if not isinstance(event, SandboxCallStartedEvent | SandboxCallFinishedEvent):
+                yield event
+                self._open_slot(event, held, slots)
+                continue
+            if event.tool_call_id in slots:
+                slots[event.tool_call_id].append(event)
+            else:
+                held.append(event)
+            while held and self._releasable(held[0]):
+                for released in self._released(held.popleft()):
+                    yield released
+        # A stream that ends before a claim's reports arrive still delivers what it held.
+        while held:
+            for released in self._released(held.popleft()):
+                yield released
+
+    def _open_slot(
+        self,
+        event: AgentStreamEvent,
+        held: deque[AgentStreamEvent | list[AgentStreamEvent]],
+        slots: dict[str, list[AgentStreamEvent]],
+    ) -> None:
+        """Queue a slot for a reported claim's two reports, ahead of the reports that follow it."""
+        if isinstance(event, SpeculativeCallClaimedEvent) and event.nested_tool_call_id in self._reported:
+            self._reported.discard(event.nested_tool_call_id)
+            held.append(slots.setdefault(event.nested_tool_call_id, []))
+
+    @staticmethod
+    def _releasable(item: AgentStreamEvent | list[AgentStreamEvent]) -> bool:
+        """An event, or a claim's slot once both of its reports are in."""
+        return not isinstance(item, list) or len(item) == 2
+
+    @staticmethod
+    def _released(item: AgentStreamEvent | list[AgentStreamEvent]) -> list[AgentStreamEvent]:
+        return item if isinstance(item, list) else [item]
 
 
 def speculative_capabilities(

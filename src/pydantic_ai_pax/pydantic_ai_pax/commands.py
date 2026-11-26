@@ -100,7 +100,7 @@ class Command:
     live: bool = False
     """Keep the editor live while the handler runs, as it is during a turn.
 
-    The working spinner shows, Esc or Ctrl-C cancels, and Enter queues a follow-up. Only for
+    The working spinner shows, Esc or Ctrl+C cancels, and Enter queues a follow-up. Only for
     handlers that may take a while and only print through the console: one that reads keys or
     opens a menu needs the suspended editor every other command gets.
     """
@@ -303,7 +303,7 @@ def config_command(store: SettingsStore, args: list[str]) -> str:
         store.set(args[1], _typed(args[1], args[2]))
     else:
         raise ValueError('Usage: config show|get KEY|set KEY VALUE|reset KEY')
-    return 'Saved. Applies when you restart CLAI.'
+    return 'Saved. Applies when you restart Pax.'
 
 
 def _typed(key: str, raw: str) -> JsonValue:
@@ -330,7 +330,7 @@ def _session_only(command: str, args: list[str]) -> ValueError:
     """The agent can run `pax` from its shell, so a change that lets it do more is a `/command` the user types."""
     return ValueError(
         f'`pax {command} {args[0]}` cannot let the agent do more, since the agent can run pax from its shell. '
-        f'Run `/{shlex.join([command, *args])}` in a CLAI session instead.'
+        f'Run `/{shlex.join([command, *args])}` in a Pax session instead.'
     )
 
 
@@ -373,10 +373,10 @@ def config_completions(args: list[str]) -> Iterable[str]:
 
 PLUGINS_USAGE = (
     'Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID'
-    '\nGit repositories can be installed only inside a CLAI session: /plugins add GIT_URL'
+    '\nGit repositories can be installed only inside a Pax session: /plugins add GIT_URL'
 )
 _SHELL_PLUGINS_USAGE = (
-    'Usage: plugins list\nAdd, enable, disable, or remove plugins with /plugins inside a CLAI session.'
+    'Usage: plugins list\nAdd, enable, disable, or remove plugins with /plugins inside a Pax session.'
 )
 
 

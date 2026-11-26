@@ -15,6 +15,12 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from pydantic_ai_pax.config import SETTING_FIELDS, STORED_MAIN_CHANNEL, PluginSettings, Settings, resolve_settings
 from pydantic_ai_pax.config.plugin_requirements import Requirements, merged_requirements
 
+# Re-exported: plugins imported them from here before `paths` existed.
+from pydantic_ai_pax.paths import (
+    config_dir as config_dir,
+    state_dir as state_dir,
+)
+
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
 _CHAIN: TypeAdapter[list[str]] = TypeAdapter(list[str])
@@ -59,7 +65,7 @@ class StoredAccount:
     label: str | None = None
     """A name the user gave it; the profile is shown when there is none."""
     plugin_login: str | None = None
-    """The plugin `/login` name that signed it in, such as `claude`; `None` when CLAI keeps its credentials."""
+    """The plugin `/login` name that signed it in, such as `claude`; `None` when Pax keeps its credentials."""
 
 
 _OPEN_FLAGS = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NONBLOCK', 0)
@@ -75,7 +81,7 @@ def read_regular_file(path: Path) -> bytes:
 
 
 def file_sha256(path: Path) -> str:
-    """The SHA-256 of a file's bytes, as `approve_files` records it; `''` when it is not a regular file CLAI can read."""
+    """The SHA-256 of a file's bytes, as `approve_files` records it; `''` when it is not a regular file Pax can read."""
     try:
         return hashlib.sha256(read_regular_file(path)).hexdigest()
     except OSError:
@@ -85,18 +91,6 @@ def file_sha256(path: Path) -> str:
 def setting_json(value: JsonValue) -> str:
     """A setting value as the JSON text the store keeps, so two values compare by their exact JSON."""
     return _JSON.dump_json(value).decode()
-
-
-def config_dir() -> Path:
-    """The user's CLAI folder, honouring `XDG_CONFIG_HOME`."""
-    return Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
-
-
-def state_dir() -> Path:
-    """Where CLAI keeps state that is not a preference, honouring an absolute `XDG_STATE_HOME`."""
-    root = os.environ.get('XDG_STATE_HOME', '')
-    state = Path(root) if os.path.isabs(root) else Path.home() / '.local' / 'state'
-    return state / 'pydantic-clai2'
 
 
 class SettingsStore:
@@ -146,6 +140,11 @@ class SettingsStore:
             connection.execute(
                 'CREATE TABLE IF NOT EXISTS accounts (provider TEXT NOT NULL, profile TEXT NOT NULL, label TEXT, '
                 'plugin_login TEXT, position INTEGER NOT NULL, PRIMARY KEY (provider, profile))'
+            )
+            # Folder trust decisions, by the absolute folder they were made for, sit beside the rest for the
+            # same reason. A repository's own files never reach this table: only `/trust` and the trust prompt write it.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS workspace_trust (path TEXT PRIMARY KEY, trusted INTEGER NOT NULL)'
             )
             connection.execute('PRAGMA user_version = 1')
 
@@ -229,7 +228,7 @@ class SettingsStore:
 
     @staticmethod
     def _remove_model(connection: sqlite3.Connection, name: str) -> bool:
-        # Keep the default check and the deletes atomic across CLAI sessions.
+        # Keep the default check and the deletes atomic across Pax sessions.
         connection.execute('BEGIN IMMEDIATE')
         row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
         if row is not None and _JSON.validate_json(row[0]) == name:
@@ -267,7 +266,7 @@ class SettingsStore:
         Raises `ValueError` if another session took `new` since the name was checked.
         """
         with self._connect() as connection:
-            # Keep the checks and the renames atomic across CLAI sessions, as removal does.
+            # Keep the checks and the renames atomic across Pax sessions, as removal does.
             connection.execute('BEGIN IMMEDIATE')
             row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
             if row is not None and _JSON.validate_json(row[0]) == f'chain:{old}':
@@ -491,6 +490,20 @@ class SettingsStore:
             connection.executemany(
                 'DELETE FROM approved_project_settings WHERE root = ? AND key = ?',
                 [(str(root.resolve()), key) for key in keys],
+            )
+
+    def workspace_trust(self, path: Path) -> bool | None:
+        """Whether you trusted the folder at `path`, by its absolute path; `None` when you never decided."""
+        with self._connect() as connection:
+            row = connection.execute('SELECT trusted FROM workspace_trust WHERE path = ?', (str(path),)).fetchone()
+        return None if row is None else bool(row[0])
+
+    def set_workspace_trust(self, path: Path, *, trusted: bool) -> None:
+        """Remember whether you trust the folder at `path`, by its absolute path, replacing an earlier decision."""
+        with self._connect() as connection:
+            connection.execute(
+                'INSERT INTO workspace_trust VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET trusted = excluded.trusted',
+                (str(path), int(trusted)),
             )
 
     def model_settings(self, model: str) -> dict[str, JsonValue]:

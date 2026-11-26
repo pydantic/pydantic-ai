@@ -409,7 +409,7 @@ def test_splash_restores_streams(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_config_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('XDG_CONFIG_HOME', os.fspath(tmp_path))
-    assert SettingsStore().path == tmp_path / 'pydantic-clai2/config.db'
+    assert SettingsStore().path == tmp_path / 'pydantic-ai-pax/config.db'
 
 
 async def test_model_adds_and_selects_any_model(tmp_path: Path) -> None:
@@ -476,9 +476,10 @@ async def test_live_editor_interrupts_slow_turn_hooks(
             pipe.send_text('\x15/exit\r')
             await done.wait()
     assert 'Goodbye.' in output.getvalue()
+    assert ('Done in ' in output.getvalue()) is (phase == 'end')  # Only a finished turn says it is done.
     if phase == 'start':
-        assert 'Turn cancelled. Use /exit to quit.' in output.getvalue()
-        assert 'Press Ctrl-C again' not in output.getvalue()
+        assert 'Interrupted. Type what to do instead.' in output.getvalue()
+        assert 'Press Ctrl+C again' not in output.getvalue()
         assert 'completed' not in output.getvalue()
 
 

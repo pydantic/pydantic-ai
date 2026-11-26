@@ -2,6 +2,7 @@
 
 import io
 import math
+import re
 
 import pytest
 from pygments.token import Keyword
@@ -21,7 +22,8 @@ from pydantic_ai_pax.ui.rendering import theme
 
 @pytest.mark.parametrize('name', theme.names())
 @pytest.mark.parametrize('width', [46, 86])
-def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> None:
+def test_conversation_preview_uses_candidate_colours(name: str, width: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv('COLORTERM', 'truecolor')
     console = Console()
     with theme.use(lambda: 'tokyo_night'):
         rendered = theme_preview(name, width=width)
@@ -30,7 +32,7 @@ def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> N
     assert all(visible_length(line) == width for line in rendered.splitlines())
     text = Text.from_ansi(rendered)
     for fragment in (
-        'CLAI 2.0',
+        'Pax',
         'Thinking',
         'read_file',
         'Summary',
@@ -42,11 +44,12 @@ def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> N
     ):
         assert fragment in text.plain
     palette = PALETTES.get(name)
-    header = text.get_style_at_offset(console, text.plain.index('CLAI 2.0'))
+    header = text.get_style_at_offset(console, text.plain.index('Pax'))
     assert header.color == Color.parse(theme.LITHIUM)
     assert header.bgcolor == (Color.parse(palette.bg) if palette is not None else None)
     with theme.use(lambda: name):
         keyword = theme.syntax_theme().get_style_for_token(Keyword).color
+        tint = theme.prompt_background()
     assert text.get_style_at_offset(console, text.plain.index('return')).color == (
         keyword if palette is not None else Color.parse('color(4)')
     )
@@ -56,6 +59,11 @@ def test_conversation_preview_uses_candidate_colours(name: str, width: int) -> N
     assert text.get_style_at_offset(console, text.plain.index('Summarize')).color == (
         Color.parse(palette.fg) if palette is not None else None
     )
+    # The sample prompt has the palette's prompt tint, as the transcript does; `default` has none.
+    assert text.get_style_at_offset(console, text.plain.index('Summarize')).bgcolor == (
+        Color.parse(tint) if tint is not None else None
+    )
+    assert (tint is None) == (palette is None)
 
 
 @pytest.mark.parametrize('name', theme.names())
@@ -188,3 +196,113 @@ async def test_selected_theme_reaches_markdown_and_diffs() -> None:
     assert '\x1b[48;2;229;244;233m' in output.getvalue()
     assert '\x1b[48;2;237;168;175m' in output.getvalue()
     assert text.get_style_at_offset(console, text.plain.index('new')).color is None
+
+
+async def _render_sample() -> str:
+    """A heading, inline code, a link, a code fence, and a diff, as the default theme streams them."""
+    output = io.StringIO()
+    console = Console(file=output, force_terminal=True, color_system='truecolor', width=80)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, show_tool_output=True)
+    await renderer.on_stream_event(
+        PartStartEvent(
+            index=0,
+            part=TextPart(
+                content='# Heading `add()` after\n\nSee `add()` at https://example.com\n\n```python\ndef add(a, b):\n    return a\n```\n'
+            ),
+        )
+    )
+    await renderer.on_stream_event(
+        FileEditedEvent(
+            path='demo.py',
+            root_dir='/tmp',
+            content_hash='hash',
+            diff='--- a/demo.py\n+++ b/demo.py\n@@ -1 +1 @@\n-return "old"  # was\n+return "[38;2;1;2;3m"  # now\n',
+            truncated=False,
+        )
+    )
+    await renderer.finish()
+    return output.getvalue()
+
+
+@pytest.mark.parametrize('background', ['#000000', '#1E1E2E', '#808080'])
+async def test_default_theme_is_unchanged_on_a_dark_background(background: str) -> None:
+    with theme.use(lambda: 'default'):
+        unknown = (await _render_sample(), theme.roles('default'), theme.sgr(theme.INFO))
+    with theme.use(lambda: 'default', background=background):
+        assert theme.light_background() is None
+        dark = (await _render_sample(), theme.roles('default'), theme.sgr(theme.INFO))
+        assert theme.color(theme.INFO) == theme.INFO
+        assert theme.diff_theme().addition == theme.DIFF_ADDITION
+    assert dark == unknown
+
+
+def _hex_colours(rendered: str) -> set[tuple[str, str]]:
+    """Each truecolor foreground in `rendered` with the truecolor background it sits on, `''` for none."""
+    colours: set[tuple[str, str]] = set()
+    foreground = background = ''
+    for codes, text in re.findall(r'\x1b\[([0-9;]*)m([^\x1b]*)', rendered):
+        parts = codes.split(';')
+        index = 0
+        while index < len(parts):
+            if parts[index] in ('38', '48') and parts[index + 1 : index + 2] == ['2']:
+                shade = '#' + ''.join(f'{int(channel):02X}' for channel in parts[index + 2 : index + 5])
+                foreground, background = (shade, background) if parts[index] == '38' else (foreground, shade)
+                index += 5
+                continue
+            if parts[index] in ('', '0'):
+                foreground = background = ''
+            elif parts[index] == '39':
+                foreground = ''
+            elif parts[index] == '49':
+                background = ''
+            index += 1
+        if foreground and text.strip():
+            colours.add((foreground, background))
+    return colours
+
+
+@pytest.mark.parametrize('background', ['#FFFFFF', '#FDF6E3', '#EEEEEE'])
+async def test_default_theme_reads_on_a_light_background(background: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every brand role, in truecolor and as a 256-colour code, and the diff text reach WCAG AA (4.5:1)."""
+    roles = (
+        theme.ACCENT,
+        theme.INFO,
+        theme.SUCCESS,
+        theme.WARNING,
+        theme.ERROR,
+        theme.MUTED,
+        theme.THINKING,
+        theme.SUGAR,
+    )
+    monkeypatch.setenv('COLORTERM', 'truecolor')
+    with theme.use(lambda: 'default', background=background):
+        colours = {role: theme.color(role).removeprefix('bold ') for role in roles}
+        rendered = await _render_sample()
+        diff = theme.diff_theme()
+        monkeypatch.delenv('COLORTERM', raising=False)
+        codes = {role: theme.sgr(role) for role in roles}
+    assert len(set(colours.values())) == len(roles)  # Still one colour per role.
+    for role, code in codes.items():
+        colours[f'{role} 256'] = Color.from_ansi(int(code.split(';')[-1].rstrip('m'))).get_truecolor().hex
+    assert {role: colour for role, colour in colours.items() if _contrast(colour, background) < 4.5} == {}
+    painted = _hex_colours(rendered)
+    assert (colours[theme.MUTED].upper(), '') in painted and '\x1b[2m' not in rendered  # Inline code, not dim.
+    heading, console = Text.from_ansi(rendered).split()[0], Console()
+    after = heading.get_style_at_offset(console, heading.plain.index('after'))
+    assert after.color == heading.get_style_at_offset(console, 0).color  # Its colour comes back after the code.
+    # Diff markers are tinted from their line, like a light palette's.
+    markers = {diff.addition_marker.upper(), diff.deletion_marker.upper()}
+    assert {(fg, bg) for fg, bg in painted if fg not in markers and _contrast(fg, bg or background) < 4.5} == set()
+    assert '[38;2;1;2;3m' in re.sub(r'\x1b\[[0-9;]*m', '', rendered)  # Code that looks like an escape stays as written.
+    assert {bg for _, bg in painted} >= {diff.addition.upper(), diff.deletion.upper()}
+
+
+async def test_default_preview_over_a_dark_palette_paints_the_light_background() -> None:
+    """Browsing `/theme` on a light terminal with a dark palette applied previews `default` on the terminal's white."""
+    with theme.use(lambda: 'tokyo_night', background='#FFFFFF'):
+        preview = theme_preview('default', width=60)
+    painted = _hex_colours(preview)
+    assert {bg for _, bg in painted} == {'#FFFFFF'}
+    assert {(fg, bg) for fg, bg in painted if _contrast(fg, bg) < 4.5} <= {
+        (theme.LOGO.removeprefix('bold '), '#FFFFFF')
+    }

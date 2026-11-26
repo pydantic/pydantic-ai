@@ -7,11 +7,11 @@ import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
-from pathlib import Path
-from typing import Self, cast
+from pathlib import Path, PurePath
+from typing import ClassVar, Literal, Self, cast
 
 import anyio
-from rich.cells import set_cell_size
+from rich.cells import cell_len, set_cell_size
 from rich.console import Console
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
-from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField
+from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField, TrustLevel
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -35,7 +35,31 @@ from pydantic_ai_pax.ui.rendering.usage_report import format_cost
 TEXT_TIME = 'clai2_last_text_at'
 """Local text-observation time stored in response metadata, not sent to the provider."""
 
-StatusSegment = Callable[[], str]
+LINK_MARK = '↗'
+"""Follows a link's text in the status row, so it reads as clickable."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class StatusLink:
+    """A status-row fragment that opens `url` when clicked; the row shows `text` followed by `LINK_MARK`."""
+
+    text: str
+    url: str
+
+
+class LinkText(str):
+    """Toolbar text that a click opens; every painter that ignores links sees a plain string."""
+
+    url: str
+
+    def __new__(cls, text: str, *, url: str) -> Self:
+        """Keep `url` beside the text."""
+        linked = super().__new__(cls, text)
+        linked.url = url
+        return linked
+
+
+StatusSegment = Callable[[], str | StatusLink]
 """One short status-row fragment supplied by a plugin; see `PluginHost.status_segment`."""
 
 
@@ -48,14 +72,16 @@ class Status:
     text_updates: int = 0
     last_text_at: float | None = None
     """Main-assistant text time, independent of the subagent whose figures are shown."""
-    updates: StatusSegment = lambda: ''
-    live: StatusSegment = lambda: ''
+    updates: Callable[[], str] = lambda: ''
+    live: Callable[[], str] = lambda: ''
     queued: Callable[[], int] = lambda: 0
     _text_response: ModelResponse | None = field(default=None, init=False, repr=False)
     _streamed_text: bool = field(default=False, init=False, repr=False)
     model: str = 'agent default'
     workspace: str = ''
     """The session's working directory; hidden while empty."""
+    trust: Callable[[], TrustLevel | None] = lambda: None
+    """Whether you trust the session's directory, painted after it; hidden for `None`, as for a host that decides."""
     context_tokens: int | None = None
     context_estimated: bool = False
     """`context_tokens` is a character estimate, made before any response reported usage; painted with `~`."""
@@ -78,6 +104,26 @@ class Status:
     """The subagent these figures belong to, painted before the model; empty for the main conversation."""
     subagent: 'Callable[[], Status | None]' = lambda: None
     """The running subagent whose figures replace these on the row until it settles; see `Tasks.focused`."""
+
+    FIT_STEPS: ClassVar[tuple[tuple[Literal['shorten', 'hide'], FooterField], ...]] = (
+        ('shorten', 'workspace'),
+        ('hide', 'assistant_age'),
+        ('hide', 'output'),
+        ('hide', 'cost'),
+        ('hide', 'queued'),
+        ('hide', 'updates'),
+        ('hide', 'live'),
+        ('hide', 'workspace'),
+        ('hide', 'plugins'),
+        ('shorten', 'context'),
+        ('hide', 'model'),
+    )
+    """How a footer too wide for the terminal gives way, first step first.
+
+    `workspace` shortens to its last folder and `context` to its bare figure. `activity` is never
+    hidden, nor is `context`'s figure: they say whether Pax is working and how full the conversation
+    is. `model` goes last because it names a focused subagent whose figures are shown.
+    """
 
     def clear_conversation(self) -> None:
         """Forget the figures of a conversation the shell switched away from."""
@@ -164,8 +210,11 @@ class Status:
         painted = self.toolbar()
         return (frame + ' ' if frame else '', *(text for _, text in painted))
 
-    def _fields(self) -> dict[FooterField, list[tuple[str, str]]]:
-        """Style each field by meaning, before applying the main conversation's layout."""
+    def _fields(self) -> tuple[dict[FooterField, list[tuple[str, str]]], dict[FooterField, list[tuple[str, str]]]]:
+        """Style each field by meaning, before applying the main conversation's layout.
+
+        Also returns the shorter form of each field a `FIT_STEPS` step shortens.
+        """
         shown = self.subagent() or self
         estimated = '~' if shown.context_estimated else ''
         context = f'{estimated}{_compact_tokens(shown.context_tokens)}/{_compact_tokens(shown.window)}'
@@ -188,58 +237,62 @@ class Status:
             else ''
         )
         queued = self.queued()
+        # A POSIX path can contain terminal controls; sanitize it on every painter.
+        path = _short_path(terminal_text(shown.workspace, keep=''))
+        folder = f'…/{PurePath(path).name}'
+        figure = (theme.WARNING if shown.context_alert else theme.MUTED, context)
+        trust = shown.trust()
+        trust_parts = [(theme.WARNING if trust == 'untrusted' else theme.MUTED, trust)] if trust is not None else []
+        short_path = folder if cell_len(folder) < cell_len(path) else path
+        shorter: dict[FooterField, list[tuple[str, str]]] = {
+            'workspace': _workspace_with_trust(short_path, trust_parts),
+            'context': [figure],
+        }
         return {
             'model': [*named, (theme.MUTED, shown.model)],
-            # A POSIX path can contain terminal controls; sanitize it on every painter.
-            'workspace': [(theme.MUTED, _short_path(terminal_text(shown.workspace, keep='')))],
-            'context': [
-                (theme.MUTED, 'context: '),
-                (theme.WARNING if shown.context_alert else theme.MUTED, context),
-                (theme.MUTED, ' tokens'),
-            ],
+            'workspace': _workspace_with_trust(path, trust_parts),
+            'context': [(theme.MUTED, 'context: '), figure, (theme.MUTED, ' tokens')],
             'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
             'cost': [(theme.MUTED, cost)],
             'activity': activity,
-            'plugins': [(theme.MUTED, self._plugin_text().removeprefix(' | '))],
+            'plugins': self._plugin_fragments(),
             'updates': [(theme.MUTED, self.updates())],
             'live': [(theme.MUTED, self.live())],
             'queued': [(theme.MUTED, f'queued: {queued}' if queued else '')],
             'assistant_age': [(theme.MUTED, age)],
-        }
+        }, shorter
 
-    def _plugin_text(self) -> str:
-        """Plugin fragments, separated and prefixed; a fragment that raises or returns a non-string is reported."""
-        shown: list[str] = []
-        for segment in self.status_segments:
-            try:
-                # Plugins may be untyped, so validate the runtime result despite the callable's contract.
-                text = cast(object, segment())
-                if not isinstance(text, str):
-                    # A non-string cannot be joined; report its type instead of raising out of the painter.
-                    text = f'!{type(text).__name__}' if text else ''
-                if text:
-                    # Sanitized here rather than only in the row painter: the toolbar draws fragments too.
-                    shown.append(_printable(text))
-            except Exception as exc:  # noqa: BLE001 -- a plugin fragment must not take down the footer.
-                shown.append(f'!{type(exc).__name__}')
-        return '' if not shown else ' | ' + ' | '.join(shown)
+    def _plugin_fragments(self) -> list[tuple[str, str]]:
+        """Plugin fragments separated by ` | `: plain text runs as one fragment, and each link as its own, keeping its URL."""
+        texts: list[str] = []
+        for text in filter(None, map(_segment_text, self.status_segments)):
+            for piece in (' | ', text) if texts else (text,):
+                if texts and not isinstance(texts[-1], LinkText) and not isinstance(piece, LinkText):
+                    texts[-1] += piece
+                else:
+                    texts.append(piece)
+        return [(theme.MUTED, text) for text in texts]
 
     def text(self, frame: str = '') -> str:
         """Show compact used/max context, with `?` for unknown counts."""
         return ''.join(self.segments(frame))
 
-    def toolbar(self) -> list[tuple[str, str]]:
-        """Apply visibility and ordering without tying any field's style to its position."""
-        fields = self._fields()
-        painted: list[tuple[str, str]] = []
-        for name in self.fields():
-            fragments = fields[name]
-            if not any(text for _, text in fragments):
-                continue
-            if painted:
-                painted.append((theme.MUTED, ' | '))
-            painted.extend((role, text) for role, text in fragments if text)
-        return painted
+    def toolbar(self, *, width: int | None = None) -> list[tuple[str, str]]:
+        """Apply visibility and ordering without tying any field's style to its position.
+
+        With `width`, take `FIT_STEPS` in turn until the row fits in that many cells, keeping the
+        configured order of what is left; a row that still does not fit is the painter's to cut.
+        """
+        (fields, shorter), order = self._fields(), self.fields()
+        row = _join(fields, order)
+        if width is None:
+            return row
+        for step, name in self.FIT_STEPS:
+            if sum(cell_len(text) for _, text in row) <= width:
+                break
+            fields[name] = shorter[name] if step == 'shorten' else []
+            row = _join(fields, order)
+        return row
 
 
 class StatusLine:
@@ -294,7 +347,7 @@ class StatusLine:
             task.cancel()
             try:
                 # `asyncio.wait` never forwards our cancellation to the animation, so a
-                # `CancelledError` here is ours and propagates: Ctrl-C must still abort.
+                # `CancelledError` here is ours and propagates: Ctrl+C must still abort.
                 await asyncio.wait({task})
                 with contextlib.suppress(asyncio.CancelledError):
                     task.result()  # Surface an animation failure; its cancellation was ours.
@@ -318,7 +371,7 @@ class StatusLine:
             return
         rows = 4 if height >= 6 and width >= 4 else 1
         # Leave one column unused so the footer cannot trigger autowrap.
-        fragments = self.status.toolbar()
+        fragments = self.status.toolbar(width=max(0, width - 1))
         prefix = '\x1b7'
         if (height, rows) != (self._height, self._rows):
             self._clear()
@@ -334,7 +387,7 @@ class StatusLine:
         if rows == 4:
             inner_width = width - 3
             glyph = self.spinner().frame(self.clock())
-            hint = set_cell_size(f'> Working {glyph} Ctrl-C to interrupt', inner_width)
+            hint = set_cell_size(f'> Working {glyph} Ctrl+C to interrupt', inner_width)
             border = '─' * inner_width
             for row, line in enumerate((f'┌{border}┐', f'│{hint}│', f'└{border}┘'), start=height - 3):
                 prefix += f'\x1b[{row};1H\x1b[2K{theme.sgr(theme.MUTED)}{line}\x1b[0m'
@@ -346,6 +399,24 @@ class StatusLine:
             # Refresh live counts at least ten times a second, whatever the spinner's speed.
             self._draw()
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
+
+
+def _workspace_with_trust(path: str, trust: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    if path and trust:
+        return [(theme.MUTED, path), (theme.MUTED, ' | '), *trust]
+    return trust or [(theme.MUTED, path)]
+
+
+def _join(fields: dict[FooterField, list[tuple[str, str]]], order: Sequence[FooterField]) -> list[tuple[str, str]]:
+    """The fields of `order` that have text, joined by separators."""
+    painted: list[tuple[str, str]] = []
+    for name in order:
+        fragments = [(role, text) for role, text in fields[name] if text]
+        if fragments:
+            if painted:
+                painted.append((theme.MUTED, ' | '))
+            painted.extend(fragments)
+    return painted
 
 
 def _compact_tokens(count: int | None) -> str:
@@ -367,5 +438,21 @@ def _short_path(path: str, limit: int = 40) -> str:
     return path if len(path) <= limit else '…' + path[-(limit - 1) :]
 
 
+def _segment_text(segment: StatusSegment) -> str:
+    """A plugin fragment's sanitized text, a link's as `LinkText`; one that raises or returns another type is reported."""
+    try:
+        # Plugins may be untyped, so validate the runtime result despite the callable's contract.
+        shown = cast(object, segment())
+        if isinstance(shown, StatusLink):
+            return LinkText(f'{_printable(shown.text)} {LINK_MARK}', url=_printable(shown.url))
+    except Exception as exc:  # noqa: BLE001 -- a plugin fragment must not take down the footer.
+        return f'!{type(exc).__name__}'
+    if isinstance(shown, str):
+        # Sanitized here rather than only in the row painter: the toolbar draws fragments too.
+        return _printable(shown)
+    # Another type cannot be joined; report its type instead of raising out of the painter.
+    return f'!{type(shown).__name__}' if shown else ''
+
+
 def _printable(text: str) -> str:
-    return ''.join(char if char.isascii() and char.isprintable() else '?' for char in text)
+    return ''.join(char if (char.isascii() and char.isprintable()) or char == LINK_MARK else '?' for char in text)

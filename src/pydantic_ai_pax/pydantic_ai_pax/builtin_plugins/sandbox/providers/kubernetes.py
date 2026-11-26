@@ -40,12 +40,14 @@ class KubernetesProvider:
     working_dir: str = '/workspace/checkout'
     """Below sandboxd's default root, which the docs' templates also make the home, so the token is not in the checkout."""
     token_in_sandbox: bool = True
+    desktop_at_create: bool = False
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('k8s_agent_sandbox') is None or find_spec('grpc') is None:
-            return "Kubernetes support is not installed. Install CLAI with it: uv tool install 'pydantic-ai-pax[kubernetes]'."
+            return "Kubernetes support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[kubernetes]'."
         if shutil.which('kubectl') is None:
-            return 'Install kubectl: CLAI reaches the sandbox pods through kubectl port-forward.'
+            return 'Install kubectl: Pax reaches the sandbox pods through kubectl port-forward.'
         if saved_key(WARM_POOL_NAME) is None:
             return (
                 f'Add the agent-sandbox warm pool to claim sandboxes from in /keys as {WARM_POOL_NAME}, '
@@ -53,7 +55,9 @@ class KubernetesProvider:
             )
         return None
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandboxBackend
 
         backend = KubernetesSandboxBackend(
@@ -62,6 +66,7 @@ class KubernetesProvider:
             sandbox_timeout=None,
             working_dir=self.working_dir,
             env=SANDBOX_ENV,
+            desktop=desktop,
         )
         try:
             # A claim that fails is rolled back by the backend, so only its `kubectl port-forward` is left to stop.
@@ -73,10 +78,10 @@ class KubernetesProvider:
         assert backend.ref is not None
         return backend.ref, backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandboxBackend
 
-        return KubernetesSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
+        return KubernetesSandboxBackend(ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop)
 
     async def close(self, backend: SandboxBackend) -> None:
         # Stops the `kubectl port-forward` the backend started.

@@ -12,6 +12,7 @@ from __future__ import annotations as _annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from datetime import datetime
 
 from typing_extensions import TypedDict
 
@@ -30,21 +31,34 @@ from .messages import (
     _FRAME_PLACEHOLDER,  # pyright: ignore[reportPrivateUsage]
     Authority,
     BinaryContent,
+    CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
     CapabilityPart,
     CapabilityPartSource,
     CapabilitySource,
+    CompactionPart,
+    InstructionBaselinePart,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelSettingsDeltaPart,
     ModelSource,
+    OperatorText,
+    RetryFeedbackPart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    SpeechPart,
     StructuredContent,
     SystemPromptPart,
     TextContent,
+    ToolAvailabilityDeltaPart,
     ToolResultSource,
+    ToolReturnPart,
     UserContent,
     UserPromptPart,
     UserSource,
     WorkspaceSource,
+    _CapabilityInstructionsPart,  # pyright: ignore[reportPrivateUsage]
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -54,13 +68,51 @@ def has_capability_parts(messages: Sequence[ModelMessage]) -> bool:
     return any(_has_capability_parts(message) for message in messages)
 
 
-def effective_authority(part: CapabilityPart) -> Authority:
-    """The authority `part` reaches the model with: the lower of its source's and the one its kind asks for.
+_PART_AUTHORITY: dict[type[object], Authority] = {
+    SystemPromptPart: 'operator',
+    # The framework's own records of the run's state, which the model reads in the application's voice.
+    InstructionBaselinePart: 'operator',
+    ToolAvailabilityDeltaPart: 'operator',
+    CapabilityLoadDeltaPart: 'operator',
+    ModelSettingsDeltaPart: 'operator',
+    UserPromptPart: 'user',
+    SpeechPart: 'user',
+    # Tool output is data whatever the tool, and so are the typed returns `ToolSearchReturnPart` and
+    # `LoadCapabilityReturnPart`, which subclass `ToolReturnPart`.
+    ToolReturnPart: 'none',
+    RetryPromptPart: 'none',  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
+    # Retry feedback quotes the model's own output.
+    RetryFeedbackPart: 'none',
+    # A summary another model wrote of what it replaces.
+    CompactionPart: 'none',
+}
+"""The fixed authority of each request part kind whose authority doesn't depend on the part."""
 
-    An instruction kind asks for `'operator'`, a data kind for `'none'`. It only ever downgrades.
+
+def effective_authority(part: ModelRequestPart) -> Authority:
+    """The [authority][pydantic_ai.messages.Authority] `part` reaches the model with.
+
+    A pure function of the part: it reads nothing from the run, so every reader of a history, such as a check on what
+    may reach the application's voice, gets the same answer.
+
+    - A [`CapabilityPart`][pydantic_ai.messages.CapabilityPart]: the lower of its source's and the one its kind asks
+      for. An instruction kind asks for `'operator'`, a data kind for `'none'`. It only ever downgrades.
+    - An [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]: the authority stored on it.
+    - A system prompt and the framework's records of the run's state: `'operator'`.
+    - A user prompt or the user's speech: `'user'`.
+    - Tool output, retry feedback and a compaction summary: `'none'`.
+
+    A part of any other kind is `'none'`, so a kind added later carries no authority until it's given one here.
     """
-    asked: Authority = 'operator' if part.rendering.voice == 'instruction' else 'none'
-    return _lower_authority(asked, part.source.authority)
+    if isinstance(part, CapabilityPart):
+        asked: Authority = 'operator' if part.rendering.voice == 'instruction' else 'none'
+        return _lower_authority(asked, part.source.authority)
+    if isinstance(part, InstructionDeltaPart):
+        return part.authority
+    for kind, authority in _PART_AUTHORITY.items():
+        if isinstance(part, kind):
+            return authority
+    return 'none'
 
 
 def is_downgraded_request_scoped(part: ModelRequestPart) -> bool:
@@ -185,6 +237,52 @@ def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
     note = None if text is None else SystemPromptPart(text, timestamp=part.timestamp)
     parts: list[SystemPromptPart | UserPromptPart] = [body] if note is None else [note, body]
     return RenderedCapabilityPart(parts=parts, body=body, note=note, lookalikes=lookalikes, naming=naming)
+
+
+def lowered_instruction_statement(
+    change: InstructionDeltaPart, *, restated: bool, timestamp: datetime
+) -> list[SystemPromptPart | CapabilityPart]:
+    """What a statement of a capability's instructions below `'operator'` reaches the model as.
+
+    `change` is an [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] whose `authority` is below
+    `'operator'`, and `restated` says whether an earlier statement of its block is still in effect. Its text goes out
+    as a capability part at that authority, rendered by `render_capability_part` like any other: framed on the user
+    channel, never in the application's voice. When it replaces or withdraws an earlier statement, a note in the
+    application's voice says that one no longer applies first. The authority comes from the stored part alone.
+    """
+    assert change.authority != 'operator'
+    source = CapabilitySource(_statement_capability_id(change), authority=change.authority)
+    parts: list[SystemPromptPart | CapabilityPart] = []
+    if restated:
+        tag = _CapabilityInstructionsPart._registered_kind  # pyright: ignore[reportPrivateUsage]
+        assert tag is not None
+        author = _author_phrase(source)
+        assert author is not None
+        parts.append(
+            SystemPromptPart(
+                f'The earlier <{tag.rpartition(".")[2]}> from {author} no longer applies.', timestamp=timestamp
+            )
+        )
+    if change.content is not None:
+        # Safe for text the operator didn't write: the part is never stored or enqueued, only rendered, and its source
+        # is below operator authority, so it renders as framed data rather than in the application's voice.
+        content = OperatorText(change.content)
+        parts.append(_CapabilityInstructionsPart(content=content, source=source, timestamp=timestamp))
+    return parts
+
+
+def _statement_capability_id(change: InstructionDeltaPart) -> str:
+    """The capability a lowered block's statement is from, as its id `capability:<id>` names it.
+
+    That id is the capability's `id` or its class's name, which the operator's configuration sets, never text a server
+    or a tool reports. A statement under any other id names no capability: `_author_phrase` calls it "a capability".
+    """
+    source = change.id.source if change.id is not None else None
+    return source.id if isinstance(source, CapabilityInstructionSource) else _UNNAMED_CAPABILITY
+
+
+_UNNAMED_CAPABILITY = '<unnamed>'
+"""A capability id that isn't a plain identifier, so a note names its capability by kind alone."""
 
 
 def _note_frame(tag: str, attrs: dict[str, str | None], open_tag: str) -> str:

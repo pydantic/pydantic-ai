@@ -17,7 +17,7 @@ from .agent import (
     capture_run_messages,
 )
 from .agent.spec import AgentSpec
-from .capabilities import AgentCapability, Capability, CapabilityFunc
+from .capabilities import AgentCapability, AgentInstructions, Capability, CapabilityFunc, SourcedInstruction
 from .concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -46,7 +46,9 @@ from .exceptions import (
     ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
@@ -207,6 +209,7 @@ from .models.concurrency import ConcurrencyLimitedModel, limit_model_concurrency
 from .native_tools import (
     AdvisorTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -330,6 +333,8 @@ __all__: tuple[str, ...] = (
     'ModelAuthenticationError',
     'ModelNotFoundError',
     'ModelRequestTimeout',
+    'ModelEmptyResponseError',
+    'ModelInvalidResponseError',
     'FallbackExceptionGroup',
     'IncompleteToolCall',
     'OutputTokenLimitExceeded',
@@ -501,6 +506,7 @@ __all__: tuple[str, ...] = (
     # builtin_tools
     'AdvisorTool',
     'CodeExecutionTool',
+    'ComputerTool',
     'FileSearchTool',
     'ImageGenerationTool',
     'MCPServerTool',
@@ -513,6 +519,9 @@ __all__: tuple[str, ...] = (
     'AgentCapability',
     'Capability',
     'CapabilityFunc',
+    # instructions
+    'AgentInstructions',
+    'SourcedInstruction',
     # output
     'ToolOutput',
     'NativeOutput',

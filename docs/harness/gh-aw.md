@@ -41,10 +41,10 @@ import-based engine like this one, so it is not part of the configuration below.
 ```mermaid
 flowchart TB
     accTitle: gh-aw: your Pydantic AI agent as a GitHub Agentic Workflow
-    accDescr: An opened issue triggers the agent job, a container behind an egress firewall, where the pydantic-ai engine starts clai2 and runs your Agent named by PAI_AGENT. The agent reaches the model through the api-proxy, which holds the provider key, and calls MCP gateway tools. Its output goes to the threat detection job, then the add-comment job posts the comment with its own token.
+    accDescr: An opened issue triggers the agent job, a container behind an egress firewall, where the pydantic-ai engine starts Pax and runs your Agent named by PAI_AGENT. The agent reaches the model through the api-proxy, which holds the provider key, and calls MCP gateway tools. Its output goes to the threat detection job, then the add-comment job posts the comment with its own token.
     issue["issue opened"]:::external
     subgraph job["Agent job: container behind egress firewall"]
-        engine["pydantic-ai engine<br/>starts clai2"]:::capability
+        engine["pydantic-ai engine<br/>starts Pax"]:::capability
         agent["your Agent<br/>named by PAI_AGENT"]
     end
     proxy["api-proxy<br/>holds the<br/>provider key"]:::external
@@ -75,7 +75,7 @@ flowchart TB
 - The protected-capture runtime rejects workflows with `evals`, whose secondary engine invocation
   reads `evals.log`. Omit `evals` when using this engine.
 - The workflow summary is the canonical success/failure report. MCP startup and
-  request-limit errors keep their CLAI 2 diagnostics and nonzero exit status.
+  request-limit errors keep their Pax diagnostics and nonzero exit status.
 - Linux runners. gh-aw's sandbox needs Linux and Docker, so the `macos-*` and `windows-*`
   runner labels are
   [not supported](https://github.github.com/gh-aw/reference/frontmatter/).
@@ -210,7 +210,7 @@ def label_catalog() -> list[str]:
   without setup of your own. Anything else your agent imports is installed by a
   workflow-level `steps:` block (see [Dependencies](#dependencies)).
 
-The engine resolves and imports the module once, then gives the agent to CLAI 2 with
+The engine resolves and imports the module once, then gives the agent to Pax with
 `-a`, the workflow model with `-m`, and the prompt with `-p`. Module-level work therefore
 runs once. An import error fails the step with its Python traceback.
 
@@ -411,7 +411,7 @@ steps. Your install therefore runs against the same interpreter the engine later
 
 A step can also end a run that has nothing to do by appending
 `{"type":"noop","message":"..."}` to `$GH_AW_SAFE_OUTPUTS`. The engine reads that file
-before it starts CLAI 2 and exits with status 0 when it finds a `noop`, so no model request
+before it starts Pax and exits with status 0 when it finds a `noop`, so no model request
 is made. gh-aw's
 [cost management reference](https://github.github.com/gh-aw/reference/cost-management/#skip-the-agent-when-it-is-not-needed)
 documents the pattern. When a search query can express the condition, `skip-if-match` or

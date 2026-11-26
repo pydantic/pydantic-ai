@@ -263,7 +263,7 @@ async def test_an_older_build_changing_the_token_retires_the_sign_in_email(
         await loader.reload('observability')
     finally:
         await loader.close('exit')
-    tags = [(span.attributes or {})['logfire.tags'] for span in recorder.spans() if span.name == 'CLAI session']
+    tags = [(span.attributes or {})['logfire.tags'] for span in recorder.spans() if span.name == 'Pax session']
     assert tags == [(), ('mike@example.com',), (), ()]
 
 
@@ -763,7 +763,7 @@ def test_codex_speed_labels_preserve_existing_preferences(tmp_path: Path, tier: 
     ],
 )
 def test_codex_speed_default_keeps_saved_tiers(tmp_path: Path, stored: str, speed: str, tier: str) -> None:
-    """A tier an older CLAI's `/fast` saved picks the speed instead of the ultrafast default; other rows gain it."""
+    """A tier an older Pax's `/fast` saved picks the speed instead of the ultrafast default; other rows gain it."""
     path = tmp_path / 'config.db'
     SettingsStore(path)
     name = 'openai-codex:gpt-6-astra'
@@ -807,7 +807,7 @@ async def test_older_builds_fast_outranks_a_stale_speed(tmp_path: Path, stored: 
 
 
 def test_codex_chain_keeps_its_saved_tier(tmp_path: Path) -> None:
-    """A chain's tier, as an older CLAI's `/fast` saved it, picks its Codex members' speed."""
+    """A chain's tier, as an older Pax's `/fast` saved it, picks its Codex members' speed."""
     path = tmp_path / 'config.db'
     store = SettingsStore(path)
     members = ['openai-codex:gpt-6-astra', 'openai-codex@work:gpt-6-astra']
@@ -900,7 +900,7 @@ def test_database_without_requirement_tags_loads_unchanged(tmp_path: Path) -> No
 
 
 def test_database_without_approved_files_keeps_its_approvals_and_gains_the_table(tmp_path: Path) -> None:
-    """A database from before CLAI kept approved file contents opens unchanged; they go in a table older builds never read."""
+    """A database from before Pax kept approved file contents opens unchanged; they go in a table older builds never read."""
     path = tmp_path / 'config.db'
     helper = Path('/work/repo/plugins/helper.py')
     with closing(sqlite3.connect(path)) as connection, connection:
@@ -1499,7 +1499,7 @@ async def test_automatic_sign_in_saved_by_older_builds_means_the_browser(
 
 
 async def test_a_workspace_kind_keeps_the_model_older_builds_saved() -> None:
-    """A kind's `model`, which builds that ran each workspace's own CLAI read, survives editing other settings."""
+    """A kind's `model`, which builds that ran each workspace's own Pax read, survives editing other settings."""
     saved: list[dict[str, JsonValue]] = []
     host = PluginHost[None](
         name='workspaces',
@@ -1835,3 +1835,22 @@ def test_worktree_command_symlink_key_is_canonical_and_menu_is_json(tmp_path: Pa
     assert source.current(row) == '{"/repo": ["remove"]}'
     context.reset_setting('worktrees.remove_commands')
     assert source.current(row) == '{}'
+
+
+def test_database_from_before_folder_trust_keeps_its_settings_and_trusts_nothing(tmp_path: Path) -> None:
+    """A database an older build wrote has no `workspace_trust` table: it gains an empty one, and keeps the rest."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('model', '"test"'))
+        connection.execute('INSERT INTO settings VALUES (?, ?)', ('future.setting', '1'))
+    store = SettingsStore(path)
+    assert store.workspace_trust(tmp_path) is None
+    store.set_workspace_trust(tmp_path, trusted=True)
+    reopened = SettingsStore(path)
+    assert reopened.workspace_trust(tmp_path) is True
+    assert reopened.overrides() == {'model': 'test'}
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT value_json FROM settings WHERE key = 'future.setting'").fetchone() == ('1',)
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
