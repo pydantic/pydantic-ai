@@ -143,6 +143,27 @@ def billed_web_searches(
             )
 
 
+def _apply_cache_write_tokens(request_usage: usage.RequestUsage, input_tokens_details: object) -> None:
+    # genai-prices maps OpenAI's nested `cache_write_tokens` on the `openai` extractors as of
+    # https://github.com/pydantic/genai-prices/pull/463 (in 0.1.4), but not every OpenAI-compatible
+    # provider's extractor does — Azure's still omits it — so lift it manually here.
+    # TODO: Remove this block once those remaining extractors map it. Check `prices/providers/azure.yml`.
+    if _is_str_dict(input_tokens_details):
+        cache_write_tokens = input_tokens_details.get('cache_write_tokens')
+        if isinstance(cache_write_tokens, int):
+            request_usage.cache_write_tokens = cache_write_tokens
+
+
+def _unmeasured_usage(web_search_requests: int) -> usage.RequestUsage:
+    if web_search_requests:
+        return usage.RequestUsage(
+            unmeasured_requests=1,
+            web_searches=web_search_requests,
+            details={'web_search_requests': web_search_requests},
+        )
+    return usage.RequestUsage(unmeasured_requests=1)
+
+
 def map_usage(
     response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
     provider: str,
@@ -154,13 +175,7 @@ def map_usage(
     response_usage = response.usage
     web_search_requests = 0 if deepseek_web_tools else billed_web_searches(response)
     if response_usage is None:
-        if web_search_requests:
-            return usage.RequestUsage(
-                unmeasured_requests=1,
-                web_searches=web_search_requests,
-                details={'web_search_requests': web_search_requests},
-            )
-        return usage.RequestUsage(unmeasured_requests=1)
+        return _unmeasured_usage(web_search_requests)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details = {
@@ -194,14 +209,7 @@ def map_usage(
     # It isn't a declared field, so it's set the way `RequestUsage.__init__` sets extra units.
     if web_search_requests:
         setattr(request_usage, 'web_searches', web_search_requests)
-    # genai-prices maps OpenAI's nested `cache_write_tokens` on the `openai` extractors as of
-    # https://github.com/pydantic/genai-prices/pull/463 (in 0.1.4), but not every OpenAI-compatible
-    # provider's extractor does — Azure's still omits it — so lift it manually here.
-    # TODO: Remove this block once those remaining extractors map it. Check `prices/providers/azure.yml`.
-    if _is_str_dict(input_tokens_details):
-        cache_write_tokens = input_tokens_details.get('cache_write_tokens')
-        if isinstance(cache_write_tokens, int):
-            request_usage.cache_write_tokens = cache_write_tokens
+    _apply_cache_write_tokens(request_usage, input_tokens_details)
     if deepseek_web_tools and (tool_usage := usage_data.get('server_tool_use')) is not None:
         DeepSeekWebUsage.model_validate(tool_usage).apply(request_usage)
     return request_usage

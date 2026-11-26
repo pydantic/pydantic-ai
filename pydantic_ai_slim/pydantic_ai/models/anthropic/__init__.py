@@ -2571,13 +2571,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         ]
         sent_native_computer = self._sent_native_computer(model_settings, model_request_parameters)
         for item in response.content:
-            if (
-                self.profile.get('anthropic_deepseek_web_tools', False)
-                and (part := web_tool_part(item, self.system)) is not None
-            ):
-                items.append(part)
-                continue
             match item:
+                case _ if (
+                    self.profile.get('anthropic_deepseek_web_tools', False)
+                    and (part := web_tool_part(item, self.system)) is not None
+                ):
+                    items.append(part)
                 # The SDK builds a block type it doesn't know as a `BetaTextBlock` carrying that type.
                 case BetaTextBlock() if item.type != 'text':
                     warnings.warn(

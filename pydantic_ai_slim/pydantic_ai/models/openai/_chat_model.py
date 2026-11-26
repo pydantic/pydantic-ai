@@ -805,11 +805,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 finish_reason='content_filter',
             )
 
-        items: list[ModelResponsePart] = []
-        if self.profile.get('openai_deepseek_web_tools', False):
-            items.extend(self._map_deepseek_web_steps(choice.message, provider_details))
-        elif thinking_parts := self._process_thinking(choice.message):
-            items.extend(thinking_parts)
+        items = self._map_reasoning_and_web_steps(choice.message, provider_details)
 
         items.extend(
             map_chat_content(
@@ -841,9 +837,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             finish_reason=finish_reason,
         )
 
-    def _map_deepseek_web_steps(
+    def _map_reasoning_and_web_steps(
         self, message: chat.ChatCompletionMessage, provider_details: dict[str, Any]
     ) -> list[ModelResponsePart]:
+        if not self.profile.get('openai_deepseek_web_tools', False):
+            return list(self._process_thinking(message) or ())
         items: list[ModelResponsePart] = []
         message_extras = message.model_extra or {}
         if raw_steps := message_extras.get('server_tool_calls'):
@@ -852,22 +850,27 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             if isinstance(message_extras.get('reasoning_content'), str):
                 provider_details[CHAT_FINAL_STEP_KEY] = max((step.index for step in steps), default=-1) + 1
             for step in steps:
-                if step.reasoning_content:
-                    items.append(
-                        ThinkingPart(
-                            id='reasoning_content',
-                            content=step.reasoning_content,
-                            provider_name=self.system,
-                            provider_details={CHAT_STEP_KEY: step.index},
-                        )
-                    )
-                items.extend(call.call_part(self.system) for call in step.calls)
-                items.extend(call.return_part(self.system) for call in step.calls)
+                items.extend(self._deepseek_step_parts(step))
         if thinking_parts := self._process_thinking(message):
             if isinstance(final_step := provider_details.get(CHAT_FINAL_STEP_KEY), int):
                 for part in thinking_parts:
                     part.provider_details = {CHAT_STEP_KEY: final_step}
             items.extend(thinking_parts)
+        return items
+
+    def _deepseek_step_parts(self, step: ChatWebStep) -> list[ModelResponsePart]:
+        items: list[ModelResponsePart] = []
+        if step.reasoning_content:
+            items.append(
+                ThinkingPart(
+                    id='reasoning_content',
+                    content=step.reasoning_content,
+                    provider_name=self.system,
+                    provider_details={CHAT_STEP_KEY: step.index},
+                )
+            )
+        items.extend(call.call_part(self.system) for call in step.calls)
+        items.extend(call.return_part(self.system) for call in step.calls)
         return items
 
     def _fill_missing_finish_reason(self, response: chat.ChatCompletion) -> bool:
@@ -1325,6 +1328,28 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         wire_steps: object,
         final_step: object,
     ) -> chat.ChatCompletionAssistantMessageParam | None:
+        retained, thinking_by_step = self._retained_deepseek_parts(message)
+        steps: list[ChatWebStep] = []
+        for step in chat_web_steps.validate_python(wire_steps):
+            step.calls = [call for call in step.calls if (call.id, call.tool_name) in retained]
+            if not step.calls:
+                continue
+            if step.reasoning_content is not None:
+                step.reasoning_content = ''.join(thinking_by_step.get(step.index, ()))
+            steps.append(step)
+        if steps:
+            param = param or chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
+        if param is not None:
+            # The SDK message type lacks these DeepSeek extensions.
+            wire = cast(dict[str, object], param)
+            if steps:
+                wire['server_tool_calls'] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
+            wire.pop('reasoning_content', None)
+            if isinstance(final_step, int):
+                wire['reasoning_content'] = ''.join(thinking_by_step.get(final_step, ()))
+        return param
+
+    def _retained_deepseek_parts(self, message: ModelResponse) -> tuple[set[tuple[str, str]], dict[int, list[str]]]:
         calls: set[tuple[str, str]] = set()
         returns: set[tuple[str, str]] = set()
         thinking_by_step: dict[int, list[str]] = {}
@@ -1341,25 +1366,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             ):
                 # DeepSeek clears step reasoning from the terminal content-filter response.
                 thinking_by_step.setdefault(index, []).append(part.content)
-        retained = calls & returns
-        steps: list[ChatWebStep] = []
-        for step in chat_web_steps.validate_python(wire_steps):
-            step.calls = [call for call in step.calls if (call.id, call.tool_name) in retained]
-            if step.calls:
-                if step.reasoning_content is not None:
-                    step.reasoning_content = ''.join(thinking_by_step.get(step.index, ()))
-                steps.append(step)
-        if steps:
-            param = param or chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
-        if param is not None:
-            # The SDK message type lacks these DeepSeek extensions.
-            wire = cast(dict[str, object], param)
-            if steps:
-                wire['server_tool_calls'] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
-            wire.pop('reasoning_content', None)
-            if isinstance(final_step, int):
-                wire['reasoning_content'] = ''.join(thinking_by_step.get(final_step, ()))
-        return param
+        return calls & returns, thinking_by_step
 
     def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:
         """Build the user message that carries this `ModelResponse`'s reasoning ahead of its assistant message.

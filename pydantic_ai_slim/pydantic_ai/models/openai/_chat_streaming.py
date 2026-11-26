@@ -162,22 +162,23 @@ class OpenAIStreamedResponse(StreamedResponse):
         delta = choice.delta.model_extra or {}
         if isinstance(delta.get('reasoning_content'), str):
             self._deepseek_has_reasoning = True
-        if raw_steps := delta.get('server_tool_calls'):
-            steps = chat_web_steps.validate_python(raw_steps)
-            self.provider_details = {
-                **(self.provider_details or {}),
-                CHAT_STEPS_KEY: chat_web_step_metadata(steps),
-            }
-            if self._deepseek_has_reasoning:
-                self.provider_details[CHAT_FINAL_STEP_KEY] = self._deepseek_reasoning_step
-            for step in steps:
-                for call in step.calls:
-                    call_id = ('deepseek_call', call.id)
-                    if self._parts_manager.get_part_by_vendor_id(call_id) is None:
-                        yield self._parts_manager.handle_part(
-                            vendor_part_id=call_id, part=call.call_part(self.provider_name)
-                        )
-                    yield from self._map_deepseek_web_result(call)
+        if not (raw_steps := delta.get('server_tool_calls')):
+            return
+        steps = chat_web_steps.validate_python(raw_steps)
+        self.provider_details = {
+            **(self.provider_details or {}),
+            CHAT_STEPS_KEY: chat_web_step_metadata(steps),
+        }
+        if self._deepseek_has_reasoning:
+            self.provider_details[CHAT_FINAL_STEP_KEY] = self._deepseek_reasoning_step
+        for step in steps:
+            for call in step.calls:
+                call_id = ('deepseek_call', call.id)
+                if self._parts_manager.get_part_by_vendor_id(call_id) is None:
+                    yield self._parts_manager.handle_part(
+                        vendor_part_id=call_id, part=call.call_part(self.provider_name)
+                    )
+                yield from self._map_deepseek_web_result(call)
 
     def _map_deepseek_web_progress(self, event: ChatWebEvent) -> Iterator[ModelResponseStreamEvent]:
         if event.type == 'step_reasoning_done':

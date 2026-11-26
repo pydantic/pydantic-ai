@@ -1295,6 +1295,13 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details=provider_details or None,
         )
 
+    def _map_web_search_call(
+        self, item: responses.ResponseFunctionWebSearch
+    ) -> tuple[NativeToolCallPart, NativeToolReturnPart]:
+        if self.profile.get('openai_deepseek_web_tools', False) and (parts := web_tool_parts(item, self.system)):
+            return parts
+        return map_web_search_tool_call(item, self.system)
+
     def _map_output_items(  # noqa: C901
         self,
         response: responses.Response,
@@ -1324,12 +1331,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case responses.ResponseCodeInterpreterToolCall():
                     items.extend(self._map_code_interpreter_call(item))
                 case responses.ResponseFunctionWebSearch():
-                    deepseek_parts = (
-                        web_tool_parts(item, self.system)
-                        if self.profile.get('openai_deepseek_web_tools', False)
-                        else None
-                    )
-                    items.extend(deepseek_parts or map_web_search_tool_call(item, self.system))
+                    items.extend(self._map_web_search_call(item))
                 case responses.ResponseToolSearchCall():
                     items.extend(self._map_tool_search_call(item, tool_search_outputs))
                 case responses.ResponseToolSearchOutputItem():
