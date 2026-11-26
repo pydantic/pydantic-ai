@@ -566,8 +566,8 @@ levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.g
 `gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen`, and `gemini-4-neon` on the Gemini API, support the
 `low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` and, on
 the Gemini API, `gemini-4-neon` also support `xhigh`, their deepest reasoning, which `thinking='xhigh'` and `'max'`
-select; on models without it, they resolve to `high`. On Google Cloud, `gemini-4-neon` keeps the default levels. The
-`google-genai` SDK's `ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns
+select; on models without it, they resolve to `high`. On Google Cloud, `gemini-4-neon` keeps the default levels.
+`google-genai` earlier than 3.3 doesn't list `XHIGH` in its `ThinkingLevel` enum, so the SDK warns
 `XHIGH is not a valid ThinkingLevel` and sends the level anyway.
 
 On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use
