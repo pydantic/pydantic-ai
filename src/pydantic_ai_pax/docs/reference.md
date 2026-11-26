@@ -33,6 +33,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/keys` | Manage saved API keys |
 | `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
 | `/project [approve NAME...\|all \| revoke NAME...\|all]` | Review what `.clai/settings.json` sets, and approve or revoke its keys for this repository |
+| `/trust [yes\|no]` | Show whether you trust this session's folder, or trust it or not; see [Folder trust](#folder-trust) |
 | `/set [KEY [VALUE]]` | Change a setting; no arguments opens the menu (alias `/settings`) |
 | `/config show\|get\|set\|reset` | Read or write saved settings; writes apply on restart |
 | `/system_prompt` | View the system prompt and edit your own instructions |
@@ -51,6 +52,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/tasks` | Inspect and control delegated tasks |
 | `/commit [MESSAGE]` | Commit every change in the session's directory; the model drafts the message when none is given |
 | `/sandbox [local smol\|local boxlite\|e2b\|boxd\|daytona\|opensandbox\|modal\|render\|sprites\|kubernetes\|delete]` | Start a new conversation in a sandbox: `local smol` (SmolVM) and `local boxlite` (BoxLite) run a VM on this machine, the others are cloud sandboxes; `/sandbox local` asks which engine, and no argument says where this one runs. See [Sandboxes](#sandboxes-sandbox) |
+| `/computer-use [on\|off]` | Let the model see and control the sandbox's desktop. See [Computer use](#computer-use-computer-use) |
 | `/push [confirm]` | `git push -u origin BRANCH`; `confirm` is needed on the default branch |
 | `/pr [confirm\|TITLE]` | Show a pull request the model drafts; `confirm`, or a `TITLE` of your own, pushes the branch and opens it with `gh` |
 | `/update [now]` | Show whether a newer Pax is out on `updates.channel`, with **Update…** to install it; `/update now` installs at once and restarts |
@@ -143,7 +145,7 @@ Paths are under `$XDG_CONFIG_HOME/pydantic-clai2/`, or `~/.config/pydantic-clai2
 
 | Path | Holds |
 |---|---|
-| `config.db` | Settings, saved models and their settings, and plugin declarations |
+| `config.db` | Settings, saved models and their settings, plugin declarations, and which folders you trust |
 | `sessions.db`, `sessions.repl/` | Saved conversations, and code mode's sandbox state per session |
 | `input-history` | Prompts you typed, for Up/Down recall (plaintext) |
 | `credentials-*.enc` | Encrypted sign-ins and saved keys; the key that decrypts them is in your OS keyring |
@@ -203,6 +205,64 @@ Pax's environment minus LLM provider API keys. To keep the file tools inside the
 launch directory, set **Unrestricted filesystem** to `false` in
 `/plugins configure coder`. Shell commands are not restricted either way.
 
+### Folder trust
+
+Pax treats every folder as untrusted until you say otherwise, as Claude Code does. The
+first time the interactive shell starts in a folder, before any plugin loads or turn runs,
+it asks **Do you trust the files in this folder?** It names what the answer covers and lists
+what it found there: instruction files (`AGENTS.md`, `CLAUDE.md`), skill folders
+(`.agents/skills`, `.claude/skills`), and agent folders (`.agents/agents`, `.claude/agents`,
+`.codex/agents`), from the folder up to the repository root. Only names are checked, never
+contents.
+
+- **Yes, I trust this folder**: the folder's files are yours. Their text reaches the model
+  as your own instructions.
+- **No, keep it untrusted** (the default):
+  the agent still reads, edits, and runs code there, as before. Pax gives the folder's files
+  no authority (`authority='none'` on its `LocalWorkspace`), so capabilities that check it send
+  their text as the repository's data, not as yours. Use it to look at a repository someone
+  else wrote. Dismissing the prompt with <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> keeps
+  the folder untrusted for this session without saving the answer, so Pax asks again next time.
+
+Trust is not a sandbox, and it does not approve anything else in the folder. Project settings
+still wait for `/project approve`, project plugins and hooks for `/plugins enable`, and project
+MCP files for `/mcp trust`, whatever the answer. The question lists the ones it found. Settings a
+project file may apply at once, such as `display.*` or a stricter `run.permissions`, still apply.
+
+`/trust` shows the decision and what it covers; `/trust yes` and `/trust no` change it. A change
+applies from the next prompt. What the model has already read stays in the conversation, so
+`/clear` starts a new one when you want a clean break. The status row shows `trusted`, or
+`untrusted` in the warning colour, beside the `workspace` directory.
+
+Where the decision is kept:
+
+- It is kept in `config.db`, in your settings, never in the repository, so a repository cannot
+  trust itself: `.clai/settings.json` has no key for it, and `pax config` cannot set it. Pax reads
+  nothing the folder holds to decide whether to ask.
+- Inside a Git repository, it covers the whole repository: every subfolder and every linked
+  worktree share the main checkout's decision. A repository nested inside it, such as a
+  submodule or a clone, is asked about on its own. A folder whose `.git` file points at another
+  repository counts as that repository's worktree only if that repository's worktree metadata
+  points back to it.
+- Outside a repository, it is kept for the folder you started in and covers its subfolders; the
+  nearest folder with a decision wins.
+- In your home folder or the filesystem root, the answer holds for that session only, even if it
+  sits inside a repository or worktree, so Pax asks again next time, and a decision there never
+  covers the folders below.
+
+`pax -p`, `pax --web`, and sessions the web UI opens never ask: they use the decision you made
+before, and a folder you never decided about stays untrusted. `pax -p` says so on stderr and
+`pax --web` in its terminal. `/trust yes` in the web UI trusts the folder of that session. A
+session that moves to another folder (`/workspace`, or `/resume` of a session saved in another
+folder) takes that folder's decision.
+
+Which capabilities change their output for an untrusted folder depends on their support for
+workspace authority. Today `repo_context` marks the instruction files it surfaces as the
+agent works in a subfolder, and the read-only Review specialist keeps the authority for the
+directory it is sent to. `repo_context`'s walk-up files (the `AGENTS.md` it loads at the start),
+Agent Skills, and agent folders do not check it yet, and load as before in both cases. A
+`/sandbox` conversation works in the sandbox's own workspace, which does not take the decision yet.
+
 ### Startup
 
 `pax --help` parses arguments without loading the agent or plugins. Interactive
@@ -247,7 +307,7 @@ the folder that holds `clai2-bleeding.json`. A fork that runs the `Pax bleeding`
 workflow publishes its own:
 
 ```bash
-CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding clai2
+CLAI_BLEEDING_URL=https://github.com/<you>/pydantic-ai/releases/download/clai2-bleeding pax
 ```
 
 To try a local checkout, build the same files and serve them over HTTP:
@@ -255,7 +315,7 @@ To try a local checkout, build the same files and serve them over HTTP:
 ```bash
 src/pydantic_ai_pax/scripts/build_bleeding.sh /tmp/clai2-bleeding
 python -m http.server --directory /tmp/clai2-bleeding 8000 &
-CLAI_BLEEDING_URL=http://localhost:8000 clai2
+CLAI_BLEEDING_URL=http://localhost:8000 pax
 ```
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
@@ -580,11 +640,15 @@ paste of existing image paths creates attachments as described in
 Up/down move through multiline drafts, then recall queued messages and saved
 prompt history. Queued messages come first, newest first, because they are
 your most recent input; Up then continues into history, skipping the copies of
-queued messages that history already holds. Enter on a recalled queued message
-rewrites it in place, keeping its position in the queue, and the queue row
-shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
-message from the queue. If the run takes the message before you press Enter,
-the edit is queued as a new follow-up. With nothing queued, Up/down only walk
+queued messages that history already holds. A recalled queued message leaves the
+queue while you edit it, so it does not run when the turn ends; the messages around
+it still do. Its queue row shows `(editing)` at the place it keeps, and the input
+box shows `Enter to save · Esc to stop editing · Clear it to remove`. Enter puts the
+edited message back in its place. Esc puts it back unchanged; it does not interrupt
+the turn, so a second Esc does. To remove the message, clear the draft and press
+Enter, Esc, or Ctrl+C. Each of these, and Alt+Enter, restores the draft you had
+before pressing Up. If the turn ends and nothing else is queued, the message
+stays in the input as an unsent draft. With nothing queued, Up/down only walk
 history.
 While you walk history, Up/down stay on history even when a recalled slash
 command shows completion suggestions. Press Tab to pick a suggestion; Up/down
@@ -1218,14 +1282,17 @@ is still submitted and saved in input history. Move the cursor inside a folded
 paste to reveal it for editing; recalled history shows the full text.
 While a turn or command runs, the rule above the draft shows how long it has run
 and that Esc interrupts it; with a draft or a queued message it also shows the
-queue and steer keys, which keep their place first on a narrow terminal.
+queue and steer keys, which keep their place first on a narrow terminal. While you
+edit a queued message, it shows the keys that finish the edit instead.
 A turn that finishes ends with a muted `Done in 12s` row; an interrupted one with
 `Interrupted. Type what to do instead.`
 Each submitted prompt is echoed into the transcript after a `>` marker in the theme's
 accent colour, with the prompt text in bold and every row after its first (wrapped or
 its own line) indented under the text. This keeps your prompts apart from answers.
 Steering messages, commands entered during a turn, and prompts restored by `/resume`
-look the same.
+look the same. An answer you type to a question gets the same marker and bold text,
+without the indent. Under a bundled palette, on a terminal that advertises 24-bit
+colour, all of these also sit on a grey background; see [Themes](#themes).
 Completion suggestions
 appear below the draft, between the top and bottom rules. The rows carry no
 side borders, so they cannot drift out of alignment.
@@ -1268,11 +1335,12 @@ previews, with queued slash commands labeled `Command:`. Previews are shown in
 execution order and disappear as each submission starts. Long or multiline messages
 have a single-line preview; large queues show a `+N more queued` summary to leave
 room for the editor. The original message text is unchanged. The footer also shows
-the number waiting when the `queued` footer field is visible. This is a read-only preview, not a queue editor. Control bytes in completion-derived
+the number waiting when the `queued` footer field is visible. Press Up to edit one (see Up/down above). Control bytes in completion-derived
 text are escaped in previews and prompt echoes; the submitted text is unchanged.
 
 Messages and slash commands run in submission order, after the current turn and its cleanup
-finish. They do not interrupt or steer the active turn. Bare settings menus such as
+finish, whether it ends or you interrupt it. They do not interrupt or
+steer the active turn. Bare settings menus such as
 `/set` are the exception: they open during the turn (see "Settings and commands"). An unsubmitted draft stays
 in the editor as turns finish. Queued messages are not saved as conversation turns
 until execution starts, and are discarded on exit or `/reload`.
@@ -1432,6 +1500,12 @@ example with `export WT_SESSION=1` in the shell you start Pax from.
 ### Interrupting a turn
 
 Press Esc or Ctrl+C to cancel the active agent turn without discarding your draft.
+Queued messages, slash commands, and `!` shell commands stay queued and run next, in
+the order you queued them. While you edit a queued message, the first Esc stops
+editing instead of interrupting. Ctrl+C interrupts and ends the edit as Esc does:
+the message goes back to its place unchanged, since only Enter saves an edit, or is
+removed if you cleared it. Up finds your edit in history, and the draft you had
+before pressing Up comes back.
 Tool cleanup finishes before the next queued message starts. Esc does not request
 exit, even when pressed repeatedly. Arrow keys and Alt+key shortcuts keep their
 editing behavior. The active full-screen interface retains control of Esc rather
@@ -1737,8 +1811,9 @@ or by the capability's 16 KB event preview cap, the row shows the log path, wher
 output remains. Background commands can keep writing
 after the snapshot; those future lines are not included in its count.
 
-Read headers show the path, zero-based offset, and effective line limit (Coder
-default and maximum: 2000). Listing headers show the directory, recursive mode,
+Read headers show the path and, when the model set them, the lines read, as in
+`lines 20-34` or `from line 20`, numbered like `read_file`'s output (Coder
+default and maximum limit: 2000). Listing headers show the directory, recursive mode,
 result limit (default 200), and optional glob. Coder listings recurse using
 ripgrep and honor ignore rules. These displayed defaults describe Coder tools.
 Read and listing calls add no result row on success.
@@ -1793,7 +1868,7 @@ Every field is independently selectable and reorderable:
 | Field | Shows |
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
-| `workspace` | Working directory, abbreviated to its tail; hidden when empty |
+| `workspace` | Working directory, abbreviated to its tail, with its `trusted` / `untrusted` state when folder trust applies; hidden when empty |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
@@ -1889,7 +1964,8 @@ It retains up to 10,000 items and four million characters, plus a bounded partia
 line. Old output is dropped at those limits; oversized Markdown parts keep their
 rendered tail instead of their source. `/clear` and `/new` forget earlier output,
 so neither the panel nor the exit printout shows it again. Hyperlinks are
-preserved in that printout; Termflow 1.0's live cells do not carry hyperlink metadata.
+preserved in that printout. On the full screen, a click on a link in the status row, such as
+`watch live ↗`, opens it in your browser.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
 The status row follows Code Puppy's styling: muted surrounding text, an accented
@@ -1898,7 +1974,7 @@ context warnings keep the warning colour. The same styling applies while idle
 and working.
 
 A plugin can contribute its own fragment from `get_status_segments`, such
-as a branch name. Fragments are muted, grouped under the configurable `plugins`
+as a branch name, or a link that ends in `↗` and opens when clicked. Fragments are muted, grouped under the configurable `plugins`
 field, and dropped when the plugin unloads. See [PLUGINS.md](../PLUGINS.md) for the method and its cost
 rules.
 
@@ -1929,6 +2005,13 @@ terminal (OSC 11), else from `COLORFGBG`; when neither says, it assumes a dark o
 It does not ask when stdin or stdout is not a terminal, with `TERM=dumb`, on Windows, or with `-p` or `--web`; keys typed
 during the question still reach the first prompt. The logo keeps its brand colours. On a dark or unknown background the default preview has no forced background.
 `/theme default` restores this appearance after trying another palette.
+
+Under a bundled palette, your prompts sit on a grey background: the palette's
+background moved a little towards its text colour, lighter on a dark palette and
+darker on a light one. This needs a terminal that advertises 24-bit colour
+(`COLORTERM=truecolor`), since the nearest of 256 colours is often not grey; without
+it, prompts keep the bold text alone. Under `default` they keep the bold text alone
+too, on a light terminal background as on a dark one.
 
 All other choices come from Termflow's bundled registry, including
 `catppuccin_mocha`, `catppuccin_latte`, `tokyo_night`, and `github_light`. Pax adds
@@ -2207,7 +2290,8 @@ can be asked in, such as `pax -p` or a web session with questions turned off, us
 harness default text, and answers questions from `AskUser` with "No one is available to answer in this run", so
 the run finishes. A session with the terminal picker or the web UI's approval cards does not deny these. Outside `full`, a delegation whose delegate would run without these checks is refused: a named
 sub-agent, or a delegation to `self` from an agent you supply (`pax --agent`), which gets `/permissions`
-per run rather than bound to the agent. The model is told to do the work itself instead.
+per run rather than bound to the agent. The model is told to do the work itself instead. Outside `full` the model also gets no
+[`computer`](#computer-use-computer-use) tool.
 
 ### Compacting the conversation
 
@@ -3023,7 +3107,7 @@ To call a user-defined shell function, explicitly invoke its shell. For example,
 a zsh function named `cleanup_worktree` could use this argv:
 
 ```json
-["zsh", "-ic", "cleanup_worktree \"$1\"", "clai2-remove", "{branch}"]
+["zsh", "-ic", "cleanup_worktree \"$1\"", "pax-remove", "{branch}"]
 ```
 
 Interactive zsh loads your rc files, adding startup overhead and possibly output.
@@ -3060,8 +3144,8 @@ Run `/sandbox PROVIDER` (`local smol`, `local boxlite`, `e2b`, `boxd`, `daytona`
 `sprites`, or `kubernetes`) in a new conversation, before its first prompt. `local smol` and `local boxlite` run a
 microVM on this machine, with SmolVM or BoxLite; `/sandbox local` alone asks which, and says what each still needs.
 The others are cloud sandboxes. Pax copies this checkout (the branch, its unpushed commits, and
-uncommitted files) into a new sandbox, and every command and file edit of the conversation runs
-there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
+uncommitted files) into a new sandbox, saying which step it is on, and every command and file edit of the
+conversation runs there, `!` lines included. `/resume` and `/fork` reopen it, and `/sandbox delete` deletes it. `/sandbox` alone says where
 the conversation runs. To work on this machine again, run `/new`.
 
 A sandbox stays until you run `/sandbox delete`, even when you leave its conversation. If Pax stops
@@ -3070,7 +3154,10 @@ it. A fork or copy of the conversation uses the same sandbox, and stops working 
 
 `git` and `gh` in the sandbox act as your `gh` login, so the agent can push and open pull requests.
 Each sandbox gets the token `gh` has when you run `/sandbox`, and loses it when the sandbox is deleted.
-Without a `gh` login, the sandbox has no GitHub access, and its copy has no `origin` remote.
+The copy downloads older versions of files from GitHub when a command first reads them, so `git log -p`,
+`git blame`, `git diff` against an older commit, or checking out another branch also need that token, and
+fail once it stops working. Without a `gh` login, the sandbox has no GitHub access, and its copy has no
+`origin` remote; it gets the whole history from this machine instead, and needs nothing from GitHub.
 
 | Provider | Install extra | Keys | Where your GitHub token is | Who can read it |
 |---|---|---|---|---|
@@ -3164,6 +3251,43 @@ run there can read it. It reaches every command started afterwards; a server sta
 needs a restart. The table says how long it lasts: one kept for this Pax session is gone once the session
 closes the sandbox, as an idle session does, or in a `/fork`, so the agent asks again. The agent asks only in the terminal,
 not in the web UI.
+
+### Computer use: `/computer-use`
+
+`/computer-use` gives the model a `computer` tool that sees and controls the sandbox's desktop.
+
+- **Before `/sandbox`**: run `/computer-use`, then `/sandbox PROVIDER`. The sandbox starts with a
+  desktop.
+- **In a running sandbox**: `boxd`, `daytona`, `local smol`, `render`, `sprites` and `kubernetes`
+  add a desktop to the sandbox you have. `e2b`, `modal` and `local boxlite` can only
+  give a desktop to a new sandbox, so Pax asks you to run `/sandbox delete`, `/new`, `/computer-use`,
+  then `/sandbox PROVIDER`. It never deletes the sandbox itself, since a fork or copy of the conversation
+  may use it.
+- **Turning it off**: `/computer-use off` removes the `computer` tool from the next turn. The sandbox
+  keeps running until `/sandbox delete`.
+- **Permissions**: the model gets the `computer` tool only under `/permissions full`, since the screen can
+  change anything. Under another mode it is told the desktop needs `/permissions full`, and `/computer-use` says so too.
+- `local smol` needs `smolmachines` for a desktop (`pydantic-ai-pax[local]`, on macOS Apple silicon
+  or Linux), so not on Windows. `opensandbox` has no desktop.
+
+The setting is saved in the conversation, so `/resume`, `/fork` and compaction keep it.
+
+#### Watching the desktop
+
+While computer use is on, the status row shows `watch live ↗` next to the sandbox. Click it to open the
+desktop on the provider's own website. Pax runs no viewer of its own. In a resumed conversation the link
+appears once a turn reaches the sandbox, since getting it would start a stopped one.
+
+- **`boxd`**: the machine's Desktop view in boxd's console. It opens in a browser signed in to your
+  boxd account.
+- **`daytona`**: the desktop's noVNC page, on a signed link that works for 1 hour. Anyone holding the link
+  can see the screen and use the mouse and keyboard until it expires. Pax gets a new link for the status
+  row when a turn starts, once the old one is over 50 minutes old, so in a turn longer than an hour the link
+  disappears until the next turn. A page opened earlier stays connected.
+- **Other providers** have no such link, so the status row shows no `watch live ↗`.
+
+Everything on the sandbox's screen, secrets included, goes to the model's provider in screenshots,
+and text on the screen can steer the model like any tool output.
 
 ### Several sessions in the web UI
 

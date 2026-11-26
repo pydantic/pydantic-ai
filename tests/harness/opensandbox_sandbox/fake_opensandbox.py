@@ -81,6 +81,7 @@ class FakeSandbox:
     expires_at: str | None
     network_policy: dict[str, Any] | None = None
     credential_proxy: dict[str, object] | None = None
+    volumes: list[dict[str, Any]] | None = None
     secure_access: bool = False
     credential_vault: dict[str, object] | None = None
     """What the egress sidecar's Credential Vault was created with, values included."""
@@ -189,6 +190,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             resource=body.get('resourceLimits') or {},
             network_policy=body.get('networkPolicy'),
             credential_proxy=body.get('credentialProxy'),
+            volumes=body.get('volumes'),
             secure_access=body.get('secureAccess', False),
             expires_at=None if timeout is None else (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
         )

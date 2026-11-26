@@ -514,6 +514,7 @@ async def test_run_context_serialization_is_exhaustive() -> None:
         'validation_context',  # arbitrary user object; rebuilt from the worker's agent on load
         'model_settings',  # only set for model requests, which receive it as their own parameter
         '_mcp_tool_defs_cache',  # run-local cache read and written workflow-side
+        '_appended_messages',  # run-local record of the history, kept workflow-side
         '_event_stream_buffer',  # live run event buffer; child task events cross as recorded effects
         '_pending_immediate_dispatches',  # live workflow-side event deduplication state
         '_event_stream_replacements',  # live workflow-side legacy-replacement state
