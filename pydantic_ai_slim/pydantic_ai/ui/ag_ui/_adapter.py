@@ -54,6 +54,7 @@ from ...messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolPartKind,
+    ToolResultAttachment,
     ToolReturnContent,
     ToolReturnPart,
     UploadedFile,
@@ -1268,7 +1269,7 @@ def _dump_tool_return_part(part: ToolReturnPart, context: _DumpRequestContext) -
                 part.tool_kind,
                 outcome=part.outcome,
                 retry=part.retry,
-                attachments=part.attachments,
+                attachments=_client_attachments(part.attachments, context),
                 supported=context.use_encrypted_value,
             ),
         )
@@ -1282,6 +1283,19 @@ def _dump_tool_return_part(part: ToolReturnPart, context: _DumpRequestContext) -
         context.result.append(
             ActivityMessage(id=_new_message_id(), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app))
         )
+
+
+def _client_attachments(
+    attachments: Sequence[ToolResultAttachment], context: _DumpRequestContext
+) -> Sequence[ToolResultAttachment]:
+    """The attachments a tool return sends the client: an `UploadedFile` only with `preserve_file_data=True`.
+
+    Its `file_id` is a provider-held reference the server's credentials can use, which a dumped user message also
+    leaves out by default.
+    """
+    if context.preserve_file_data:
+        return attachments
+    return [attachment for attachment in attachments if not isinstance(attachment.content, UploadedFile)]
 
 
 # TODO(v3): remove `RetryPromptPart`

@@ -244,7 +244,10 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ),
     # Vertex AI can't crawl certain URLs blocked by robots.txt (gstatic.com, test-videos.co.uk).
     # force_download variants work since the client downloads locally before sending to Vertex.
-    ('google_vertex', 'image', 'url', None): ExpectError(ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED'),
+    # Older recordings carry the `URL_ROBOTED`/`ROBOTED_DENIED` code; newer ones only the message.
+    ('google_vertex', 'image', 'url', None): ExpectError(
+        ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED|blocked by robots\.txt'
+    ),
     ('google_vertex_interactions', 'image', 'url', None): ExpectError(ModelHTTPError, r'blocked by robots.txt'),
     # Chat Completions can't reference an uploaded image by file_id (no image equivalent of the
     # `file` content part), so OpenAIChatModel raises before the request. Responses maps it to

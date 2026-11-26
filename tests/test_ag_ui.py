@@ -12622,3 +12622,40 @@ def test_tool_result_attachments_below_the_carrier_dump_as_a_user_message() -> N
     assert [(type(message).__name__, message.content) for message in ag_ui_messages] == snapshot(
         [('UserMessage', 'Look.'), ('AssistantMessage', None), ('ToolMessage', 'ok'), ('UserMessage', 'A note.')]
     )
+
+
+@pytest.mark.parametrize('preserve_file_data', [False, True])
+def test_an_uploaded_file_attachment_reaches_the_client_only_with_preserve_file_data(preserve_file_data: bool) -> None:
+    """An `UploadedFile` attachment's provider file reference is dumped only when the application opts in, as for user content."""
+    uploaded = UploadedFile(file_id='file-abc123', provider_name='openai', media_type='application/pdf')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Look.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='look', tool_call_id='c1', args={})]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='look',
+                    content='ok',
+                    tool_call_id='c1',
+                    attachments=[
+                        ToolResultAttachment(content=uploaded, tool_call_id='c1', tool_name='look'),
+                        ToolResultAttachment(content='A note.', tool_call_id='c1', tool_name='look'),
+                    ],
+                )
+            ]
+        ),
+    ]
+    ag_ui_messages = AGUIAdapter.dump_messages(history, preserve_file_data=preserve_file_data)
+    tool_message = next(message for message in ag_ui_messages if isinstance(message, ToolMessage))
+    assert ('file-abc123' in (tool_message.encrypted_value or '')) == preserve_file_data
+    reloaded = AGUIAdapter.load_messages(ag_ui_messages, preserve_file_data=preserve_file_data)
+    tool_return = next(
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert [attachment.content for attachment in tool_return.attachments] == (
+        [uploaded, 'A note.'] if preserve_file_data else ['A note.']
+    )
