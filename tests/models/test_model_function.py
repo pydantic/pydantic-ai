@@ -427,6 +427,7 @@ def test_var_args():
             'content': '{"args": [1, 2, 3]}',
             'tool_call_id': IsStr(),
             'tool_kind': None,
+            'ui_visibility': None,
             'metadata': None,
             'timestamp': IsStr() & IsNow(iso_string=True, tz=UTC),  # type: ignore[reportUnknownMemberType]
             'outcome': 'success',
