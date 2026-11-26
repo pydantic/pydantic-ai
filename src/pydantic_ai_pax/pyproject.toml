@@ -48,7 +48,7 @@ dependencies = [
     # extra's floor: the first Monty to import every module the `run_code` description lists.
     "pydantic-monty>=1.7.0,<2",
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
-    "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    "pydantic-ai-slim[anthropic,google,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     # Above the `[mcp]` extra's 3.3.0: browser sign-in passes `OAuth(callback_host=...)`, new in FastMCP 3.4.0.
     "fastmcp-slim[client]>=3.4.0,<5",
     # FastMCP 3's browser sign-in (`/mcp` OAuth and the day_ai, notion, ordinal, posthog, pylon, and grain
@@ -77,9 +77,28 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.65b0",
 ]
 
-# Providers whose SDK Pax does not install by default. `/model` names the extra when it is missing.
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+# A model provider's SDK, for each provider extra of `pydantic-ai-slim`, so `pydantic-ai-pax[groq]` installs Groq's.
+# The OpenAI, Anthropic, and Google SDKs come with Pax, and their extras exist so every provider has one.
+# `/model` names the extra when a provider's SDK is missing.
+# BEGIN provider extras: one per `pydantic-ai-slim` extra, less the ones `tests/pax/test_provider_extras.py` excludes.
+openai = ["pydantic-ai-slim[openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+cohere = ["pydantic-ai-slim[cohere]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+google = ["pydantic-ai-slim[google]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+anthropic = ["pydantic-ai-slim[anthropic]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+xai = ["pydantic-ai-slim[xai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+groq = ["pydantic-ai-slim[groq]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+openrouter = ["pydantic-ai-slim[openrouter]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+mistral = ["pydantic-ai-slim[mistral]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+bedrock = ["pydantic-ai-slim[bedrock]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+bedrock-mantle = ["pydantic-ai-slim[bedrock-mantle]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+zai = ["pydantic-ai-slim[zai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+snowflake = ["pydantic-ai-slim[snowflake]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+crusoe = ["pydantic-ai-slim[crusoe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+cerebras = ["pydantic-ai-slim[cerebras]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+huggingface = ["pydantic-ai-slim[huggingface]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+# END provider extras
 # `/sandbox PROVIDER`: each installs the harness backend for that provider.
 boxd = ["pydantic-ai-harness[boxd]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 daytona = ["pydantic-ai-harness[daytona]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
@@ -92,6 +111,11 @@ modal = ["pydantic-ai-harness[modal]==0.{{ minor }}.{{ patch }}{% if distance %}
 opensandbox = ["pydantic-ai-harness[opensandbox]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 render = ["pydantic-ai-harness[render]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 sprites = ["pydantic-ai-harness[sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+# Every extra above that installs on every platform: all but `local`, whose SDKs have no Windows wheel.
+all = [
+    "pydantic-ai-slim[anthropic,bedrock,bedrock-mantle,cerebras,cohere,crusoe,google,groq,huggingface,mistral,openai,openrouter,snowflake,typesafe,xai,zai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    "pydantic-ai-harness[boxd,daytona,e2b,kubernetes,modal,opensandbox,render,sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+]
 
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax"
