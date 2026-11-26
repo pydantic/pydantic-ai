@@ -668,7 +668,7 @@ When one agent run starts another, for example a sub-agent called from a tool, t
 
 So the inner run's spans also get a `pydantic_ai.root_conversation_id` attribute, set to the top-level run's `conversation_id`. The top-level run's own spans don't get it, and neither does an inner run that uses the same `conversation_id` as the top-level run. To get the full cost of a conversation, sub-agents included, add up cost by `pydantic_ai.root_conversation_id`, and use `gen_ai.conversation.id` for spans that don't have it.
 
-Pydantic AI finds the top-level `conversation_id` in OpenTelemetry baggage: values that OpenTelemetry hands from a span to the spans started inside it, and from one process to another along with the trace. So the attribute also appears on a sub-agent that runs in another process, and on a run whose incoming request already carries a `gen_ai.conversation.id` in its baggage, for example from another service that runs an agent.
+Pydantic AI tracks the top-level run inside one Python process, so a sub-agent that runs in another process, such as on a remote worker, doesn't get the attribute.
 
 ### Which model answered
 
