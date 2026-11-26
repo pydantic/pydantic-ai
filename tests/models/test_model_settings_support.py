@@ -78,6 +78,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
+from .conftest import anthropic_2023_06_01_client
 
 with try_import() as openai_available:
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
@@ -694,7 +695,8 @@ def _bedrock_mantle_responses(client: httpx2.AsyncClient) -> Model:
 
 
 def _anthropic(client: httpx2.AsyncClient) -> Model:
-    return AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=PROBE_KEY, http_client=client))
+    provider = AnthropicProvider(anthropic_client=anthropic_2023_06_01_client(PROBE_KEY, client))
+    return AnthropicModel('claude-sonnet-4-5', provider=provider)
 
 
 def _groq(client: httpx.AsyncClient) -> Model:
