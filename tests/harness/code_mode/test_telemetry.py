@@ -17,7 +17,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai._telemetry import RunTelemetry, run_telemetry_scope
+from pydantic_ai._telemetry import run_telemetry_scope
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
@@ -48,18 +48,13 @@ def code_mode_attributes(exporter: InMemorySpanExporter) -> list[tuple[str, dict
     return [(name, attributes) for name, attributes in found if attributes]
 
 
-def run_code_snippets(*snippets: str, before_sending: Callable[[int], None] | None = None) -> FunctionModel:
-    """A model that sends each snippet to `run_code` in turn, then answers.
-
-    `before_sending` is called with each snippet's index just before the model sends it.
-    """
+def run_code_snippets(*snippets: str) -> FunctionModel:
+    """A model that sends each snippet to `run_code` in turn, then answers."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         sent = len(messages) // 2
         if sent == len(snippets):
             return ModelResponse(parts=[TextPart('done')])
-        if before_sending is not None:
-            before_sending(sent)
         return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': snippets[sent]})])
 
     return FunctionModel(respond)
@@ -68,12 +63,11 @@ def run_code_snippets(*snippets: str, before_sending: Callable[[int], None] | No
 async def failure_attributes(
     *snippets: str,
     capability: CodeMode[object] | None = None,
-    before_sending: Callable[[int], None] | None = None,
     instrumented: Instrumented,
 ) -> list[tuple[str, dict[str, AttributeValue]]]:
     instrumentation, exporter = instrumented(False)
     agent = Agent(
-        run_code_snippets(*snippets, before_sending=before_sending),
+        run_code_snippets(*snippets),
         capabilities=[capability or CodeMode[object](), instrumentation],
     )
 
@@ -136,7 +130,7 @@ async def diverged_prefix_attributes(
         tracer=tracer,
     )
     # A real run publishes its telemetry before any tool runs; this hand-built run does it here.
-    with run_telemetry_scope(RunTelemetry(tracer=tracer, include_content=ctx.trace_include_content)):
+    with run_telemetry_scope(ctx):
         async with root:
             manager = await ToolManager(toolset=root).for_run_step(ctx)
             ctx.tool_manager = manager
@@ -185,51 +179,49 @@ class TestRunCodeFailureTelemetry:
                 # Only the first snippet is type-checked, so a later one's syntax error comes from the parser.
                 ('x = 1', 'def broken(:\n    pass'),
                 None,
-                [run_code_span(), run_code_span(error_kind='syntax', session_reset=False)],
+                [run_code_span(), run_code_span(error_kind='syntax')],
                 id='syntax',
             ),
             pytest.param(
                 ("await add(a='one', b=2)",),
                 None,
-                # The reset drops only the type-check stubs: no code has run yet.
-                [run_code_span(error_kind='type_check', session_reset=False)],
+                [run_code_span(error_kind='type_check')],
                 id='type_check',
             ),
             pytest.param(
                 ('def broken(:\n    pass',),
                 None,
-                [run_code_span(error_kind='type_check', session_reset=False)],
+                [run_code_span(error_kind='type_check')],
                 id='syntax-in-a-type-checked-snippet',
             ),
             pytest.param(
                 ('1 / 0',),
                 None,
-                [run_code_span(error_kind='runtime', session_reset=False)],
+                [run_code_span(error_kind='runtime')],
                 id='runtime',
             ),
             pytest.param(
                 ('x = [0] * 50_000_000',),
                 CodeMode[object](resource_limits={'max_memory': 8 * 1024 * 1024}),
-                [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_memory')],
+                [run_code_span(error_kind='resource_limit', limit='max_memory')],
                 id='max_memory',
             ),
             pytest.param(
                 ('x = 0\nwhile True:\n    x += 1',),
                 CodeMode[object](resource_limits={'max_duration_seconds': 0.01}),
-                # The first snippet ran, so the reset loses `x` even though no earlier snippet ran.
-                [run_code_span(error_kind='resource_limit', session_reset=True, limit='max_duration_seconds')],
-                id='max_duration_seconds-in-the-first-snippet',
+                [run_code_span(error_kind='resource_limit', limit='max_duration_seconds')],
+                id='max_duration_seconds',
             ),
             pytest.param(
                 ('await add(a=1, b=2)',),
                 CodeMode[object](resource_limits={'max_suspensions': 1}),
-                [run_code_span(error_kind='resource_limit', session_reset=False, limit='max_suspensions')],
+                [run_code_span(error_kind='resource_limit', limit='max_suspensions')],
                 id='max_suspensions',
             ),
             pytest.param(
                 ('await add(a=1, b=2)\nawait add(a=3, b=4)',),
                 CodeMode[object](max_tool_calls=1),
-                [run_code_span(budget_exhausted=True, error_kind='runtime', session_reset=False)],
+                [run_code_span(budget_exhausted=True, error_kind='runtime')],
                 id='max_tool_calls',
             ),
             pytest.param(
@@ -252,30 +244,19 @@ class TestRunCodeFailureTelemetry:
     @pytest.mark.parametrize(
         ('error', 'expected'),
         [
+            pytest.param(CrashedError(timed_out=False), run_code_span(error_kind='crashed'), id='crashed'),
+            # The pool's watchdog and a remote turn deadline are the transport's timers, not `max_duration_seconds`.
+            pytest.param(CrashedError(timed_out=True), run_code_span(error_kind='crashed'), id='worker-timed-out'),
             pytest.param(
-                CrashedError(timed_out=False), run_code_span(session_reset=True, error_kind='crashed'), id='crashed'
-            ),
-            pytest.param(
-                CrashedError(timed_out=True),
-                run_code_span(session_reset=True, error_kind='resource_limit', limit='max_duration_seconds'),
-                id='worker-timed-out',
-            ),
-            pytest.param(
-                DisconnectError(cause='turn_timeout'),
-                run_code_span(session_reset=True, error_kind='resource_limit', limit='max_duration_seconds'),
-                id='turn-timeout',
+                DisconnectError(cause='turn_timeout'), run_code_span(error_kind='disconnected'), id='turn-timeout'
             ),
             pytest.param(
                 DisconnectError(cause=None),
-                run_code_span(session_reset=True, error_kind='disconnected'),
+                run_code_span(error_kind='disconnected'),
                 id='disconnected',
             ),
-            pytest.param(
-                RuntimeError('host binding failed'), run_code_span(session_reset=True, error_kind='host'), id='host'
-            ),
-            pytest.param(
-                PanicException('sandbox aborted'), run_code_span(session_reset=True, error_kind='panic'), id='panic'
-            ),
+            pytest.param(RuntimeError('host binding failed'), run_code_span(error_kind='host'), id='host'),
+            pytest.param(PanicException('sandbox aborted'), run_code_span(error_kind='panic'), id='panic'),
         ],
     )
     async def test_a_failure_outside_the_snippet_is_recorded_by_kind(
@@ -285,25 +266,22 @@ class TestRunCodeFailureTelemetry:
         expected: tuple[str, dict[str, AttributeValue]],
         instrumented: Instrumented,
     ):
-        """The second snippet fails, so the reset discards the state the first one left."""
         monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', CrashedError)
         monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyDisconnectError', DisconnectError)
 
         async def fail(self: object, feed_start: object) -> object:
             raise error
 
-        def fail_the_second_snippet(index: int) -> None:
-            if index == 1:
-                monkeypatch.setattr(MONTY_EXECUTOR_RUN, fail)
+        monkeypatch.setattr(MONTY_EXECUTOR_RUN, fail)
 
-        assert await failure_attributes(
-            'x = 1', '1 + 1', before_sending=fail_the_second_snippet, instrumented=instrumented
-        ) == [run_code_span(), expected]
+        assert await failure_attributes('1 + 1', instrumented=instrumented) == [expected]
 
     async def test_a_streamed_statement_that_failed_early_is_recorded_on_run_code(self, instrumented: Instrumented):
         """Eager execution runs statements before `run_code`'s span opens; the failure still lands on that span."""
-        code = 'boom = 1 // 0\n"unused"'
+        # The scanner holds the last full statement back, so `"held"` lets the failing one run eagerly.
+        code = 'boom = await ready() // 0\n"held"\n"unused"'
         args = json.dumps({'code': code})
+        fed = asyncio.Event()
 
         async def stream_once(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             if len(messages) > 1:
@@ -313,21 +291,30 @@ class TestRunCodeFailureTelemetry:
             for offset in range(0, len(args), 8):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 8])}
                 await anyio.lowlevel.checkpoint()
+            # Kept open until the statement runs, which only the eager feed can do before the stream ends.
+            await asyncio.wait_for(fed.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
         instrumentation, exporter = instrumented(False)
         agent = Agent(
             FunctionModel(stream_function=stream_once), capabilities=[CodeMode[object](eager=True), instrumentation]
         )
 
+        @agent.tool_plain
+        def ready() -> int:
+            fed.set()
+            return 1
+
         await agent.run('go')
 
-        assert code_mode_attributes(exporter) == [run_code_span(error_kind='runtime', session_reset=False)]
+        assert code_mode_attributes(exporter) == [run_code_span(error_kind='runtime')]
 
     @pytest.mark.parametrize('eager', [False, True], ids=['sequential', 'eager'])
     async def test_a_call_ended_by_a_usage_limit_records_only_the_budget(self, eager: bool, instrumented: Instrumented):
         """Core's tool call limit ends the run inside a nested call, so `run_code` records no failure of its own."""
-        code = 'await add(a=1, b=2)\nawait add(a=3, b=4)'
+        # The scanner holds the last full statement back, so `"held"` lets the second `add` run eagerly.
+        code = 'await add(a=1, b=2)\nawait add(a=3, b=4)\n"held"\n"unused"'
         args = json.dumps({'code': code})
+        added = asyncio.Event()
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
@@ -337,6 +324,8 @@ class TestRunCodeFailureTelemetry:
             for offset in range(0, len(args), 8):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 8])}
                 await anyio.lowlevel.checkpoint()
+            # Kept open until the first `add` runs, which only the eager feed can do before the stream ends.
+            await asyncio.wait_for(added.wait(), timeout=READINESS_WAIT_TIMEOUT)
 
         instrumentation, exporter = instrumented(False)
         agent = Agent(
@@ -346,6 +335,7 @@ class TestRunCodeFailureTelemetry:
 
         @agent.tool_plain
         def add(a: int, b: int) -> int:
+            added.set()
             return a + b
 
         with pytest.raises(UsageLimitExceeded):
@@ -355,12 +345,12 @@ class TestRunCodeFailureTelemetry:
             [('execute_tool run_code', {'code_mode.budget_exhausted': False})]
         )
 
-    async def test_a_diverged_prefix_records_the_failed_statement_and_the_restart(self):
-        """The failure kept the session, but the restart discards the one `x = 1` ran in."""
+    async def test_a_diverged_prefix_records_only_the_budget(self):
+        """A streamed statement failed, but the rewrite discarded that code, so the failure is not the call's."""
         assert await diverged_prefix_attributes(
             'x = 1\nboom = await ready() // 0\n"unused"\n',
             'y = 2\ny',
             ready=lambda: 1,
             sync_code='None',
             capability=CodeMode[None](eager=True),
-        ) == [run_code_span(error_kind='runtime', session_reset=True)]
+        ) == [run_code_span()]

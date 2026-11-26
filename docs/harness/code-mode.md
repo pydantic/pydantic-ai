@@ -612,16 +612,14 @@ span. It opens no span of its own: the tool call is already spanned, and the wor
 |---|---|
 | `code_mode.budget_exhausted` | whether the snippet asked for more than `max_tool_calls` nested calls, set on every call. A snippet that catches the refusal and finishes still records `true` |
 | `code_mode.error_kind` | set when the call failed, naming what ended it: `type_check` (a diagnostic from the first snippet's type check, including a syntax error in that snippet), `syntax` (a parse error in a snippet that is not type-checked: a later snippet, or a first one when no tool is sandboxed or state was restored from the REPL store), `runtime` (an uncaught exception in the snippet, including a nested tool's error or the `max_tool_calls` refusal), `resource_limit`, `crashed` (the sandbox worker died), `disconnected` (a remote worker's stream ended), `panic` (Monty aborted inside the sandbox), or `host` (a failure in the host-side bindings) |
-| `code_mode.limit` | with `resource_limit`, the Monty sandbox limit that stopped the code: `max_duration_seconds`, `max_memory`, or `max_suspensions`. A worker the sandbox stopped for running too long, including a remote worker's turn deadline, is `max_duration_seconds` |
-| `code_mode.session_reset` | with `error_kind`, whether the failure reset a session that code had run in, so the next snippet starts without the variables and imports that code defined. Code had run when an earlier snippet completed in the session, when saved REPL state was restored into it, or when the failing snippet itself had started executing, which it does once it gets past parsing and type-checking. So a `resource_limit` at `max_duration_seconds` or `max_memory`, `crashed`, `disconnected`, `host` and `panic` record `true`, even for the first snippet. A failure that keeps the session (`runtime`, unless the sandbox could not keep the session after it, `max_suspensions`, a `syntax` error in a later snippet) records `false`, and so does a `syntax` or `type_check` failure in a fresh session, whose reset drops only that snippet's type-check stubs |
+| `code_mode.limit` | with `resource_limit`, the Monty sandbox limit that stopped the code: `max_duration_seconds`, `max_memory`, or `max_suspensions`. A worker stopped by the pool's watchdog or a remote turn deadline is `crashed` or `disconnected`, since those timers run even when `max_duration_seconds` is off |
 
 A call that ends the run on `UsageLimitExceeded` records no `error_kind`, since core's error on the
 span already says why. The code, the error message and the traceback stay out of these attributes.
 Eager execution can fail a statement before the `run_code` span opens; the failure is then recorded on
 that span when the call is dispatched. The retry eager execution sends when the final code no longer
-matches the statements it already ran has no `error_kind` of its own. It records the budget, and the
-`error_kind` of a statement that had already failed, with `session_reset` saying whether the failure or
-the restart reset a session code had run in.
+matches the statements it already ran records only the budget: the streamed code was discarded, so a
+statement of it that failed is not the call's outcome.
 
 Monty has no typed marker for a resource limit, so the limit is read from its error, backed by a
 structural signal where one exists (a duration stop has no traceback). A nested tool's error is

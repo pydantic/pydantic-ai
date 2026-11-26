@@ -17,7 +17,6 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
-from pydantic_ai._telemetry import current_span
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import durable_operation_dispatch
@@ -32,6 +31,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserContent,
 )
+from pydantic_ai.telemetry import current_span
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
@@ -222,23 +222,6 @@ def _mentions_sandbox_limit(error: MontyFailure) -> SandboxLimit | None:
         if marker in error.message:
             return limit
     return None
-
-
-async def reset_session(run_state: MontyRunState, *, snippet_ran: bool) -> bool:
-    """Reset the session and return `code_mode.session_reset`: whether the reset lost state that code had built.
-
-    Code had run in the session when an earlier snippet completed in it or saved REPL state was
-    restored into it (`has_executed_feed`), or when the failing snippet itself had started
-    executing (`snippet_ran`). A snippet starts executing once it gets past parsing and
-    type-checking, so the resets after a duration or memory limit, a crashed or lost worker, a
-    host failure, or a panic all pass `True`: the snippet's statements may already have defined
-    names, and Monty cannot say which, so the reset is counted as losing them. Syntax and
-    type-check failures, and eager execution's restart on a diverged prefix, pass `False`. A
-    reset with neither, which drops nothing but the first snippet's type-check stubs, returns `False`.
-    """
-    lost_state = snippet_ran or run_state.has_executed_feed
-    await run_state.reset()
-    return lost_state
 
 
 def _elided(count: int, shown: int, unit: str) -> str:
@@ -720,11 +703,6 @@ class RunCodeFailure:
     """How a `run_code` call failed, for its `execute_tool` span."""
 
     kind: RunCodeErrorKind
-    session_reset: bool
-    """Whether the failure reset a session that code had run in, earlier snippets or this one, losing what it defined.
-
-    See `reset_session` for exactly when code counts as having run.
-    """
     limit: SandboxLimit | None = None
     """The sandbox limit that stopped the code, when `kind` is `'resource_limit'`."""
 
@@ -755,13 +733,12 @@ class RunCodeExecution:
     failure: RunCodeFailure | None = None
 
     def record_outcome(self, ctx: RunContext[object]) -> None:
-        """Put how this call ended (budget, error kind, session reset, limit) on its `execute_tool` span."""
+        """Put how this call ended (budget, error kind, limit) on its `execute_tool` span."""
         span = current_span(ctx)
         span.set_attribute('code_mode.budget_exhausted', self.budget_exhausted)
         if self.failure is None:
             return
         span.set_attribute('code_mode.error_kind', self.failure.kind)
-        span.set_attribute('code_mode.session_reset', self.failure.session_reset)
         if self.failure.limit is not None:
             span.set_attribute('code_mode.limit', self.failure.limit)
 
@@ -1523,13 +1500,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         run_state.has_executed_feed = True
         limit = exceeded_sandbox_limit(error)
         reset_advice = self._runtime_reset_advice(limit, session_lost=error.session_lost)
-        session_reset = await reset_session(run_state, snippet_ran=True) if reset_advice else False
+        if reset_advice:
+            await run_state.reset()
         # A nested call's `UsageLimitExceeded` ends the call instead (raised by `_runtime_failure_retry`, after
         # an escaped `ToolFailed`), so the failure is recorded only when no limit is pending.
         if execution.usage_limit_exceeded is None:
-            execution.failure = RunCodeFailure(
-                'runtime' if limit is None else 'resource_limit', session_reset=session_reset, limit=limit
-            )
+            execution.failure = RunCodeFailure('runtime' if limit is None else 'resource_limit', limit=limit)
         _raise_escaped_tool_failed(error, execution, reset_advice=reset_advice)
         return _runtime_failure_retry(error, execution, limit=limit, reset_advice=reset_advice)
 
@@ -1559,10 +1535,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     @staticmethod
     def _worker_failure_message(error: MontyFailure) -> str:
-        if exceeded_sandbox_limit(error) == 'max_duration_seconds':
-            return _TIME_LIMIT_MESSAGE
         if error.kind == 'crashed':
-            return 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
+            return (
+                _TIME_LIMIT_MESSAGE
+                if error.timed_out
+                else 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
+            )
+        if error.cause == 'turn_timeout':
+            return _TIME_LIMIT_MESSAGE
         if error.cause in ('session_timeout', 'idle_timeout'):
             return (
                 'The sandbox session ended; state is lost. Re-run any imports, recreate any state '
@@ -1592,16 +1572,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         capture = execution.capture
         match failure.kind:
             case 'syntax':
-                # A session code has run in is kept, so the snippet can be resent against it. A fresh
-                # one is reset to drop the checkout-time type stubs: a later step may expose a
-                # different tool catalog (for example after Tool Search discovers a tool).
-                session_reset = await reset_session(run_state, snippet_ran=False) if fresh_repl else False
-                execution.failure = RunCodeFailure('syntax', session_reset=session_reset)
+                if fresh_repl:
+                    # No code ran, so discard the checkout-time type stubs. A later step may expose
+                    # a different tool catalog (for example after Tool Search discovers a tool).
+                    await run_state.reset()
+                execution.failure = RunCodeFailure('syntax')
                 return ModelRetry(f'Syntax error in code:\n{capture.prepend_to(failure.display)}')
             case 'typing':
                 # Typing errors can only come from the fresh-feed check above.
-                session_reset = await reset_session(run_state, snippet_ran=False)
-                execution.failure = RunCodeFailure('type_check', session_reset=session_reset)
+                await run_state.reset()
+                execution.failure = RunCodeFailure('type_check')
                 return ModelRetry(f'Type error in code:\n{capture.prepend_to(failure.display)}')
             case 'runtime':
                 return await self._runtime_error_retry(failure, run_state, execution)
@@ -1610,12 +1590,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # request timeout) and the REPL state died with it; the pool replaces the
                 # worker transparently. Reset so the retry starts from a fresh,
                 # type-checked session.
-                session_reset = await reset_session(run_state, snippet_ran=True)
+                await run_state.reset()
                 _raise_usage_limit_exceeded(execution)
-                limit = exceeded_sandbox_limit(failure)
-                execution.failure = RunCodeFailure(
-                    failure.kind if limit is None else 'resource_limit', session_reset=session_reset, limit=limit
-                )
+                execution.failure = RunCodeFailure(failure.kind)
                 return ModelRetry(f'{self._worker_failure_message(failure)}{_started_calls_note(execution)}')
             case 'not_stored':
                 # Retrying soon would meet the same refusal, so the run fails with the reason.
@@ -1624,9 +1601,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             case 'other':
                 # The session may have been invalidated by a host-side binding or protocol failure.
                 # Make the reset visible so the model can rebuild state on its next attempt.
-                session_reset = await reset_session(run_state, snippet_ran=True)
+                await run_state.reset()
                 _raise_usage_limit_exceeded(execution)
-                execution.failure = RunCodeFailure('host', session_reset=session_reset)
+                execution.failure = RunCodeFailure('host')
                 error_text = (
                     failure.type_name if self.monty_sandbox is not None else f'{failure.type_name}: {failure.display}'
                 )
@@ -1638,9 +1615,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # Convert a sandbox panic to a retry rather than end the run.
                 # A panic aborts the VM mid-execution, so the REPL's accumulated state cannot
                 # be trusted; drop it so the retry starts from a fresh, type-checked session.
-                session_reset = await reset_session(run_state, snippet_ran=True)
+                await run_state.reset()
                 _raise_usage_limit_exceeded(execution)
-                execution.failure = RunCodeFailure('panic', session_reset=session_reset)
+                execution.failure = RunCodeFailure('panic')
                 return ModelRetry(
                     'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
                     f'{_started_calls_note(execution)}'

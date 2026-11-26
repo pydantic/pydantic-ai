@@ -24,7 +24,7 @@ from ._streaming import (
     closed_statements,
     decode_partial_args,
 )
-from ._toolset import CodeModeToolset, RunCodeExecution, reset_session
+from ._toolset import CodeModeToolset, RunCodeExecution
 
 
 @dataclass(kw_only=True)
@@ -363,13 +363,9 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             await self.execution.discard(call)
             run_state = self._run_state
             assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
-            # The fed statements that completed set `has_executed_feed`; a failed one was already
-            # counted when it failed, so the mismatch itself adds no running code.
-            session_reset = await reset_session(run_state, snippet_ran=False)
-            # A statement fed early may have failed; the mismatch itself is not a sandbox failure.
-            # A failure that already reset the session left nothing for this reset to find.
-            if (failure := call.execution.failure) is not None:
-                call.execution.failure = replace(failure, session_reset=failure.session_reset or session_reset)
+            await run_state.reset()
+            # The streamed code was discarded, so a statement of it that failed early is not this call's outcome.
+            call.execution.failure = None
             call.execution.record_outcome(ctx)
             if call.execution.usage_limit_exceeded is not None:
                 raise call.execution.usage_limit_exceeded

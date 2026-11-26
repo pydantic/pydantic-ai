@@ -95,10 +95,9 @@ class TestDynamicWorkflowTelemetry:
         ('error', 'expected'),
         [
             pytest.param(CrashedError(timed_out=False), {'dynamic_workflow.error_kind': 'crashed'}, id='crashed'),
+            # The pool's watchdog is the transport's timer, not `max_duration_seconds`, which is off by default.
             pytest.param(
-                CrashedError(timed_out=True),
-                {'dynamic_workflow.error_kind': 'resource_limit', 'dynamic_workflow.limit': 'max_duration_seconds'},
-                id='worker-timed-out',
+                CrashedError(timed_out=True), {'dynamic_workflow.error_kind': 'crashed'}, id='worker-timed-out'
             ),
             pytest.param(PanicException('sandbox aborted'), {'dynamic_workflow.error_kind': 'panic'}, id='panic'),
         ],

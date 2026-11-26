@@ -393,23 +393,11 @@ def exceeded_sandbox_limit(failure: MontyFailure) -> SandboxLimit | None:
       heap-limit failure from a callback's own `MemoryError`, so this errs toward the limit.
     - Suspensions: a `RuntimeError` whose whole message is Monty's.
 
-    A worker the pool's watchdog killed for elapsed time, or a remote turn past its deadline
-    (`max_duration_seconds` plus transport slack), also ran too long.
+    A crashed or disconnected worker is never a limit: a pool's watchdog or a remote turn deadline is
+    the transport's own timer, which runs even when `max_duration_seconds` is off.
     """
-    match failure.kind:
-        case 'runtime':
-            return _runtime_sandbox_limit(failure)
-        case 'crashed':
-            return 'max_duration_seconds' if failure.timed_out else None
-        case 'disconnected':
-            return 'max_duration_seconds' if failure.cause == 'turn_timeout' else None
-        # Callers pass only runtime, crashed or disconnected failures.
-        case _:  # pragma: no cover
-            return None
-
-
-def _runtime_sandbox_limit(failure: MontyFailure) -> SandboxLimit | None:
-    """The limit a runtime `failure` reports; see `exceeded_sandbox_limit` for the signals it reads."""
+    if failure.kind != 'runtime':
+        return None
     message = failure.message
     # Monty's time-limit wording is read first, so a message naming both limits is never `max_memory`.
     mentions_time_limit = SANDBOX_LIMIT_MARKERS['max_duration_seconds'] in message
