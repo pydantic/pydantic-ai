@@ -97,6 +97,22 @@ def session_context(session_id: str) -> Generator[None]:
         _CURRENT_SESSION_ID.reset(token)
 
 
+_FOLDER_AUTHORITY: ContextVar[tuple[str, Authority] | None] = ContextVar('pax_folder_authority', default=None)
+"""The running session's folder (`Session.workspace`) and the `authority` its `LocalWorkspace` gives its files."""
+
+
+async def folder_authority(directory: str | Path) -> Authority:
+    """The `authority` the running session gives the files in `directory`, when `directory` is the session's folder.
+
+    `'operator'` for any other directory, a subfolder included, and outside a session's run.
+    """
+    if (folder := _FOLDER_AUTHORITY.get()) is None:
+        return 'operator'
+    session_folder, authority = folder
+    resolved = await to_thread.run_sync(Path(directory).resolve)
+    return authority if str(resolved) == session_folder else 'operator'
+
+
 class SessionStepStore(SqliteStepStore):
     """Step records in `sessions.db`, where a write another process keeps locked out is skipped, not raised.
 
@@ -1091,7 +1107,7 @@ class Session(Generic[DepsT, OutputT]):
         cell = MontyCell(code=code)
         self._running = True
         try:
-            with session_context(self.summary.id):
+            with session_context(self.summary.id), self._folder_authority():
                 _, capabilities = self._bind(await self._models())
                 self._add_local_workspace(capabilities)
                 await self.agent.run(
@@ -1120,7 +1136,7 @@ class Session(Generic[DepsT, OutputT]):
         if self.delegations is None:
             raise RuntimeError('This session delegates no tasks.')
         script = TaskPrompt(agent_name=agent_name, task_id=task_id, text=text)
-        with session_context(self.summary.id), self.delegations.bind():
+        with session_context(self.summary.id), self._folder_authority(), self.delegations.bind():
             run_model, capabilities = self._bind(await self._models())
             capabilities.append(script)
             self._add_local_workspace(capabilities)
@@ -1139,10 +1155,23 @@ class Session(Generic[DepsT, OutputT]):
         if script.refused is not None:
             raise ValueError(script.refused)
 
+    @contextmanager
+    def _folder_authority(self) -> Generator[None]:
+        """Keep the folder and level that `_add_local_workspace` sets for `folder_authority` to one run."""
+        token = _FOLDER_AUTHORITY.set(_FOLDER_AUTHORITY.get())
+        try:
+            yield
+        finally:
+            _FOLDER_AUTHORITY.reset(token)
+
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
-        """Add Pax's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
+        """Add Pax's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did.
+
+        It reads `trust` once, for that workspace and for the run's `folder_authority`, inside `_folder_authority`.
+        """
         configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
         authority: Authority = 'operator' if self.trust is None else self.trust.authority
+        _FOLDER_AUTHORITY.set((self.workspace, authority))
         if (local := local_workspace(configured, self.workspace, self._messages, authority=authority)) is None:
             return False
         capabilities.append(local)
@@ -1192,7 +1221,7 @@ class Session(Generic[DepsT, OutputT]):
         submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True
         self._accepting_steering = True
-        with session_context(self.summary.id):
+        with session_context(self.summary.id), self._folder_authority():
             try:
                 previous = self._messages
                 run_id = str(uuid4())
