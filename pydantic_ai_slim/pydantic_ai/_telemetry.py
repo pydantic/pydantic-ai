@@ -168,19 +168,17 @@ def records_content(ctx: RunContext[Any] | RunTelemetry | None, /) -> bool:
 
 
 def current_span(ctx: RunContext[Any] | RunTelemetry | None, /) -> Span:
-    """The span open where the caller runs, to add attributes to, or `INVALID_SPAN` when the run isn't traced.
+    """The span open where the caller runs, to add attributes to, or `INVALID_SPAN` when there is none of the run's.
 
     In a tool hook that is the call's `execute_tool` span, and in `before_model_request` the request's
-    `chat` span. Unlike `opentelemetry.trace.get_current_span()`, it returns `INVALID_SPAN` when the run
-    isn't traced, so an uninstrumented run doesn't write to the application's own span. In a capability
-    ordered outside `Instrumentation`, the open span is the one around the run. In a sub-agent's `for_run`,
-    which runs before the sub-agent publishes its telemetry, the open span belongs to the parent run, so
-    when the sub-agent's tracer or content setting differs from the parent's, it returns `INVALID_SPAN`.
+    `chat` span. Unlike `opentelemetry.trace.get_current_span()`, it returns a span only inside the run's
+    own trace, once the run has published its telemetry, so a run never writes to a span it doesn't own:
+    it returns `INVALID_SPAN` when the run isn't traced, and in `for_run`, which runs before the run
+    publishes. A sub-agent's `for_run` sees its parent's published telemetry, so it gets the parent's
+    span only when its tracer and content setting are the parent's. In a capability ordered outside
+    `Instrumentation`, the open span is the one around the run.
     """
-    if (telemetry := _telemetry_of(ctx)) is None:
-        return INVALID_SPAN
-    published = _current.get()
-    if published is not None and published != telemetry:
+    if (telemetry := _telemetry_of(ctx)) is None or _current.get() != telemetry:
         return INVALID_SPAN
     return get_current_span()
 

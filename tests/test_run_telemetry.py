@@ -210,6 +210,19 @@ def marked_spans(exporter: InMemorySpanExporter) -> list[str]:
     return [span.name for span in exporter.get_finished_spans() if 'example.prompt' in (span.attributes or {})]
 
 
+async def test_a_for_run_does_not_write_to_the_applications_span(instrumented: Instrumented):
+    """A top-level run's `for_run` runs before the run publishes, while the application's own span is open."""
+    instrumentation, exporter = instrumented(True)
+    app_exporter = InMemorySpanExporter()
+    app_provider = TracerProvider()
+    app_provider.add_span_processor(SimpleSpanProcessor(app_exporter))
+    with app_provider.get_tracer('app').start_as_current_span('app request'):
+        await Agent(TestModel(), capabilities=[MarkWhenPrepared(), instrumentation]).run('go')
+
+    assert marked_spans(app_exporter) == []
+    assert marked_spans(exporter) == []
+
+
 async def test_a_sub_agents_for_run_does_not_write_to_its_parents_span(instrumented: Instrumented):
     """In a sub-agent's `for_run` the open span is the parent's tool call, which records no content here."""
     parent, parent_exporter = instrumented(False)
