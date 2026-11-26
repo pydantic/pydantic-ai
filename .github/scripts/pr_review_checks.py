@@ -72,8 +72,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         scope='URL fetching, downloads, provider file references and browser egress',
         paths=re.compile(
             r'pydantic_ai_slim/pydantic_ai/(_ssrf\.py|common_tools/web_fetch\.py'
-            r'|capabilities/(web_fetch|file_understanding)\.py'
-            r'|models/(?:(?:openai|anthropic)/)?_deepseek_web_tools\.py|providers/deepseek_messages\.py)'
+            r'|capabilities/(web_fetch|file_understanding)\.py)'
             r'|src/pydantic_ai_harness/pydantic_ai_harness/(_browser_egress\.py|(playwright|browser_use|cdp_browser)/.*)'
             r'|tests/test_(ssrf|web_fetch)\.py'
         ),
