@@ -1,4 +1,4 @@
-"""The data peers exchange, and the network and inbox protocols a host implements to connect them."""
+"""The data peers exchange, and the connection and inbox protocols a host implements to connect them."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ class PeerInfo:
     """A peer visible to the agent. `id` addresses it; `handle` is its short display name."""
 
     id: str
-    """Address accepted by `PeerNetwork.send`, unique among reachable peers."""
+    """Address accepted by `PeerConnection.send`, unique among reachable peers."""
     handle: str
     """Short host-assigned name, also accepted by the agent's `send_message` tool."""
     title: str = ''
@@ -89,8 +89,11 @@ class PeerDelivery:
     """Messages awaiting acknowledgement in the recipient's inbox after this operation."""
 
 
-class PeerNetwork(Protocol):
-    """One peer's view of its neighbours. The host implements transport and authenticates senders."""
+class PeerConnection(Protocol):
+    """One peer's connection to a network: it lists the other peers and sends as this peer.
+
+    The host implements transport and authenticates senders.
+    """
 
     async def peers(self) -> Sequence[PeerInfo]:
         """Other reachable peers, never this one, most relevant first."""

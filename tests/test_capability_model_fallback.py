@@ -48,6 +48,7 @@ from pydantic_ai import (
     exceptions,
     messages as _messages,
 )
+from pydantic_ai._fallback import SpecModelError
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -61,12 +62,12 @@ from pydantic_ai.capabilities import (
     WrapModelRequestHandler,
     WrapperCapability,
 )
-from pydantic_ai.capabilities.model_fallback import _SpecFallbackError  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import (
     ContentFilterError,
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
+    ModelEmptyResponseError,
     ModelRateLimitError,
     ModelRetry,
     OutputTokenLimitExceeded,
@@ -170,6 +171,21 @@ async def success_stream(messages: list[ModelMessage], info: AgentInfo) -> Async
 async def test_streaming_open_failure_falls_back():
     agent = Agent(
         FunctionModel(stream_function=failure_stream),
+        capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
+    )
+    async with agent.run_stream('x') as stream:
+        assert await stream.get_output() == 'hello'
+
+
+async def test_streaming_empty_response_falls_back_by_default():
+    """A stream that ends before its first event, which adapters raise as `ModelEmptyResponseError`, falls back."""
+
+    async def empty_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        raise ModelEmptyResponseError('primary', 'Streamed response ended without content or tool calls')
+        yield ''  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=empty_stream),
         capabilities=[ModelFallback(FunctionModel(stream_function=success_stream))],
     )
     async with agent.run_stream('x') as stream:
@@ -2580,7 +2596,7 @@ def test_spec_fallback_on_names_every_public_model_api_error():
         for name in exceptions.__all__
         if isinstance(cls := getattr(exceptions, name), type) and issubclass(cls, ModelAPIError)
     }
-    assert set(get_args(_SpecFallbackError)) == public_errors | {'ContentFilterError', 'OutputTokenLimitExceeded'}
+    assert set(get_args(SpecModelError)) == public_errors | {'ContentFilterError', 'OutputTokenLimitExceeded'}
 
 
 @pytest.mark.parametrize(

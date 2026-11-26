@@ -23,6 +23,7 @@ import asyncio
 import codecs
 import json
 import os
+import shlex
 import signal
 import time
 import uuid
@@ -37,6 +38,8 @@ import anyio
 import httpx
 from opensandbox.config import ConnectionConfig
 from pydantic import TypeAdapter
+
+from ..computer_use._fake_x_display import FakeDisplay
 
 API_KEY = 'fake-key'
 DOMAIN = 'opensandbox.invalid'
@@ -78,6 +81,7 @@ class FakeSandbox:
     expires_at: str | None
     network_policy: dict[str, Any] | None = None
     credential_proxy: dict[str, object] | None = None
+    volumes: list[dict[str, Any]] | None = None
     secure_access: bool = False
     credential_vault: dict[str, object] | None = None
     """What the egress sidecar's Credential Vault was created with, values included."""
@@ -133,6 +137,8 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         """Send output lines without their newline, as execd before 1.1.1 does."""
         self.image_working_dir = '/'
         """Where a command sent with no `cwd` starts, as execd starts it in the image's working directory."""
+        self.display: Callable[[str, float | None], tuple[str, str, int]] | None = None
+        """Answers the X display's commands, as a sandbox with a desktop does; every other command still runs."""
         self.connection = ConnectionConfig(domain=DOMAIN, api_key=API_KEY, transport=self)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
@@ -184,6 +190,7 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
             resource=body.get('resourceLimits') or {},
             network_policy=body.get('networkPolicy'),
             credential_proxy=body.get('credentialProxy'),
+            volumes=body.get('volumes'),
             secure_access=body.get('secureAccess', False),
             expires_at=None if timeout is None else (datetime.now(UTC) + timedelta(seconds=timeout)).isoformat(),
         )
@@ -296,10 +303,16 @@ class FakeOpenSandbox(httpx.AsyncBaseTransport):
         if not os.path.isdir(cwd):
             return _error(400, 'INVALID_REQUEST_BODY', f'working directory does not exist: {cwd}')
         stream_breaks = sandbox.stream_breaks
+        command = body['command']
+        if self.display is not None and FakeDisplay.answers(command):
+            envs: dict[str, str] = body.get('envs') or {}
+            assert envs.get('DISPLAY') == ':1'
+            stdout, stderr, exit_code = self.display(command, None)
+            command = f'printf %s {shlex.quote(stdout)}; printf %s {shlex.quote(stderr)} >&2; exit {exit_code}'
         process = await asyncio.create_subprocess_exec(
             '/bin/bash',
             '-c',
-            body['command'].replace('/tmp/pydantic-ai', self.pid_dir),
+            command.replace('/tmp/pydantic-ai', self.pid_dir),
             cwd=cwd,
             env={'PATH': os.environ['PATH'], **sandbox.env, **(body.get('envs') or {})},
             stdin=asyncio.subprocess.DEVNULL,

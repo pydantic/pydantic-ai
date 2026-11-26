@@ -5,6 +5,7 @@ from __future__ import annotations
 import warnings
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Literal
 
@@ -13,6 +14,7 @@ from pydantic_ai._utils import is_str_dict, replace_no_init
 from pydantic_ai.capabilities import AbstractCapability, on_event
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    Authority,
     CompactionPart,
     DataCapabilityPart,
     ModelMessage,
@@ -24,9 +26,16 @@ from pydantic_ai.messages import (
     WorkspaceSource,
     post_compaction_window,
 )
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai.workspaces import SupportsCommands, SupportsRealpath, Workspace
+from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
+    SupportsCommands,
+    SupportsRealpath,
+    Workspace,
+    lowest_authority_under,
+)
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, HarnessDeprecationWarning, warn_argument_ignored
 from pydantic_ai_harness._workspace import in_working_dir, innermost_backend, require_workspace, workspace_path
 from pydantic_ai_harness.file_system import DirectoryListedEvent, FileEditedEvent, FileReadEvent, FileWrittenEvent
@@ -57,6 +66,10 @@ _POINTER_NOTE = (
     'A directory you just accessed has an instruction file, not loaded here. Its path is in the accompanying '
     '{frame}. Read the file if it is relevant to your task.'
 )
+_UNLOADED_NOTE = (
+    "The working directory has an instruction file that is not loaded here, because it isn't from the operator: "
+    '`{label}`. Read it with your file tools if it is relevant to your task.'
+)
 _NESTED_PRECEDENCE = (
     'Instruction files ({names}) apply to the directory they are in and everything below it. Where instruction '
     "files conflict, the more deeply nested one takes precedence, and the user's direct instructions take "
@@ -71,16 +84,18 @@ surfaced `directory`; still recognized in a saved history, so a note in it isn't
 class ContextFilePart(
     DataCapabilityPart[str], namespace='repo_context', name='context_file', tag='context_file', attributes=('path',)
 ):
-    """A nested instruction file's contents, as `RepoContext(nested_inject='contents')` surfaces them.
+    """An instruction file's contents, sent as repository data rather than as instructions.
 
-    Repository data on the user channel, in a `<context_file>` tag naming the file. Find them in history by this type.
+    `RepoContext(nested_inject='contents')` surfaces nested files this way, and the walk-up sends an ancestor's file
+    this way when it's below `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of]. Repository data
+    on the user channel, in a `<context_file>` tag naming the file. Find them in history by this type.
     """
 
     path: str
-    """The file's label: its path relative to the working directory."""
+    """The file's label: its path relative to the working directory, with `..` steps for an ancestor's file."""
 
     directory: str
-    """The directory the file applies to, which the traversal surfaced. Never sent to the model."""
+    """The directory the file applies to: one the traversal surfaced, or one the walk-up scanned. Never sent to the model."""
 
 
 @dataclass(kw_only=True)
@@ -127,7 +142,11 @@ class RepoContext(AbstractCapability[AgentDepsT]):
        (`'all'`); files are deduped by content, broadest first. These are read once at run start
        and injected as system instructions via `get_instructions`, so they stay in
        the cached prefix, stable within a run; a change between runs of a
-       conversation is appended rather than rewritten.
+       conversation is appended rather than rewritten. A file below `'operator'`
+       [authority][pydantic_ai.workspaces.Workspace.authority_of] is never put in the
+       instructions: the working directory's own file is named there for the model
+       to read with its file tools, and an ancestor's file, which those tools can't
+       reach, is sent as repository data, a `ContextFilePart`.
 
     2. Asset inventory (`expose_inventory_tool`, off by default): a tool that
        reports where the repo's coding-assistant assets live (`.claude`/`.agents`/`.codex`/
@@ -229,6 +248,16 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     An entry of any kind counts, so a linked worktree's `.git` file marks its root like a `.git` directory.
     """
 
+    nested_exclude: Sequence[str] = field(default=('node_modules', '.venv', 'venv', 'site-packages'), kw_only=True)
+    """For Strategy 3: `fnmatch` patterns for directory names whose instruction files are never surfaced.
+
+    A directory is skipped when any component of its path below the working directory matches, either as written
+    or after resolving symlinks, so everything beneath a match is skipped too, while the directories above it are
+    still surfaced. The default covers directories package managers install into, whose instruction files are
+    written for the package's own contributors and would otherwise take precedence over the project's. Matching
+    is case-sensitive.
+    """
+
     nested_max_chars: int | None = 32_000
     """For Strategy 3 with `nested_inject='contents'`: the total characters of nested file contents to inline per conversation.
 
@@ -239,7 +268,24 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     """
 
     _context_files: list[ContextFile] | None = field(default=None, init=False, repr=False, compare=False)
-    """Walk-up result for this run, loaded once in `before_run` via `ctx.workspace`."""
+    """Walk-up files with `'operator'` authority for this run, loaded once in `before_run` via `ctx.workspace`."""
+
+    _unloaded_file: ContextFile | None = field(default=None, init=False, repr=False, compare=False)
+    """The working directory's own walk-up file when it's below `'operator'` authority, named in the instructions."""
+
+    _ancestor_parts: list[ContextFilePart] = field(
+        default_factory=list[ContextFilePart], init=False, repr=False, compare=False
+    )
+    """Walk-up files above the working directory that are below `'operator'` authority, sent as repository data."""
+
+    _pending_ancestors: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Directories whose `_ancestor_parts` entry is enqueued but not yet in history."""
+
+    _ancestor_compaction: CompactionPart | None = field(default=None, init=False, repr=False, compare=False)
+    """The latest compaction in history when `_pending_ancestors` was last checked; a new one clears them."""
+
+    _lowered: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether this run reads instruction files below `'operator'` authority, which leaves out `_NESTED_PRECEDENCE`."""
 
     _pending_dirs: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
     """Directories whose Strategy 3 note is enqueued but not yet in history."""
@@ -267,6 +313,10 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def __post_init__(self) -> None:
         if isinstance(self.root_markers, str):
             raise UserError(f'`RepoContext.root_markers` takes a sequence of names, e.g. `({self.root_markers!r},)`.')
+        if isinstance(self.nested_exclude, str):
+            raise UserError(
+                f'`RepoContext.nested_exclude` takes a sequence of patterns, e.g. `({self.nested_exclude!r},)`.'
+            )
         if self.nested_max_chars is not None and self.nested_max_chars < 0:
             raise UserError('`RepoContext.nested_max_chars` must not be negative.')
         if self.home_dir is not None and self.walk_up == 'repo_root':
@@ -289,20 +339,32 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         """
         run = replace_no_init(self)
         run._context_files = None
+        run._unloaded_file = None
+        run._ancestor_parts = []
+        run._pending_ancestors = set()
+        run._ancestor_compaction = None
         run._pending_dirs = set()
         run._loaded_dirs = set()
         run._pending_chars = {}
         run._window_chars = 0
         run._latest_compaction = None
         run._cached_working_dir = None
+        # Known before `get_instructions`, which runs before `before_run`, without I/O: `for_run` mustn't reach the
+        # workspace. `before_run` also looks for a `path_authority` entry lowering files where nested traversal reads.
+        run._lowered = ctx.workspace.authority != 'operator'
         return run
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, and load walk-up instruction files so `get_instructions` is sync."""
         require_workspace(ctx.workspace, 'RepoContext', ctx.messages)
+        workspace = ctx.workspace
+        if self.nested_traversal and not self._lowered:
+            # With any file below `'operator'` where nested traversal reads, the precedence sentence mustn't rank its
+            # files over the operator's.
+            root = str(await self._working_dir(workspace))
+            self._lowered = await lowest_authority_under(workspace, root) != 'operator'
         if not self.autoload_instructions:
             return
-        workspace = ctx.workspace
         working_dir = await self._working_dir(workspace)
         top: Path | None = None
         if self.home_dir is not None:
@@ -312,13 +374,36 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             top = await find_root(workspace, working_dir, self.root_markers)
         elif self.walk_up == 'all':
             top = Path(working_dir.anchor)
-        self._context_files = await discover_instruction_files(
-            workspace,
-            working_dir,
-            top,
-            self.filenames,
-            autoload_symlink_roots=await self._autoload_symlink_roots(workspace),
+        symlink_roots = await self._autoload_symlink_roots(workspace)
+        walk_up = _walk_up_view(workspace, working_dir, top, symlink_roots)
+        levels: dict[Path, Authority] = {}
+
+        async def authority_of(path: Path) -> Authority:
+            if path not in levels:
+                levels[path] = await walk_up.authority_of(path.as_posix())
+            return levels[path]
+
+        discovered = await discover_instruction_files(
+            workspace, working_dir, top, self.filenames, autoload_symlink_roots=symlink_roots, authority_of=authority_of
         )
+        self._context_files = []
+        for context_file in discovered:
+            path = context_file.path.as_posix()
+            if await authority_of(context_file.path) == 'operator':
+                self._context_files.append(context_file)
+            elif context_file.directory == working_dir:
+                self._unloaded_file = context_file
+                self._lowered = True
+            else:
+                self._lowered = True
+                self._ancestor_parts.append(
+                    ContextFilePart(
+                        content=context_file_part_content(context_file),
+                        source=await WorkspaceSource.from_workspace(walk_up, path),
+                        path=context_file_label(context_file.path, working_dir),
+                        directory=str(context_file.directory),
+                    )
+                )
         # The walk-up loaded the working directory's instruction files (or an identical ancestor copy), so nested
         # traversal has nothing to add there. A file that appears there later in the run is still surfaced.
         if self.nested_traversal and await dir_context_file_path(workspace, working_dir, self.filenames) is not None:
@@ -326,8 +411,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     def get_instructions(self) -> str | Callable[[RunContext[AgentDepsT]], str | None] | None:
         """Cache-stable instructions resolved after `before_run` loads workspace files."""
-        if not self.autoload_instructions:
-            # Neither part depends on the run, so they stay static and inside the cached prefix.
+        if not self.autoload_instructions and not self.nested_traversal:
+            # Nothing depends on the run, so it stays static and inside the cached prefix. The precedence sentence
+            # nested traversal adds depends on the levels `before_run` finds, after this is called.
             return '\n\n'.join(self._static_instructions()) or None
 
         def instructions(_ctx: RunContext[AgentDepsT]) -> str | None:
@@ -345,6 +431,12 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if self._context_files:
             assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
             parts.append(render_context_files(self._context_files, relative_to=self._cached_working_dir))
+        if self._unloaded_file is not None:
+            assert self._cached_working_dir is not None, '`before_run` resolves it before loading files'
+            # The label is built from the working directory and a configured filename, never from the repository's
+            # text, so it can go in the instructions.
+            label = context_file_label(self._unloaded_file.path, self._cached_working_dir)
+            parts.append(_UNLOADED_NOTE.format(label=label))
         parts.extend(self._static_instructions())
         return '\n\n'.join(parts) or None
 
@@ -352,7 +444,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         parts: list[str] = []
         if self.expose_inventory_tool:
             parts.append(self._inventory_hint())
-        if self.nested_traversal:
+        if self.nested_traversal and not self._lowered:
+            # In operator voice, it would rank repository files nested deeper over the operator's own.
             parts.append(_NESTED_PRECEDENCE.format(names=', '.join(f'`{name}`' for name in self.filenames)))
         return parts
 
@@ -373,6 +466,34 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         The inventory reads the run's workspace, so this is all it takes for `read_file` to reach the same files.
         """
         return bool(self.asset_roots) and all(in_working_dir(root) for root in self.asset_roots)
+
+    async def before_model_request(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """Send the walk-up files above the working directory that are below `'operator'` authority, as repository data.
+
+        Each goes in unless the history the model sees already holds it with the same text, checked on every request:
+        a conversation records a file again when it changed, and a run puts back one a compaction dropped, at the end
+        of the request being sent. A run that resumes from tool results sends a changed file after them too: unlike
+        user text, the part's frame and note say it's the repository's file, not a new message from the user.
+        """
+        if not self._ancestor_parts:
+            return request_context
+        compaction = _latest_compaction(ctx.messages)
+        if compaction is not self._ancestor_compaction:
+            # Whatever was enqueued before this compaction may not survive it.
+            self._ancestor_compaction = compaction
+            self._pending_ancestors.clear()
+        latest = _latest_context_files(ctx.messages)
+        for part in self._ancestor_parts:
+            if latest.get(part.directory) == part.content:
+                self._pending_ancestors.discard(part.directory)
+            # Enqueued parts land in the request being sent, so one is only still pending when this hook runs
+            # again for that same request, as after an earlier hook's retry.
+            elif part.directory not in self._pending_ancestors:  # pragma: no branch
+                self._pending_ancestors.add(part.directory)
+                ctx.enqueue(part)
+        return request_context
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """The asset-inventory toolset, or `None` when the tool is disabled."""
@@ -445,7 +566,7 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         working_dir = await self._working_dir(ctx.workspace)
         real_working_dir: Path | None = None
         in_history = self._sync_surfaced_dirs(ctx.messages)
-        for current in directories_up_to(directory, working_dir):
+        for current in self._chain_until_excluded(directory, working_dir):
             # Already surfaced, so it passed the check below then; skipping it first saves a `realpath`, which is a
             # command round trip on shell-backed sandboxes.
             if self._surfaced(str(current), in_history):
@@ -457,12 +578,46 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             if confine_target or current != directory or current.is_relative_to(working_dir):
                 if real_working_dir is None:
                     real_working_dir = Path(await ctx.workspace.realpath(str(working_dir)))
-                if not Path(await ctx.workspace.realpath(str(current))).is_relative_to(real_working_dir):
+                verdict = await self._resolved_verdict(ctx.workspace, current, real_working_dir)
+                if verdict == 'stop':
+                    break
+                if verdict == 'skip':
                     continue
             # Only the target directory can hold the file just written, so the others skip `_same_file`'s `realpath`s.
             await self._enqueue_directory(
                 ctx, current, in_history, written_file=written_file if current == directory else None
             )
+
+    def _chain_until_excluded(self, directory: Path, working_dir: Path) -> list[Path]:
+        """The directories from the working directory down to `directory`, up to the first `nested_exclude` match.
+
+        The chain runs shallowest first, so once one directory is excluded, every deeper one is too.
+        """
+        chain = directories_up_to(directory, working_dir)
+        for index, current in enumerate(chain):
+            if self._nested_excluded(current, working_dir):
+                return chain[:index]
+        return chain
+
+    async def _resolved_verdict(
+        self, workspace: Workspace, directory: Path, real_working_dir: Path
+    ) -> Literal['surface', 'skip', 'stop']:
+        """Whether `directory`, after symlinks, is surfaced, skipped as outside the working directory, or excluded.
+
+        Exclusion stops the chain, since every deeper directory is beneath the excluded one.
+        """
+        real = Path(await workspace.realpath(str(directory)))
+        if not real.is_relative_to(real_working_dir):
+            return 'skip'
+        # A symlink such as `libs/dep -> node_modules/dep` reaches an excluded directory under another name.
+        return 'stop' if self._nested_excluded(real, real_working_dir) else 'surface'
+
+    def _nested_excluded(self, directory: Path, working_dir: Path) -> bool:
+        try:
+            parts = directory.relative_to(working_dir).parts
+        except ValueError:
+            return False
+        return any(fnmatchcase(part, pattern) for part in parts for pattern in self.nested_exclude)
 
     async def _enqueue_directory(
         self, ctx: RunContext[AgentDepsT], directory: Path, in_history: set[str], *, written_file: Path | None = None
@@ -505,7 +660,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
         if latest is not self._latest_compaction:
             self._latest_compaction = latest
             self._pending_dirs.clear()
-        notes = _notes_in_window(messages)
+        # The walk-up's parts share the type, but they aren't nested notes: they don't count against the budget.
+        ancestors = {part.directory for part in self._ancestor_parts}
+        notes = [note for note in _notes_in_window(messages) if note[0] not in ancestors]
         in_history = {directory for directory, _ in notes}
         self._window_chars = sum(chars for _, chars in notes)
         self._pending_dirs -= in_history
@@ -562,6 +719,36 @@ class RepoContext(AbstractCapability[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Serialization name for agent-spec support."""
         return 'RepoContext'
+
+
+def _walk_up_view(
+    workspace: Workspace, working_dir: Path, top: Path | None, symlink_roots: Sequence[Path]
+) -> Workspace:
+    """`workspace` as the walk-up reads it, with the ancestors it scans and its authorized link roots inside it.
+
+    `authority_of` puts a path outside the working directory at `'none'` unless a `path_authority` entry covers it.
+    The walk-up reads an ancestor's file, or a link's target in an authorized root, at the level of the entry covering
+    it, if any, and otherwise at the workspace's own level, so a plain workspace loads them as before, and one lowered
+    with `authority='none'` lowers them too. Naming those directories at `'operator'` in a wrapper does that: the
+    wrapper never raises a level, so every path keeps the lowest level any of the workspace's own layers gives it.
+    """
+    paths = [root.as_posix() for root in symlink_roots]
+    if top is not None and top != working_dir and working_dir.is_relative_to(top):
+        paths.append(top.as_posix())
+    if not paths:
+        return workspace
+    return AuthorityWorkspace(workspace, authority='operator', path_authority=dict.fromkeys(paths, 'operator'))
+
+
+def _latest_context_files(messages: Sequence[ModelMessage]) -> dict[str, str]:
+    """The text of the latest `ContextFilePart` for each directory in the post-compaction window."""
+    return {
+        part.directory: part.content
+        for message in post_compaction_window(messages)
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ContextFilePart)
+    }
 
 
 def _latest_compaction(messages: Sequence[ModelMessage]) -> CompactionPart | None:

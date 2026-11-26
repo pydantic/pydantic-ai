@@ -126,7 +126,8 @@ class InstrumentationSettings:
                 its output function receives, and run and tool deferral metadata. The media type is
                 recorded either way. Binary content is found inside dictionaries, lists and
                 `ToolReturn`s, but not inside your own types: a `BinaryContent` held as a field of a
-                model or dataclass you define is still recorded in full.
+                model or dataclass you define is still recorded in full. The agent's
+                `DeferredToolRequests` output is recorded without its `validated_args`.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
             include_model_request_parameters: Whether to emit the `model_request_parameters` span attribute on
@@ -590,14 +591,10 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     if (
         isinstance(
             part,
-            SystemPromptPart
-            | ToolAvailabilityDeltaPart
-            | CapabilityLoadDeltaPart
-            | InstructionDeltaPart
-            | ModelSettingsDeltaPart,
+            SystemPromptPart | ToolAvailabilityDeltaPart | CapabilityLoadDeltaPart | ModelSettingsDeltaPart,
         )
         or (version >= 6 and isinstance(part, RetryFeedbackPart) and _retry_feedback_speaks_for_the_harness(part))
-        or (isinstance(part, CapabilityPart) and effective_authority(part) == 'operator')
+        or (isinstance(part, CapabilityPart | InstructionDeltaPart) and effective_authority(part) == 'operator')
     ):
         return 'system'
     # TODO(v3): remove `RetryPromptPart`, still reachable here because `pydantic_ai.all_messages`

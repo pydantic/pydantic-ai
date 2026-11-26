@@ -53,8 +53,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # tests import each from where it actually lives, not from a re-export.
 import agentic_workflow_guard
 import pydantic_ai_gh_aw_shim as pkg
-from mcp.shared.exceptions import McpError
-from mcp.types import ErrorData
+from fastmcp.exceptions import McpError
 from pydantic_ai_gh_aw_shim import (
     cli as shim,
     shared,
@@ -640,21 +639,20 @@ def test_read_file_offset_and_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'n.txt'
     f.write_text('l1\nl2\nl3\nl4\n', encoding='utf-8')
-    # Claude's 1-based offset=2 maps to the harness 0-based offset; limit=2.
+    # Claude's 1-based offset=2 is the harness's offset=2; limit=2.
     out = asyncio.run(pkg.read_file(_ctx(), str(f), offset=2, limit=2))
     assert 'l2' in out and 'l3' in out
     assert 'l1' not in out and 'l4' not in out
 
 
 def test_read_continuation_hint_uses_one_based_offset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # The harness's truncation hint carries its own 0-based offset; this tool's
-    # `offset` is 1-based, so the hint must be bumped by one. Otherwise a model
-    # that follows the hint literally re-reads the last line of the prior chunk.
+    # The harness's truncation hint names the next 1-based line, which this tool's
+    # `offset` takes as is; following it must not re-read the last line of the prior chunk.
     monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
     f = tmp_path / 'big.txt'
     f.write_text('\n'.join(f'L{i}' for i in range(1, 4)) + '\n', encoding='utf-8')  # L1..L3
     first = asyncio.run(pkg.read_file(_ctx(), str(f), limit=2))  # reads L1,L2 + a continuation hint
-    assert 'Use offset=3 to continue reading.' in first  # harness emits 2 (0-based); bumped to 3
+    assert 'Use offset=3 to continue reading.' in first
     assert 'Use offset=2 to continue reading.' not in first
     # Following the (1-based) hint continues at L3 with no duplicated boundary line.
     nxt = asyncio.run(pkg.read_file(_ctx(), str(f), offset=3, limit=2))
@@ -720,19 +718,6 @@ def test_read_large_chunk_keeps_accurate_continuation_offset(tmp_path: Path, mon
     # Following the offset continues exactly at line nxt.
     cont = asyncio.run(pkg.read_file(_ctx(), str(f), offset=nxt))
     assert f'{nxt:06d}x' in cont
-
-
-def test_read_does_not_rewrite_hint_text_in_file_contents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    # The offset bump must target only the harness's own continuation hint, not file
-    # content -- even a line reproducing the *full* hint verbatim. The harness writes
-    # the real hint at column 0; content lines are line-number-prefixed, so anchoring
-    # to `^` leaves the content untouched.
-    monkeypatch.setenv('GITHUB_WORKSPACE', str(tmp_path))
-    f = tmp_path / 'doc.txt'
-    f.write_text('... (4 more lines. Use offset=7 to continue reading.)\n', encoding='utf-8')
-    out = asyncio.run(pkg.read_file(_ctx(), str(f)))  # short file: not truncated, no real hint added
-    assert 'Use offset=7 to continue reading.' in out  # content preserved verbatim
-    assert 'Use offset=8' not in out
 
 
 def test_edit_file_replace_all(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -2157,7 +2142,11 @@ def test_runner_drops_dynamic_workflow_dependencies():
 
 
 def test_runner_resolves_pydantic_ai_from_the_workspace():
-    """The shim's code is this checkout, so its libraries must be too — see #6998, #7103."""
+    """The legacy runner installs this checkout's libraries; no workflow runs it (#12796).
+
+    Its smoke test therefore cannot catch a symbol the pinned engine runtime lacks. CI's "Import the gh-aw
+    shim on the pinned engine runtime" step checks the shim on that runtime.
+    """
     runner = (Path(__file__).parent / 'pydantic-ai-runner').read_text(encoding='utf-8')
     assert '# [tool.uv.sources]' in runner
     assert '# pydantic-ai-slim = { path = "../../pydantic_ai_slim", editable = true }' in runner
@@ -2808,6 +2797,40 @@ _RATE_LIMITED_RESPONSE = {
 }
 
 
+@pytest.mark.parametrize(
+    ('base_url', 'output_config'),
+    [
+        # The AWF api-proxy the engine points the agent step at, in front of Z.AI.
+        pytest.param('http://host.docker.internal:10001', {'effort': 'low'}, id='zai-through-awf'),
+        pytest.param('https://api.anthropic.com', None, id='anthropic'),
+        pytest.param(None, None, id='sdk-default'),
+    ],
+)
+def test_build_model_requests_low_effort_only_from_zai(
+    monkeypatch: pytest.MonkeyPatch, base_url: str | None, output_config: dict[str, str] | None
+):
+    """Z.AI gets its low effort and no `thinking`, which it would run at its default `max`; Anthropic gets neither."""
+    bodies: list[dict[str, object]] = []
+
+    def _handle(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json=_MESSAGE_RESPONSE)
+
+    transport = shim.rate_limit_retry_transport
+    monkeypatch.setattr(shim, 'rate_limit_retry_transport', lambda: transport(httpx2.MockTransport(_handle)))
+    if base_url is None:
+        monkeypatch.delenv('ANTHROPIC_BASE_URL', raising=False)
+    else:
+        monkeypatch.setenv('ANTHROPIC_BASE_URL', base_url)
+    monkeypatch.setenv('ANTHROPIC_MODEL', 'glm-5.4')
+    model, _ = shim.build_model(shim.parse_args(['--print']))
+    assert asyncio.run(Agent(model).run('hi')).output == 'ok'
+    [body] = bodies
+    assert body['model'] == 'glm-5.4'
+    assert body.get('output_config') == output_config
+    assert 'thinking' not in body
+
+
 def _rate_limited_client(rate_limited_responses: int, calls: list[int]) -> AsyncAnthropic:
     """An `AsyncAnthropic` client whose first requests receive a retryable 429."""
 
@@ -3204,7 +3227,7 @@ def test_observability_names_the_running_shim_sources(monkeypatch: pytest.Monkey
 
 
 def test_clai2_engine_names_the_staged_shim_sources():
-    """The CLAI 2 engine configures Logfire before it loads the shim, so the staging step supplies `service.version`.
+    """The Pax engine configures Logfire before it loads the shim, so the staging step supplies `service.version`.
 
     It digests the staged copy: CI Review checks out the pull request head after staging.
     """
@@ -3664,7 +3687,7 @@ def test_mcp_wrapped_in_filter_when_allowlist_present(tmp_path: Path):
 # from the gh-aw gateway escaped `MCPToolset` and killed the whole run).
 # --------------------------------------------------------------------------- #
 def _mcp_error(message: str) -> McpError:
-    return McpError(ErrorData(code=-32602, message=message))
+    return McpError(code=-32602, message=message)
 
 
 def _error_hook_ctx() -> RunContext[None]:
@@ -3843,6 +3866,27 @@ def test_failure_metadata_classifies_anthropic_timeout_wrapped_by_model_api_erro
     details = shim.failure_details(error)
 
     assert details == {'kind': 'timeout'}
+
+
+def test_failure_metadata_does_not_read_the_awf_cache_miss_refusal_as_authentication():
+    """AWF's API proxy refuses a run at its consecutive cache-miss cap with a 403 that Z.ai never sent."""
+    # The 403 body in the agent log of https://github.com/pydantic/pydantic-ai/actions/runs/45107391472.
+    refusal: dict[str, object] = {
+        'error': {
+            'type': 'max_cache_misses_exceeded',
+            'message': 'Maximum consecutive cache misses exceeded (5 / 5).',
+            'consecutive_cache_misses': 5,
+            'max_cache_misses': 5,
+        }
+    }
+    transport = httpx2.MockTransport(lambda _request: httpx2.Response(403, json=refusal))
+    client = AsyncAnthropic(api_key='x', http_client=httpx2.AsyncClient(transport=transport))
+    agent = Agent(AnthropicModel('glm-5.3-flash', provider=AnthropicProvider(anthropic_client=client)))
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        asyncio.run(agent.run('hi'))
+
+    assert shim.failure_details(exc_info.value) == {'kind': 'cache_miss_limit', 'http_status': 403}
 
 
 def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch: pytest.MonkeyPatch):

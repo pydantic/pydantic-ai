@@ -37,7 +37,7 @@ LANE_VARS = (
 )
 REDUCED_JOBS = ('test', 'test-all-extras', 'test-durable-exec', 'test-lowest-versions', 'test-examples')
 # The `classify` outputs of each route a change can take through the test jobs: the full one, and the narrower
-# ones for a change confined to `pydantic-ai-harness` (and `pydantic-clai2`) or to `pydantic-clai2`.
+# ones for a change confined to `pydantic-ai-harness` (and `pydantic-ai-pax`) or to `pydantic-ai-pax`.
 ROUTES = {
     'full': {'clai2_only': 'false', 'harness_only': 'false'},
     'harness_only': {'clai2_only': 'false', 'harness_only': 'true'},
@@ -209,7 +209,9 @@ def _render(value: object, context: Mapping[str, object]) -> object:
     whole = re.fullmatch(r'\s*\$\{\{(.*)\}\}\s*', value, re.DOTALL)
     if whole and '${{' not in whole.group(1):
         return _Expression(whole.group(1), context).evaluate()
-    return re.sub(r'\$\{\{(.*?)\}\}', lambda m: _text(_Expression(m.group(1), context).evaluate()), value)
+    return re.sub(
+        r'\$\{\{(.*?)\}\}', lambda m: _text(_Expression(m.group(1), context).evaluate()), value, flags=re.DOTALL
+    )
 
 
 def _text(value: object) -> str:
@@ -333,10 +335,71 @@ def test_pull_requests_test_the_oldest_and_newest_python(job_name: str):
     assert {versions[0], versions[-1]} <= reduced
 
 
+@pytest.mark.parametrize('event_name', ('pull_request', 'push', 'merge_group'))
+@pytest.mark.parametrize('route', ('full', 'harness_only'))
+def test_all_extras_shards_match_the_partition(event_name: str, route: str):
+    job = _job('test-all-extras')
+    env = _mapping(job['env'])
+    versions: set[str] = {'3.11', '3.13', '3.14', '3.15'}
+    if event_name != 'pull_request':
+        versions.add('3.12')
+    expected: set[tuple[str, int]] = {
+        (version, shard)
+        for version in versions
+        for shard in range(1, (3 if version == '3.11' else 1 if route == 'harness_only' else 2) + 1)
+    }
+    legs = _expand('test-all-extras', event_name, route)
+    assert len(legs) == len(expected)
+    assert {(leg['python-version'], leg['shard']) for leg in legs} == expected
+    assert job['timeout-minutes'] == 20
+    for leg in legs:
+        version = leg['python-version']
+        splits = 3 if version == '3.11' else 1 if route == 'harness_only' else 2
+        context = {**_context(event_name, route), 'matrix': leg}
+        assert _render(env['SPLITS'], context) == splits
+        assert _render(env['SHARD'], context) == leg['shard']
+        assert _render(job['name'], context) == f'test on {version} (all-extras, shard {leg["shard"]}/{splits})'
+        assert _render(env['COLLECT_COVERAGE'], context) is (version in ('3.11', '3.14'))
+        assert _render(env['TEST_PATHS'], context) == ('tests/harness tests/pax' if route == 'harness_only' else '')
+        step_context = {**context, 'env': {'COLLECT_COVERAGE': _text(_render(env['COLLECT_COVERAGE'], context))}}
+        for step in map(_mapping, _list(job['steps'])):
+            if step.get('name') in ('combine coverage files', 'store coverage files'):
+                assert _Expression(str(step['if']), step_context).evaluate() is (version in ('3.11', '3.14'))
+
+
 def test_every_dependency_resolution_runs_on_a_pull_request():
     resolutions = {_text(leg['resolution']) for leg in _expand('test-durable-exec', 'pull_request')}
     assert resolutions == {'locked', 'lowest'}
     assert _expand('test-lowest-versions', 'pull_request')
+
+
+@pytest.mark.parametrize('event_name', ('pull_request', 'merge_group'))
+def test_durable_exec_runs_each_suite_in_its_own_leg(event_name: str):
+    def suites(route: str) -> dict[tuple[str, str], set[str]]:
+        legs: dict[tuple[str, str], set[str]] = {}
+        for leg in _expand('test-durable-exec', event_name, route):
+            legs.setdefault((_text(leg['python-version']), _text(leg['resolution'])), set()).add(_text(leg['suite']))
+        return legs
+
+    full = suites('full')
+    assert all(legs == {'durable-exec', 'harness-temporal'} for legs in full.values())
+    # A `pydantic-ai-harness`-only change keeps every harness leg, and of `tests/durable_exec` only the
+    # 3.15 leg that runs the contract manifest freshness test.
+    assert suites('harness_only') == {
+        key: {'durable-exec', 'harness-temporal'} if key == ('3.15', 'locked') else {'harness-temporal'} for key in full
+    }
+
+
+def test_durable_exec_suite_selects_its_tests():
+    """Each `suite` leg runs its own pytest selection, so neither leg passes without running its tests."""
+    (step,) = [
+        step for step in map(_mapping, _list(_job('test-durable-exec')['steps'])) if step.get('name') == 'run tests'
+    ]
+    assert _mapping(step['env'])['SUITE'] == '${{ matrix.suite }}'
+    script = '\n'.join(line for line in str(step['run']).splitlines() if not line.lstrip().startswith('#'))
+    harness, durable = script.split('if [[ "$SUITE" == "harness-temporal" ]]; then\n', 1)[1].split('\nelif ', 1)
+    assert '-m temporal' in harness and 'tests/durable_exec' not in harness
+    assert 'tests/durable_exec' in durable and '-m temporal' not in durable
 
 
 # Steps that add coverage, or report to the author of the pull request.

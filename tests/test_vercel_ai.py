@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import json
 import uuid
@@ -8713,6 +8714,102 @@ async def test_adapter_load_messages_uploaded_file_with_vendor_metadata():
     )
 
 
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(BinaryContent(data=b'abc', media_type='application/pdf', identifier='custom'), id='binary'),
+        pytest.param(BinaryContent(data=b'abc', media_type='image/png', identifier='custom'), id='binary-image-type'),
+        pytest.param(BinaryImage(data=b'abc', media_type='image/png', identifier='custom'), id='binary-image'),
+        pytest.param(
+            BinaryImage(data=b'abc', media_type='image/png', identifier='custom', vendor_metadata={'detail': 'low'}),
+            id='binary-image-vendor-metadata',
+        ),
+        pytest.param(ImageUrl(url='https://example.com/x.png', identifier='custom'), id='image-url'),
+        pytest.param(DocumentUrl(url='https://example.com/x.pdf', identifier='custom'), id='document-url'),
+    ],
+)
+def test_user_file_custom_identifier_round_trip(item: BinaryContent | ImageUrl | DocumentUrl):
+    """A custom identifier survives dump and load, and is written to the UI part's `provider_metadata`."""
+    dumped = VercelAIAdapter.dump_messages([ModelRequest(parts=[UserPromptPart(content=[item])])])
+    file_part = dumped[0].parts[0]
+    assert isinstance(file_part, FileUIPart)
+    assert file_part.provider_metadata is not None
+    assert file_part.provider_metadata['pydantic_ai']['identifier'] == 'custom'
+
+    [message] = VercelAIAdapter.load_messages(dumped)
+    assert isinstance(message, ModelRequest)
+    part = message.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert not isinstance(part.content, str)
+    loaded = part.content[0]
+    assert isinstance(loaded, BinaryContent | ImageUrl | DocumentUrl)
+    assert loaded.identifier == 'custom'
+    assert loaded.vendor_metadata == item.vendor_metadata
+    if isinstance(item, BinaryContent) and item.is_image:
+        assert isinstance(loaded, BinaryImage)
+
+    # A second round trip keeps writing the same key.
+    assert VercelAIAdapter.dump_messages([message])[0].parts == [file_part]
+
+
+@pytest.mark.parametrize(
+    'item',
+    [
+        pytest.param(BinaryContent(data=b'abc', media_type='application/pdf'), id='binary'),
+        pytest.param(BinaryContent.from_data_uri('data:image/png;base64,YWJj'), id='narrowed-image'),
+        pytest.param(BinaryContent(data=b'abc', media_type='application/pdf', identifier=''), id='empty'),
+        pytest.param(ImageUrl(url='https://example.com/x.png'), id='image-url'),
+    ],
+)
+@pytest.mark.parametrize('reload_from_json', [False, True])
+def test_user_file_computed_identifier_is_not_dumped(
+    item: BinaryContent | ImageUrl,
+    reload_from_json: bool,
+):
+    """A computed identifier stays off the wire, even where `narrow_type` or a JSON reload stored it in `_identifier`."""
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=[item])])]
+    if reload_from_json:
+        messages = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    file_part = VercelAIAdapter.dump_messages(messages)[0].parts[0]
+    assert isinstance(file_part, FileUIPart)
+    assert file_part.provider_metadata is None
+
+
+@pytest.mark.parametrize(
+    'url',
+    [
+        pytest.param('data:application/pdf;base64,YWJj', id='binary'),
+        pytest.param('https://example.com/x.pdf', id='url'),
+    ],
+)
+@pytest.mark.parametrize(
+    'identifier',
+    [pytest.param({'not': 'a string'}, id='non-string'), pytest.param('', id='empty')],
+)
+def test_user_file_unusable_identifier_falls_back_to_computed(url: str, identifier: object):
+    """`provider_metadata` is client-supplied, so an empty or non-string identifier gives way to the computed one."""
+    ui_message = UIMessage(
+        id='msg1',
+        role='user',
+        parts=[
+            FileUIPart(
+                url=url,
+                media_type='application/pdf',
+                provider_metadata={'pydantic_ai': {'identifier': identifier}},
+            )
+        ],
+    )
+    [message] = VercelAIAdapter.load_messages([ui_message])
+    assert isinstance(message, ModelRequest)
+    part = message.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert not isinstance(part.content, str)
+    loaded = part.content[0]
+    assert isinstance(loaded, BinaryContent | DocumentUrl)
+    source = loaded.data if isinstance(loaded, BinaryContent) else loaded.url.encode()
+    assert loaded.identifier == hashlib.sha1(source, usedforsecurity=False).hexdigest()[:6]
+
+
 async def test_adapter_load_messages_file_url_without_metadata():
     """Test loading FileUIPart without provider_metadata falls back to URL-based detection."""
     ui_messages = [
@@ -8800,11 +8897,15 @@ async def test_load_messages_keeps_text_with_a_malformed_structured_content_payl
                         text='!',
                         provider_metadata={'pydantic_ai': {'structured_content': '[' * 100_000 + ']' * 100_000}},
                     ),
+                    TextUIPart(
+                        text='?',
+                        provider_metadata={'pydantic_ai': {'structured_content': '{"a": ' + '1' * 5_000 + '}'}},
+                    ),
                 ],
             )
         ]
     )
-    assert request.parts == [UserPromptPart(content=['Hi', 'there', 'you', 'all', '!'], timestamp=IsDatetime())]
+    assert request.parts == [UserPromptPart(content=['Hi', 'there', 'you', 'all', '!', '?'], timestamp=IsDatetime())]
 
 
 async def test_enqueued_structured_content_round_trips_through_stream():
@@ -8919,6 +9020,31 @@ async def test_adapter_load_messages_json_list_args():
     assert isinstance(tool_call, ToolCallPart)
     # Args should remain as string since it parses to a list, not a dict
     assert tool_call.args == '[1, 2, 3]'
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        pytest.param('[' * 100_000 + ']' * 100_000, id='deeply-nested'),
+        pytest.param('{"a": ' + '1' * 5_000 + '}', id='oversized-integer'),
+    ],
+)
+def test_adapter_load_messages_unparseable_json_args(args: str):
+    """Args nested past the recursion limit or holding an oversized integer are kept as the string, like non-JSON args."""
+    ui_message = UIMessage(
+        id='msg1',
+        role='assistant',
+        parts=[
+            DynamicToolOutputAvailablePart(
+                tool_name='my_tool', tool_call_id='tc1', input=args, output='result', state='output-available'
+            )
+        ],
+    )
+    messages = VercelAIAdapter.load_messages([ui_message])
+
+    tool_call = message(messages, ModelResponse).parts[0]
+    assert isinstance(tool_call, ToolCallPart)
+    assert tool_call.args == args
 
 
 async def test_adapter_dump_messages_with_cache_point():
@@ -14457,6 +14583,8 @@ async def _answer_ok(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIte
 @pytest.mark.parametrize(
     ('prompt', 'trim', 'efforts', 'added'),
     [
+        # The system prompt the UI adapter reinjects goes on the trimmed history's first request, a copy of the turn
+        # that only adds to it, so the turn is stored as the history holds it, with the system prompt.
         pytest.param('system_prompt', True, [None, None, None], SystemPromptPart, id='trimmed'),
         pytest.param('instructions', True, ['low', 'low', 'low'], ModelSettingsDeltaPart, id='trimmed-effort'),
         pytest.param('system_prompt', False, ['low', 'low', 'high'], ModelSettingsDeltaPart, id='effort-change'),
@@ -14502,6 +14630,9 @@ async def test_conversation_store_appends_a_turn_the_run_adds_parts_to(
     last_turn = conversation.messages[-2]
     assert isinstance(last_turn, ModelRequest)
     assert any(isinstance(part, added) for part in last_turn.parts) if added else len(last_turn.parts) == 1
+    head = conversation.messages[0]
+    assert isinstance(head, ModelRequest)
+    assert isinstance(head.parts[0], SystemPromptPart) == (prompt == 'system_prompt')
 
 
 @pytest.mark.parametrize(
