@@ -181,3 +181,14 @@ async def test_the_oldest_fork_points_make_room(monkeypatch: pytest.MonkeyPatch)
     )
     # The same answer to the same history is remembered once, at its latest transcript entry.
     assert fork_points(agent) == [('session-2', 'session-2/0')]
+
+
+async def test_an_answer_without_a_transcript_entry_isnt_a_fork_point():
+    agent, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    fake.untracked = True
+
+    first = await agent.run('Count.')
+    await agent.run('Again.', message_history=first.all_messages())
+
+    assert fork_points(agent) == []
+    assert forked_from(fake.sessions[1]) == (None, None)

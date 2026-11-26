@@ -18,7 +18,14 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, CLINotFoundError, ProcessError, Transport
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    CLIConnectionError,
+    CLINotFoundError,
+    ProcessError,
+    ResultError,
+    Transport,
+)
 
 from pydantic_ai.models.claude_agent import ClaudeAgentModel
 from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
@@ -105,6 +112,8 @@ class FakeClaudeCode:
     """There's no Claude Code executable to start."""
     transcripts: dict[str, list[str]] = field(default_factory=dict[str, list[str]])
     """The transcript each session has left, as its assistant messages' UUIDs, by session ID."""
+    untracked: bool = False
+    """Assistant messages come without their transcript entry, as no Claude Code this provider supports sends them."""
 
     def __call__(self, options: ClaudeAgentOptions) -> FakeSession:
         session = FakeSession(self, options, f'session-{len(self.sessions) + len(self.discoveries)}')
@@ -142,7 +151,8 @@ class FakeSession(Transport):
         if options.resume is not None:
             kept = self.script.transcripts.get(options.resume)
             if kept is None or options.resume_session_at not in kept:
-                raise ProcessError(f'No conversation found with session ID: {options.resume}', exit_code=1)
+                message = f'No conversation found with session ID: {options.resume}'
+                raise ResultError(message, {'subtype': 'error_during_execution', 'errors': [message]}, exit_code=1)
             assert options.fork_session
             # A fork starts its transcript with the one it forked, up to the message it forked at.
             self.script.transcripts[self.session_id] = kept[: kept.index(options.resume_session_at) + 1]
@@ -371,7 +381,7 @@ class FakeSession(Transport):
                 'message': assistant,
                 'parent_tool_use_id': None,
                 'session_id': self.session_id,
-                'uuid': transcript[-1],
+                'uuid': None if self.script.untracked else transcript[-1],
             }
         )
         self._send(

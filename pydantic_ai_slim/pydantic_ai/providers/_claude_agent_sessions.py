@@ -537,33 +537,19 @@ class _ForkPoint:
     message_uuid: str
 
 
-def _message_json(role: str, blocks: list[dict[str, JsonValue]]) -> bytes:
-    return json.dumps([role, blocks], sort_keys=True).encode() + b'\n'
+def _answer_digests(messages: Sequence[_Message]) -> list[tuple[int, str]]:
+    """Identifies each prefix of `messages` that ends with an answer, with its length, the way `continuation` compares.
 
-
-def _answer_digest(prefix: hashlib._Hash, answer: _Message) -> str:  # pyright: ignore[reportPrivateUsage]
-    """Identifies a history that ends with an answer, compared the way `_Session.continuation` compares them."""
-    hasher = prefix.copy()
-    hasher.update(_message_json(answer.role, _response_projection(answer.blocks())))
-    return hasher.hexdigest()
-
-
-def _history_digest(messages: Sequence[_Message]) -> str:
-    hasher = hashlib.sha256()
-    for message in messages[:-1]:
-        hasher.update(_message_json(message.role, message.blocks()))
-    return _answer_digest(hasher, messages[-1])
-
-
-def _answer_digests(messages: Sequence[_Message]) -> Iterator[tuple[int, str]]:
-    """The digest of each prefix of `messages` that ends with an answer, with its length, the longest first."""
-    hasher = hashlib.sha256()
+    The messages before the answer must match exactly; the answer itself, only in what a stored response keeps.
+    """
+    prefix = hashlib.sha256()
     digests: list[tuple[int, str]] = []
-    for index, message in enumerate(messages):
+    for length, message in enumerate(messages, start=1):
         if message.role == 'assistant':
-            digests.append((index + 1, _answer_digest(hasher, message)))
-        hasher.update(_message_json(message.role, message.blocks()))
-    return reversed(digests)
+            answer = json.dumps(_response_projection(message.blocks()), sort_keys=True).encode()
+            digests.append((length, hashlib.sha256(prefix.digest() + answer).hexdigest()))
+        prefix.update(json.dumps([message.role, message.blocks()], sort_keys=True).encode() + b'\n')
+    return digests
 
 
 @dataclass(eq=False)
@@ -585,7 +571,8 @@ class ClaudeCodeSessions:
     """
 
     def remember_fork_point(self, history: Sequence[_Message], point: _ForkPoint) -> None:
-        digest = _history_digest(history)
+        """Remember where a session's transcript ends with `history`'s last message, an answer."""
+        [*_, (_, digest)] = _answer_digests(history)
         self.fork_points.pop(digest, None)
         self.fork_points[digest] = point
         while len(self.fork_points) > _MAX_FORK_POINTS:
@@ -593,8 +580,9 @@ class ClaudeCodeSessions:
 
     def _fork_point(self, messages: Sequence[_Message]) -> tuple[_ForkPoint, int] | None:
         """The latest answer of the history one of this provider's sessions ended, and the history's length to it."""
-        for length, digest in _answer_digests(messages):
-            if (point := self.fork_points.get(digest)) is not None:
+        for length, digest in reversed(_answer_digests(messages)):
+            # A fork always gets a new message to answer.
+            if length < len(messages) and (point := self.fork_points.get(digest)) is not None:
                 return point, length
         return None
 
@@ -857,8 +845,9 @@ class _TurnStream(httpx2.AsyncByteStream):
         if isinstance(message, StreamEvent) and message.parent_tool_use_id is None:
             yield from self._event(message.event)
         elif isinstance(message, AssistantMessage):
-            # Claude Code's own tools are off, so no subagent's message comes, and each message has its entry.
-            if message.parent_tool_use_id is None and message.session_id and message.uuid:  # pragma: no branch
+            # Claude Code reports each message, with its transcript entry, before the response's `message_stop`, which
+            # ends this stream: the last one before it is where the turn's answer ends.
+            if message.parent_tool_use_id is None and message.session_id and message.uuid:
                 self._turn.fork_point = _ForkPoint(message.session_id, message.uuid)
         elif results := self._session.external_result(message):
             for block in results:
