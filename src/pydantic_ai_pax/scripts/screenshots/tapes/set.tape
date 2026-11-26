@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/set.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Type '/set' Enter
 Wait+Screen /model/
