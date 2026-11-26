@@ -492,7 +492,9 @@ def _http_error(
         and isinstance(message, str)
         and 'only supports interactions api' in message.lower()
     ):
-        hint = 'Use `GoogleInteractionsModel`, with the `google-interactions:` prefix, for this model.'
+        # The `google-interactions:` prefix uses the `google` provider, so another provider isn't pointed at it.
+        prefix = ', with the `google-interactions:` prefix,' if model_id_namespace == 'google' else ''
+        hint = f'Use `GoogleInteractionsModel`{prefix} for this model.'
     return _model_errors.google_status_error(
         model_name,
         status_code=status_code,
