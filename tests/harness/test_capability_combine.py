@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import CombinedCapability, Thinking
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Thinking
 from pydantic_ai.capabilities.abstract import (
     _combine_duplicate_capabilities as combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id as declares_default_id,  # pyright: ignore[reportPrivateUsage]
@@ -146,29 +146,39 @@ def test_capability_combine_policy_holds(name: str) -> None:
     policy.check(type(first).combine([first, second]))
 
 
-_CODER_LEAF_CLASS_NAMES = {type(leaf).__name__ for leaf in leaf_capabilities(Coder())}
-"""The classes of `Coder`'s own leaves, so a `Conjoins` case it carries is found by its name."""
+def _conjoins(capability_type: type[AbstractCapability[Any]]) -> Conjoins | None:
+    """The `Conjoins` policy `CASES` declares for `capability_type`, if any."""
+    case = CASES.get(capability_type.__name__)
+    return case.combine if case is not None and isinstance(case.combine, Conjoins) else None
+
+
+_CODER_CONJOINING_LEAF_TYPES = sorted(
+    {type(leaf) for leaf in leaf_capabilities(Coder()) if _conjoins(type(leaf)) is not None},
+    key=lambda capability_type: capability_type.__name__,
+)
+"""The classes of `Coder`'s own leaves that `CASES` declares `Conjoins`."""
 
 
 @pytest.mark.parametrize(
-    'name', sorted(n for n, c in CASES.items() if isinstance(c.combine, Conjoins) and n in _CODER_LEAF_CLASS_NAMES)
+    'capability_type', _CODER_CONJOINING_LEAF_TYPES, ids=lambda capability_type: capability_type.__name__
 )
-def test_a_conjoining_capability_beside_coder_narrows_coders_own(name: str) -> None:
+def test_a_conjoining_capability_beside_coder_narrows_coders_own(
+    capability_type: type[AbstractCapability[None]],
+) -> None:
     """One added beside `Coder` combines with `Coder`'s own, which then allows only what both allow.
 
     `Coder` states all of its own configuration, defaults included, so a field the added one leaves unset keeps
     `Coder`'s value rather than falling back to the class default. Until #14515, a `Shell` beside `Coder` instead
     added the `run_command` tools next to `Coder`'s unrestricted `shell`.
     """
-    shipped, _ = shipped_capability_types(HARNESS_CAPABILITY_PACKAGES)
-    policy = CASES[name].combine
-    assert isinstance(policy, Conjoins)
-    added, _ = policy.make(shipped[name])
+    policy = _conjoins(capability_type)
+    assert policy is not None
+    added, _ = policy.make(capability_type)
     coder = Coder()
-    [own] = [leaf for leaf in leaf_capabilities(coder) if type(leaf).__name__ == name]
+    [own] = [leaf for leaf in leaf_capabilities(coder) if isinstance(leaf, capability_type)]
 
     agent = Agent(TestModel(), deps_type=type(None), capabilities=[coder, added])
-    [merged] = [leaf for leaf in leaf_capabilities(agent.root_capability) if type(leaf).__name__ == name]
+    [merged] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, capability_type)]
     assert policy.allows(merged) == policy.allows(own) & policy.allows(added)
 
 
