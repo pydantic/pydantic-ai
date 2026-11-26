@@ -63,7 +63,7 @@ Detect support with a provider-prefixed **`ModelProfile` flag**. Where the featu
 - **SDK version** → probe the SDK shape and degrade with a `UserWarning` ([#5580](https://github.com/pydantic/pydantic-ai/pull/5580), botocore strict param);
 - **unknowable client-side** → defer to the runtime API error.
 
-**Unsupported → silently ignore** the setting (best-effort so as many requests as possible succeed), documented in the docstring — never hard-error. Conflicting user settings → `UserWarning`, not `UserError`. Profiles are layered: developer-keyed base + thin provider overlay resolved per family, with the provider overlay layering **last** ([#5934](https://github.com/pydantic/pydantic-ai/issues/5934), [#6231](https://github.com/pydantic/pydantic-ai/pull/6231)).
+**Unsupported → respond by who asked, per the response rule in `models/AGENTS.md`.** Degrade an unsupported unified setting (best-effort so as many requests as possible succeed) and document it in the docstring. Forward a provider-namespaced setting and let the API decide. Raise `UserError` before sending for an explicit capability the profile says is missing. A setting that conflicts with another follows the same rule. Other explicit config conflicts fail fast, per the config-conflict rule in `agent_docs/index.md`. Profiles are layered: developer-keyed base + thin provider overlay resolved per family, with the provider overlay layering **last** ([#5934](https://github.com/pydantic/pydantic-ai/issues/5934), [#6231](https://github.com/pydantic/pydantic-ai/pull/6231)).
 
 ## Step 3b — Where the wire mapping goes
 
@@ -90,7 +90,7 @@ The new public symbol's docstring lists **which providers support it** and how e
 
 1. **Reuse the cross-provider abstraction over a provider knob** — *"this maps to what the Anthropic and OpenAI APIs call `strict`… already represented on `ToolDefinition`… a more complete, consistent, 'doesn't require the user to do something special' implementation would be to automatically use this mode."* ([#5366](https://github.com/pydantic/pydantic-ai/issues/5366#issuecomment-4909047000))
 2. **Promote to a shared setting once several providers have the concept; keep per-provider overrides underneath.** ([#4926](https://github.com/pydantic/pydantic-ai/pull/4926#discussion_r3028738692))
-3. **Best-effort — silently ignore unsupported settings, don't error.** *"we typically do a 'best effort' so that as many requests as possible succeed."* ([#3438](https://github.com/pydantic/pydantic-ai/pull/3438#issuecomment-3553448605))
+3. **Best-effort — silently ignore unsupported unified settings, don't error.** A provider-namespaced setting goes to the API, per `models/AGENTS.md`. *"we typically do a 'best effort' so that as many requests as possible succeed."* ([#3438](https://github.com/pydantic/pydantic-ai/pull/3438#issuecomment-3553448605))
 4. **Hide provider complexity** — the feature should be useful to people who don't want to become experts in that provider's limitations.
 5. **Capability facts belong on `ModelProfile` flags, layered base + overlay.** ([#5934](https://github.com/pydantic/pydantic-ai/issues/5934#issuecomment-4858653237))
 6. **Type safety over repetition; no untyped kwargs.** ([#3457](https://github.com/pydantic/pydantic-ai/pull/3457#discussion_r2547862149))
