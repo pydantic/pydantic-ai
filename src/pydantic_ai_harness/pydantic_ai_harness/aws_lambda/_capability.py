@@ -36,6 +36,7 @@ from pydantic_ai.durable_exec import (
     DurableOperationBackend,
     ExternalEventError,
     ExternalEventWaiter,
+    conversation_id_from_run_id,
     external_event_scope,
 )
 from pydantic_ai.exceptions import UserError
@@ -133,6 +134,16 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return in_durable_context()
+
+    def get_default_run_id(self) -> str | None:
+        bridge = current_bridge()
+        # A run inside a step doesn't run again when the step is replayed, so it isn't counted.
+        if bridge is None or self.in_durable_unit:
+            return None
+        return bridge.next_run_id(self.name)
+
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
     def get_durable_operation_backend(self) -> DurableOperationBackend[StepConfig | None]:
         return AWSLambdaOperationBackend(

@@ -413,6 +413,29 @@ class TestToolResultSerialization:
 
 
 class TestCrashMidRunRetry:
+    def test_run_identity_is_stable_across_resume(self) -> None:
+        seen: list[tuple[str | None, str | None]] = []
+        agent = Agent(tool_then_text(), name='a', capabilities=[AWSLambdaDurability()])
+
+        @agent.tool
+        def act(ctx: RunContext[object]) -> str:
+            seen.append((ctx.run_id, ctx.conversation_id))
+            return 'sunny'
+
+        async def two_runs() -> list[tuple[str, str]]:
+            results = [await agent.run('go'), await agent.run('go')]
+            return [(result.run_id, result.conversation_id) for result in results]
+
+        first = FakeDurableContext()
+        before = run_durable(two_runs, context=first)
+        # Resume after the first run's tool step: it replays, so only the steps after it run again.
+        resumed = FakeDurableContext(journal=first.operations[:2])
+        after = run_durable(two_runs, context=resumed)
+
+        assert after == before
+        assert seen == [before[0], before[1], after[1]]
+        assert before[0] != before[1]
+
     def test_completed_model_step_is_reused_while_the_failed_tool_reruns(self) -> None:
         tool_calls: list[int] = []
 

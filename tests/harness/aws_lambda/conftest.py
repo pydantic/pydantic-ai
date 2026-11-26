@@ -47,6 +47,13 @@ class Operation:
     callback_config: CallbackConfig | None = None
 
 
+@dataclass
+class ExecutionState:
+    """Stand-in for the SDK's `ExecutionState`, which names the execution."""
+
+    durable_execution_arn: str = _ARN
+
+
 class StepContext:
     """Stand-in for the `StepContext` the SDK passes to a step body."""
 
@@ -75,6 +82,7 @@ class FakeDurableContext:
     """
 
     def __init__(self, journal: list[Operation] | None = None) -> None:
+        self.state = ExecutionState()
         self.journal: list[Operation] = journal or []
         self.operations: list[Operation] = []
         self.invoked: list[str | None] = []

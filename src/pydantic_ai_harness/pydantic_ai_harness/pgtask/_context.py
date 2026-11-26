@@ -39,6 +39,14 @@ class TaskSteps:
         name, occurrence = self._occurrence(name)
         await self.task.sleep_for(name, seconds, occurrence=occurrence)
 
+    def next_run_id(self, agent_name: str) -> str:
+        """A `run_id` for the next run of `agent_name` in this task, numbered in encounter order like a step."""
+        # `<` never survives step-name sanitizing, so the key can't collide with a step's.
+        key = f'<run>{agent_name}'
+        index = self.occurrences[key]
+        self.occurrences[key] += 1
+        return f'{self.task.id}:{agent_name}:{index}'
+
     def _occurrence(self, name: str) -> tuple[str, int]:
         name = _UNSUPPORTED_STEP_NAME_CHAR.sub('_', name)
         occurrence = self.occurrences[name]

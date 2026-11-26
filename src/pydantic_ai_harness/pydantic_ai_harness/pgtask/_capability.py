@@ -16,7 +16,7 @@ from typing import Any, ClassVar, Literal
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.capabilities import WrapRunHandler
-from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
+from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec, conversation_id_from_run_id
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -96,6 +96,16 @@ class PGTaskDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return current_task_steps() is not None
+
+    def get_default_run_id(self) -> str | None:
+        steps = current_task_steps()
+        # A run inside a step doesn't run again when the step is replayed, so it isn't counted.
+        if steps is None or self.in_durable_unit:
+            return None
+        return steps.next_run_id(self.name)
+
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
     def get_durable_operation_backend(self) -> PGTaskOperationBackend:
         return PGTaskOperationBackend(agent_name=self.name, default_model_id=self.default_model_id)

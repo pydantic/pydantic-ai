@@ -34,11 +34,12 @@ import functools
 import inspect
 import threading
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from queue import Queue
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast, overload, runtime_checkable
 
 import anyio
 
@@ -130,6 +131,17 @@ class _DurableParallelContext(DurableStepContext, Protocol):
         name: str | None = None,
         config: Any = None,
     ) -> Any: ...
+
+
+class _ExecutionState(Protocol):
+    durable_execution_arn: str
+
+
+@runtime_checkable
+class _ExecutionContext(Protocol):
+    """The part of `DurableContext` that names the execution, which a `DurableStepContext` need not have."""
+
+    state: _ExecutionState
 
 
 ContextT = TypeVar('ContextT', bound=DurableStepContext)
@@ -312,13 +324,26 @@ def _record(item: _Request, *, executed: bool) -> None:
 class StepBridge:
     """Runs durable steps on the handler thread on behalf of the agent loop."""
 
-    def __init__(self, context: DurableStepContext) -> None:
+    def __init__(self, context: DurableStepContext, *, execution_arn: str | None = None) -> None:
         self._context = context
         self._queue: Queue[_Request | _Finished[Any]] = Queue()
         # Serialises step requests so their queue order -- and so the order Lambda assigns
         # checkpoint identity in -- is first-come, rather than depending on how the event loop
         # interleaves concurrent callers (two MCP servers being listed in parallel, say).
         self._order = anyio.Lock(fast_acquire=True)
+        self._execution_arn = execution_arn
+        self._run_counts = Counter[str]()
+
+    def next_run_id(self, agent_name: str) -> str | None:
+        """A `run_id` for the next run of `agent_name` in this invocation, numbered in the order runs start.
+
+        `None` without an execution ARN, as in a parallel branch, whose runs can start in any order.
+        """
+        if self._execution_arn is None:
+            return None
+        index = self._run_counts[agent_name]
+        self._run_counts[agent_name] += 1
+        return f'{self._execution_arn}:{agent_name}:{index}'
 
     async def run_step(
         self,
@@ -755,7 +780,8 @@ def _run_durable_on_agent_loop(
     context: DurableStepContext,
     cancel_timeout: float,
 ) -> T:
-    bridge = StepBridge(context)
+    execution_arn = context.state.durable_execution_arn if isinstance(context, _ExecutionContext) else None
+    bridge = StepBridge(context, execution_arn=execution_arn)
     token = _active_bridge.set(bridge)
     loop = _agent_loop.get()
     run_context = contextvars.copy_context()

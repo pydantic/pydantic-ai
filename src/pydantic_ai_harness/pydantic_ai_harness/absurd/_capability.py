@@ -10,13 +10,22 @@ except ImportError as _import_error:
         'you can use the `absurd` optional group -- `pip install "pydantic-ai-harness[absurd]"`'
     ) from _import_error
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
+from weakref import WeakKeyDictionary
+
+from absurd_sdk import AsyncTaskContext
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.capabilities import WrapRunHandler
-from pydantic_ai.durable_exec import JSON_CODEC, BaseDurabilityCapability, DurabilityEngineSpec
+from pydantic_ai.durable_exec import (
+    JSON_CODEC,
+    BaseDurabilityCapability,
+    DurabilityEngineSpec,
+    conversation_id_from_run_id,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -27,6 +36,9 @@ from ._operation_backend import AbsurdOperationBackend
 AbsurdParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """Tool-call execution modes usable with Absurd: a subset of `ParallelExecutionMode`. `'parallel'` is
 excluded because it emits tool events in completion order, which can differ on replay."""
+
+_default_run_counts: WeakKeyDictionary[AsyncTaskContext, Counter[str]] = WeakKeyDictionary()
+"""Agent runs that drew a default `run_id`, per agent name, in each attempt of a task."""
 
 
 @dataclass(init=False)
@@ -95,6 +107,19 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return current_async_task_context() is not None
+
+    def get_default_run_id(self) -> str | None:
+        task = current_async_task_context()
+        # A run inside a step doesn't run again when the step is replayed, so it isn't counted.
+        if task is None or self.in_durable_unit:
+            return None
+        counts = _default_run_counts.setdefault(task, Counter())
+        index = counts[self.name]
+        counts[self.name] += 1
+        return f'{task.task_id}:{self.name}:{index}'
+
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
     def get_durable_operation_backend(self) -> AbsurdOperationBackend:
         return AbsurdOperationBackend(agent_name=self.name, default_model_id=self.default_model_id)
