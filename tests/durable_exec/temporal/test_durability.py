@@ -1925,6 +1925,75 @@ async def test_durability_expired_suspended_response_is_not_retried(allow_model_
     assert _expired_response_requests == ['GET /v1/responses/resp_expired']
 
 
+_expired_batch_status_checks: list[str] = []
+
+
+class _ExpiredBatchTestModel(SlowBatchTestModel):
+    async def batch_status(self, batch: Batch) -> Batch:
+        _expired_batch_status_checks.append(batch.id)
+        raise ModelHTTPError(404, self.model_name, body={'error': 'not found'})
+
+
+expired_batch_agent = Agent(
+    _ExpiredBatchTestModel(),
+    name='durability_expired_batch',
+    capabilities=[
+        BatchModelRequests(**FAST_BATCH_SETTINGS),
+        TemporalDurability(
+            model_activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        ),
+    ],
+)
+
+
+@workflow.defn
+class ExpiredBatchWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage]) -> str:
+        return (await expired_batch_agent.run(message_history=messages)).output
+
+
+async def test_durability_expired_batch_is_not_retried(client: Client):
+    """Resuming a run whose pending batch the provider no longer has fails the model activity on its first attempt:
+    every retry would check the same batch.
+    """
+    _expired_batch_status_checks.clear()
+    request = ModelRequest(parts=[UserPromptPart(content='go')])
+    # Batched before the run, for example by another process.
+    pending = (
+        await BatchPool(**FAST_BATCH_SETTINGS)
+        .wrap(SlowBatchTestModel())
+        .request([request], None, ModelRequestParameters())
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExpiredBatchWorkflow],
+        plugins=[AgentPlugin(expired_batch_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExpiredBatchWorkflow.run,
+                args=[[request, pending]],
+                id=ExpiredBatchWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert activity_error.retry_state == RetryState.NON_RETRYABLE_FAILURE
+    application_error = activity_error.cause
+    assert isinstance(application_error, ApplicationError)
+    (batch_id,) = _expired_batch_status_checks
+    assert application_error.type == 'SuspendedResponseExpired'
+    assert application_error.message == (
+        f"Batch {batch_id!r} could not be checked because 'test' no longer has it or its results: "
+        'providers keep them for a limited time, and only for the project or workspace that created them.'
+    )
+
+
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
 
 
