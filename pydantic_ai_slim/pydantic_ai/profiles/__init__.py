@@ -238,10 +238,13 @@ class ModelProfile(TypedDict, total=False):
 
     Set for gpt-oss, whose reference chat template keeps only the first system message as the developer message and
     drops the rest. Some of its hosts drop the `instructions` field too: Bedrock Mantle's Responses endpoint ignored
-    `gpt-oss-120b`'s instructions there, and followed them as one leading system message. To merge the leading system
-    messages on Chat Completions only, and leave Responses requests as they are, set
+    `gpt-oss-120b`'s instructions there, and followed them as one leading system message.
+
+    Use this key when the model only follows its first system message, on either API. When it's the backend's Chat
+    Completions endpoint that rejects more than one leading system message, whatever the model, and Responses
+    requests should stay as they are, set
     [`openai_chat_supports_multiple_system_messages=False`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_supports_multiple_system_messages]
-    instead, as `VLLMProvider` does, since some vLLM chat templates reject more than one leading system message.
+    instead, as `VLLMProvider` does for every model, since some vLLM chat templates reject more than one.
 
     Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
     [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
