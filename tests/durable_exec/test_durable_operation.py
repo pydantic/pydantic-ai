@@ -298,7 +298,7 @@ class SleepingJournalDurability(JournalDurability):
             raise self._error
 
 
-async def _ignore_events(ctx: RunContext[Any], stream: AsyncIterable[AgentStreamEvent]) -> None:
+async def _ignore_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
     async for _ in stream:
         pass
 
@@ -307,7 +307,7 @@ def _sleeping_agent(
     model: _DelayedContinuationModel, durability: SleepingJournalDurability, *, stream: bool
 ) -> Agent[None, str]:
     """An agent whose model requests stream when `stream` is set, as an event stream handler makes them."""
-    capabilities: list[AbstractCapability[Any]] = [ProcessEventStream(_ignore_events)] if stream else []
+    capabilities: list[AbstractCapability[None]] = [ProcessEventStream(_ignore_events)] if stream else []
     return Agent(model, name='sleeping', capabilities=[*capabilities, durability])
 
 
