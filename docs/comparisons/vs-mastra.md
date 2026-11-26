@@ -33,7 +33,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | [Observational Memory](https://mastra.ai/docs/memory/observational-memory) (background summaries of older messages); [`TokenLimiterProcessor`](https://mastra.ai/reference/processors/token-limiter-processor) to truncate | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes | [Your machine, SSH and 11 sandboxes](../workspace.md#supported-workspaces), with per-path [trust](../workspace-custom.md#workspace-authority) |
+| Code sandboxes | Yes | [Your machine, SSH and 11 sandboxes](../workspace.md#supported-workspaces), with per-path [authority](../workspace-custom.md#path-authority) |
 | Browser use | Yes | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research), and [computer use](../harness/computer-use.md) on a desktop in 11 sandboxes |
 
 ## FAQ

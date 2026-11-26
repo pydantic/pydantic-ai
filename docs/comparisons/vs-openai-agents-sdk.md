@@ -33,7 +33,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | Yes | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | Yes | [Your machine, SSH and 11 sandboxes](../workspace.md#supported-workspaces), with per-path [trust](../workspace-custom.md#workspace-authority) |
+| Code sandboxes | Yes | [Your machine, SSH and 11 sandboxes](../workspace.md#supported-workspaces), with per-path [authority](../workspace-custom.md#path-authority) |
 | Browser use | Bring your own `Computer` | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research), and [computer use](../harness/computer-use.md) with a ready desktop in 11 sandboxes, on OpenAI's native computer tool where the model supports it |
 
 ## FAQ
