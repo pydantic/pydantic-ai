@@ -853,8 +853,8 @@ async def _prompted_output(_messages: list[ModelMessage], _info: AgentInfo) -> A
 async def test_durable_stream_replay_prepares_a_fallback_candidates_prompted_output() -> None:
     """Behind a `FallbackModel` whose candidate resolves `'auto'` to Prompted Output, the replay takes its text as output.
 
-    The replay prepares its parameters with the candidate's mode, without the output tools Prompted Output doesn't
-    offer, and finds the same final result as a plain run.
+    The unit returns the candidate's mode, and the replay, prepared with it, finds the same final result as a plain run.
+    `test_durable_model_replays_a_resolved_output_mode_as_the_answering_model_sent_it` checks the parameters it gets.
     """
 
     async def output_and_final_result_tool_names(

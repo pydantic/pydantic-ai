@@ -87,6 +87,7 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.durable_exec._utils import (
     CountTokensResult,
     DurableModel,
+    ResolvedOutputModeResult,
     StreamedActivityResult,
     StreamedModelRequestResult,
 )
@@ -110,6 +111,7 @@ from pydantic_ai.messages import (
     _file_digest,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -1287,6 +1289,52 @@ async def test_durable_model_replays_streamed_segment_results() -> None:
             (recorded.events, response),
         ]
     )
+
+
+async def test_durable_model_replays_a_resolved_output_mode_as_the_answering_model_sent_it() -> None:
+    """A recorded `ResolvedOutputModeResult` replays against parameters prepared with its mode.
+
+    A `FallbackModel` prepares them as they are, so the replay applies what its candidate's `prepare_request` did on
+    resolving `'auto'`: Tool Output doesn't allow text, and Native and Prompted Output don't offer the output tools.
+    """
+    response = ModelResponse(parts=[TextPart('{"response": "Paris"}')])
+    results: list[StreamedModelRequestResult] = [
+        ResolvedOutputModeResult(response=response, output_mode='tool'),
+        ResolvedOutputModeResult(response=response, output_mode='prompted'),
+    ]
+
+    async def stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
+        return results.pop(0)
+
+    async def unused_request(request: ModelRequestContext) -> ModelResponse: ...  # pragma: no branch
+
+    async def unused_compact(  # pragma: no branch
+        request: ModelRequestContext, instructions: str | None
+    ) -> ModelResponse: ...
+
+    async def unused_cancel(response: ModelResponse) -> None: ...  # pragma: no branch
+
+    async def unused_count(request: ModelRequestContext) -> RequestUsage: ...  # pragma: no branch
+
+    model = DurableModel(
+        FallbackModel(TestModel()),
+        request_segment=unused_request,
+        request_stream_segment=stream_segment,
+        compact_messages_segment=unused_compact,
+        cancel_suspended_response_segment=unused_cancel,
+        count_tokens_segment=unused_count,
+    )
+    parameters = ModelRequestParameters(
+        output_mode='auto', output_tools=[ToolDefinition(name='final_result', kind='output')], allow_text_output=True
+    )
+
+    replayed: list[tuple[str, bool, list[str]]] = []
+    for _ in range(2):
+        async with model.request_stream([], None, parameters) as stream:
+            prepared = stream.model_request_parameters
+            replayed.append((prepared.output_mode, prepared.allow_text_output, [t.name for t in prepared.output_tools]))
+
+    assert replayed == snapshot([('tool', False, ['final_result']), ('prompted', True, [])])
 
 
 async def test_base_durable_model_compact_messages_dispatches_bound_operation() -> None:
