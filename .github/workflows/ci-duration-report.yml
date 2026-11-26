@@ -3,14 +3,12 @@ name: CI Duration Report
 
 # Label-triggered CI duration report. Adding `trigger:ci-duration-report` to a
 # PR compares that PR's latest CI run against recent successful `main` and PR
-# runs, then updates one sticky comment on the PR. This workflow never checks
-# out or executes PR head code.
+# runs, then updates one sticky comment on the PR. Only a user with write access
+# can request it, only on a same-repository PR, and this workflow never checks out
+# or executes PR head code.
 
 on:
-  # zizmor: ignore[dangerous-triggers] -- pull_request_target is required so fork PRs can
-  # receive comments from a base-repo token. The workflow is gated on a maintainer-applied
-  # label and only reads GitHub Actions metadata.
-  pull_request_target:
+  pull_request:
     types: [labeled]
 
 permissions: {}
@@ -21,7 +19,7 @@ concurrency:
 
 jobs:
   report:
-    if: github.event.label.name == 'trigger:ci-duration-report'
+    if: github.event.label.name == 'trigger:ci-duration-report' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -31,13 +29,35 @@ jobs:
       pull-requests: read
 
     steps:
+      # Triage, below write, can add labels too. `.permission` maps maintain and custom
+      # roles onto their base level; `.role_name` would not.
+      - name: Verify a maintainer requested the report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          permission=$(gh api "repos/${REPO}/collaborators/${SENDER}/permission" --jq .permission)
+          case "$permission" in
+            admin|write) ;;
+            *)
+              echo "${SENDER} does not have permission to request a CI duration report" >&2
+              exit 1
+              ;;
+          esac
+
+      # Under `pull_request` the default checkout is the PR's merge commit; run the
+      # default branch's script instead.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      # `auto` restores a cache on `pull_request`, from a scope the PR's own `CI` run can write.
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           python-version: "3.12"
+          enable-cache: false
 
       - name: Create or update CI duration report
         run: uv run --no-project --with certifi python .github/scripts/ci_duration.py report --poll-seconds 600
