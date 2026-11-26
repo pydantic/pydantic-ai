@@ -53,8 +53,12 @@ class OpenSandboxProvider:
     title: str = 'OpenSandbox'
     working_dir: str = '/workspace'
     token_in_sandbox: bool = False
+    desktop_at_create: bool = False
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        if desktop:
+            # Its desktop installs its programs with apt, which the GitHub-only network policy blocks.
+            return 'OpenSandbox has no desktop for /computer-use. Use another provider, such as e2b or daytona.'
         if find_spec('opensandbox') is None:
             return "OpenSandbox support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[opensandbox]'."
         if saved_key(DOMAIN_NAME) is None:
@@ -78,7 +82,10 @@ class OpenSandboxProvider:
             protocol = 'http' if urlsplit(f'//{domain}').hostname in LOOPBACK_HOSTS else 'https'
         return ConnectionConfig(domain=domain or None, api_key=saved_key(KEY_NAME), protocol=protocol)
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
+        del desktop  # `missing` refuses a desktop.
         from opensandbox.models.sandboxes import (
             Credential,
             CredentialAuth,
@@ -142,9 +149,10 @@ class OpenSandboxProvider:
             raise
         return WorkspaceRef(provider=self.name, id=sandbox.id), backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
 
+        del desktop
         return OpenSandboxBackend(ref=ref, connection=self._connection(), working_dir=self.working_dir, env=SANDBOX_ENV)
 
     async def close(self, backend: SandboxBackend) -> None:
