@@ -25,19 +25,18 @@ def wrap_in_legacy_durable_agent(wrapper: LegacyDurableWrapper, agent: Agent[Non
     """Wrap `agent` in `wrapper`, skipping the test when the engine's optional extra is not installed."""
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', PydanticAIDeprecationWarning)
-        match wrapper:
-            case 'TemporalAgent':
-                pytest.importorskip('temporalio')
-                from pydantic_ai.durable_exec.temporal import TemporalAgent  # needs the temporal extra
+        if wrapper == 'TemporalAgent':
+            pytest.importorskip('temporalio')
+            from pydantic_ai.durable_exec.temporal import TemporalAgent  # needs the temporal extra
 
-                TemporalAgent(agent)  # pyright: ignore[reportDeprecated]
-            case 'DBOSAgent':
-                pytest.importorskip('dbos')
-                from pydantic_ai.durable_exec.dbos import DBOSAgent  # needs the dbos extra
+            TemporalAgent(agent)  # pyright: ignore[reportDeprecated]
+        elif wrapper == 'DBOSAgent':
+            pytest.importorskip('dbos')
+            from pydantic_ai.durable_exec.dbos import DBOSAgent  # needs the dbos extra
 
-                DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
-            case 'PrefectAgent':
-                pytest.importorskip('prefect')
-                from pydantic_ai.durable_exec.prefect import PrefectAgent  # needs the prefect extra
+            DBOSAgent(agent)  # pyright: ignore[reportDeprecated]
+        else:
+            pytest.importorskip('prefect')
+            from pydantic_ai.durable_exec.prefect import PrefectAgent  # needs the prefect extra
 
-                PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+            PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
