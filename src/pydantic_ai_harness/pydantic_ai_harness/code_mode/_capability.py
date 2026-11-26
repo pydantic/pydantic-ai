@@ -200,6 +200,17 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
     """
 
+    allow_final_output: bool = False
+    """Let sandboxed code submit the agent run's final output, so the model doesn't have to copy a computed value into its output.
+
+    The sandbox gets one function per output type, named and typed like the output tools listed in
+    [`RunContext.output_tools`][pydantic_ai.tools.RunContext.output_tools], in every output mode. A call
+    submits through [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output] and stops the code: an
+    accepted output ends the run once the `run_code` call returns, and a rejected one answers `run_code` with the
+    validation errors and uses up an output retry, keeping the REPL's variables so the model can fix the value
+    and call again.
+    """
+
     eager: bool = False
     """Execute complete streamed statements before the `run_code` call finishes.
 
@@ -326,6 +337,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         speculate: Sequence[str] | Literal['declared'] | None = None,
         monty_sandbox: str | None = None,
         dynamic_catalog: bool = True,
+        allow_final_output: bool = False,
         **kwargs: Any,
     ) -> CodeMode[Any]:
         """Build from an agent spec, naming the fields a spec can express.
@@ -349,6 +361,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             speculate=speculate,
             monty_sandbox=monty_sandbox,
             dynamic_catalog=dynamic_catalog,
+            allow_final_output=allow_final_output,
             **kwargs,
         )
 
@@ -398,6 +411,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 os_policy=self.os_policy,
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
+                allow_final_output=self.allow_final_output,
                 capability=self,
                 speculation=self._speculation,
             )
@@ -413,6 +427,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             os_policy=self.os_policy,
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
+            allow_final_output=self.allow_final_output,
             capability=self,
             speculation=self._speculation,
         )

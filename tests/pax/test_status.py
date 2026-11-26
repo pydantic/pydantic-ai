@@ -40,7 +40,7 @@ from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.rendering import theme
-from pydantic_ai_pax.ui.rendering.status import Status, StatusLine
+from pydantic_ai_pax.ui.rendering.status import LinkText, Status, StatusLine, StatusLink
 from pydantic_ai_pax.ui.rendering.theme import LITHIUM, MUTED, THINKING, WARNING, sgr
 from tests.pax.test_app_edges import inputs
 
@@ -606,6 +606,22 @@ def test_plugin_segments_are_appended_and_empties_are_skipped() -> None:
     assert ''.join(text for _, text in status.toolbar()) == status.text()
     status.context_alert = True
     assert ''.join(text for _, text in status.toolbar()) == status.text()
+
+
+def test_a_link_segment_shows_its_text_and_keeps_its_url_apart() -> None:
+    status = Status(
+        model='m',
+        fields=lambda: ('plugins',),
+        status_segments=(
+            lambda: 'docker sandbox',
+            lambda: StatusLink(text='watch live', url='https://desktop.example/?token=t\x1b'),
+            lambda: 'last',
+        ),
+    )
+    assert status.text() == 'docker sandbox | watch live ↗ | last'
+    assert status.toolbar() == [(MUTED, 'docker sandbox | '), (MUTED, 'watch live ↗'), (MUTED, ' | last')]
+    [link] = [text for _, text in status.toolbar() if isinstance(text, LinkText)]
+    assert link.url == 'https://desktop.example/?token=t?', 'a URL cannot carry terminal controls'
 
 
 def test_a_failing_segment_reports_itself_instead_of_breaking_the_row() -> None:

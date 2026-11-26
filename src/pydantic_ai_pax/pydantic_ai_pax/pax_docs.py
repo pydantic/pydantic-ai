@@ -44,6 +44,7 @@ _HARNESS_DOCS = (
     'code_mode',
     'coder',
     'compaction',
+    'computer_use',
     'day_ai',
     'daytona_sandbox',
     'deny_unanswered',
