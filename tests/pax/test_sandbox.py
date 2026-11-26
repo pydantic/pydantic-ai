@@ -23,6 +23,7 @@ from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal, cast
 
 import anyio
@@ -1664,7 +1665,6 @@ class FakeDaytonaSecrets:
     numbers: Iterator[int] = field(default_factory=lambda: itertools.count(1))
 
     async def create(self, params: object) -> object:
-        from types import SimpleNamespace
 
         number = next(self.numbers)
         name, value, hosts = getattr(params, 'name'), getattr(params, 'value'), getattr(params, 'hosts')
@@ -1766,7 +1766,6 @@ class TestDaytona:
         # Daytona adds a desktop to a sandbox already running, so a reopen asked for one has a display.
         with_desktop = provider.reopen(ref, desktop=True)
         assert isinstance(with_desktop, SupportsDisplay) and with_desktop.display is not None
-        from types import SimpleNamespace
 
         # `watch live` gets a new signed link to the desktop's noVNC page, after starting the desktop.
         signed: list[tuple[int, int | None]] = []

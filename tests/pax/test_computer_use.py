@@ -212,7 +212,7 @@ async def test_computer_use_end_to_end_toggle_and_resume(
     await session.prompt('local turn')
     assert 'computer' not in seen_tools[-1]
 
-    # Arm `/computer-use`, then start `/sandbox fake` — `/sandbox` creates it with `desktop=True`.
+    # Arm `/computer-use`, then start `/sandbox fake`: `/sandbox` creates it with `desktop=True`.
     session.replace_messages([])
     armed = await plugin.computer_use_command([])
     assert 'Computer use is on' in armed

@@ -146,7 +146,7 @@ class DaytonaProvider:
         assert isinstance(backend, DaytonaSandboxBackend) and backend.display is not None
         await backend.display.display_size()  # Starts the desktop, which otherwise waits for the first screen call.
         sandbox = await backend.get_sandbox()
-        signed = await sandbox.create_signed_preview_url(DESKTOP_PORT, expires_in_seconds=DESKTOP_LINK_SECONDS)
+        signed = await sandbox.create_signed_preview_url(DESKTOP_PORT, expires_in_seconds=self.desktop_link_seconds)
         return f'{signed.url.rstrip("/")}/vnc.html?autoconnect=1'
 
     async def close(self, backend: SandboxBackend) -> None:
