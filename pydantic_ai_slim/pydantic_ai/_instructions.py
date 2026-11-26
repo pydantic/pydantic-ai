@@ -4,7 +4,9 @@ import warnings
 from collections import Counter
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Generic, TypeGuard
+from typing import TYPE_CHECKING, Any, Generic, TypeGuard
+
+from pydantic.alias_generators import to_snake
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -13,6 +15,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _UNSTATED_LOADS_KEY,  # pyright: ignore[reportPrivateUsage]
+    Authority,
     CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
@@ -495,6 +498,9 @@ class LoadedInstructionValues:
     _changed: set[str] = field(default_factory=set[str], repr=False)
     """The capabilities whose value an instruction change delivered, rather than their load return."""
 
+    _authorities: dict[str, Authority] = field(default_factory=dict[str, Authority], repr=False)
+    """The authority of each loaded capability's block as an instruction change last delivered it."""
+
     _unstated: dict[str, int] = field(default_factory=dict[str, int], repr=False)
     """The index of the message holding each load whose instructions nothing has stated since, as `of` folds them."""
 
@@ -522,6 +528,10 @@ class LoadedInstructionValues:
                     if loaded.values[capability_id] is None and _holds_unstated_loads(messages[index]):
                         loaded._unstated[capability_id] = index
         return loaded
+
+    def authority_of(self, capability_id: str) -> Authority:
+        """The authority `capability_id`'s block was last stated with, `'operator'` if no instruction change stated it."""
+        return self._authorities.get(capability_id, 'operator') if capability_id in self._changed else 'operator'
 
     def unstated_load_index(self, capability_id: str) -> int | None:
         """The index of the message holding `capability_id`'s load, if nothing has stated its instructions since.
@@ -569,6 +579,7 @@ class LoadedInstructionValues:
         capability_id = _changed_capability_id(change)
         previous = self.values[capability_id] if capability_id in self._changed else None
         self.values[capability_id] = change.content
+        self._authorities[capability_id] = change.authority
         self._changed.add(capability_id)
         self._unstated.pop(capability_id, None)
         return previous
@@ -639,6 +650,7 @@ def update_loaded_instruction_history(
     *,
     history: list[ModelMessage],
     keep_without_parts: Collection[str] = (),
+    authorities: Mapping[str, Authority] | None = None,
 ) -> None:
     """Record changes to loaded capabilities' instructions in history.
 
@@ -659,9 +671,12 @@ def update_loaded_instruction_history(
     A loaded block with no parts at all is withdrawn too, because the capability's instructions resolved to
     nothing or it is no longer configured, unless it's in `keep_without_parts`: a capability that's eager
     again, whose instructions are back in the prefix.
+
+    Each change carries its capability's authority from `authorities`, `'operator'` for one it doesn't list: below
+    `'operator'`, the block is rendered as framed data, as an eager capability's below it is (`LoweredInstructions`).
     """
     changes, restored = _loaded_instruction_changes(
-        messages, _loaded_texts(parts), targets, keep_without_parts=keep_without_parts
+        messages, _loaded_texts(parts), targets, keep_without_parts=keep_without_parts, authorities=authorities or {}
     )
     for index, statements in restored.items():
         _restore_statements(messages, history, index, statements)
@@ -676,6 +691,7 @@ def _loaded_instruction_changes(
     targets: Sequence[ModelRequest],
     *,
     keep_without_parts: Collection[str],
+    authorities: Mapping[str, Authority],
 ) -> tuple[list[InstructionDeltaPart], dict[int, list[InstructionDeltaPart]]]:
     """What `update_loaded_instruction_history` records, given each loaded block's `current` text.
 
@@ -689,9 +705,13 @@ def _loaded_instruction_changes(
         on_target = index is not None and any(messages[index] is target for target in targets)
         if capability_id not in current and capability_id in keep_without_parts:
             continue
-        if (content := current.get(capability_id)) == previous:
+        authority = authorities.get(capability_id, 'operator')
+        # Stated again when only its authority changed, so the model reads it at the authority it has now.
+        if (content := current.get(capability_id)) == previous and (
+            content is None or authority == loaded.authority_of(capability_id)
+        ):
             continue
-        change = _instruction_change(loaded_instruction_id(capability_id), previous, content)
+        change = _instruction_change(loaded_instruction_id(capability_id), previous, content, authority=authority)
         if index is not None and not on_target:
             restored.setdefault(index, []).append(change)
         else:
@@ -726,6 +746,116 @@ def _restore_statements(
             history[position] = restored
 
 
+@dataclass
+class LoweredInstructions:
+    """Each lowered capability's instructions as the model last received them, and the authority they carried.
+
+    A capability whose authority is below `'operator'`, lowered by
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority] or its class's `authority`, has its
+    instructions, its own and its toolsets', delivered as one block, `capability:<id>`, that never enters the prefix.
+    Like a loaded capability's block (see `LoadedInstructionValues`), every statement of it is an
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] in history, carrying the block's authority:
+    the first on the request it first applies to, and one for each change since. Only the parts in the
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] are folded, so a compaction ends every
+    block, and the next request states it again.
+    """
+
+    values: dict[InstructionId, tuple[str, Authority]] = field(
+        default_factory=dict[InstructionId, tuple[str, Authority]]
+    )
+    """Each block's text and authority, by id. A withdrawn block isn't in it."""
+
+    @classmethod
+    def of(cls, messages: Sequence[ModelMessage]) -> LoweredInstructions:
+        """The values at the end of `messages`."""
+        lowered = cls()
+        for _, part in loaded_window_parts(messages):
+            if is_lowered_statement(part):
+                lowered.apply(part)
+        return lowered
+
+    def apply(self, change: InstructionDeltaPart) -> bool:
+        """Fold in a statement `is_lowered_statement` accepted, returning whether an earlier one was in effect."""
+        assert change.id is not None
+        restated = self.values.pop(change.id, None) is not None
+        if change.content is not None:
+            self.values[change.id] = (change.content, change.authority)
+        return restated
+
+
+def lowered_block_id(capability: AbstractCapability[Any]) -> str:
+    """The key a capability below `'operator'` authority states its instructions under; see `lowered_instruction_id`.
+
+    Its `id`, or for a capability without one, its class's name in snake case after a `:`, which no `id` can contain:
+    stable across runs, unlike the key a run registers such a capability under, and never the key of a capability with
+    an `id`, loaded or lowered. Capabilities of one class without an `id` share the block.
+    """
+    return capability.id if capability.id is not None else f':{to_snake(type(capability).__name__)}'
+
+
+def lowered_instruction_id(block_id: str) -> InstructionId:
+    """The id of the block a capability below `'operator'` authority states its instructions as.
+
+    `capability:<id>` for a capability with an `id`, and `capability::<snake_class_name>` for one without, which renders
+    and loads back as the same id.
+    """
+    if block_id.startswith(':'):
+        return InstructionId(CapabilityInstructionSource(''), name=block_id[1:])
+    return loaded_instruction_id(block_id)
+
+
+def is_lowered_statement(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
+    """Whether `part` states a block of instructions below `'operator'` authority, which never enters the prefix."""
+    return isinstance(part, InstructionDeltaPart) and part.authority != 'operator' and part.id is not None
+
+
+def update_lowered_instruction_history(
+    messages: Sequence[ModelMessage],
+    parts: Sequence[InstructionPart],
+    authorities: Mapping[str, Authority],
+    targets: Sequence[ModelRequest],
+    *,
+    loaded: Collection[str] = (),
+) -> None:
+    """Record changes to the instructions of capabilities below `'operator'` authority on `targets`.
+
+    `authorities` are those capabilities, by the id their block is keyed beneath, and `parts` the instruction parts
+    this request resolved, after the `before_model_request` hooks; parts of other blocks are ignored. A block whose
+    joined text or authority differs from what the model last received is stated again, at the authority it has now,
+    and one in history that resolved to nothing, or whose capability is no longer lowered or configured, is withdrawn.
+    A block a load in history owns, `loaded`, is left to `update_loaded_instruction_history`, which records it at its
+    capability's authority too.
+    """
+    owned: dict[str, Authority] = {
+        capability_id: authority for capability_id, authority in authorities.items() if capability_id not in loaded
+    }
+    current: dict[InstructionId, tuple[str, Authority]] = {
+        lowered_instruction_id(capability_id): (text, owned[capability_id])
+        for capability_id, text in _loaded_texts(
+            [part for part in parts if loaded_part_capability_id(part) in owned]
+        ).items()
+        if text is not None
+    }
+    recorded = {
+        instruction_id: value
+        for instruction_id, value in LoweredInstructions.of(messages).values.items()
+        if _loaded_block_capability_id(instruction_id) not in loaded
+    }
+    changes = [
+        InstructionDeltaPart(id=instruction_id, content=content, authority=authority)
+        for instruction_id, (content, authority) in current.items()
+        if recorded.get(instruction_id) != (content, authority)
+    ]
+    changes.extend(
+        InstructionDeltaPart(id=instruction_id, content=None, authority=authority)
+        for instruction_id, (_, authority) in recorded.items()
+        if instruction_id not in current
+    )
+    if changes:
+        for target in targets:
+            target.parts = [*target.parts, *changes]
+
+
 def _recorded_instruction_values(
     messages: Sequence[ModelMessage], baseline: InstructionBaselinePart
 ) -> dict[InstructionId, str | None] | None:
@@ -745,7 +875,8 @@ def _recorded_instruction_values(
             # A loaded capability's block is delivered through history, not the prefix: its changes are no part of
             # this window, and leaving it out of `current` is no withdrawal.
             loaded.apply(part)
-        elif in_window and isinstance(part, InstructionDeltaPart):
+        elif in_window and isinstance(part, InstructionDeltaPart) and part.authority == 'operator':
+            # A block below operator authority is delivered through history, never the prefix (`LoweredInstructions`).
             if part.id is None:
                 return None
             values.apply(part)
@@ -979,9 +1110,14 @@ def _record_baseline(targets: Sequence[ModelRequest], instructions: list[Instruc
 
 
 def _instruction_change(
-    instruction_id: InstructionId, previous: str | None, content: str | None
+    instruction_id: InstructionId, previous: str | None, content: str | None, *, authority: Authority = 'operator'
 ) -> InstructionDeltaPart:
-    """Record a block's change, with the hash of the text it replaces so a model can send it as a diff."""
+    """Record a block's change, with the hash of the text it replaces so a model can send it as a diff.
+
+    A change below `'operator'` is rendered as framed data, never as a diff, so it records no hash.
+    """
+    if authority != 'operator':
+        return InstructionDeltaPart(id=instruction_id, content=content, authority=authority)
     base_hash = _instruction_text_hash(previous) if previous is not None and content is not None else None
     return InstructionDeltaPart(id=instruction_id, content=content, base_hash=base_hash)
 
