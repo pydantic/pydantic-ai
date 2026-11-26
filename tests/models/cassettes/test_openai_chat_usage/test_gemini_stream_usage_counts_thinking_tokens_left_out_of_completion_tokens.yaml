@@ -1,0 +1,55 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "162"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.5-flash
+        stream: true
+        messages:
+        - role: user
+          content: Write three short sentences about tea.
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=3678
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: text
+      content: |+
+        data: {"choices":[{"delta":{"content":"Tea is a comforting drink enjoyed all around the world. It is made by steeping fragrant","role":"assistant"},"index":0}],"created":1795546836,"id":"0d4Fa-vZGO6LkdUPqfuc2AQ","model":"gemini-3.5-flash","object":"chat.completion.chunk","usage":{"completion_tokens":18,"prompt_tokens":8,"total_tokens":444}}
+
+        data: {"choices":[{"delta":{"content":" leaves in hot water. A warm cup brings a moments of peace to a busy day.","role":"assistant"},"index":0}],"created":1795546836,"id":"0d4Fa-vZGO6LkdUPqfuc2AQ","model":"gemini-3.5-flash","object":"chat.completion.chunk","usage":{"completion_tokens":36,"prompt_tokens":8,"total_tokens":462}}
+
+        data: {"choices":[{"delta":{"extra_content":{"google":{"thought_signature":"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"}},"role":"assistant"},"finish_reason":"stop","index":0}],"created":1795546836,"id":"0d4Fa-vZGO6LkdUPqfuc2AQ","model":"gemini-3.5-flash","object":"chat.completion.chunk","usage":{"completion_tokens":36,"prompt_tokens":8,"total_tokens":462}}
+
+        data: [DONE]
+
+  recorded_at: 2026-11-24T19:00:36.891177+00:00

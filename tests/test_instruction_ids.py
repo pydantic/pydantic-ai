@@ -1331,6 +1331,25 @@ def test_resolved_id_serialization_round_trip(id: InstructionId, serialized: str
     assert instruction_part_ta.validate_python(payload) == part
 
 
+@pytest.mark.parametrize(
+    'id',
+    [
+        agent_instruction_id(),
+        agent_instruction_id('persona'),
+        InstructionId(RunInstructionSource(), name='task'),
+        toolset_instruction_id('weather'),
+        capability_instruction_id('weather'),
+        capability_instruction_id('weather', 'limits'),
+    ],
+)
+def test_id_python_mode_round_trip_keeps_its_source(id: InstructionId):
+    # Outside JSON mode an id is dumped as an object, so the source's `kind` is what tells sources with the same
+    # fields apart: a capability from a toolset, a run from the agent.
+    ta = TypeAdapter(InstructionId)
+    assert ta.validate_python(ta.dump_python(id)) == id
+    assert ta.validate_python(id) == id
+
+
 def test_unresolved_and_missing_id_serialization_round_trip():
     # A name whose source has no identity of its own travels as a name, with no key beside it.
     unresolved = InstructionPart(content='Instructions.', name='limits')
