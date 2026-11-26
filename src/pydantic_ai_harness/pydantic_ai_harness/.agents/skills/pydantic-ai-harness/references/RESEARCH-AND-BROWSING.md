@@ -368,6 +368,7 @@ Playwright routes service-worker requests through the guards unless
 `PLAYWRIGHT_DISABLE_SERVICE_WORKER_NETWORK` is set. Connections opened before attachment bypass
 them, as does a new WebSocket opened through the native `WebSocket` constructor that script running
 before attachment kept, and a page loaded before attachment can register a worker until it navigates.
+Under an enforced policy, pages lose WebRTC, WebTransport, `WebSocketStream` and FedCM, whose traffic no guard sees; workers, isolated sandboxed iframes and documents loaded before attachment keep some of them.
 
 `EgressPolicy` (from `pydantic_ai_harness.playwright`) fields: `allowed_domains=None`,
 `blocked_domains=None`, `block_private_addresses=True`, `include_subdomains=True`,
@@ -482,6 +483,10 @@ Gotchas:
   `pydantic_ai.computer_use`), `ctx.tool_call_approved` is false, and an action in the validated `args['actions']`
   isn't `screenshot`, `zoom`, `wait` or `cursor_position`. Don't test `isinstance(call, ComputerCallPart)`: a call
   whose arguments a hook repaired arrives as a plain `ToolCallPart`.
+- On the Gemini API, a call Gemini flags as needing confirmation raises `ApprovalRequired` in the tool itself. Resolve
+  it with a `HandleDeferredToolCalls` capability, or add `DeferredToolRequests` to `output_type` and resume the run;
+  with neither, the run fails at the first flagged call. Streamed runs (`run_stream()`, the UI adapters, an event
+  stream handler) get no flags from Google, so they never pause.
 - Screenshots are sent at the screen's full size. A 1280x800 screen suits every model.
 - If the screen changes size, a call that gives positions is refused until the model takes a new screenshot.
 - When one `computer` call in a model response fails, the response's later `computer` calls don't run, and the model

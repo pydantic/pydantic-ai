@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -116,13 +116,16 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.messages import (
+    AgentInstructionSource,
     CapabilitySource,
     DataCapabilityPart,
     InstructionCapabilityPart,
     LoadCapabilityReturnPart,
     OperatorSource,
     OperatorText,
+    RunInstructionSource,
     ToolResultSource,
+    ToolsetInstructionSource,
 )
 from pydantic_ai.models import (
     Model,
@@ -158,11 +161,12 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 try:
     from prefect import flow, task
-    from prefect.cache_policies import INPUTS
+    from prefect.cache_policies import INPUTS, NO_CACHE
     from prefect.context import FlowRunContext, TaskRunContext
     from prefect.utilities.hashing import hash_objects
 
@@ -194,11 +198,12 @@ except ImportError:  # pragma: lax no cover
 
 try:
     from fastmcp import FastMCP
-    from fastmcp.client.transports import StdioTransport
+    from fastmcp.client.transports import FastMCPTransport, StdioTransport
     from fastmcp.server.dependencies import get_http_request
 
     from pydantic_ai._mcp_compat import MCP_SDK_V2
     from pydantic_ai.mcp import MCPToolset
+    from tests.mcp_server import mcp as test_mcp_server
     from tests.mcp_task_server import TASK_SERVER_UNAVAILABLE
 except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -223,6 +228,7 @@ from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 from .override_rebind_cases import REBIND_CASES, RebindCase
+from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 from .preamble_text import RunAndStreamResult, plain_run_and_stream, preamble_text_agents, run_and_stream
 from .span_utils import drop_fastmcp_client_spans
 
@@ -593,6 +599,48 @@ async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> No
         return (await agent.run('Hello Prefect')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+@pytest.mark.parametrize('where', ['tool-task', 'user-task', 'flow-code'])
+async def test_prefect_durability_submit_output_needs_the_tool_in_flow_code(where: str) -> None:
+    """`submit_output()` is refused in a task, whose recorded result a retry replays, and works in flow code.
+
+    That includes a task the tool's own code runs, not only the one the agent runs the tool in.
+    """
+
+    @task(cache_policy=NO_CACHE)
+    async def submit_in_a_task(ctx: RunContext[None]) -> None:
+        await ctx.submit_output('final_result', {'response': 'submitted'})
+
+    async def finish(ctx: RunContext[None]) -> str:
+        if where == 'user-task':
+            await submit_in_a_task(ctx)
+        else:
+            await ctx.submit_output('final_result', {'response': 'submitted'})
+        return 'done'
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[ToolCallPart('finish', {})])
+
+    toolset = FunctionToolset[None](id='submit-tools')
+    toolset.add_function(finish, metadata=None if where == 'tool-task' else {'prefect': False})
+    agent = Agent(
+        FunctionModel(model),
+        name=f'prefect_durability_submit_output_{where}',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[PrefectDurability()],
+    )
+
+    @flow(name=f'test_prefect_durability_submit_output_{where}')
+    async def run_durable_agent() -> str:
+        return (await agent.run('Finish')).output
+
+    if where == 'flow-code':
+        assert await run_durable_agent() == 'submitted'
+    else:
+        with pytest.raises(UserError, match='cannot be called from a tool that runs as a durable step or task'):
+            await run_durable_agent()
 
 
 class Deps(BaseModel):
@@ -2041,6 +2089,42 @@ async def test_deprecated_agent_executes_identified_dynamic_toolset_task(blockbu
     assert calls[0] is not None
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_deprecated_agent_holds_per_run_step_false_dynamic_toolset_for_the_run(blockbuster_enabled: bool) -> None:
+    """The deprecated wrapper resolves and enters an identified `per_run_step=False` dynamic toolset once per run.
+
+    Its tasks run in the flow's process, so they reuse the toolset the run holds, as under `PrefectDurability`,
+    instead of each building and entering their own.
+    """
+    assert blockbuster_enabled is False
+    counts = {'factory': 0, 'enter': 0}
+
+    class CountingToolset(FunctionToolset[None]):
+        async def __aenter__(self) -> Self:
+            counts['enter'] += 1
+            return await super().__aenter__()
+
+    async def get_price() -> str:
+        return '42'
+
+    def build(ctx: RunContext[None]) -> FunctionToolset[None]:
+        counts['factory'] += 1
+        return CountingToolset([get_price])
+
+    agent = Agent(
+        TestModel(),
+        name='deprecated_run_held_dynamic',
+        deps_type=type(None),
+        toolsets=[DynamicToolset(build, per_run_step=False, id='deprecated_held')],
+    )
+    prefect_agent = PrefectAgent(agent)  # pyright: ignore[reportDeprecated]
+
+    result = await prefect_agent.run('Get the price')
+
+    assert '42' in str(result.output)
+    assert counts == {'factory': 1, 'enter': 1}
+
+
 # Test cache policies
 async def test_cache_policy_default():
     """Test that the default cache policy is set correctly."""
@@ -2311,6 +2395,37 @@ def test_cache_policy_normalizes_a_synthetic_capability_id_on_a_source():
 
     assert key_for('<fetcher:abc123>') == key_for('<fetcher:def456>')
     assert key_for('fetcher') != key_for('crawler')
+
+
+def test_cache_policy_keys_for_instruction_ids_are_pinned():
+    """Instruction sources' `kind` tag stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digests were computed before the tag existed; a model request's parameters carry its instruction parts' ids.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    ids = [
+        InstructionId(AgentInstructionSource(), name='persona'),
+        InstructionId(RunInstructionSource(), name='task'),
+        InstructionId(ToolsetInstructionSource('memory')),
+        InstructionId(CapabilityInstructionSource('memory'), name='usage'),
+    ]
+    part = InstructionPart(content='Keep notes short.', id=InstructionId(CapabilityInstructionSource('memory')))
+    parameters = ModelRequestParameters(instruction_parts=[part])
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    assert key_for(part) == snapshot('371a510820fa52497114a702b5fe1bcf')
+    assert key_for(parameters) == snapshot('a7303d336722ed24df27df4bca54d50f')
+    assert [key_for(id) for id in ids] == snapshot(
+        [
+            '5006ff5014df6944343041dd24711207',
+            'c71eb5db3f64fbc25e31531a0433cd26',
+            '0888bba0476c0180b3f2a7766bd379b7',
+            'd080d54547ecfe63be80e0edb1942c8c',
+        ]
+    )
 
 
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
@@ -2915,6 +3030,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
         '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
+        '_output_submitter',  # live view of the run's graph state; carries no inputs and must not fork the cache key
         # Toolsets the run holds entered, built from `deps`, which is projected: they carry no
         # input the task's own resolution wouldn't reach, so they must not fork the key.
         '_run_held_toolsets',
@@ -4299,6 +4415,28 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
     assert task_run_names[0].startswith('Call Tool: dynamic_tool')
 
 
+@pytest.mark.parametrize('variant', VARIANTS)
+async def test_prefect_durability_parallel_calls_use_their_own_step_of_run_held_dynamic_toolset(
+    variant: Variant,
+) -> None:
+    """Parallel tool-call tasks list and call their tools through the toolset prepared once for the step.
+
+    `FunctionModel` drives it rather than a cassette: the race is between the tool-call tasks, after the model
+    response that requests both calls.
+    """
+    state = StepState()
+    agent = parallel_calls_agent(f'prefect_parallel_run_held_dynamic_{variant}', variant, state, PrefectDurability())
+
+    @flow(name=f'prefect_parallel_run_held_dynamic_{variant}')
+    async def run_agent() -> str:
+        return (await agent.run('go')).output
+
+    assert await run_agent() == 'done'
+    assert state.listed.keys() == {'call-a', 'call-b'}
+    assert state.called == state.listed
+    assert len(set(state.listed.values())) == 1
+
+
 async def test_prefect_durability_task_name_assembly_sequence() -> None:
     task_names: list[str] = []
 
@@ -4339,7 +4477,6 @@ async def test_prefect_durability_task_name_assembly_sequence() -> None:
     ]
 
 
-@pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
 @pytest.mark.parametrize('blockbuster_enabled', [False])
 async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bool) -> None:
     assert blockbuster_enabled is False
@@ -4359,8 +4496,10 @@ async def test_prefect_durability_journals_mcp_discovery(blockbuster_enabled: bo
             task_names.append(task_run_context.task.name)
             return InstructionPart(content='Server instructions', dynamic=False)
 
+    # The default 5 s init_timeout is shorter than a stalled CI worker can take to finish the initialize handshake.
     toolset = RecordingMCPToolset(
-        StdioTransport(command='python', args=['-m', 'tests.mcp_server']),
+        FastMCPTransport(test_mcp_server),
+        init_timeout=READINESS_WAIT_TIMEOUT,
         id='recording_mcp',
         include_instructions=True,
     )
