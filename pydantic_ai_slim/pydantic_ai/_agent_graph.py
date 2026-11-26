@@ -54,7 +54,7 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
 )
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
-from pydantic_ai._parts_manager import resolved_call_part, ui_visibility_stamps
+from pydantic_ai._parts_manager import call_part_from_tool_defs, ui_visibility_stamps
 from pydantic_ai._tool_execution import process_tool_calls
 from pydantic_ai._utils import (
     ScopedTask,
@@ -2342,7 +2342,7 @@ async def model_request(  # noqa: C901
                     await cancel_abandoned_job(model, response, error)
                 raise
 
-            new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
+            new_response = _apply_tool_defs_to_call_parts(new_response, request_context.model_request_parameters)
             report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
@@ -6034,7 +6034,7 @@ def _build_agent_graph(
     return g.build(validate_graph_structure=False)
 
 
-def _narrow_tool_call_parts(
+def _apply_tool_defs_to_call_parts(
     response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
 ) -> _messages.ModelResponse:
     """Stamp each `ToolCallPart` with its tool's `ui_visibility`, and promote a base one to its typed subclass.
@@ -6054,7 +6054,7 @@ def _narrow_tool_call_parts(
         return response
 
     new_parts: list[_messages.ModelResponsePart] = [
-        resolved_call_part(part, tool_kind_by_name, ui_visibility_by_name)
+        call_part_from_tool_defs(part, tool_kind_by_name, ui_visibility_by_name)
         if isinstance(part, _messages.ToolCallPart)
         else part
         for part in response.parts

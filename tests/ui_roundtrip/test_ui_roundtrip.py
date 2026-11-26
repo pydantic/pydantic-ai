@@ -1563,11 +1563,11 @@ async def test_conversation_store_regenerate_after_reload(protocol: Protocol, js
     assert [len(messages) for messages in seen] == [1, 1]
 
 
-def _client_tool_result(protocol: Protocol, messages: list[dict[str, Any]], tool_call_id: str) -> dict[str, Any]:
-    """What a client holds for the result of `tool_call_id`: the AI SDK's tool part, or AG-UI's tool message."""
-    if protocol == 'vercel':
-        return next(part for message in messages for part in message['parts'] if part.get('toolCallId') == tool_call_id)
-    return next(message for message in messages if message.get('toolCallId') == tool_call_id)
+REDACTED_CLIENT_TOOL_RESULTS: dict[Protocol, dict[str, str]] = {
+    'vercel': {'state': 'output-available', 'output': '[REDACTED]'},
+    'agui': {'role': 'tool', 'content': '[REDACTED]'},
+}
+"""What a client holds for a `'redacted'` tool's result: the AI SDK's tool part, or AG-UI's tool message."""
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
@@ -1597,12 +1597,11 @@ async def test_redacted_tool_result_completes_the_client_tool_call(protocol: Pro
     # The page reloads: the app hydrates the client from the server's history.
     reloaded = json.loads(client.submit('Question 2', result.all_messages()))['messages']
 
+    expected = REDACTED_CLIENT_TOOL_RESULTS[protocol]
     for messages in (streamed, reloaded):
-        tool_result = _client_tool_result(protocol, messages, 'call-1')
-        if protocol == 'vercel':
-            assert (tool_result['state'], tool_result['output']) == ('output-available', '[REDACTED]')
-        else:
-            assert (tool_result['role'], tool_result['content']) == ('tool', '[REDACTED]')
+        entries = [part for message in messages for part in message['parts']] if protocol == 'vercel' else messages
+        tool_result = next(entry for entry in entries if entry.get('toolCallId') == 'call-1')
+        assert {key: tool_result[key] for key in expected} == expected
         assert 'Sunny in Paris' not in json.dumps(messages)
 
     # The model got the real result.

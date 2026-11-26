@@ -7,18 +7,18 @@ returns, which no provider response changes, so there is nothing for a cassette 
 from __future__ import annotations
 
 import json
-import warnings
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import pytest
 
-from pydantic_ai import Agent, ToolOutput
+from pydantic_ai import Agent, AgentRunResult, ToolOutput
 from pydantic_ai.capabilities import Capability, PrepareTools
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailed
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, ToolFailed
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -33,10 +33,12 @@ from pydantic_ai.tools import DeferredToolRequests, RunContext, Tool, ToolDefini
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 
 from ._inline_snapshot import snapshot
-from .conftest import try_import
+from .conftest import legacy_retry_prompt_part, try_import
 
 with try_import() as imports_successful:
     from ag_ui.core import CustomEvent, RunAgentInput, UserMessage
+    from starlette.requests import Request
+    from starlette.responses import StreamingResponse
 
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
     from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, DEFAULT_AG_UI_VERSION, parse_ag_ui_version
@@ -112,7 +114,7 @@ async def run_adapter(
     adapter_kwargs['manage_message_history'] = manage_message_history
     messages: list[ModelMessage] = []
 
-    async def keep_history(result: Any) -> None:
+    async def keep_history(result: AgentRunResult[Any]) -> None:
         messages.extend(result.all_messages())
 
     if protocol == 'ag_ui':
@@ -166,7 +168,7 @@ def stamps(messages: Sequence[ModelMessage]) -> list[tuple[str, str, ToolUIVisib
         (part.part_kind, part.tool_name, part.ui_visibility)
         for message in messages
         for part in message.parts
-        if isinstance(part, ToolCallPart | ToolReturnPart | NativeToolCallPart | NativeToolReturnPart)
+        if isinstance(part, (ToolCallPart, ToolReturnPart, NativeToolCallPart, NativeToolReturnPart))
     ]
 
 
@@ -284,6 +286,19 @@ async def test_dump_reads_the_stamp_not_the_tool_definitions(protocol: ProtocolN
 
     assert SECRET not in dump(protocol, run.messages)
     assert 'lookup_order' in dump(protocol, run.messages, default_ui_visibility='private')
+
+    # The stamps survive the stored history's own round trip.
+    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(run.messages))
+    assert stamps(stored) == stamps(run.messages)
+    assert SECRET not in dump(protocol, stored)
+
+    # The protocols don't carry them, so a history the client sends back has none, and only the placeholder.
+    if protocol == 'ag_ui':
+        client_copy = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(run.messages))
+    else:
+        client_copy = VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(run.messages))
+    assert [stamp for *_, stamp in stamps(client_copy)] == [None, None]
+    assert SECRET not in dump(protocol, client_copy)
 
     # History with no stamps, such as one from an earlier version, takes the dump's default.
     unstamped = (await run_adapter(protocol, secret_agent(None))).messages
@@ -426,7 +441,7 @@ EXPECTED_DEFERRED_EVENTS: dict[tuple[ProtocolName, str], Any] = {
 async def test_redacted_tool_drops_the_mcp_app_and_keeps_metadata_events(protocol: ProtocolName):
     """The MCP Apps record holds the full result, so it goes; events the tool put in its metadata are its own channel."""
     agent = Agent(calling(('forecast', '{"city": "Paris"}'), ('notify', '{}')))
-    app = {
+    app: dict[str, Any] = {
         'resource_uri': 'ui://weather/forecast',
         'tool_input': {'city': 'Paris'},
         'result': {'content': [{'type': 'text', 'text': SECRET}]},
@@ -531,16 +546,15 @@ async def test_client_held_history_warns_about_non_public_tools(protocol: Protoc
         await run_adapter(
             protocol, secret_agent(None), manage_message_history='client', default_ui_visibility='redacted'
         )
-    assert len([warning for warning in record if 'ui_visibility' in str(warning.message)]) == 1
+    assert len(record) == 1
 
     with pytest.warns(UserWarning, match="`manage_message_history='server'`") as record:
         await run_adapter(protocol, secret_agent('private'), manage_message_history='client')
-    assert len([warning for warning in record if 'ui_visibility' in str(warning.message)]) == 1
+    assert len(record) == 1
 
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        await run_adapter(protocol, secret_agent('private'))
-        await run_adapter(protocol, secret_agent(None), manage_message_history='client')
+    # Any warning fails the test (`filterwarnings = ['error']`).
+    await run_adapter(protocol, secret_agent('private'))
+    await run_adapter(protocol, secret_agent(None), manage_message_history='client')
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
@@ -554,8 +568,15 @@ async def test_client_held_history_warns_when_an_interrupted_redacted_call_is_cl
 
     with pytest.warns(UserWarning, match="`manage_message_history='server'`") as record:
         run = await run_adapter(protocol, agent, manage_message_history='client')
-    assert len([warning for warning in record if 'ui_visibility' in str(warning.message)]) == 1
+    assert len(record) == 1
     assert '[REDACTED]' in run.wire
+
+
+ENQUEUED_RECORDS: dict[ProtocolName, str] = {
+    'ag_ui': 'pydantic_ai_enqueued_messages',
+    'vercel_ai': 'data-enqueued-messages',
+}
+"""The event each protocol streams messages a tool enqueues in."""
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
@@ -582,8 +603,7 @@ async def test_enqueued_tool_exchange_follows_the_stream_default(protocol: Proto
 
     run = await run_adapter(protocol, agent, default_ui_visibility='private')
 
-    enqueued_record = 'pydantic_ai_enqueued_messages' if protocol == 'ag_ui' else 'data-enqueued-messages'
-    assert enqueued_record in run.wire
+    assert ENQUEUED_RECORDS[protocol] in run.wire
     assert 'Escalated.' not in run.wire
     assert SECRET not in run.wire
 
@@ -648,19 +668,26 @@ async def test_tool_name_streamed_in_pieces_is_stamped_from_the_complete_name(
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 @pytest.mark.parametrize('ui_visibility', ['redacted', 'private'])
-async def test_failure_a_tool_reports_follows_its_visibility(protocol: ProtocolName, ui_visibility: ToolUIVisibility):
-    """A `ToolFailed` message is the tool's result, so it stays off the stream and out of the dump like any result."""
+@pytest.mark.parametrize('failure', [ToolFailed, ModelRetry])
+async def test_failure_a_tool_reports_follows_its_visibility(
+    protocol: ProtocolName, ui_visibility: ToolUIVisibility, failure: type[ToolFailed | ModelRetry]
+):
+    """A `ToolFailed` or `ModelRetry` message is the tool's result, so it stays off the stream and out of the dump.
+
+    A `'redacted'` tool's failure still goes out, with the placeholder as its error text.
+    """
     agent = Agent(calling(('lookup_order', '{"order_id": "o_1"}')))
 
     @agent.tool_plain(ui_visibility=ui_visibility)
     def lookup_order(order_id: str) -> str:
-        raise ToolFailed(SECRET)
+        raise failure(SECRET)
 
     run = await run_adapter(protocol, agent)
 
     assert 'Done.' in run.wire
     assert SECRET not in run.wire
     assert SECRET not in dump(protocol, run.messages)
+    assert ('[REDACTED]' in run.wire) == (ui_visibility == 'redacted')
 
 
 async def test_standalone_event_stream_default_applies_only_to_unstamped_parts():
@@ -681,10 +708,8 @@ async def test_standalone_event_stream_default_applies_only_to_unstamped_parts()
         return 'shipped'
 
     stream = AGUIEventStream[None, Any](default_ui_visibility='private')
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        async with agent.run_stream_events('Where is my order?') as events:
-            wire = [stream.encode_event(event) async for event in stream.transform_stream(events)]
+    async with agent.run_stream_events('Where is my order?') as events:
+        wire = [stream.encode_event(event) async for event in stream.transform_stream(events)]
 
     assert 'lookup_order' not in ''.join(wire)
     assert SECRET not in ''.join(wire)
@@ -734,17 +759,22 @@ def test_ui_visibility_flows_from_each_tool_setter_into_the_tool_definition() ->
     }
     assert FunctionToolset[None]([plain]).tools['plain'].tool_def.ui_visibility is None
 
-    agent = Agent(deps_type=type(None))
+    seen: dict[str, ToolUIVisibility | None] = {}
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.update({tool_def.name: tool_def.ui_visibility for tool_def in info.function_tools})
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    agent = Agent(FunctionModel(answer), deps_type=type(None))
     agent.tool_plain(ui_visibility='private')(plain)
     agent.tool(ui_visibility='redacted')(with_ctx)
     capability = Capability[None]()
     capability.tool_plain(ui_visibility='private')(plain)
     capability.tool(ui_visibility='redacted')(with_ctx)
-    for tools in (agent._function_toolset.tools, capability._function_toolset.tools):  # pyright: ignore[reportPrivateUsage]
-        assert {name: tool.tool_def.ui_visibility for name, tool in tools.items()} == {
-            'plain': 'private',
-            'with_ctx': 'redacted',
-        }
+    for tooled in (agent, Agent(FunctionModel(answer), deps_type=type(None), capabilities=[capability])):
+        seen.clear()
+        tooled.run_sync('Hi')
+        assert seen == {'plain': 'private', 'with_ctx': 'redacted'}
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
@@ -763,6 +793,71 @@ async def test_prepare_tools_sets_visibility_in_bulk(protocol: ProtocolName):
         ('tool-call', 'lookup_order', 'redacted'),
         ('tool-return', 'lookup_order', 'redacted'),
     ]
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+async def test_dispatch_request_passes_the_default_to_the_adapter(protocol: ProtocolName):
+    """`dispatch_request` hands `default_ui_visibility` to `from_request`, which sets it on the adapter it builds."""
+    if protocol == 'ag_ui':
+        adapter_type: type[AGUIAdapter[None, Any] | VercelAIAdapter[None, Any]] = AGUIAdapter
+        body = RunAgentInput(
+            thread_id='thread_1',
+            run_id='run_1',
+            messages=[UserMessage(id='msg_1', content='Where is my order?')],
+            state={},
+            tools=[],
+            context=[],
+            forwarded_props={},
+        ).model_dump_json(by_alias=True)
+    else:
+        adapter_type = VercelAIAdapter
+        body = SubmitMessage(
+            trigger='submit-message',
+            id='chat_1',
+            messages=[UIMessage(id='msg_1', role='user', parts=[TextUIPart(text='Where is my order?')])],
+        ).model_dump_json(by_alias=True)
+
+    async def receive() -> dict[str, Any]:
+        return {'type': 'http.request', 'body': body.encode()}
+
+    request = Request(
+        scope={'type': 'http', 'method': 'POST', 'headers': [(b'content-type', b'application/json')]},
+        receive=receive,
+    )
+    response = await adapter_type.dispatch_request(
+        request, agent=secret_agent(None), manage_message_history='server', default_ui_visibility='redacted'
+    )
+
+    assert isinstance(response, StreamingResponse)
+    wire = ''.join(
+        [chunk if isinstance(chunk, str) else bytes(chunk).decode() async for chunk in response.body_iterator]
+    )
+    assert 'lookup_order' in wire
+    assert SECRET not in wire
+
+
+@pytest.mark.parametrize('protocol', PROTOCOLS)
+@pytest.mark.parametrize('ui_visibility', ['redacted', 'private'])
+def test_dump_projects_a_legacy_retry_as_its_calls_result(protocol: ProtocolName, ui_visibility: ToolUIVisibility):
+    """A deprecated `RetryPromptPart` bound to a call is that call's result, so it takes the call's stamp.
+
+    A unit test: no run makes one any more, and a stored one is translated when it loads.
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest.user_text_prompt('Where is my order?'),
+        ModelResponse(parts=[ToolCallPart('lookup_order', {}, tool_call_id='call_0', ui_visibility=ui_visibility)]),
+        ModelRequest(parts=[legacy_retry_prompt_part(SECRET, tool_name='lookup_order', tool_call_id='call_0')]),
+    ]
+
+    assert SECRET not in dump(protocol, messages)
+
+
+def test_unknown_visibility_raises_rather_than_sends_the_result():
+    """A value outside `ToolUIVisibility`, which only code that ignores its types can set, never reads as `'public'`."""
+    call = ToolCallPart('lookup_order', {}, tool_call_id='call_0', ui_visibility='Private')  # pyright: ignore[reportArgumentType]
+
+    with pytest.raises(AssertionError):
+        dump('vercel_ai', [ModelResponse(parts=[call])])
 
 
 def test_dump_drops_a_response_left_empty_by_private_parts():

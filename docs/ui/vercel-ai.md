@@ -290,7 +290,7 @@ An enqueued system prompt, such as a capability's announcement, is only sent whe
 
 ## MCP Apps
 
-After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries a `data-mcp-apps` [data chunk](#data-chunks) with `id` set to the tool call ID. Its `data`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). Dumped history keeps it as a data part; loading ignores it.
+After the result of an [MCP Apps](../mcp/client.md#mcp-apps) tool call, the stream carries a `data-mcp-apps` [data chunk](#data-chunks) with `id` set to the tool call ID. Its `data`: `resourceUri`, `toolInput`, `result` (the full MCP `CallToolResult`), and `serverId` and `serverHash` (both the toolset `id`, when set). Dumped history keeps it as a data part; loading ignores it. A [`'redacted'` or `'private'`](./overview.md#tool-visibility) tool's result gets neither the chunk nor the data part, since they hold the full result.
 
 To show the page with AI SDK UI's `experimental_MCPAppRenderer`, give it the resource URI as `toolMetadata.app` and the full result as `output`, both from the chunk. The tool part's own `output` is what the model saw, without the `structuredContent` and `_meta` the page needs:
 

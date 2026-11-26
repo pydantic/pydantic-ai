@@ -790,6 +790,9 @@ class _DefaultUIVisibility(AbstractCapability[AgentDepsT]):
     stream sent.
     """
 
+    # It adds no toolsets or durable operations, so a durable workflow has nothing to register for it.
+    _safe_at_runtime: ClassVar[bool] = True
+
     visibility: ToolUIVisibility
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -814,7 +817,7 @@ class _DefaultUIVisibility(AbstractCapability[AgentDepsT]):
         # from. The stream already sent them by its own default, which is this one.
         parts = [
             replace(part, ui_visibility=self.visibility)
-            if isinstance(part, ToolCallPart | NativeToolCallPart | NativeToolReturnPart) and part.ui_visibility is None
+            if isinstance(part, (ToolCallPart, NativeToolCallPart, NativeToolReturnPart)) and part.ui_visibility is None
             else part
             for part in response.parts
         ]
@@ -951,8 +954,9 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
 
     `'public'` (default) sends every call and result. `'redacted'` sends the calls and a placeholder instead of
     each result, and `'private'` sends neither. A run writes this onto the tools without a setting, so their call
-    and return parts are stamped with it and a conversation reloaded with `dump_messages` is sent the way it was
-    streamed. External (frontend) tools and output tools are always `'public'`, and native tools and calls to tools
+    and return parts are stamped with it and a conversation reloaded from the stored history with `dump_messages`
+    is sent the way it was streamed. The protocols don't carry the stamps, so a history the client sends back has
+    none. External (frontend) tools and output tools are always `'public'`, and native tools and calls to tools
     the run doesn't know take this default. The stored history always keeps the full results.
 
     A non-public tool needs the history held on the server, with
@@ -1508,7 +1512,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             on_complete = self._announce_saved_entries(on_complete)
         event_stream = self.build_event_stream()
         event_stream.default_ui_visibility = self.default_ui_visibility
-        # A non-public default already warned when the run started.
+        # A run with a non-public default warns when it starts. Events this adapter didn't run, such as those of a
+        # durable run in another process, are encoded like a stream used on its own: they don't warn.
         event_stream._warns_on_hidden_tools = (  # pyright: ignore[reportPrivateUsage]
             self._client_holds_history and self.default_ui_visibility == 'public'
         )

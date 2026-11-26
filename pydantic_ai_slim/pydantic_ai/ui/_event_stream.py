@@ -28,7 +28,6 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    ModelResponsePart,
     ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -64,7 +63,12 @@ from ..messages import (
 from ..output import OutputDataT
 from ..run import AgentRunResult, AgentRunResultEvent
 from ..tools import AgentDepsT
-from ._utils import client_tool_return, ui_visibility_of, warn_client_held_history_with_hidden_tools
+from ._utils import (
+    client_response_part,
+    client_tool_return,
+    ui_visibility_of,
+    warn_client_held_history_with_hidden_tools,
+)
 
 if TYPE_CHECKING:
     from starlette.responses import StreamingResponse
@@ -409,7 +413,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         # Mark the part open only after its start event has been emitted, so a start hook that
         # raises mid-emit doesn't leave the error path closing a part the client never saw.
         if (
-            isinstance(event.part, TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart)
+            isinstance(event.part, (TextPart, ThinkingPart, ToolCallPart, NativeToolCallPart))
             and event.index not in self._hidden_part_indices
         ):
             self._open_part = event.part
@@ -602,7 +606,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """What the client is sent for `part`: its stamp, else its call's, else `default_ui_visibility`."""
         call_visibility = (
             self._call_ui_visibilities.get(part.tool_call_id)
-            if isinstance(part, ToolReturnPart | NativeToolReturnPart)
+            if isinstance(part, (ToolReturnPart, NativeToolReturnPart))
             else None
         )
         return ui_visibility_of(part, call_visibility=call_visibility, default=self.default_ui_visibility)
@@ -631,19 +635,12 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
 
     def _client_part_start(self, event: PartStartEvent) -> PartStartEvent | None:
         """A `PartStartEvent` as the client is to be sent it, recording whether the part's later events are hidden."""
-        part = event.part
-        shown: ModelResponsePart | None = part
-        if isinstance(part, ToolCallPart | NativeToolCallPart):
-            visibility = self._call_ui_visibilities[part.tool_call_id] = self._ui_visibility(part)
-            if visibility == 'private':
-                shown = None
-        elif isinstance(part, NativeToolReturnPart):
-            shown = client_tool_return(part, self._ui_visibility(part))
+        shown = client_response_part(event.part, self._call_ui_visibilities, self.default_ui_visibility)
         if shown is None:
             self._hidden_part_indices.add(event.index)
             return None
         self._hidden_part_indices.discard(event.index)
-        return event if shown is part else replace(event, part=shown)
+        return event if shown is event.part else replace(event, part=shown)
 
     async def _show_deferred_hidden_calls(self, event: DeferredToolRequestsEvent) -> AsyncIterator[EventT]:
         """Send the client the `'private'` calls that deferred, which the agent run now stamps `'redacted'`.
