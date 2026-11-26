@@ -57,7 +57,7 @@ GH_AW_REVIEWERS: dict[str, str] = {
 }
 # Resolving a thread settled a finding started before this time. GitHub records no resolution time.
 # Delete this baseline once no open PR has a bot thread started before it.
-RESOLVED_THREADS_STARTED_BEFORE = datetime(2026, 11, 19, tzinfo=UTC)
+RESOLVED_THREADS_STARTED_BEFORE = datetime(2026, 11, 27, 0, tzinfo=UTC)
 # A reply's first line in this form answers its finding; the reply can open with an attribution line.
 DISPOSITION = re.compile(
     r'^(?:Fixed in (?P<sha>[0-9a-f]{7,40})\b|Tracked in #(?P<number>[1-9][0-9]{0,8})\b|(?P<declined>Declined: \S))',

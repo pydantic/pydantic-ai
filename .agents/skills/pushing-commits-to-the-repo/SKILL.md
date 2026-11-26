@@ -571,6 +571,7 @@ if the head changes, capture the new SHA and restart the loop.
      existing one. Reply with its link, react 👍, and resolve the thread.
      On an inline finding from a review bot, open the reply, after any required attribution line, with `Tracked in #<n>`.
      Without write access, cite an issue opened at or after the finding.
+     When the only matching issue predates the finding and you lack write access, ask a maintainer to post the `Tracked in`, and leave the thread open until they do.
    - **Invalid** → verify the claim, reply with concrete evidence, and react 👎.
      On an inline finding from a review bot, open the reply, after any required attribution line, with `Declined: <reason>`.
      `Declined:` counts only from a user with write access, or from the PR author on a douwebot `Optional:` finding.

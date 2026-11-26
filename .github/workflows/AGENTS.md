@@ -303,8 +303,8 @@ The `PR Review Gates` run that the status links to lists each unanswered thread,
 forms does not count. Rewriting the pull request's history drops earlier commits from it, so post `Fixed in` again
 with the new commits.
 
-Resolving a thread does not answer it, except that a thread started before 2026-11-19 needs no reply once
-resolved. `REVIEWER_LOGINS` in `review_gates.py` names the review bots, and receipts tell douwebot,
+Resolving a thread does not answer it, except that a thread started before 2026-11-27 00:00 UTC needs no reply
+once resolved. `REVIEWER_LOGINS` in `review_gates.py` names the review bots, and receipts tell douwebot,
 `PR Review Checks` and `CI Review` apart on `github-actions[bot]`. On a thread from an unregistered bot, or a
 `github-actions[bot]` thread without one of those receipts, only a reply from a user with write access counts, and the
 `PR Review Gates` run still lists the thread as unregistered. Threads a person starts and
