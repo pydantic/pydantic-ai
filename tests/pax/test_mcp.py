@@ -146,7 +146,7 @@ def test_store_round_trip_is_private_and_fails_loudly(tmp_path: Path) -> None:
         store.load()
 
 
-def test_default_store_uses_the_clai_config_folder(tmp_path: Path) -> None:
+def test_default_store_uses_the_pax_config_folder(tmp_path: Path) -> None:
     assert MCPStore().path == tmp_path / 'config' / 'pydantic-ai-pax' / 'mcp.json'
 
 
