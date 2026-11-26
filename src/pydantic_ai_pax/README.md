@@ -27,7 +27,7 @@ workspaces are plugins too, so where the agent runs and where it works are yours
 choose. To run an agent of your own instead, use `pax --agent my_module:agent`, which
 loads that agent on its own without Pax's plugins.
 
-![Pax starting up in a project and adding a flag: its thinking, the files it read, the diff it made, and the test run](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
+![Pax in a terminal running anthropic:claude-opus-5-5: the PAX banner, a question about how a forecast is fetched, the tool calls it made counted on one line, a three-step answer, and the status row with the model, its 1m-token context window and the cost](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/hero.png)
 
 - **Any model, any account.** Switch models mid-conversation. Sign in to several
   accounts and let Pax move to the next one when you hit a limit.

@@ -10,9 +10,19 @@
 # Every tape runs the checkout's `pax` in a fixed-size VHS terminal against a throwaway HOME and
 # XDG_CONFIG_HOME, with a clean environment: no API keys, sign-ins, saved sessions, or real paths
 # reach the images. Turns use the scripted `demo:tour` model from `demo_model.py`, a drop-in plugin,
-# so no model is called and every built-in plugin still loads. With TAPE names (such as `hero`),
+# so no model is called and every built-in plugin still loads. With TAPE names (such as `shell`),
 # only those tapes run; the setup tape always runs first.
+#
+# The `hero` shot is the exception: it shows a real model's turn, so it isn't in the default run and
+# needs a real model and its API key, for example:
+#   PAX_SHOTS_MODEL=anthropic:claude-opus-5-5 ANTHROPIC_API_KEY=... capture.sh hero
+# The answer differs a little between runs; check the image before committing it.
 set -euo pipefail
+
+model="${PAX_SHOTS_MODEL:-demo:tour}"
+# A real model's API key reaches only the tapes, and only when PAX_SHOTS_MODEL picks a real model.
+key=()
+if [ "$model" != demo:tour ] && [ -n "${ANTHROPIC_API_KEY:-}" ]; then key=(ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"); fi
 
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
@@ -41,7 +51,7 @@ run() {
     PATH="$home/bin:$repo/.venv/bin$tools:/usr/bin:/bin" \
     TERM=xterm-256color COLORTERM=truecolor LANG=en_US.UTF-8 \
     PYTHONPATH="$here" PYTHON_KEYRING_BACKEND=demo_keyring.Keyring \
-    PROJECT="$project" \
+    PROJECT="$project" PAX_SHOTS_MODEL="$model" "${key[@]}" \
     "$@"
 }
 
@@ -163,7 +173,7 @@ git checkout -q . && git clean -qfd
 # A clear screen and scrollback: no shell prompt above Pax, and VHS's Wait+Screen reads from the top.
 printf '\033[H\033[2J\033[3J'
 # `pax config` refuses run settings, since the agent can run it too; this is the user's own setup.
-python -c "from pydantic_ai_pax.config.settings_store import SettingsStore as S; s = S(); s.set('model', 'demo:tour'); s.reset('run.speculative_code_mode')"
+python -c "from pydantic_ai_pax.config.settings_store import SettingsStore as S; s = S(); s.set('model', '$PAX_SHOTS_MODEL'); s.reset('run.speculative_code_mode')"
 pax config reset display.theme > /dev/null
 exec pax "$@"
 EOF
@@ -189,8 +199,14 @@ for folder in ('$project', '$other'):
 tapes=("$@")
 if [ ${#tapes[@]} -eq 0 ]; then
   tapes=(resume model model-add accounts keys plugins set theme spinner system-prompt
-    hero ask-user shell code-mode rewind usage fork)
+    ask-user shell code-mode rewind usage fork)
 fi
+for name in "${tapes[@]}"; do
+  if [ "$name" = hero ] && [ "$model" = demo:tour ]; then
+    echo "the hero shot needs a real model: set PAX_SHOTS_MODEL (see the top of $0)" >&2
+    exit 1
+  fi
+done
 failed=""
 cd "$root"
 run vhs "$here/tapes/setup.tape" || run vhs "$here/tapes/setup.tape"
@@ -205,6 +221,7 @@ done
 mkdir -p "$images"
 for shot in "$root"/shots/*.png; do
   [ -e "$shot" ] || continue
+  if [ "${shot##*/}" = hero.png ]; then "$repo/.venv/bin/python" "$here/trim_shot.py" "$shot"; fi
   pngquant --force --skip-if-larger --quality 80-95 --output "$shot" "$shot" || true
   oxipng --quiet --opt 4 --strip safe "$shot"
   cp "$shot" "$images/"
