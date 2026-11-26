@@ -882,7 +882,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel, model_serializer
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Instrumentation, ProcessEventStream
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation, ProcessEventStream
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelResponse, PartEndEvent, PartStartEvent, TextPart, ToolCallPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
@@ -946,6 +946,25 @@ def test_run_event_stream_fails():
         agent.run_sync('echo')
 
 
+class Passthrough(AbstractCapability[None]):
+    def wrap_run_event_stream(self, ctx, *, stream):
+        return stream
+
+
+class Events:
+    def __init__(self, *events):
+        self.events = iter(events)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self.events)
+        except StopIteration:
+            raise StopAsyncIteration
+
+
 def test_run_event_stream_called_directly():
     async def events():
         yield PartStartEvent(index=0, part=TextPart({text!r}))
@@ -954,6 +973,9 @@ def test_run_event_stream_called_directly():
     async def run():
         ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
         [event async for event in ProcessEventStream(drop_part_ends).wrap_run_event_stream(ctx, stream=events())]
+        # A stream that isn't a generator has nothing to close.
+        stream = Events(PartStartEvent(index=0, part=TextPart({text!r})))
+        [event async for event in Passthrough().wrap_run_event_stream(ctx, stream=stream)]
 
     asyncio.run(run())
 
@@ -967,6 +989,11 @@ async def stream_answer(messages, info):
     yield {{0: DeltaToolCall(name, '{{"value": ', tool_call_id='out')}}
     yield {{0: DeltaToolCall(json_args='4')}}
     yield {{0: DeltaToolCall(json_args='2}}')}}
+
+
+async def fail_mid_stream(messages, info):
+    yield {text!r}[:2]
+    raise RuntimeError('stream failed')
 
 
 async def stream_no_answer(messages, info):
@@ -986,6 +1013,9 @@ def test_agent_stream_calls():
         async with Agent(FunctionModel(stream_function=stream_no_answer), output_type=Answer).run_stream('hi') as result:
             with pytest.raises(UnexpectedModelBehavior):
                 await result.get_output()
+        with pytest.raises(RuntimeError):
+            async with Agent(FunctionModel(stream_function=fail_mid_stream)).run_stream('hi') as result:
+                [text async for text in result.stream_text(debounce_by=None)]
 
     asyncio.run(run())
 
@@ -2613,6 +2643,7 @@ def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: Run
             ('test_enqueued_message', [], None),
             ('test_run_event_stream_fails', ['part_start'], 'RuntimeError: processor failed'),
             ('test_run_event_stream_called_directly', ['part_start'], None),
+            ('test_run_event_stream_called_directly', ['part_start'], None),
             ('test_agent_stream_calls', ['part_start', 'part_end'], None),
             ('test_agent_stream_calls', ['function_tool_call', 'function_tool_result'], None),
             ('test_agent_stream_calls', ['part_start', 'final_result', 'part_delta', 'part_end'], None),
@@ -2621,6 +2652,7 @@ def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: Run
             ('test_agent_stream_calls', ['part_start', 'final_result', 'part_delta', 'part_end'], None),
             ('test_agent_stream_calls', ['part_start', 'final_result', 'part_delta', 'part_delta', 'part_end'], None),
             ('test_agent_stream_calls', ['part_start', 'final_result', 'part_end'], None),
+            ('test_agent_stream_calls', ['part_start', 'final_result'], 'RuntimeError: stream failed'),
             ('test_spans', ['function_tool_call'], 'LookupError: tool failed'),
             ('test_unformattable_error', ['part_start'], {'unrecorded': 'Unformattable: `str()` raised RuntimeError'}),
             ('test_tool_metadata[test]', ['function_tool_call', 'function_tool_result'], None),
@@ -2702,6 +2734,14 @@ value
                 None,
                 None,
                 'UnexpectedModelBehavior: Output validation failed during streaming, and retries are not supported in `run_stream()`',
+            ),
+            (
+                'test_agent_stream_calls',
+                'stream_text',
+                {'delta': False, 'debounce_by': None},
+                ['he'],
+                None,
+                'RuntimeError: stream failed',
             ),
         ]
     )

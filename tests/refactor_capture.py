@@ -134,8 +134,8 @@ the `EnqueuedMessagesEvent`s that delivering a message adds. The stream of each 
 the root's, so it isn't recorded again. A call with a run context that has no root capability, as a test makes to call
 a capability directly, is recorded too, and so is each call a capability called that way makes on the capabilities it
 combines. The capture wraps `wrap_run_event_stream` where `AbstractCapability` or a subclass defines it, whether the
-subclass is defined before the capture starts or after, and closes the stream it wraps when the consumer closes the
-recording.
+subclass is defined before the capture starts or after, and closes the stream it wraps, when that's a generator, as
+the consumer closes the recording.
 
 Each call on a method `AGENT_STREAM_ITERATORS` or `AGENT_STREAM_CALLS` lists, on `AgentStream`, is one line of kind
 `agent_stream`, with its arguments, defaults filled in, and what it yields, in order, or returns, or the error it raises:
@@ -1695,12 +1695,10 @@ class RefactorCapture:
         ) -> AsyncIterable[AgentStreamEvent]:
             stream = original(capability, *args, **kwargs)
             ctx = args[0] if args else kwargs.get('ctx')
-            if not isinstance(ctx, RunContext):
-                return stream
             # The root capability's stream is the one the consumer gets, with the streams of the capabilities it
             # combines inside it. A run context with no root is one a test built to call a capability directly.
-            # A run context's deps type is the run's, which this can't name.
-            if ctx.root_capability is not None and ctx.root_capability is not capability:  # pyright: ignore[reportUnknownMemberType]
+            root: object = getattr(ctx, 'root_capability', None)
+            if root is not None and root is not capability:
                 return stream
             return self._recorded_run_events(stream)
 
