@@ -281,6 +281,9 @@ class _Turn:
     """Whether every event was understood, so the blocks are what the next request continues from."""
 
     def record(self, raw_event: dict[str, JsonValue]) -> None:
+        if not self.complete:
+            # The block indexes no longer line up with what was recorded.
+            return
         try:
             event = _stream_event_ta.validate_python(raw_event)
         except ValidationError:
@@ -344,6 +347,7 @@ class _Session:
         self, input_data: HookInput, tool_use_id: str | None, context: HookContext
     ) -> HookJSONOutput:
         """Remember which call the MCP handler about to run belongs to, as MCP doesn't tell it."""
+        # The SDK calls this hook for `PreToolUse` only, and Claude Code's `PreToolUse` input always has the call's ID.
         assert tool_use_id is not None and input_data['hook_event_name'] == 'PreToolUse'
         key = _claim_key(input_data['tool_name'], input_data['tool_input'])
         self.claims.setdefault(key, []).append(tool_use_id)
@@ -533,10 +537,11 @@ class ClaudeCodeSessions:
         session = await self._reusable(conversation_id, request)
         if session is None:
             session = await self._start(request)
-            if conversation_id is not None and self.leases and conversation_id not in self.sessions:
-                await self._keep(conversation_id, session)
+        # Claimed before the session is kept, so a concurrent request of the conversation can't take it.
         session.busy = True
         session.seen = list(request.messages)
+        if conversation_id is not None and self.leases and conversation_id not in self.sessions:
+            await self._keep(conversation_id, session)
         return session, session in self.sessions.values()
 
     async def _keep(self, conversation_id: str, session: _Session) -> None:

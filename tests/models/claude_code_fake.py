@@ -77,6 +77,8 @@ class FakeSession(Transport):
         """The user and assistant frames the SDK sent, history replay included."""
         self.tool_results: list[dict[str, Any]] = []
         self.closed = False
+        self.write_error: BaseException | None = None
+        """Writing to the process fails with this error, as when it fails between requests."""
         self._outbox: asyncio.Queue[dict[str, Any] | BaseException | None] = asyncio.Queue()
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._hook_ids: list[str] = []
@@ -109,6 +111,8 @@ class FakeSession(Transport):
     async def write(self, data: str) -> None:
         if self.closed:
             raise CLIConnectionError('ProcessTransport is not ready for writing')
+        if self.write_error is not None:
+            raise self.write_error
         message = json.loads(data)
         match message['type']:
             case 'control_request':
@@ -239,6 +243,12 @@ class FakeSession(Transport):
                         'index': index,
                         'delta': {'type': 'text_delta', 'text': block['text']},
                     },
+                ]
+            elif block['type'] not in ('tool_use', 'thinking'):
+                # A block type newer than the `anthropic` types, followed by a delta type they do know.
+                events += [
+                    {'type': 'content_block_start', 'index': index, 'content_block': {'type': block['type']}},
+                    {'type': 'content_block_delta', 'index': index, 'delta': {'type': 'text_delta', 'text': ''}},
                 ]
             elif block['type'] == 'thinking':
                 start = {'type': 'thinking', 'thinking': '', 'signature': ''}

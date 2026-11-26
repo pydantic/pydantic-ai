@@ -550,6 +550,32 @@ async def test_an_event_newer_than_the_anthropic_types_replays_the_next_request(
     )
 
 
+async def test_a_block_newer_than_the_anthropic_types_replays_the_next_request():
+    model, fake = claude_code(FakeResponse([{'type': 'a_new_block'}, text('One.')]), FakeResponse([text('Two.')]))
+    agent = Agent(model)
+
+    async with agent:
+        with pytest.warns(UserWarning, match="content block type is not yet implemented.+'a_new_block'"):
+            first = await agent.run('Count.')
+        second = await agent.run('Again.', message_history=first.all_messages())
+
+    assert (first.output, second.output) == ('One.', 'Two.')
+    assert len(fake.sessions) == 2
+
+
+async def test_a_process_that_fails_between_turns_is_replaced():
+    model, fake = claude_code(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
+    agent = Agent(model)
+
+    async with agent:
+        first = await agent.run('Count.')
+        fake.sessions[0].write_error = ProcessError('Command failed', exit_code=1)
+        second = await agent.run('Again.', message_history=first.all_messages())
+
+    assert second.output == 'Two.'
+    assert len(fake.sessions) == 2 and fake.sessions[0].closed
+
+
 async def test_an_error_claude_code_has_no_status_for():
     model, _ = claude_code(FakeResponse(error='a_new_kind', error_text='Something new went wrong'))
 
