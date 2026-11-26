@@ -11,11 +11,14 @@ have in common lives here, so a fix lands once and the two can never disagree:
   keeps for any capability that raises `RetryModelRequest`;
 - opening a candidate's stream so that an error before its first event can still fall back
   (`request_stream_until_first_event`), and the warning for response handlers on a streamed request;
-- pinning a suspended response to the model that started it.
+- pinning a suspended response to the model that started it;
+- the jittered exponential backoff that `RetryOnModelErrors` waits between attempts and `ModelFallback` between
+  passes (`jittered_backoff`).
 """
 
 from __future__ import annotations as _annotations
 
+import hashlib
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
@@ -62,6 +65,7 @@ __all__ = (
     'AttemptLog',
     'request_stream_until_first_event',
     'warn_response_handlers_not_applied',
+    'jittered_backoff',
     'ResponseRejected',
     'raise_fallback_exception_group',
     'stamp_continuation_pin',
@@ -409,6 +413,18 @@ class FallbackChain:
         """Warn that a streamed request accepts its response without consulting the response handlers."""
         if self.predicates.response_handlers:
             warn_response_handlers_not_applied(self.owner)
+
+
+def jittered_backoff(ctx: RunContext[Any], n: int, *, initial_delay: float, max_delay: float, key: str) -> float:
+    """The wait before the `n`th retry, counting from 1: `initial_delay` doubled for each retry before it, up to `max_delay`.
+
+    Up to half of it is taken off at random, so that runs failing at the same moment don't all retry at the same
+    moment too. The random part is derived from the run's ID, step and `key` rather than drawn, so a durable execution
+    engine replaying the run waits the same delay it recorded.
+    """
+    backoff = min(initial_delay * 2 ** (n - 1), max_delay)
+    digest = hashlib.blake2b(f'{ctx.run_id}:{ctx.run_step}:{key}'.encode(), digest_size=8).digest()
+    return backoff * (1 - int.from_bytes(digest, 'big') / 2**64 / 2)
 
 
 def warn_response_handlers_not_applied(owner: str, param: str = 'fallback_on') -> None:

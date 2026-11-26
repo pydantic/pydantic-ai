@@ -1011,6 +1011,77 @@ async def test_durability_retry_owns_model_errors_over_the_activity_retry_policy
     assert len([e for e in history.events if e.HasField('timer_started_event_attributes')]) == 1
 
 
+_pass_calls: list[str] = []
+
+
+def _fails_first_pass_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    _pass_calls.append('pass_primary')
+    if len(_pass_calls) == 1:
+        raise ModelAPIError(model_name='pass_primary', message='down')
+    return ModelResponse(parts=[TextPart('second pass')])
+
+
+def _always_failing_pass_target_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    _pass_calls.append('pass_target')
+    raise ModelAPIError(model_name='pass_target', message='down')
+
+
+passes_durable_agent = Agent(
+    FunctionModel(_fails_first_pass_model_fn, model_name='pass_primary'),
+    name='durability_passes_agent',
+    capabilities=[
+        ModelFallback('pass_target', passes=2, initial_delay=0.01),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'pass_target': FunctionModel(_always_failing_pass_target_fn, model_name='pass_target')},
+        ),
+    ],
+)
+
+
+@workflow.defn
+class PassesDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, list[tuple[str, str]]]:
+        result = await passes_durable_agent.run(prompt)
+        attempts = result.response.failed_attempts or []
+        return result.output, [(attempt.model_name, attempt.kind) for attempt in attempts]
+
+
+async def test_durability_fallback_passes_wait_on_a_durable_timer(client: Client):
+    """The wait before another pass through a `ModelFallback` chain is a workflow timer, which replays deterministically.
+
+    Each attempt in each pass is a model activity of its own.
+    """
+    _pass_calls.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PassesDurableAgentWorkflow],
+        plugins=[AgentPlugin(passes_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            PassesDurableAgentWorkflow.run,
+            args=['hello'],
+            id=PassesDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == ('second pass', [('pass_primary', 'fallback'), ('pass_target', 'fallback')])
+    assert _pass_calls == ['pass_primary', 'pass_target', 'pass_primary']
+    assert _scheduled_activity_count(history) == 3
+    assert len([e for e in history.events if e.HasField('timer_started_event_attributes')]) == 1
+
+    # Replaying the history makes the same activities and timer in the same order, without calling the models again.
+    await Replayer(
+        workflows=[PassesDurableAgentWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        plugins=[AgentPlugin(passes_durable_agent)],
+    ).replay_workflow(history)
+    assert _pass_calls == ['pass_primary', 'pass_target', 'pass_primary']
+
+
 def test_durability_warns_that_retry_on_model_errors_ignores_non_retryable_model_errors():
     """With `RetryOnModelErrors`, an explicit `non_retryable_model_errors` other than the default has no effect.
 

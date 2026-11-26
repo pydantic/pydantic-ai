@@ -3594,3 +3594,178 @@ Attempt 3.\
 """,
         ]
     )
+
+
+# --- `passes`: going through the whole chain again ---
+
+
+def _fails_then_answers(name: str, failures: int, calls: list[str], retry_after: float | None = None) -> FunctionModel:
+    """A model that fails its first `failures` requests, with `retry_after` if given, then answers."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        if calls.count(name) <= failures:
+            raise ModelAPIError(model_name=name, message='down', retry_after=retry_after)
+        return ModelResponse(parts=[TextPart(f'{name} answered')])
+
+    return FunctionModel(respond, model_name=name)
+
+
+@asynccontextmanager
+async def _recorded_sleeps() -> AsyncGenerator[list[float]]:
+    """Record the waits the agent makes between passes instead of sleeping."""
+    delays: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+
+    with Agent.using_sleep(sleep):
+        yield delays
+
+
+def _attempted(attempts: Sequence[ModelRequestAttempt] | None) -> list[tuple[str, str]]:
+    return [(attempt.model_name, attempt.kind) for attempt in attempts or []]
+
+
+async def test_one_pass_by_default():
+    """Without `passes`, a chain every model failed raises at once, without waiting or starting over."""
+    calls: list[str] = []
+    agent = Agent(_fails_then_answers('a', 1, calls), capabilities=[ModelFallback(_fails_then_answers('b', 1, calls))])
+    async with _recorded_sleeps() as delays:
+        with pytest.raises(FallbackExceptionGroup) as exc_info:
+            await agent.run('x')
+    assert calls == ['a', 'b']
+    assert delays == []
+    assert _attempted(exc_info.value.attempts) == [('a', 'fallback'), ('b', 'fallback')]
+
+
+async def test_a_second_pass_starts_over_from_the_first_model():
+    """When every model failed, the next pass waits, then tries the chain again from the step's own model."""
+    calls: list[str] = []
+    agent = Agent(
+        _fails_then_answers('a', 1, calls),
+        capabilities=[ModelFallback(_fails_then_answers('b', 1, calls), passes=2)],
+    )
+    async with _recorded_sleeps() as delays:
+        result = await agent.run('x')
+    assert result.output == 'a answered'
+    assert calls == ['a', 'b', 'a']
+    # Both failed attempts of the first pass are recorded as fallbacks, on the response that answers.
+    assert _attempted(result.response.failed_attempts) == [('a', 'fallback'), ('b', 'fallback')]
+    assert result.usage.requests == 1
+    # `initial_delay` (1s), with up to half of it taken off as jitter.
+    assert len(delays) == 1
+    assert 0.5 <= delays[0] <= 1.0
+
+
+async def test_a_later_pass_moves_on_down_the_chain_again():
+    """A model that fails again in the next pass falls back to the next one, as in the first pass."""
+    calls: list[str] = []
+    agent = Agent(
+        _fails_then_answers('a', 5, calls),
+        capabilities=[ModelFallback(_fails_then_answers('b', 1, calls), passes=2)],
+    )
+    async with _recorded_sleeps():
+        result = await agent.run('x')
+    assert result.output == 'b answered'
+    assert calls == ['a', 'b', 'a', 'b']
+
+
+async def test_every_pass_failing_raises_the_group_of_every_pass():
+    """Once the last pass fails, the group holds every pass's errors and attempts, with a growing wait between passes."""
+    calls: list[str] = []
+    agent = Agent(
+        _fails_then_answers('a', 5, calls),
+        capabilities=[ModelFallback(_fails_then_answers('b', 5, calls), passes=3, initial_delay=2, max_delay=3)],
+    )
+    async with _recorded_sleeps() as delays:
+        with pytest.raises(FallbackExceptionGroup) as exc_info:
+            await agent.run('x')
+    assert calls == ['a', 'b'] * 3
+    assert len(exc_info.value.exceptions) == 6
+    assert _attempted(exc_info.value.attempts) == [('a', 'fallback'), ('b', 'fallback')] * 3
+    # 2s, then 4s capped at `max_delay`, each with up to half taken off as jitter.
+    assert len(delays) == 2
+    assert 1.0 <= delays[0] <= 2.0
+    assert 1.5 <= delays[1] <= 3.0
+
+
+async def test_a_pass_waits_for_the_longest_retry_after_of_the_pass_before():
+    """A `retry_after` longer than the backoff is waited out, up to `max_delay`."""
+    calls: list[str] = []
+    agent = Agent(
+        _fails_then_answers('a', 1, calls, retry_after=3),
+        capabilities=[ModelFallback(_fails_then_answers('b', 1, calls, retry_after=7), passes=2, initial_delay=0)],
+    )
+    async with _recorded_sleeps() as delays:
+        assert (await agent.run('x')).output == 'a answered'
+    assert delays == [7]
+
+    calls.clear()
+    agent = Agent(
+        _fails_then_answers('a', 1, calls, retry_after=60),
+        capabilities=[ModelFallback(_fails_then_answers('b', 1, calls), passes=2, max_delay=10)],
+    )
+    async with _recorded_sleeps() as delays:
+        assert (await agent.run('x')).output == 'a answered'
+    assert delays == [10]
+
+
+async def test_only_the_last_pass_s_retry_after_counts():
+    """A `retry_after` from an earlier pass doesn't stretch the wait after a later one."""
+    calls: list[str] = []
+    retry_afters = iter([20.0, None])
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('a')
+        if len(calls) <= 2:
+            raise ModelAPIError(model_name='a', message='down', retry_after=next(retry_afters))
+        return ModelResponse(parts=[TextPart('a answered')])
+
+    model = FunctionModel(respond, model_name='a')
+    # The candidate is the agent's own model, so each pass is the one attempt at it.
+    agent = Agent(model, capabilities=[ModelFallback(model, passes=3, initial_delay=0)])
+    async with _recorded_sleeps() as delays:
+        assert (await agent.run('x')).output == 'a answered'
+    assert delays == [20, 0]
+
+
+async def test_no_pass_is_started_that_would_outlast_the_run_timeout():
+    """A wait that would end after the run's `timeout=` isn't made: the group is raised while the run still has time."""
+    calls: list[str] = []
+    agent = Agent(
+        _fails_then_answers('a', 1, calls),
+        capabilities=[ModelFallback(_fails_then_answers('b', 1, calls), passes=2, initial_delay=60, max_delay=60)],
+    )
+    async with _recorded_sleeps() as delays:
+        with pytest.raises(FallbackExceptionGroup):
+            await agent.run('x', timeout=10)
+    assert calls == ['a', 'b']
+    assert delays == []
+
+
+async def test_a_usage_limit_stops_the_passes():
+    """Every pass's rejected responses count toward the run's token limit, which ends the run mid-pass."""
+    agent = Agent(
+        FunctionModel(_rejected_with_usage, model_name='a'),
+        capabilities=[
+            ModelFallback(FunctionModel(_rejected_with_usage, model_name='b'), fallback_on=reject_nope, passes=5)
+        ],
+    )
+    async with _recorded_sleeps() as delays:
+        with pytest.raises(UsageLimitExceeded, match='input_tokens_limit of 25'):
+            await agent.run('x', usage_limits=UsageLimits(input_tokens_limit=25))
+    # The second pass started, and its first attempt took the run past the limit.
+    assert len(delays) == 1
+
+
+def test_passes_and_delays_are_validated():
+    with pytest.raises(UserError, match='`passes` must be at least 1, got 0'):
+        ModelFallback('test', passes=0)
+    with pytest.raises(UserError, match='`initial_delay` and `max_delay` must not be negative'):
+        ModelFallback('test', initial_delay=-1)
+
+
+def test_passes_from_spec():
+    capability = ModelFallback.from_spec(['test'], passes=3, initial_delay=0.5, max_delay=5)
+    assert (capability.passes, capability.initial_delay, capability.max_delay) == (3, 0.5, 5)

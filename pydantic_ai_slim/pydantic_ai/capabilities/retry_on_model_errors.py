@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -15,6 +14,7 @@ from pydantic_ai._fallback import (
     FallbackOn,
     FallbackPredicates,
     SpecModelError,
+    jittered_backoff,
     spec_error_types,
     warn_response_handlers_not_applied,
 )
@@ -281,8 +281,9 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
                 return None
             delay = max(retry_after, 0.0)
         else:
-            backoff = min(self.initial_delay * 2 ** (self._attempt - 1), self.max_delay)
-            delay = backoff * (1 - _jitter(ctx, self._attempt) / 2)
+            delay = jittered_backoff(
+                ctx, self._attempt, initial_delay=self.initial_delay, max_delay=self.max_delay, key=str(self._attempt)
+            )
         if (remaining := ctx.remaining_time()) is not None and delay >= remaining:
             # The run would time out while waiting; raising now lets a `ModelFallback` try another model instead.
             return None
@@ -327,13 +328,3 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
 def _now() -> float:
     # The clock a `request_timeout` deadline is set on: the workflow's on Temporal, which replays it.
     return anyio.current_time()  # workflow-nondeterminism-ok: the clock `request_timeout` runs on, replayed by Temporal
-
-
-def _jitter(ctx: RunContext[Any], attempt: int) -> float:
-    """A number in `[0, 1)` that differs between runs, steps and attempts, and is the same when a run is replayed.
-
-    Derived from the run's ID rather than drawn at random, so a durable execution engine replaying the run waits the
-    same delay it recorded, while runs that fail at the same moment still spread out their retries.
-    """
-    digest = hashlib.blake2b(f'{ctx.run_id}:{ctx.run_step}:{attempt}'.encode(), digest_size=8).digest()
-    return int.from_bytes(digest, 'big') / 2**64

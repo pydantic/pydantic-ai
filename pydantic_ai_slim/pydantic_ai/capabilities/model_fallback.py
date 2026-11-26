@@ -4,11 +4,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pydantic_ai._agent_graph import _agent_graph_sleep  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._fallback import (
     FallbackChain,
     FallbackOn,
     FallbackPredicates,
     SpecModelError,
+    jittered_backoff,
     spec_error_types,
     spec_list,
 )
@@ -73,6 +75,16 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     steps and later runs continuing its message history, so the provider's prompt cache keeps
     being hit and the failing model isn't asked first every step.
 
+    With `passes` above 1, a request every model failed goes through the whole chain again, from its first model,
+    after a backoff, so a brief outage of every candidate at once doesn't fail the run:
+
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import ModelFallback
+
+    agent = Agent('openai:gpt-6.1-sol', capabilities=[ModelFallback('anthropic:claude-fable-5-1', passes=3)])
+    ```
+
     Prefer this over [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] inside an agent.
     `FallbackModel` remains the way to get the same behavior from a bare
     [`Model`][pydantic_ai.models.Model], outside an agent run.
@@ -83,6 +95,15 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
 
     sticky: bool
     """Whether a conversation stays on the model that last answered it after falling back."""
+
+    passes: int
+    """How many times a request goes through the whole chain before the agent gives up, the first time included."""
+
+    initial_delay: float
+    """Seconds to wait before the second pass through the chain; doubled for each pass after it."""
+
+    max_delay: float
+    """The longest wait before a pass through the chain, in seconds."""
 
     _predicates: FallbackPredicates = field(repr=False)
     _supplies_model: bool = field(repr=False)
@@ -101,12 +122,21 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     _pin_checked: bool = field(repr=False)
     _moved: bool = field(repr=False)
     """Whether the next attempt is at a candidate this capability moved the request to."""
+    _pass: int = field(repr=False)
+    """Which pass through the chain the current attempt is in, counting from 1."""
+    _pass_chain: list[Model | KnownModelName | str] = field(repr=False)
+    """The chain as the first pass started it, which every later pass starts over from."""
+    _pass_errors: int = field(repr=False)
+    """How many of the chain's errors earlier passes raised, so the current pass's are the ones after them."""
 
     def __init__(
         self,
         *models: Model | KnownModelName | str,
         fallback_on: FallbackOn = (ModelAPIError, ContentFilterError, OutputTokenLimitExceeded),
         sticky: bool = False,
+        passes: int = 1,
+        initial_delay: float = 1.0,
+        max_delay: float = 30.0,
     ):
         """Initialize the fallback capability.
 
@@ -147,12 +177,35 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 `run(model=...)` or `override(model=...)`, or selected by another capability, such as
                 `SelectModel`, is still attempted first. If the sticky candidate fails, the chain moves on
                 to the models after it, then the step's own model and the models before it.
+            passes: How many times a request goes through the whole chain, the first time included. When every model
+                in the chain failed, the next pass starts over from the model the first pass started with, after a
+                wait, and tries every model again. The default `1` gives up after one pass. Once the last pass
+                fails, the agent raises what a single pass would, such as a
+                [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup], holding the errors of
+                every pass and listing all their attempts. The agent attempts a request at most 100 times across all its models and passes, after
+                which it raises a `UserError` rather than the last error.
+            initial_delay: Seconds to wait before the second pass. The wait doubles for each pass after it, up to
+                `max_delay`, and a random part of up to half of it is taken off, as
+                [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] does between attempts. When a
+                model in the pass that failed asked to wait longer in its error's
+                [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after], the longest such wait is used
+                instead, up to `max_delay`. No pass is started when the wait would end after the run's
+                [deadline][pydantic_ai.tools.RunContext.deadline]. The wait goes through the agent's sleep, which a
+                durable execution engine replaces with a durable timer.
+            max_delay: The longest wait before a pass, in seconds.
         """
         super().__init__()
         if not models:
             raise UserError('`ModelFallback` requires at least one model to fall back to.')
+        if passes < 1:
+            raise UserError(f'`ModelFallback` `passes` must be at least 1, got {passes!r}.')
+        if initial_delay < 0 or max_delay < 0:
+            raise UserError('`ModelFallback` `initial_delay` and `max_delay` must not be negative.')
         self.models = list(models)
         self.sticky = sticky
+        self.passes = passes
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
         self._predicates = FallbackPredicates.parse(
             fallback_on, owner='ModelFallback', default='(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)'
         )
@@ -165,6 +218,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self._chain = self._new_chain()
         self._pin_checked = False
         self._moved = False
+        self._pass = 1
+        self._pass_chain = []
+        self._pass_errors = 0
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost so a rejected attempt is judged before any other capability's
@@ -211,6 +267,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             _chain=self._new_chain(),
             _pin_checked=False,
             _moved=False,
+            _pass=1,
+            _pass_chain=[],
+            _pass_errors=0,
         )
 
     async def prepare_model_request(
@@ -234,6 +293,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             self._chain = self._new_chain()
             self._pin_checked = False
             self._moved = False
+            self._pass = 1
+            self._pass_chain = []
+            self._pass_errors = 0
         if not self._pin_checked:
             self._pin_checked = True
             if (pinned := self._pinned_candidate(request_context)) is not None:
@@ -246,7 +308,11 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         if moved and self._already_attempted(request_context.model):
             # A candidate given as a string, which the agent resolved only now, turned out to be a model already
             # attempted this step, like the step's own model under an alias.
-            raise self._advance()
+            raise await self._advance(ctx)
+        if not self._pass_chain:
+            # Where a later pass starts over: this first attempt's model, by the ID it was selected by if it has one,
+            # so the agent resolves it the same way again, then the candidates the first pass would move on to.
+            self._pass_chain = [request_context.model_id or request_context.model, *self._remaining]
         self._attempted_models.append(request_context.model)
         if request_context.model_id is not None:
             self._attempted_ids.add(request_context.model_id)
@@ -264,7 +330,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             raise error
         if not await self._chain.falls_back(error):
             raise error
-        raise self._advance()
+        raise await self._advance(ctx)
 
     async def after_model_request(
         self,
@@ -284,7 +350,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # The core records a rejected response's tokens and cost before the next attempt, so a
         # rejected generation is still paid for in `RunUsage` even though it never enters history,
         # and records the attempt on the response that answers, as `FallbackModel` does.
-        raise self._advance()
+        raise await self._advance(ctx)
 
     def _new_chain(self) -> FallbackChain:
         return FallbackChain(self._predicates, owner='ModelFallback')
@@ -329,16 +395,42 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             return _is_or_wraps(request_context.model, default)
         return default is not None and request_context.model_id == default
 
-    def _advance(self) -> RetryModelRequest:
-        """Return the exception that moves to the next untried candidate, or the aggregated failure."""
+    async def _advance(self, ctx: RunContext[AgentDepsT]) -> RetryModelRequest:
+        """Return the exception that moves to the next untried candidate, or the next pass, or the aggregated failure."""
         while self._remaining:
             candidate = self._remaining.pop(0)
             if not self._already_attempted(candidate):
                 self._moved = True
                 return RetryModelRequest(candidate)
+        if self._pass < self.passes and (delay := self._pass_delay(ctx)) is not None:
+            # Through the agent graph's sleep, which a durable execution engine replaces with its own durable timer.
+            await _agent_graph_sleep(delay)
+            self._pass += 1
+            self._pass_errors = len(self._chain.exceptions)
+            first, *self._remaining = self._pass_chain
+            self._attempted_models = []
+            self._attempted_ids = set()
+            self._moved = True
+            return RetryModelRequest(first)
         # The attempts are the agent's to list, as it made them: it records each failed one, and
         # lists them on this group once it ends the request.
         self._chain.exhausted()
+
+    def _pass_delay(self, ctx: RunContext[AgentDepsT]) -> float | None:
+        """How long to wait before the next pass, or `None` if the run would time out first."""
+        delay = jittered_backoff(
+            ctx, self._pass, initial_delay=self.initial_delay, max_delay=self.max_delay, key=f'pass:{self._pass}'
+        )
+        retry_afters = [
+            error.retry_after
+            for error in self._chain.exceptions[self._pass_errors :]
+            if isinstance(error, ModelAPIError) and error.retry_after is not None
+        ]
+        if retry_afters:
+            delay = max(delay, min(max(retry_afters), self.max_delay))
+        if (remaining := ctx.remaining_time()) is not None and delay >= remaining:
+            return None
+        return delay
 
     def _already_attempted(self, candidate: Model | KnownModelName | str) -> bool:
         if isinstance(candidate, Model):
@@ -357,6 +449,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             'OutputTokenLimitExceeded',
         ),
         sticky: bool = False,
+        passes: int = 1,
+        initial_delay: float = 1.0,
+        max_delay: float = 30.0,
     ) -> ModelFallback[Any]:
         """Build from an agent spec, which names the models and the exceptions to fall back on.
 
@@ -375,6 +470,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                   models: [anthropic:claude-opus-5-5]
                   fallback_on: [ModelRateLimitError, ModelUnavailableError]
                   sticky: true
+                  passes: 3
         """
         # Spec arguments reach here unvalidated: the annotations above are what the published spec schema
         # advertises, not something that rejects other values on the way in.
@@ -384,7 +480,14 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             invalid = [model for model in given_models if not isinstance(model, str)]
             raise UserError(f'`ModelFallback` in an agent spec takes model names, got {invalid!r}.')
         error_types = spec_error_types(fallback_on, owner='ModelFallback', param='fallback_on')
-        return cls(*model_names, fallback_on=error_types, sticky=sticky)
+        return cls(
+            *model_names,
+            fallback_on=error_types,
+            sticky=sticky,
+            passes=passes,
+            initial_delay=initial_delay,
+            max_delay=max_delay,
+        )
 
 
 def _pin_id(model: Model | str) -> str:
