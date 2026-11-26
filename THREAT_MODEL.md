@@ -93,6 +93,16 @@ Retained session audio and images are capped by default, and the caps can be rem
 
 Canonical guidance: [realtime deployment](docs/realtime/deployment.md), [steering GPT-Live's voice](docs/realtime/openai.md#voice-instructions), [seeding a session](docs/realtime/history.md#seeding-a-session), [retaining audio](docs/realtime/history.md#retaining-audio), and [realtime usage and limits](docs/realtime/observability.md#usage-and-limits).
 
+### Google Interactions history
+
+`GoogleInteractionsModel` sends the complete conversation with `store=False`; it does not continue stored interactions by ID. Signed thought and native-tool steps remain provider data, not evidence of application authorization. The application still authorizes deferred tool approvals and access to persisted history. Interactions remote MCP calls run at Google with the server URL and headers configured by the application; local download address checks do not govern those provider-side requests.
+
+Generated media uses inline delivery. URI-only output raises an error before fetching a provider-selected URL; video URI delivery requires server-side storage.
+
+Persisted step metadata in client-held history is replayed only into the step type its message part maps from, and replayed media is sent inline. A persisted file URI raises an error instead of being sent, so `sanitize_messages` file-reference rules cannot be bypassed through replay metadata. Remote MCP results replay as the server's MCP `CallToolResult`, serialized to JSON. In a live check, Google did not fetch URIs inside a replayed result.
+
+Input `FileUrl` references are resolved by Google on both transports under its policies. Applications choosing local address and response-size checks set `force_download=True` for HTTP(S) inputs; the default follows the shared provider-native URL contract.
+
 ### URL fetching and provider file references
 
 URLs can select resources reachable with the server's network access or a provider's credentials. Server-side request forgery (SSRF) review covers schemes, resolved addresses, redirects, alternate address forms, response size, and each transport that performs a fetch.
@@ -240,7 +250,7 @@ Stock Pax is a broad local-execution profile: its default Coder has unrestricted
 - Environment filtering covers selected credential names and does not isolate other secrets or files readable by the OS user.
 - A model's saved `base_url` receives its provider's credentials: saved keys, keyed profiles, and Codex sign-ins. Whoever can write the model settings can redirect them; `delegate_models` settings cannot set it. A model's saved `api_key` names a `/keys` entry, never the key itself; together with `base_url`, whoever can write the model settings can send any saved key, including one saved for an unrelated service, to that endpoint.
 - `open_stock_agent` gives code and ACP hosts the same Coder and workspace defaults.
-- When no OS keyring backend exists, saved credentials fall back to `0600` plaintext files under `$XDG_CONFIG_HOME/pydantic-clai2/`, and `pydantic_ai_pax.config.credential_store` logs a single warning per process when reading or writing one.
+- When no OS keyring backend exists, saved credentials fall back to `0600` plaintext files under `$XDG_CONFIG_HOME/pydantic-ai-pax/`, and `pydantic_ai_pax.config.credential_store` logs a single warning per process when reading or writing one.
 
 See the Pax docs on [environment variables](src/pydantic_ai_pax/docs/reference.md#environment-variables), [Code Mode](src/pydantic_ai_pax/README.md#code-mode-and-speculative-execution), [agent folders](src/pydantic_ai_pax/docs/reference.md#agent-folders), and [the stock agent in your own code](src/pydantic_ai_pax/docs/reference.md#the-stock-agent-in-your-own-code).
 
