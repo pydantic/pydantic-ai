@@ -247,7 +247,7 @@ code_mode_agent = Agent(
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='unset')
 
 
-# Only the skipped relay test calls this `os_access` (#8824).
+# Only the skipped relay test calls this `os_access` (#14674).
 def _workflow_os(
     *, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object
 ) -> object:  # pragma: lax no cover
@@ -1030,7 +1030,7 @@ async def test_remote_checkout_backoff_replays_without_workflow_timer(client: Cl
     assert not any(event.HasField('timer_started_event_attributes') for event in history.events)
 
 
-@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
+@pytest.mark.skip(reason='Hangs in CI under xdist: https://github.com/pydantic/pydantic-ai/issues/14674')
 @pytest.mark.usefixtures('temporal_monty_relay')
 async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> None:
     """Remote workers run and replay in a workflow like local ones do.
