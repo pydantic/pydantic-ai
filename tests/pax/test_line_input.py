@@ -123,6 +123,17 @@ def test_long_answer_wraps_and_keeps_the_cursor_in_view() -> None:
     assert LineInput(prompt='Paste: ', hidden=True).frame(width=40)[1] == '\x1b[7m \x1b[27m'
 
 
+def test_read_line_answer_wraps_at_word_boundaries() -> None:
+    line = LineInput(prompt='Paste: ')
+    line.feed(Paste(text='Best pick for persistence layer in a multi-agent app'))
+    rows = list(line.frame(width=40))
+    assert rows[:1] == ['\x1b[1;95mPaste: \x1b[0m']
+    assert [Text.from_ansi(row).plain for row in rows[1:]] == [
+        'Best pick for persistence layer in a ',
+        'multi-agent app ',
+    ]
+
+
 def test_hidden_answers_are_edited_only_at_the_end() -> None:
     """The count cannot show where a moved cursor is, so moving it would edit text the user cannot see."""
     line = LineInput(prompt='Code: ', hidden=True)

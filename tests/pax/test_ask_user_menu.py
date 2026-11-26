@@ -713,6 +713,20 @@ def test_pasted_shortcuts_are_literal_and_history_search_is_disabled() -> None:
     assert menu.choose('enter') == 'first\nsecond'
 
 
+def test_typed_other_answer_wraps_at_word_boundaries() -> None:
+    """Typing the Other answer wraps it whole-word at the terminal edge."""
+    answer = 'Best pick for persistence layer in a multi-agent app'
+    menu = QuestionMenu(question=APPROACH, position=1, total=1)
+    menu.choose('up')
+    for key in answer:
+        assert menu.choose(key) is None
+    assert menu.editing_custom
+    rows = [Text.from_ansi(row).plain for row in menu.custom.rows(width=40, limit=8)]
+    assert rows == ['Best pick for persistence layer in a ', 'multi-agent app ']
+    painted = [Text.from_ansi(row).plain for row in menu.frame(width=40, height=24)]
+    assert all(cell_len(row) <= 40 for row in painted)
+
+
 async def test_question_decoder_eof_declines(question_pipe: PipeInput) -> None:
     question_pipe.close()
     response = await TerminalAnswerer(full_screen=ScreenLog(), console=Console(file=io.StringIO()))(
