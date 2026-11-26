@@ -29,9 +29,14 @@ from pydantic_ai_harness import (
     Shell,
     ToolOutputLimits,
 )
-from pydantic_ai_harness.require_verification import CompletionUnverifiedEvent, VerificationRequiredPart
+from pydantic_ai_harness.require_verification import (
+    DEFAULT_VERIFICATION_COMMANDS,
+    CompletionUnverifiedEvent,
+    VerificationRequiredPart,
+)
 from pydantic_ai_harness.tool_output_limits import Band, Summarize
 from tests.harness._deferred_tools import BackgroundModel
+from tests.harness._regex_steps import StepCounter
 
 _SHELL = {'code_arg_language': 'shell', 'code_arg_name': 'command'}
 
@@ -785,6 +790,27 @@ class TestRequireVerification:
         result = await agent.run('Look around')
 
         assert result.output == 'Done.'
+
+    @pytest.mark.parametrize(
+        ('prefix', 'repeated', 'suffix'),
+        [
+            pytest.param('', 'black/', 'black x', id='tool-path'),
+            pytest.param('uv run ', '-a/black ', 'x', id='runner-flags'),
+        ],
+    )
+    @pytest.mark.parametrize('pattern', DEFAULT_VERIFICATION_COMMANDS)
+    def test_default_patterns_scale_with_command_length(
+        self, pattern: str, prefix: str, repeated: str, suffix: str
+    ) -> None:
+        """Each doubling of a command adds fewer than three times the match steps the previous doubling added.
+
+        The steps are counted rather than timed, so the result is the same on any runner. A recorded run cannot show
+        how the steps grow, so the test reads the default patterns directly.
+        """
+        counter = StepCounter(pattern)
+        steps = [counter.scan(prefix + repeated * n + suffix, budget=1_000_000).steps for n in (32, 64, 128)]
+
+        assert steps[2] - steps[1] < 3 * (steps[1] - steps[0])
 
     def test_rejects_a_negative_attempt_limit(self) -> None:
         with pytest.raises(ValueError, match='`max_attempts` must be at least 0, got -1'):

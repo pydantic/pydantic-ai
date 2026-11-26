@@ -252,7 +252,7 @@ def map_client_tool_search_call(item: ResponseToolSearchCall, provider_name: str
     Emits the typed [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
     subclass directly — the wire shape is distinct enough that the adapter can identify
     this as a tool-search call without going through the framework's post-hoc
-    `_narrow_tool_call_parts` pass.
+    `_apply_tool_defs_to_call_parts` pass.
     """
     call_id = item.call_id or item.id
     args = normalize_tool_search_args(item.arguments)

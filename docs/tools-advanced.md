@@ -249,7 +249,7 @@ A `prepare` method can be registered via the `prepare` kwarg to any of the tool 
 The `prepare` method has type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc]. It receives [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]. It can return that definition unchanged, return a modified copy built with [`dataclasses.replace`][dataclasses.replace], or return `None` to omit the tool for that step.
 
 !!! warning "Modify the definition you're given, don't build a new one"
-    A [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] carries more than a name and a parameters schema: `description`, `strict`, `sequential`, `kind`, `metadata`, `timeout`, `durable`, `defer_loading`, and `toolset_id` all arrive pre-filled. Constructing a fresh one inside a `prepare` function silently resets every field you don't pass back to its default, so modify the definition you were handed or copy it with [`dataclasses.replace`][dataclasses.replace] instead.
+    A [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] carries more than a name and a parameters schema: `description`, `strict`, `sequential`, `kind`, `metadata`, `timeout`, `durable`, `ui_visibility`, `defer_loading`, and `toolset_id` all arrive pre-filled. Constructing a fresh one inside a `prepare` function silently resets every field you don't pass back to its default, so modify the definition you were handed or copy it with [`dataclasses.replace`][dataclasses.replace] instead.
 
     `kind` is the field that bites: it is how [`requires_approval=True`](deferred-tools.md#human-in-the-loop-tool-approval) reaches the agent run. A definition that loses it describes a tool that runs immediately, without pausing for approval. If you'd rather not depend on every `prepare` function preserving it, [`ApprovalRequiredToolset`](toolsets.md#requiring-tool-approval) enforces approval when the tool is called, independently of how its definition was prepared.
 
@@ -808,7 +808,7 @@ The validation result is exposed via the `args_valid` field on [`FunctionToolCal
 
 When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`, executing them in the order the model emitted them.
 
-To stop a specific tool from overlapping with others, mark it `sequential=True` — it then acts as a barrier: tools the model emitted before it finish first, it runs alone, and tools emitted after it start only once it finishes.
+To stop a specific tool from overlapping with other tools in the same run, mark it `sequential=True` — it acts as a barrier within that run: tools emitted before it finish first, it runs alone, and tools emitted after it start once it finishes.
 
 ```python {title="sequential_tool.py"}
 from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -852,10 +852,17 @@ print(calls)
 
 You can pass the [`sequential`][pydantic_ai.tools.ToolDefinition.sequential] flag when registering any function tool, and the same barrier is available for [output tools](output.md#tool-output) via [`ToolOutput(sequential=True)`][pydantic_ai.output.ToolOutput] (see [Controlling output tool parallelism](output.md#controlling-output-tool-parallelism)). To run an entire run's tools serially regardless of which tools were called, wrap the run in the [`with agent.parallel_tool_call_execution_mode('sequential')`][pydantic_ai.agent.AbstractAgent.parallel_tool_call_execution_mode] context manager, or set `parallel_tool_calls=False` on the [model settings][pydantic_ai.settings.ModelSettings].
 
-Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
+Async functions run on the event loop; sync functions run on worker threads. Prefer `async def` unless you're doing blocking I/O that has no non-blocking alternative, or CPU-bound work (like `numpy` or `scikit-learn`), so lightweight functions aren't offloaded to threads unnecessarily.
 
-!!! note "Sync tools run on a separate thread"
-    Because a sync function runs on a worker thread, a value it sets on a [`contextvars.ContextVar`][contextvars.ContextVar] is not visible outside the function, and asyncio APIs like `asyncio.get_running_loop()` raise an error, since the worker thread has no event loop. Reading context variables still works, but the write limitation also applies to libraries that use them internally, such as tracing and logging integrations. If your tool needs any of these, make it async. The same applies to any sync function the agent runs for you, including [hooks](hooks.md), system prompt functions, output functions, and history processors.
+!!! warning "Sync tools run concurrently on worker threads"
+    Because sync tools run on worker threads, keep two things in mind:
+
+    - **Thread safety**: Parallel tool calls within one run and concurrent agent runs can call the same sync function (or different sync tools sharing state) at the same time. Your function, shared `deps`, and any libraries it calls must be thread-safe — especially on free-threaded Python. `sequential=True` only prevents overlap within a single run, not across concurrent runs.
+
+        To use non-thread-safe code, guard calls with a `threading.Lock`. If a library also requires single-thread affinity, make the tool `async def` and dispatch just those library calls to a module-level [`ThreadPoolExecutor(max_workers=1)`][concurrent.futures.ThreadPoolExecutor] shared by all calls via `await asyncio.get_running_loop().run_in_executor(...)` (wrap the call with `contextvars.copy_context().run` if it also needs context variables).
+    - **Context variables and asyncio**: Writes to a [`contextvars.ContextVar`][contextvars.ContextVar] don't propagate back out of the worker thread (which affects libraries like tracing and logging integrations), and asyncio APIs like `asyncio.get_running_loop()` fail because the worker thread has no event loop. Reading context variables still works. Make the tool `async def` if you need either.
+
+    The same applies to any other sync function the agent runs for you, including [hooks](hooks.md), system prompt functions, output functions, and history processors.
 
 #### Thread executor for long-running servers
 

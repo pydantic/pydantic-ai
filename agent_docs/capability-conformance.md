@@ -20,7 +20,7 @@ The contracts are numbered C0, C1, … in the order they land. C1–C5 work towa
 **How it's tested**
 
 - `DECLARES_CALLS` (C0) builds every buildable public case and checks it: `test_a_capability_that_runs_with_tools_declares_calls`. A capability made of others is checked through its parts.
-- `test_pending_calls_backfill` pins how many cases are still pending. A PR that writes a case's `calls` removes its exemption and lowers the count; a new capability doesn't add a pending one.
+- `test_pending_calls_backfill` pins how many cases are still pending. A PR that writes a case's `calls`, or gives a case a reasoned exemption of its own (such as a route other tools run through, which C1 covers), removes its pending exemption and lowers the count; no PR raises it, so a new capability doesn't add a pending one.
 - For a capability whose hooks run around other tools' calls, `with_echo` builds it beside an `echo` tool, and `ECHO` calls it.
 
 ## Prompt cache
@@ -28,7 +28,7 @@ The contracts are numbered C0, C1, … in the order they land. C1–C5 work towa
 **Requirements**
 
 - Every request a capability sends repeats the earlier one as a prefix: it appends to history and never rewrites what an earlier request sent, its instructions are addressable, and the same history projects to the same bytes. The rules are in [Message History & Prompt Caching](message-history-and-caching.md).
-- Two of a capability on one agent mean what its `combine` policy says, and stating one configuration twice reaches the model the same as stating it once.
+- Two of a capability on one agent mean what its `combine` policy says, and stating one configuration twice reaches the model the same as stating it once. The capability decides that policy explicitly: a default `id` when two are one configuration (fixed tool names, or one run-wide policy), so they merge, and none when they compose; see [Deciding What Two Of It Mean](../src/pydantic_ai_harness/agent_docs/capability-authoring.md#deciding-what-two-of-it-mean).
 
 **How it's tested**
 
