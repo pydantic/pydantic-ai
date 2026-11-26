@@ -720,6 +720,52 @@ class TestBuildSchemaTypes:
             capabilities = Agent.from_spec(spec, custom_capability_types=[Priced]).root_capability.capabilities
             assert [c.rate for c in capabilities if isinstance(c, Priced)] == [1.5]
 
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_type_checking_only_hint_schema_error_capability_schema(self):
+        """A class whose schema can't be built from the hints that resolve publishes its name alone, as before.
+
+        Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
+        """
+
+        class Session(Protocol):
+            id: str
+
+        @dataclass
+        class PricedSession(AbstractCapability[None]):
+            session: Session | None = None
+            rate: 'Decimal | None' = None
+
+        schema = AgentSpec.model_json_schema_with_capabilities([PricedSession])
+        assert [key for key in schema['$defs'] if key.endswith('_PricedSession')] == []
+        name_only = {'model': 'test', 'capabilities': ['PricedSession']}
+        assert list(validator_for(schema)(schema).iter_errors(name_only)) == []
+        capabilities = Agent.from_spec(name_only, custom_capability_types=[PricedSession]).root_capability.capabilities
+        assert [c for c in capabilities if isinstance(c, PricedSession)] == [PricedSession()]
+
+    def test_type_checking_only_hint_from_spec_schema(self):
+        """A `from_spec` parameter whose hint resolves only under `TYPE_CHECKING` is left out; the others stay."""
+
+        @dataclass
+        class PricedFromSpec(AbstractCapability[None]):
+            limit: int = 3
+
+            @classmethod
+            def from_spec(cls, limit: int = 3, rate: 'Decimal | None' = None) -> Self:
+                return cls(limit=limit)  # pragma: no cover
+
+        schema = AgentSpec.model_json_schema_with_capabilities([PricedFromSpec])
+        assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedFromSpec')} == snapshot(
+            {
+                'short_spec_PricedFromSpec': {
+                    'additionalProperties': False,
+                    'properties': {'PricedFromSpec': {'title': 'Pricedfromspec', 'type': 'integer'}},
+                    'required': ['PricedFromSpec'],
+                    'title': 'short_spec_PricedFromSpec',
+                    'type': 'object',
+                }
+            }
+        )
+
     def test_type_checking_only_hint_inherited_from_spec_schema(self):
         """A class whose `__init__` hints don't all resolve keeps the schema of the `from_spec` override it inherits."""
 

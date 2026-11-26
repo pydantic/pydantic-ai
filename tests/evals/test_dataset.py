@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import partial, wraps
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 import pytest
@@ -24,6 +24,9 @@ from .._inline_snapshot import snapshot
 from ..clock_utils import LONG_TIMEOUT, Clock
 from ..conftest import IsStr, try_import
 from .utils import render_table
+
+if TYPE_CHECKING:
+    from decimal import Decimal
 
 with try_import() as imports_successful:
     from rich.table import Table
@@ -1878,6 +1881,34 @@ def test_add_invalid_evaluator():
     with pytest.raises(ValueError) as exc_info:
         dataset.model_json_schema_with_evaluators((SimpleEvaluator,))
     assert str(exc_info.value).startswith('All custom evaluator classes must be decorated with `@dataclass`')
+
+
+def test_evaluator_schema_with_type_checking_only_hint():
+    """A parameter whose hint resolves only under `TYPE_CHECKING` is left out of the schema; the others stay.
+
+    Schema generation makes no model request, so there is nothing to record.
+    """
+
+    @dataclass
+    class PricedEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        threshold: int = 1
+        rate: Decimal | None = None
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:  # pragma: no cover
+            return True
+
+    schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators([PricedEvaluator])
+    assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedEvaluator')} == snapshot(
+        {
+            'short_spec_PricedEvaluator': {
+                'additionalProperties': False,
+                'properties': {'PricedEvaluator': {'title': 'Pricedevaluator', 'type': 'integer'}},
+                'required': ['PricedEvaluator'],
+                'title': 'short_spec_PricedEvaluator',
+                'type': 'object',
+            }
+        }
+    )
 
 
 def test_import_generate_dataset():

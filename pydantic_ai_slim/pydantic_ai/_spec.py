@@ -368,12 +368,23 @@ def _spec_annotation_hints(target: Callable[..., object]) -> dict[str, Any]:
 
     A class target's annotations also name attributes its `__init__` doesn't take, like a `ClassVar` or an
     `init=False` dataclass field. A target that takes `*args` or `**kwargs` may take any of them except a `ClassVar`.
+    Otherwise a hint that doesn't resolve, like a `TYPE_CHECKING` import, leaves only its own parameter unannotated.
     """
     parameters = inspect.signature(target).parameters
     if any(p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters.values()):
         hints = get_function_type_hints(target)
         return {name: hint for name, hint in hints.items() if not is_classvar_annotation(hint)}
-    return get_function_type_hints(target, include_keys=set(parameters))
+    try:
+        return get_function_type_hints(target, include_keys=set(parameters))
+    except (NameError, TypeError, AttributeError):
+        hints: dict[str, Any] = {}
+        for name in parameters:
+            try:
+                hints |= get_function_type_hints(target, include_keys={name})
+            except (NameError, TypeError, AttributeError):
+                # TODO(report): `name` is left out of the schema if optional, and takes any value if required.
+                pass
+        return hints
 
 
 def _without_not_required(type_hint: object) -> object:
