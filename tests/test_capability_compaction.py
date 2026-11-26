@@ -47,6 +47,8 @@ from pydantic_ai.capabilities import (
     WrapperCapability,
     on_event,
 )
+from pydantic_ai.conversation import Conversation
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import (
     CallDeferred,
     ModelAPIError,
@@ -69,7 +71,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot
 from .batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
-from .conftest import IsDatetime
+from .conftest import IsDatetime, conversation_view
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 from .function_model_prefix import COMPACTION_REWRITES_HISTORY
 
@@ -1336,7 +1338,11 @@ async def test_records_locate_their_part_after_a_round_trip(
 
 
 async def test_a_pickled_result_leaves_out_what_a_compaction_replaced():
-    """DBOS pickles a run result: the record keeps everything but the history it replaced."""
+    """DBOS pickles a run result: the record keeps everything but the history it replaced.
+
+    The replaced messages still reach the other process once, as part of the run's conversation, which keeps every
+    message the run was given or added.
+    """
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart('the replaced history')]),
         ModelResponse(parts=[TextPart('a')]),
@@ -1346,10 +1352,11 @@ async def test_a_pickled_result_leaves_out_what_a_compaction_replaced():
     [record] = result.compactions
     assert record.replaced is not None
 
-    data = pickle.dumps(result)
-    assert b'the replaced history' not in data
-    [loaded] = pickle.loads(data).compactions
+    unpickled = pickle.loads(pickle.dumps(result))
+    [loaded] = unpickled.compactions
     assert loaded == record and loaded.replaced is None
+    assert unpickled.conversation.messages == result.conversation.messages
+    assert conversation_view(unpickled.conversation.messages[:1]) == ['user-prompt: the replaced history']
     # The live record is untouched.
     assert record.replaced is not None
     # A copy of the record itself keeps it.
@@ -2111,3 +2118,167 @@ async def test_compaction_usage_is_priced_at_a_timestamp_from_the_history(
         assert isinstance(answered, ModelRequest)
         expected = answered.timestamp
     assert compaction_billed.timestamp == expected
+
+
+def _compaction_view(messages: Sequence[ModelMessage]) -> list[str]:
+    """`conversation_view`, plus a line for each compaction summary."""
+    return [
+        line
+        for message in messages
+        for line in (
+            [f'compaction: {part.content}' for part in message.parts if isinstance(part, CompactionPart)]
+            or conversation_view([message])
+        )
+    ]
+
+
+def _looks_up_twice_then_compacts() -> tuple[Agent[None, str], ModelRequest]:
+    """An agent that looks something up twice, compacts before its third request, and notes the answer to it.
+
+    The note is appended by `after_model_request` while the compacted attempt is answered, after the snapshot the
+    compaction replaced.
+    """
+    made = 0
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal made
+        if made < 2:
+            made += 1
+            return ModelResponse(parts=[ToolCallPart('lookup', {'n': made}, tool_call_id=f'call-{made}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    note = ModelRequest(parts=[UserPromptPart('a note from after_model_request')])
+
+    async def before(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        if ctx.run_step == 3:
+            ctx.request_compaction(reason='threshold')
+        return request_context
+
+    async def after(
+        ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        if ctx.run_step == 3:
+            ctx.messages.append(note)
+        return response
+
+    agent = Agent(
+        FunctionModel(model, model_name='model'),
+        capabilities=[Hooks(before_model_request=before, after_model_request=after), Summarize()],
+    )
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    return agent, note
+
+
+async def test_a_run_that_compacts_mid_run_keeps_every_message_it_added_in_its_conversation():
+    """The history the run continues with is compacted, but its conversation keeps every message the run added.
+
+    The compaction is a rewrite, reported by its record, not an append: the summary sits where it replaced the
+    summarized messages, the messages it kept and the note appended after its snapshot appear once each, in order.
+    """
+    agent, note = _looks_up_twice_then_compacts()
+    result = await agent.run('look it up')
+
+    assert _compaction_view(result.all_messages()) == snapshot(
+        [
+            'compaction: summarize for model',
+            'call call-2',
+            'return call-2: fact 2',
+            'user-prompt: a note from after_model_request',
+            'text: done',
+        ]
+    )
+    messages = result.conversation.messages
+    assert _compaction_view(messages) == snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'compaction: summarize for model',
+            'call call-2',
+            'return call-2: fact 2',
+            'user-prompt: a note from after_model_request',
+            'text: done',
+        ]
+    )
+    # Each message once, and the ones the compacted history kept are the same objects.
+    assert len({id(message) for message in messages}) == len(messages)
+    assert sum(message is note for message in messages) == 1
+    assert all(any(message is kept for message in messages) for kept in result.all_messages())
+    [record] = result.compactions
+    assert (record.reason, record.messages_before, record.messages_after) == ('threshold', 5, 3)
+    assert messages[3] is result.all_messages()[record.part_message_index]
+
+    store = InMemoryConversationStore()
+    await store.save(result)
+    stored = await store.load(result.conversation_id)
+    assert stored is not None
+    assert _compaction_view(stored.messages) == _compaction_view(messages)
+
+
+async def test_a_compacted_run_result_keeps_its_conversation_and_compactions_across_serialization():
+    """A serialized result carries both its compaction records and its whole conversation, and loads back to both."""
+    agent, _ = _looks_up_twice_then_compacts()
+    result = await agent.run('look it up')
+    adapter = pydantic.TypeAdapter(AgentRunResult[str])
+
+    dumped = adapter.dump_python(result)
+    assert len(dumped['compactions']) == 1
+    # The messages the compacted history still holds are referred to by their index in it, the summarized ones
+    # are written out.
+    assert [item for item in dumped['conversation_messages'] if isinstance(item, int)] == list(
+        range(len(result.all_messages()))
+    )
+    restored = adapter.validate_json(adapter.dump_json(result))
+
+    assert restored.all_messages() == result.all_messages()
+    assert restored.conversation.messages == result.conversation.messages
+    assert restored.compactions == result.compactions
+
+
+@dataclass
+class _Answer:
+    text: str
+
+
+def _prompt(turn: int) -> ModelRequest:
+    return ModelRequest(parts=[UserPromptPart(f'turn {turn}')], metadata={'turn': turn})
+
+
+@pytest.mark.parametrize('compact', [False, True])
+async def test_compacting_a_run_s_first_request_keeps_the_stored_requests_it_merged_apart(compact: bool):
+    """The unsaved prompt the run merges into the stored one it sends is saved on its own, compacted or not.
+
+    The compaction of the first request summarizes messages the run was given, and every message the run sent or
+    added is saved once, in the same order as without it.
+    """
+    store = InMemoryConversationStore()
+    plain = Agent(TestModel(), output_type=_Answer)
+    await store.save(await plain.run('turn 0', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(_prompt(1))
+    await store.save(loaded)
+    loaded.messages.append(_prompt(2))
+    agent = Agent(TestModel(), output_type=_Answer, capabilities=[RequestOnce(), Summarize()] if compact else [])
+
+    result = await agent.run(conversation=loaded)
+    assert len(result.compactions) == int(compact)
+    await store.save(result)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+            'user-prompt: turn 1',
+            'user-prompt: turn 2',
+            'call pyd_ai_tool_call_id__final_result',
+            'return pyd_ai_tool_call_id__final_result: Final result processed.',
+        ]
+    )
