@@ -39,6 +39,7 @@ with try_import() as imports_successful:
     from ag_ui.core import CustomEvent, RunAgentInput, UserMessage
 
     from pydantic_ai.ui.ag_ui import AGUIAdapter, AGUIEventStream
+    from pydantic_ai.ui.ag_ui._utils import ACTIVITY_EVENTS_VERSION, DEFAULT_AG_UI_VERSION, parse_ag_ui_version
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
     from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
     from pydantic_ai.ui.vercel_ai.response_types import DataChunk
@@ -536,6 +537,8 @@ async def test_client_held_history_warns_when_an_interrupted_redacted_call_is_cl
 @pytest.mark.parametrize('protocol', PROTOCOLS)
 async def test_enqueued_tool_exchange_follows_the_stream_default(protocol: ProtocolName):
     """A tool exchange a tool enqueues has no definition to be stamped from, so the stream's default decides it."""
+    if protocol == 'ag_ui' and parse_ag_ui_version(DEFAULT_AG_UI_VERSION) < ACTIVITY_EVENTS_VERSION:
+        pytest.skip('this ag-ui-protocol has no activity events')  # pragma: lax no cover
 
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
         if any(isinstance(part, ToolReturnPart) and part.tool_name == 'escalate' for m in messages for part in m.parts):
