@@ -106,6 +106,25 @@ class DurabilityEngineSpec:
     cancelling the run at an unrecorded point. An ordinary asyncio loop doesn't qualify.
     """
 
+    replays_orchestrator_code: bool = False
+    """Whether code that a capability runs in the durable container must not branch on elapsed wall-clock time.
+
+    Set this when the engine replays container code and needs each replay to take the recorded path.
+    A capability that runs its own code there, such as Pydantic AI Harness's `CodeMode` sandbox, then
+    turns off its wall-clock execution limit, because a limit that fires on one execution but not the
+    other would make them diverge. Temporal and Azure Durable Task set it.
+    """
+
+    thread_wakeable_loop: bool = True
+    """Whether the event loop running durable-container code can be woken from another thread.
+
+    Set this to `False` when the container's loop doesn't run callbacks scheduled from other threads
+    with `call_soon_threadsafe()`, as with Temporal's workflow loop and the loop Azure Durable Task
+    orchestrators run on. A capability whose async work completes on a thread of its own, such as
+    Pydantic AI Harness's Monty sandbox, then calls that work through a blocking portal: a helper
+    thread with an ordinary loop, while the container's thread waits for each call.
+    """
+
     def __post_init__(self) -> None:
         errors: list[str] = []
         if not self.durable_unit_noun:

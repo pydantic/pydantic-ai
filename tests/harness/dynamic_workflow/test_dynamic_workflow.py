@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import functools
 import re
+import threading
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -52,6 +54,7 @@ from pydantic_ai_harness.dynamic_workflow import (
 )
 
 from .._deferred_tools import asking_agent, deferring_agent, pending_agent
+from .._recording_durability import RecordingDurability
 from ._concurrent_sub_agents import DeferredStarts
 
 
@@ -2091,3 +2094,79 @@ async def test_parent_deny_unanswered_answers_a_workflow_childs_question() -> No
     result = await parent.run('run it')
     assert result.output == 'workflow done'
     assert observed == [DEFAULT_QUESTION_MESSAGE]
+
+
+class _UnwakeableLoopDurability(RecordingDurability):
+    """An engine whose workflow code runs on a loop that can't be woken from another thread."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, thread_wakeable_loop=False)
+
+
+class _ReplayingDurability(RecordingDurability):
+    """An engine that replays its workflow code against the recorded history."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, replays_orchestrator_code=True)
+
+
+async def _run_workflow_under(
+    durability: RecordingDurability,
+    code: str,
+    sub_agent: Agent[object, str],
+    resource_limits: WorkflowResourceLimits | None = None,
+) -> ToolReturnPart:
+    """Run `code` once through `run_workflow` in `durability`'s workflow code, and return what the model got back."""
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('run_workflow', {'code': code})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        name='orchestrator',
+        capabilities=[DynamicWorkflow[object](agents=[sub_agent], resource_limits=resource_limits), durability],
+    )
+    result = await agent.run('go')
+    request = result.all_messages()[2]
+    assert isinstance(request, ModelRequest)
+    [part] = request.parts
+    assert isinstance(part, ToolReturnPart)
+    return part
+
+
+@pytest.mark.parametrize(
+    ('durability_type', 'through_portal'),
+    [
+        pytest.param(RecordingDurability, False, id='wakeable'),
+        pytest.param(_UnwakeableLoopDurability, True, id='unwakeable'),
+    ],
+)
+async def test_an_unwakeable_loop_calls_monty_through_the_portal(
+    durability_type: type[RecordingDurability], through_portal: bool
+) -> None:
+    """The engine spec's `thread_wakeable_loop` decides whether the script's Monty calls go through a portal."""
+    portals: list[list[str]] = []
+
+    def probe() -> str:
+        """Report the portal threads open while the script waits on this sub-agent."""
+        # `anyio` names them `asyncio-portal-<id>`, or `Thread-<n> (run_blocking_portal)` in older versions.
+        portals.append([thread.name for thread in threading.enumerate() if 'portal' in thread.name])
+        return 'probed'
+
+    prober: Agent[object, str] = Agent(TestModel(), name='prober', tools=[probe])
+    part = await _run_workflow_under(durability_type(), "await prober(task='look')", prober)
+
+    assert part.outcome != 'retried'
+    assert len(portals) == 1
+    assert bool(portals[0]) is through_portal
+
+
+async def test_replaying_engine_keeps_the_elapsed_time_limit() -> None:
+    """`DynamicWorkflow` doesn't read `replays_orchestrator_code` yet: Temporal workflow code keeps the limit (#14528)."""
+    busy = 'total = 0\nfor i in range(200000):\n    total += i\ntotal'
+    part = await _run_workflow_under(
+        _ReplayingDurability(), busy, _sub_agent(), resource_limits={'max_duration_seconds': 1e-6}
+    )
+
+    assert part.outcome == 'retried'
+    assert 'time limit exceeded' in str(part.content).lower()

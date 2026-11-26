@@ -25,4 +25,7 @@ TEMPORAL_ENGINE_SPEC = DurabilityEngineSpec(
     # token created in the workflow and fired from a signal handler cancels the run at the same
     # point on replay.
     accepts_cancellation_token=True,
+    # Workflow code replays against the history, on a loop that rejects `call_soon_threadsafe()`.
+    replays_orchestrator_code=True,
+    thread_wakeable_loop=False,
 )

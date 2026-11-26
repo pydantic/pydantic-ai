@@ -116,6 +116,22 @@ toolsets, per-tool configuration key, and whether a run inside the container may
 delivery from other threads; see the field's docs). The default lifecycle policy enters function and MCP
 toolsets for every run and never enters dynamic toolsets.
 
+Two fields tell capabilities that run their own code in the durable container how to behave there,
+as Pydantic AI Harness's [Code Mode](../harness/code-mode.md) and
+[Dynamic Workflow](../harness/dynamic-workflow.md) do with their Monty sandbox:
+
+- [`replays_orchestrator_code`][pydantic_ai.durable_exec.DurabilityEngineSpec.replays_orchestrator_code]: set it to `True` when the engine replays container code and each replay
+  must take the recorded path. Code Mode then turns off `max_duration_seconds` there, because an
+  elapsed-time limit that fires on one execution but not the other would make them diverge.
+  Temporal and Azure Durable Task set it.
+- [`thread_wakeable_loop`][pydantic_ai.durable_exec.DurabilityEngineSpec.thread_wakeable_loop]: set it to `False` when the container's event loop doesn't run callbacks
+  scheduled from other threads with `call_soon_threadsafe()`. The sandbox completes each awaited call
+  from a thread of its own, so Code Mode and Dynamic Workflow then call it through a blocking portal,
+  and the container's thread waits for each call. Temporal and Azure Durable Task set it to `False`.
+
+Leave both at their defaults when container code runs on an ordinary asyncio loop and the engine
+doesn't need replays to repeat the recorded path.
+
 Define every field whose engine behavior differs from the defaults. The spec validates non-empty
 nouns and requires a lifecycle for every wrapped toolset kind when it is constructed, so an invalid
 engine declaration fails while its class is being defined. Lifecycle choices must ensure toolset

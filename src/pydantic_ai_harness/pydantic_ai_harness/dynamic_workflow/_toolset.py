@@ -62,8 +62,9 @@ from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
     PrintCapture,
+    durable_engine_spec,
     in_durable_task_orchestration,
-    in_temporal_workflow,
+    uses_portal,
 )
 from pydantic_ai_harness._monty_turns import is_sandbox_panic
 from pydantic_ai_harness._sub_agent_output import (
@@ -120,16 +121,11 @@ def _sandbox_limits(limits: ResourceLimits) -> ResourceLimits:
     last sub-agent call would let the replay continue with a retry prompt where the recorded run had
     the tool result. The sleep allowance is charged separately, so it is kept. Until script turns
     run as activities (#14528), nothing bounds a CPU loop that never awaits there.
+
+    Unlike `CodeMode`, this doesn't read `DurabilityEngineSpec.replays_orchestrator_code`: Temporal
+    sets it, and Temporal workflow code keeps the limit until #14528 decides whether it should.
     """
     return limits | {'max_feed_duration_secs': None} if in_durable_task_orchestration() else limits
-
-
-def _uses_portal() -> bool:
-    """Whether Monty must be called through a portal: in replaying code whose loop Monty's thread can't wake.
-
-    That is a Temporal workflow's loop or a Durable Task orchestrator's loop (see `call_monty`).
-    """
-    return in_temporal_workflow() or in_durable_task_orchestration()
 
 
 def _default_resource_limits() -> ResourceLimits:
@@ -1081,7 +1077,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 type_check=True,
                 type_check_stubs=type_check_stubs,
                 limits=_sandbox_limits(limits),
-                use_portal=_uses_portal(),
+                use_portal=uses_portal(durable_engine_spec(ctx)),
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for
