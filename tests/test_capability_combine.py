@@ -151,6 +151,13 @@ def test_a_deferred_capability_does_not_combine_with_an_always_on_one(
     assert 'give one of them its own `id`' in str(raised.value)
 
 
+async def test_a_run_layer_combines_without_its_overridden_deferred_namesake() -> None:
+    """Only the last layer's occurrences combine, so a deferred agent-level copy it overrides isn't compared."""
+    agent = Agent(TestModel(), capabilities=[Thinking(effort='low', defer_loading=True)])
+    result = await agent.run('Hi', capabilities=[Thinking(effort='high'), Thinking(effort='medium')])
+    assert result.output
+
+
 def test_capabilities_in_two_deferred_groups_do_not_combine() -> None:
     """A regression test: combined, the later group's `Thinking` replaced the earlier's, so its setting never applied."""
     first = CombinedCapability[Any]([Thinking(effort='high')], id='careful', defer_loading=True)
