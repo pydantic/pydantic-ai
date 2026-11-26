@@ -94,7 +94,7 @@ async def test_remapped_composer_and_hints_use_effective_bindings() -> None:
         pipe.send_text('one\rtwo\nthree\x13')
         assert await live.read() == 'one\ntwo\nthree'
         # Newline keeps naming Ctrl+J, which every terminal sends.
-        hint = 'Ctrl+S: send | F4 Delivery | Ctrl+J newline | /input'
+        hint = 'Ctrl+S: send - F4 Delivery - Ctrl+J newline - /input'
         assert live.input_hint() == hint
         assert live.key_label('steer') == 'Option+S'
         assert hint in Text.from_ansi('\n'.join(live.frame())).plain
@@ -168,9 +168,10 @@ async def test_setup_actions_save_reset_and_cancel(tmp_path: Path) -> None:
     await menu.actions['send'](ScriptedDialogs([Pick(value='ctrl-s')]))
     assert context.settings.input_bindings.action('ctrl-s') == 'send'
     assert context.settings.input_bindings.action('enter') is None
-    rejected = await menu.actions['newline'](ScriptedDialogs([Pick(value='ctrl-s')]))
-    assert 'collide' in '\n'.join(rejected)
-    assert context.settings.input_bindings.newline == 'shift-enter'
+    swapped = await menu.actions['newline'](ScriptedDialogs([Pick(value='ctrl-s')]))
+    assert swapped[-1] == 'Newline is now ctrl-s; Send moved to shift-enter.'
+    assert (context.settings.input_bindings.send, context.settings.input_bindings.newline) == ('shift-enter', 'ctrl-s')
+    await menu.actions['send'](ScriptedDialogs([Pick(value='ctrl-s')]))
     result = await menu.actions['test'](ScriptedDialogs([]))
     assert isinstance(result, CloseMenu) and tested == [True]
     assert 'Saved' in menu.source.apply(rows['input.keyboard_labels'], 'mac')
@@ -178,6 +179,21 @@ async def test_setup_actions_save_reset_and_cancel(tmp_path: Path) -> None:
     menu.source.reset(rows['send'])
     assert context.settings.input_bindings.send == 'enter'
     assert menu.source.reset(rows['test']) == 'No captured key is saved.'
+
+
+async def test_choosing_a_key_another_action_holds_swaps_the_two(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'settings.db')
+    context = CommandContext(settings=Settings(model=None), store=store, apply_setting=lambda key, settings: None)
+    menu = input_menu(context, start_test=lambda: None)
+    # Enter for a newline and Alt+Enter to send: each step takes a key another action holds.
+    assert (await menu.actions['newline'](ScriptedDialogs([Pick(value='enter')])))[-1] == (
+        'Newline is now enter; Send moved to shift-enter.'
+    )
+    assert (await menu.actions['send'](ScriptedDialogs([Pick(value='alt-enter')])))[-1] == (
+        'Send is now alt-enter; Steer moved to shift-enter.'
+    )
+    assert store.load().input_bindings == InputBindings(send='alt-enter', steer='shift-enter', newline='enter')
+    assert context.settings.input_bindings.action('enter') == 'newline'
 
 
 async def test_input_command_resets_every_input_setting_and_hands_key_tests_to_the_composer(
@@ -305,6 +321,29 @@ async def test_follow_up_choice_does_not_answer_and_cancel_preserves_draft() -> 
         assert live.buffer.text == 'keep this draft'
 
 
+async def test_a_focused_question_names_the_composer_keys_once() -> None:
+    async with editor() as (live, _, _):
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await live.questions.ask(question_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            live.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            frame = Text.from_ansi('\n'.join(live.frame())).plain
+            assert 'number/Enter select - Esc composer' in frame
+            assert 'F2 composer - Ctrl+J newline - Ctrl+C decline' in frame
+            live.feed('3')  # Other: the menu's own footer now names Ctrl+C.
+            frame = Text.from_ansi('\n'.join(live.frame())).plain
+            assert 'Enter submits - Esc back - Ctrl+C decline' in frame
+            assert frame.count('Ctrl+C decline') == 1
+            live.feed('ctrl-c')
+        assert responses[0].cancelled
+
+
 async def test_remembered_follow_up_queues_the_draft_without_routing() -> None:
     async with editor() as (live, _, _):
         live.questions.preference = lambda: 'follow-up'
@@ -316,7 +355,7 @@ async def test_remembered_follow_up_queues_the_draft_without_routing() -> None:
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(ask)
             await anyio.wait_all_tasks_blocked()
-            assert live.input_hint().startswith('Enter: queue follow-up |')
+            assert live.input_hint().startswith('Enter: queue follow-up -')
             live.feed('paste', 'next step')
             live.feed('enter')
             assert not live.questions.routing
@@ -426,7 +465,7 @@ async def test_visible_queue_edit_keeps_id_order_and_entire_earlier_draft() -> N
         earlier = live.buffer
         live.feed('f4')
         await anyio.lowlevel.checkpoint()
-        assert 'e Edit | d Remove | s Steer' in '\n'.join(live.frame())
+        assert 'e Edit - d Remove - s Steer' in '\n'.join(live.frame())
         live.feed('down')
         live.feed('e')
         assert [entry.id for entry in live.runnable_prompts()] == [first.id]
@@ -603,10 +642,10 @@ async def test_first_run_hint_offers_keyboard_setup_until_labels_are_chosen() ->
     async with editor() as (live, _, _):
         live.keyboard_labels = lambda: 'unset'
         newline = live.key_label('newline')
-        assert live.input_hint() == f'Keyboard setup: /input | {newline} newline'
+        assert live.input_hint() == f'Keyboard setup: /input - {newline} newline'
         assert live.input_hint() in [Text.from_ansi(row).plain for row in live.frame()]
         live.keyboard_labels = lambda: 'pc'
-        assert live.input_hint() == f'Enter: send | F4 Delivery | {newline} newline | /input'
+        assert live.input_hint() == f'Enter: send - F4 Delivery - {newline} newline - /input'
 
 
 async def test_editing_is_not_pending_and_cancel_preserves_reserved_id_and_images() -> None:
@@ -650,14 +689,14 @@ async def test_delivery_mode_is_persistent_and_reachable_without_queued_messages
         live.feed('f4')
         await anyio.lowlevel.checkpoint()
         frame = '\n'.join(live.frame())
-        assert 'New busy: after turn | m change | Esc close' in frame and 'e Edit' not in frame
+        assert 'New busy: after turn - m change - Esc close' in frame and 'e Edit' not in frame
         live.feed('e')  # Nothing is queued, so nothing was ever queued to edit.
         assert live.notice == '' and 'm change' in '\n'.join(live.frame())
         live.feed('m')
         assert context.settings.busy_delivery == 'next-checkpoint'
         assert SettingsStore(store.path).load().busy_delivery == 'next-checkpoint'
         live.console.size = (40, 12)
-        assert 'New busy: next checkpoint | m change' in '\n'.join(live.frame())
+        assert 'New busy: next checkpoint - m change' in '\n'.join(live.frame())
         live.feed('escape')
         menu = input_menu(context, start_test=lambda: None)
         row = next(row for row in menu.source.rows() if row.key == 'input.busy_delivery')

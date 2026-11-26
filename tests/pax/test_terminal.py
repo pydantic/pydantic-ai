@@ -288,7 +288,7 @@ async def test_prompt_frame_stays_visible_during_tools(
             assert bottom - top == 2
             # The input hint takes the spare row between the box and the footer.
             assert bottom == len(frame) - 3
-            assert frame[bottom + 1].startswith('Return: send | F4 Delivery | Ctrl+J newline | /input')
+            assert frame[bottom + 1].startswith('Return: send - F4 Delivery - Ctrl+J newline - /input')
             pipe.send_text('\x12')
             await searched.wait()
             top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})

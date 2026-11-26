@@ -5,7 +5,7 @@ from collections.abc import Callable, Sequence
 from functools import partial
 
 from pydantic_ai_pax.cli.command_context import CommandContext
-from pydantic_ai_pax.config.input_bindings import BINDABLE_KEYS, InputAction, InputBindings
+from pydantic_ai_pax.config.input_bindings import BINDABLE_KEYS, InputAction, InputBindings, canonical_key
 from pydantic_ai_pax.plugins.menus import CloseMenu, Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_ai_pax.ui.menus.set_menu import SettingsSource
 
@@ -57,7 +57,7 @@ class InputSource(SettingsSource):
 
 
 async def choose_binding(dialogs: Dialogs, *, context: CommandContext, action: InputAction) -> Sequence[str]:
-    """Save through the same validation as `/set`, including decoded-key collisions."""
+    """Save through the same validation as `/set`; a key another action holds swaps the two actions' keys."""
     chosen = await dialogs.choose(
         title=f'Key for {action}',
         options=tuple(Option(value=key, label=key) for key in BINDABLE_KEYS),
@@ -67,11 +67,18 @@ async def choose_binding(dialogs: Dialogs, *, context: CommandContext, action: I
     if chosen is None:
         return ()
     values = context.settings.input_bindings.model_dump()
+    replaced = values[action]
+    holder = next((other for other in _ACTIONS if other != action and canonical_key(values[other]) == chosen), None)
     values[action] = chosen
+    if holder is not None:
+        values[holder] = replaced
     try:
-        return (context.set_setting(['input.bindings', json.dumps(values)]),)
+        saved = context.set_setting(['input.bindings', json.dumps(values)])
     except ValueError as exc:
         return (str(exc),)
+    if holder is None:
+        return (saved,)
+    return (saved, f'{action.capitalize()} is now {chosen}; {holder.capitalize()} moved to {replaced}.')
 
 
 async def test_key(dialogs: Dialogs, *, start: Callable[[], None]) -> Sequence[str]:

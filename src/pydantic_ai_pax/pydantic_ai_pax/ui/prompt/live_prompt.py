@@ -1062,13 +1062,13 @@ class LivePrompt:
         entry = self._queue_selected
         if entry is None:
             return (
-                truncate(f'New busy: {self.busy_delivery().replace("-", " ")} | m change | Esc close', width),
+                truncate(f'New busy: {self.busy_delivery().replace("-", " ")} - m change - Esc close', width),
                 *self.buffer.rows(width=width, limit=max(1, height - 3)),
             )
         preview = ' '.join(terminal_text(entry.text).split())
         return (
-            truncate('e Edit | d Remove | s Steer | Esc close', width),
-            truncate(f'New busy: {self.busy_delivery().replace("-", " ")} | m change', width),
+            truncate('e Edit - d Remove - s Steer - Esc close', width),
+            truncate(f'New busy: {self.busy_delivery().replace("-", " ")} - m change', width),
             truncate('Queue: Up/Down choose (after turn)', width),
             truncate(preview, width),
             *self.buffer.rows(width=width, limit=max(1, height - 6)),
@@ -1225,15 +1225,15 @@ class LivePrompt:
         if self._editing is not None:
             steer = self.key_label('steer')
             action = 'Choose delivery' if self.send_action() == 'choose save delivery' else 'Save/requeue'
-            return f'{send}: {action} | Esc: Stop editing | {steer}: Steer/send | Clear to remove'
+            return f'{send}: {action} - Esc: Stop editing - {steer}: Steer/send - Clear to remove'
         if self.questions.menu is not None:
             return self.questions.hint(send_label=send, newline_label=newline)
         if self.queued_messages:
-            return f'F4 Queue: Edit / Remove / Steer / Delivery | {newline} newline | /input setup'
+            return f'F4 Queue: Edit / Remove / Steer / Delivery - {newline} newline - /input setup'
         if self.keyboard_labels() == 'unset':
-            return f'Keyboard setup: /input | {newline} newline'
+            return f'Keyboard setup: /input - {newline} newline'
         action = self.binding_action('send')
-        return f'{send}: {action} | F4 Delivery | {newline} newline | /input'
+        return f'{send}: {action} - F4 Delivery - {newline} newline - /input'
 
     def _footer(self, width: int, *, muted: str) -> str:
         """The bottom row: the history search, or else a notice or the toolbar, with the queue's length."""

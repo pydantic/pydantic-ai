@@ -217,11 +217,11 @@ class PromptQuestions:
     def hint(self, *, send_label: str, newline_label: str) -> str:
         """Describe what the effective send key does in the current question context."""
         if self.focused:
-            return f'{send_label}: choose | F2 composer | {newline_label} newline'
+            return f'{send_label}: choose - F2 composer - {newline_label} newline'
         if self.routing:
-            return 'a Answer | q Follow-up | r Remember | Esc cancel'
+            return 'a Answer - q Follow-up - r Remember - Esc cancel'
         if self.approval:
-            return f'{send_label}: queue | F2 review approval'
+            return f'{send_label}: queue - F2 review approval'
         preference = self.preference()
         action = (
             'queue follow-up'
@@ -230,7 +230,7 @@ class PromptQuestions:
             if preference == 'ask' or not self._reviewed
             else 'answer question'
         )
-        return f'{send_label}: {action} | F2 choices | {newline_label} newline'
+        return f'{send_label}: {action} - F2 choices - {newline_label} newline'
 
     def rows(
         self, *, width: int, height: int, send_label: str = 'Enter', newline_label: str = 'Ctrl+J'
@@ -240,18 +240,20 @@ class PromptQuestions:
             return ()
         if self.focused:
             frame = self.menu.frame(width=width, height=height)
+            # The menu's own footer names Ctrl+C while it edits a custom answer.
+            decline = '' if self.menu.editing_custom else ' - Ctrl+C decline'
             return (
                 *frame[:-1],
                 frame[-1].replace('Enter', send_label).replace('Esc decline', 'Esc composer'),
-                truncate(f'F2 composer | {newline_label} newline | Ctrl+C decline', width),
+                truncate(f'F2 composer - {newline_label} newline{decline}', width),
             )
         if self.routing:
             return (
                 truncate(f'Answer target: {self.menu.title}', width),
                 truncate(terminal_text(self.menu.question.question), width),
-                truncate('a Answer this question | q Queue follow-up | Esc cancel', width),
-                truncate(f'r Remember my choice: {"yes" if self.remember_choice else "no"} | /input changes it', width),
+                truncate('a Answer this question - q Queue follow-up - Esc cancel', width),
+                truncate(f'r Remember my choice: {"yes" if self.remember_choice else "no"} - /input changes it', width),
                 truncate(self.notice, width),
             )
         label = 'Approval pending' if self.approval else 'Question pending'
-        return (truncate(f'{label}: {self.menu.title} | F2 review/answer; keep typing below', width),)
+        return (truncate(f'{label}: {self.menu.title} - F2 review/answer; keep typing below', width),)

@@ -1297,7 +1297,8 @@ not executed. No probe runs without this explicit action.
 If Shift+Enter or Option+Enter reports Enter, it is indistinguishable from Enter
 on that connection. Test Ctrl+J for newline or another offered binding before
 remapping. Ctrl+M, Ctrl+Enter and Ctrl+Shift+Enter act as Enter (Ctrl+Enter
-steers on Windows), so they cannot be bound separately; setup rejects bindings that collide. Unsupported shortcuts are refused
+steers on Windows), so they cannot be bound separately; `/set` rejects bindings that collide. In `/input`, choosing a
+key another action holds swaps the two, so Enter can become the newline and Alt+Enter send. Unsupported shortcuts are refused
 rather than silently taking over editing keys. The hints follow effective bindings.
 
 `/input` and `/set` can edit or reset `input.keyboard_labels`, `input.bindings`,
