@@ -1184,7 +1184,7 @@ settings using the former import paths are redirected to the new modules.
 | `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_ai_pax.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
-| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; see [Sandboxes](docs/reference.md#sandboxes-sandbox) |
+| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
@@ -1325,9 +1325,11 @@ folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
 model's catalog. With a plugin's capability function in the run, the run's
 workspace is chosen after `Skills` reads its catalog, so `coder` reads the
-catalog from the project directory. A `/skill-name` command reads them again
-when it runs, so it sends the current `SKILL.md`, and fails with a message when
-the skill is gone.
+catalog from the project directory. In an untrusted folder, those skills are
+then offered through `list_skills` and `load_skill`, which read the project
+directory too, even when the function supplies a sandbox. A `/skill-name`
+command reads them again when it runs, so it sends the current `SKILL.md`, and
+fails with a message when the skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
 catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
@@ -2694,7 +2696,7 @@ contributes nothing:
 | `get_capabilities()` | capabilities (or per-run capability functions) added to every agent run |
 | `get_commands()` | `/commands` |
 | `render(event)` | a drawing for a stream event, or `None` for the default |
-| `get_status_segments()` | text in the main footer's configurable `plugins` group |
+| `get_status_segments()` | text or links in the main footer's configurable `plugins` group |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models Pax can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
@@ -3671,7 +3673,8 @@ changes, or other tool side effects. It never replays tools or fires turn hooks.
 
 ### Add to the status row: `get_status_segments()`
 
-Each segment is a function that takes no arguments and returns a short string.
+Each segment is a function that takes no arguments and returns a short string,
+or a `StatusLink` to show a link.
 All plugin fragments form the `plugins` group in `display.footer_fields`, in
 registration order. The default layout places it after `activity`. Users can
 hide or move the group without unloading plugins; individual fragments do not
@@ -3703,6 +3706,24 @@ cost, working directory, and other optional fields, and before the model; see th
 text only; the colours in the row belong to Pax. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
+
+Return `StatusLink(text=..., url=...)` from `pydantic_ai_pax.ui.rendering.status`
+to show a link. The row shows the text followed by `↗`, and a click on it opens
+the `http` or `https` URL in your browser. Other places that show the row, such
+as the line prompt, show only the text. The built-in `sandbox` plugin uses one
+for `watch live ↗` while computer use is on.
+
+```python
+from collections.abc import Sequence
+
+from pydantic_ai_pax.plugins import Plugin
+from pydantic_ai_pax.ui.rendering.status import StatusLink, StatusSegment
+
+
+class Docs(Plugin):
+    def get_status_segments(self) -> Sequence[StatusSegment]:
+        return (lambda: StatusLink(text='docs', url='https://pydantic.dev/docs/ai/'),)
+```
 
 ### Show a page beside the conversation: `get_side_panels()`
 

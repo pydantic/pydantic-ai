@@ -33,6 +33,12 @@ KEY_NAME = 'DAYTONA_API_KEY'
 SECRET_LABEL = 'clai-github-secret'
 """The sandbox label naming its GitHub secret, so `delete` deletes the secret too."""
 
+DESKTOP_PORT = 6080
+"""Where the desktop's noVNC page and its websockify proxy listen in the sandbox (live, 2026-11-25)."""
+
+DESKTOP_LINK_SECONDS = 60 * 60
+"""How long a desktop link opens the desktop; Pax gets a new one before then. A page already open stays connected."""
+
 
 @dataclass(frozen=True)
 class DaytonaProvider:
@@ -42,6 +48,8 @@ class DaytonaProvider:
     title: str = 'Daytona'
     working_dir: str = '/home/daytona/workspace'
     token_in_sandbox: bool = False
+    desktop_at_create: bool = False
+    desktop_link_seconds: int | None = DESKTOP_LINK_SECONDS
     _clients: 'WeakKeyDictionary[SandboxBackend, daytona.AsyncDaytona]' = field(
         default_factory=WeakKeyDictionary['SandboxBackend', 'daytona.AsyncDaytona'],
         init=False,
@@ -50,7 +58,8 @@ class DaytonaProvider:
     )
     """The client made for each backend: `DaytonaSandboxBackend` leaves a client it was given open, so `close` closes it."""
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         if find_spec('daytona') is None:
             return "Daytona support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[daytona]'."
         if saved_key(KEY_NAME) is None:
@@ -65,7 +74,9 @@ class DaytonaProvider:
         # The constructor reads `.env` and `.env.local` in the working folder, so async callers run it in a thread.
         return daytona.AsyncDaytona(daytona.DaytonaConfig(api_key=saved_key(KEY_NAME)))
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, SandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, SandboxBackend]:
         import daytona
 
         from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
@@ -86,6 +97,7 @@ class DaytonaProvider:
                 working_dir=self.working_dir,
                 env=SANDBOX_ENV,
                 secrets=None if secret is None else {'GH_TOKEN': secret.name},
+                desktop=desktop,
             )
             sandbox = await backend.get_sandbox()
             if github is not None and secret is not None:
@@ -111,15 +123,31 @@ class DaytonaProvider:
         self._clients[backend] = client
         return WorkspaceRef(provider=self.name, id=sandbox.id), backend
 
-    def reopen(self, ref: WorkspaceRef) -> SandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> SandboxBackend:
         from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
 
         # Built here, though it reads the key store and two small dotenv files: the key may be only in `/keys`,
         # which a backend left to open its own client would not read.
         client = self._client()
-        backend = DaytonaSandboxBackend(client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV)
+        backend = DaytonaSandboxBackend(
+            client=client, ref=ref, working_dir=self.working_dir, env=SANDBOX_ENV, desktop=desktop
+        )
         self._clients[backend] = client
         return backend
+
+    async def desktop_url(self, backend: SandboxBackend) -> str | None:
+        """A signed link to the desktop's noVNC page; anyone holding it can use the mouse and keyboard until it expires.
+
+        The token is in the host name, so the page's own requests and its websocket carry it.
+        """
+        from pydantic_ai_harness.daytona_sandbox import DaytonaSandboxBackend
+
+        # Pax asks only while computer use is on, so the sandbox was opened with its desktop.
+        assert isinstance(backend, DaytonaSandboxBackend) and backend.display is not None
+        await backend.display.display_size()  # Starts the desktop, which otherwise waits for the first screen call.
+        sandbox = await backend.get_sandbox()
+        signed = await sandbox.create_signed_preview_url(DESKTOP_PORT, expires_in_seconds=self.desktop_link_seconds)
+        return f'{signed.url.rstrip("/")}/vnc.html?autoconnect=1'
 
     async def close(self, backend: SandboxBackend) -> None:
         if (client := self._clients.pop(backend, None)) is not None:

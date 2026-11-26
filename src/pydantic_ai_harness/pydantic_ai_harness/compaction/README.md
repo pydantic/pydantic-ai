@@ -5,6 +5,12 @@ Pydantic AI `Capability` that edits the message history just before a model requ
 **persist** into the run's history, so a trim, clear, or summary carries forward instead of being
 recomputed every turn.
 
+Across runs, the run's `result.conversation` keeps the whole history, including what a strategy
+dropped, so a `ConversationStore` stores every message. Carried into the next run, it is compacted
+again, which for `SummarizingCompaction` and `RelevanceCompaction` means another model call over the
+whole, growing history. To carry the compacted history instead, pass `result.all_messages()` as
+`message_history=`.
+
 Every strategy keeps tool calls **paired** with their returns: core does not validate this, and a
 provider rejects an orphaned call or return. The zero-LLM strategies never call a model.
 
