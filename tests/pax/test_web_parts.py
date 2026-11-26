@@ -876,7 +876,7 @@ def test_web_flag_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: pytes
 
 
 async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`pax --web --agent` runs that agent, with its tools and model, in each session, and loads no plugin but `web`.
+    """`pax --web --agent` runs that agent, with its tools and model, in the session Pax starts with, loading no plugin but `web`.
 
     Its conversation is saved, so the sidebar can resume it, as for the stock agent.
     """
