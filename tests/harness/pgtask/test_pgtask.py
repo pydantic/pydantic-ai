@@ -246,6 +246,32 @@ class TestReplay:
         assert (replayed_other.run_id, replayed_other.conversation_id) == (other.run_id, other.conversation_id)
         assert other.run_id != result.run_id
 
+    async def test_run_inside_a_step_does_not_shift_later_run_ids(self, pgtask_db: PGTaskDatabase) -> None:
+        # The sub-agent run inside the tool step doesn't happen again when the step replays.
+        sub_agent = Agent(_make_model(), name='sub', capabilities=[PGTaskDurability()])
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool_plain
+        async def delegate() -> str:
+            return (await sub_agent.run('hi')).output
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('delegate')),
+            name='a',
+            toolsets=[toolset],
+            capabilities=[PGTaskDurability()],
+        )
+        run_ids: list[str] = []
+
+        async def body(attempt: int) -> None:
+            await agent.run('hi')
+            run_ids.append((await sub_agent.run('hi')).run_id)
+
+        await run_in_task(pgtask_db, body, attempts=2)
+
+        first, replayed = run_ids
+        assert replayed == first
+
     async def test_function_tool_runs_once(self, pgtask_db: PGTaskDatabase) -> None:
         tool_calls = {'calls': 0}
         toolset = FunctionToolset[object](id='tools')
