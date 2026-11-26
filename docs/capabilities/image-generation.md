@@ -198,7 +198,8 @@ Two built-in mechanisms cover a model that does not generate images natively:
   additional agent whose native [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] produces the
   image. Reach for it when you want that model's native tool semantics and the settings the native tool carries. The
   subagent's requests and tokens count toward the agent run's usage and its [usage limits](../agent.md#usage-limits),
-  with the token limits checked against each of its responses rather than counted ahead of its request.
+  with the token limits checked against each of its responses, even with
+  [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] on.
 
 A `local=` callable, `Tool`, or toolset of your own replaces both with an implementation you write. The capability
 passes it none of its image settings, so with `native=False`, where it is the only implementation, setting any of them

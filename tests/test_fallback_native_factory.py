@@ -248,18 +248,6 @@ def _recording_subagent_model(case: Case, seen_native_tools: list[AbstractNative
     return FunctionModel(subagent_model_fn, profile=case.fallback_profile)
 
 
-class _TokenCountingModel(WrapperModel):
-    """Counts one input token ahead of each request, so `count_tokens_before_request=True` works on it."""
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> RequestUsage:
-        return RequestUsage(input_tokens=1)
-
-
 @case_param
 async def test_fallback_usage_counts_in_parent_run(case: Case, allow_model_requests: None):
     """The subagent's requests and tokens are added to the outer run's usage."""
@@ -289,9 +277,21 @@ async def test_fallback_subagent_without_count_tokens_under_count_tokens_before_
     case: Case, allow_model_requests: None
 ):
     """An outer run that counts tokens ahead of each request still runs a subagent whose model cannot."""
+
+    class TokenCountingModel(WrapperModel):
+        """Counts one input token ahead of each request, so `count_tokens_before_request=True` works on it."""
+
+        async def count_tokens(
+            self,
+            messages: list[ModelMessage],
+            model_settings: ModelSettings | None,
+            model_request_parameters: ModelRequestParameters,
+        ) -> RequestUsage:
+            return RequestUsage(input_tokens=1)
+
     seen_native_tools: list[AbstractNativeTool] = []
     capability = case.with_deps_factory(_recording_subagent_model(case, seen_native_tools))
-    agent = Agent[str, str](_TokenCountingModel(_outer_model(case)), deps_type=str, capabilities=[capability])
+    agent = Agent[str, str](TokenCountingModel(_outer_model(case)), deps_type=str, capabilities=[capability])
 
     result = await agent.run(case.prompt, deps=case.deps, usage_limits=UsageLimits(count_tokens_before_request=True))
 
