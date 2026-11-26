@@ -2799,7 +2799,8 @@ The browser follows Code Puppy's project/session design:
   **TODAY**, **YESTERDAY**, **LAST 7 DAYS**, **LAST 30 DAYS**, then one per month,
   each older card showing its date.
 - `f` cycles which sessions are listed: all of them, Pax's own, or those from
-  Claude Code or Codex. The header names the source while one is chosen.
+  Claude Code or Codex. The header names the current choice, such as
+  **Source: all**.
 - Enter opens a project or resumes a session. Right opens a scrollable transcript,
   with newer messages first. Left returns to projects.
 - `/` searches across projects, including saved user/assistant text. `s` cycles
@@ -2843,10 +2844,19 @@ Plain `/resume` lists them too, beside Pax's own sessions, in the project they
 were started in, each card saying which agent it comes from, such as **Claude
 Code · to import** for one not imported yet: Enter imports and resumes it, and
 Right previews it. Rename or delete it after importing it. The imported copy
-keeps saying where it came from, also once Pax renames it, and the web UI's
-sidebar shows the same label beside its title. Codex sessions a
-script ran with `codex exec` are not listed, but `--resume-codex SESSION-ID`
-imports one.
+takes the original's place in the list, saying **Claude Code · imported**, also
+once Pax renames it, and the web UI's sidebar shows the agent's name beside its
+title. When the original has changed since it was imported, as when you went on
+in Claude Code, the card says **imported, changed since**. A copy Pax has not
+continued is read again from the original when you resume it; once Pax adds a
+turn, the copy is Pax's own and resuming it doesn't bring in the newer turns.
+`/resume claude`, `/resume codex`, and their flags open the same browser with only
+that agent's sessions listed, and `f` lists the others.
+
+Sessions a script ran are not listed: Codex sessions run with `codex exec`, and
+Claude Code sessions run through the Agent SDK or `claude -p`. Sub-agents' transcripts
+are imported with their session, not listed on their own. `--resume-claude
+SESSION-ID` and `--resume-codex SESSION-ID` import a session that isn't listed.
 
 Importing copies the conversation into Pax's saved sessions. The originals are
 only read, never changed. Pax keeps what the model saw: prompts, answers,

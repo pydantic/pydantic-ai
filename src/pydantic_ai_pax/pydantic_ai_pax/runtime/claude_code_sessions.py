@@ -113,9 +113,10 @@ def titles(root: Path) -> dict[str, str]:
 
 def header(path: Path) -> Header | None:
     """The directory and first prompt, titled with the session's name when it has one."""
-    cwd = prompt = summary = ''
+    cwd = prompt = summary = entrypoint = ''
     for entry in records(path, limit=HEAD_LINES):
         cwd = cwd or text(entry.get('cwd'))
+        entrypoint = entrypoint or text(entry.get('entrypoint'))
         if entry.get('type') == 'summary':
             # Older versions wrote a summary title ahead of the conversation.
             summary = summary or text(entry.get('summary'))
@@ -123,7 +124,14 @@ def header(path: Path) -> Header | None:
             prompt = prompt or _prompt_title(obj(entry.get('message')).get('content'))
         if cwd and prompt:
             name = _name(path) or summary
-            return Header(native_id=path.stem, cwd=cwd, title=title_text(name or prompt), named=bool(name))
+            return Header(
+                native_id=path.stem,
+                cwd=cwd,
+                title=title_text(name or prompt),
+                named=bool(name),
+                # An Agent SDK script or `claude -p` ran a prompt, rather than a conversation to continue.
+                listed=not entrypoint.startswith('sdk-'),
+            )
     return None
 
 

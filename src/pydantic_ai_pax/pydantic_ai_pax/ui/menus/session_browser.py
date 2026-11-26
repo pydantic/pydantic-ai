@@ -95,6 +95,8 @@ class SessionBrowser:
         rename: Callable[[ConversationSummary, str], None],
         archive: Callable[[ConversationSummary, bool], None],
         importing: Callable[[ConversationSummary], bool] = lambda entry: False,
+        changed_since_import: Callable[[ConversationSummary], bool] = lambda entry: False,
+        source: SourceFilter = None,
         output: TextIO | None = None,
         key_source: Callable[[], str] = menu_key,
         size: Callable[[], tuple[int, int]] = terminal_size,
@@ -112,11 +114,13 @@ class SessionBrowser:
         """Archives (`True`) or unarchives (`False`) a saved session."""
         self.importing = importing
         """Whether an entry is a Claude Code or Codex session that resuming copies into the store."""
+        self.changed_since_import = changed_since_import
+        """Whether an imported copy's Claude Code or Codex original has changed since it was imported."""
         self.output = output or sys.stdout
         self.key_source = key_source
         self.size = size
         self.now = now
-        self.source: SourceFilter = None
+        self.source = source
         """The one source whose sessions are listed, or `None` for all."""
         self.older: dict[str, frozenset[str]] = {}
         """Each project's checkout roots that the sidebar gathers into one row, as removed or idle."""
@@ -280,9 +284,9 @@ class SessionBrowser:
         width, height = max(1, width - 1), max(3, height)
         budget = max(1, height - 5)
         shown = ', archived included' if self.archived else ''
-        source = f' | Source: {self.source_name()}' if self.source is not None else ''
         header = plain(
-            f'Pax > Resume session    {len(self.visible)} sessions / {len(self.projects)} projects{shown}{source}'
+            f'Pax > Resume session    {len(self.visible)} sessions / {len(self.projects)} projects{shown}'
+            f' | Source: {self.source_name()}'
         )
         if self.mode == 'preview':
             preview = self.preview_text[:24_000]
@@ -379,11 +383,15 @@ class SessionBrowser:
         short = f'{entry.message_count} msgs'
         if len(counts) > width // 2:
             counts = short
+        source = imported_from(entry)
+        origin = source
         if self.importing(entry):
             counts = short = 'to import'
-        source = imported_from(entry)
-        # Drop the source label before it squeezes the title below a third of the row.
-        labelled = () if source is None else (f'{source} · {counts}', f'{source} · {short}')
+        elif source is not None:
+            changed = ', changed since' if self.changed_since_import(entry) else ''
+            origin = f'{source} · imported{changed}'
+        # Drop what the import says, then the source label, before they squeeze the title below a third of the row.
+        labelled = () if source is None else (f'{origin} · {counts}', f'{origin} · {short}', f'{source} · {short}')
         counts = next((text for text in labelled if len(text) <= width - width // 3), counts)
         title = truncate(plain(title), max(1, width - len(counts) - 1))
         if entry == selected and self.mode == 'sessions':

@@ -207,6 +207,15 @@ class ImportCatalog:
         """A session a listing has returned, by its Pax ID."""
         return self._by_id.get(conversation_id)
 
+    def changed_since_import(self, copy: ConversationSummary) -> bool:
+        """Whether a saved copy's original, as a listing has read it, changed after the copy was saved.
+
+        The store sets a copy's `created_at` when importing saves it, and again when a refresh replaces it, both
+        after the original was read. A copy saved before `created_at` existed has none, so never shows as changed.
+        """
+        original = self._by_id.get(copy.id)
+        return original is not None and copy.created_at is not None and original.summary.updated_at > copy.created_at
+
 
 def find_import(source: ImportSource, native_id: str) -> ImportedSession:
     """A session by the ID its own agent shows. Blocking file IO."""

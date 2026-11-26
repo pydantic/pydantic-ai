@@ -331,17 +331,17 @@ class Sessions(Generic[DepsT, OutputT]):
         return await self.browse(source, unarchive=unarchive)
 
     async def browse(self, source: ImportSource | None, *, unarchive: bool = True) -> str:
-        """Pick from Pax's sessions and not-yet-imported ones, or from one agent's sessions only."""
-        entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
+        """Pick from Pax's sessions and not-yet-imported ones, listing only one agent's sessions at first with `source`."""
+        entries = await self.store.listing(archived=None)
         self.namer.backfill([entry for entry in entries if entry.archived_at is None], client=self.naming)
-        imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
+        imports = await run_sync(ImportCatalog, IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
 
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:
             return asyncio.run_coroutine_threadsafe(action, loop).result()
 
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
-            saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
+            saved = apply(self.store.listing(query=query, limit=limit))
             return self._browser_entries(saved, imports.listing(query, limit), limit=limit, archived=archived)
 
         retitled: dict[str, str] = {}
@@ -366,6 +366,8 @@ class Sessions(Generic[DepsT, OutputT]):
                 archive=lambda source, archived: apply(archive(source, archived)),
                 # Saved sessions have a revision; one that is not yet imported has none.
                 importing=lambda entry: not entry.revision,
+                changed_since_import=imports.changed_since_import,
+                source=source,
             ).run()
 
         selected = await run_worker(browse)
