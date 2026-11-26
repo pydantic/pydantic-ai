@@ -310,6 +310,8 @@ For the child run's model streaming, pass an `event_stream_handler`. See [capabi
 
 Plain delegation adds no OpenTelemetry spans: the child run's own spans nest under the parent's tool-call span.
 
+A child run has its own `conversation_id`, so adding up cost by `gen_ai.conversation.id` leaves it out of the conversation it was started for. Its spans also carry `pydantic_ai.root_conversation_id`, the `conversation_id` of the top-level run (the run that isn't inside any other run), even for a child started by another child; see [correlating runs](https://pydantic.dev/docs/ai/core-concepts/message-history/#correlating-runs-with-run_id-and-conversation_id) for how to use it and where it's missing.
+
 Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer. Their attributes have the `sub_agents.` prefix and include `sub_agents.agent_name` (for a created agent, whose name the model chose, only as content) and, for a task, `sub_agents.task_id`:
 
 | Span | When | Attributes |
