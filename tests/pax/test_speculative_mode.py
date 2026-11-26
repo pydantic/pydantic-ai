@@ -7,7 +7,7 @@ pytest.importorskip('pydantic_monty')
 import io
 import json
 import re
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
     ValidatedToolArgs,
 )
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -856,6 +857,51 @@ except Exception:
 """
 
 
+async def run_claim_then_cold(
+    root: Path,
+    cold_started: anyio.Event,
+    *,
+    before: Sequence[Hooks[object]] = (),
+    after: Sequence[Hooks[object]] = (),
+) -> tuple[SpeculationCounters, list[AgentStreamEvent | AgentRunResultEvent[str]]]:
+    """Run a snippet that claims a speculative `read_file`, then calls a cold tool that sets `cold_started`."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        code = 'text = await read_file(path="a.py")\nawait cold()\nfinished = True\n'
+        return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+    (root / 'a.py').write_text('contents of a.py\n')
+    counters = SpeculationCounters()
+    file_system = FileSystem()
+    sandbox = speculative_capabilities(counters, (file_system,))
+    agent: Agent[None, str] = Agent(
+        streamed(respond), capabilities=[file_system, *before, *sandbox, *after, LocalWorkspace(root)]
+    )
+
+    @agent.tool_plain
+    def cold() -> str:
+        """Run without speculating."""
+        cold_started.set()
+        return 'ran'
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with agent.run_stream_events('go') as stream:
+            events = [event async for event in stream]
+    return counters, events
+
+
+def sandbox_reports(events: Sequence[object]) -> list[tuple[str, str]]:
+    return [
+        ('started', event.call.tool_name)
+        if isinstance(event, SandboxCallStartedEvent)
+        else ('finished', event.result.tool_name)
+        for event in events
+        if isinstance(event, SandboxCallStartedEvent | SandboxCallFinishedEvent)
+    ]
+
+
 class TestSandboxCallDisplay:
     async def test_calls_inside_run_code_render_like_direct_calls(self, tmp_path: Path) -> None:
         counters = SpeculationCounters()
@@ -929,6 +975,7 @@ class TestSandboxCallDisplay:
     async def test_claimed_call_is_reported_before_a_later_cold_call(self, tmp_path: Path) -> None:
         """The stream can reach a claim after the snippet has moved on; the claimed call still comes first."""
         cold_started = anyio.Event()
+        listened: list[str] = []
         lag = Hooks[object]()
 
         @lag.on.event(SpeculativeCallClaimedEvent)
@@ -936,42 +983,42 @@ class TestSandboxCallDisplay:
             # A consumer still busy with an earlier event holds the stream back like this.
             await cold_started.wait()
 
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if len(messages) > 1:
-                return ModelResponse(parts=[TextPart('done')])
-            code = 'text = await read_file(path="a.py")\nawait cold()\nfinished = True\n'
-            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+        @lag.on.event(SandboxCallStartedEvent)
+        async def listen(ctx: RunContext[object], event: SandboxCallStartedEvent) -> None:
+            listened.append(event.call.tool_name)
 
-        (tmp_path / 'a.py').write_text('contents of a.py\n')
-        counters = SpeculationCounters()
-        file_system = FileSystem()
-        sandbox = speculative_capabilities(counters, (file_system,))
-        agent: Agent[None, str] = Agent(
-            streamed(respond), capabilities=[file_system, lag, *sandbox, LocalWorkspace(tmp_path)]
-        )
-
-        @agent.tool_plain
-        def cold() -> str:
-            """Run without speculating."""
-            cold_started.set()
-            return 'ran'
-
-        reports: list[tuple[str, str]] = []
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            async with agent.run_stream_events('go') as events:
-                async for event in events:
-                    if isinstance(event, SandboxCallStartedEvent):
-                        reports.append(('started', event.call.tool_name))
-                    elif isinstance(event, SandboxCallFinishedEvent):
-                        reports.append(('finished', event.result.tool_name))
+        counters, events = await run_claim_then_cold(tmp_path, cold_started, before=[lag])
 
         assert counters.hits == 1
-        assert reports == [
+        assert sandbox_reports(events) == [
             ('started', 'read_file'),
             ('finished', 'read_file'),
             ('started', 'cold'),
             ('finished', 'cold'),
         ]
+        # Listeners still receive the claimed call's report, where it was emitted.
+        assert listened == ['cold', 'read_file']
+
+    async def test_claim_whose_reports_are_filtered_out_still_delivers_the_rest(self, tmp_path: Path) -> None:
+        """A capability inside the stream can drop the reports the claim is waiting for."""
+        cold_started = anyio.Event()
+        hide = Hooks[object]()
+
+        @hide.on.run_event_stream
+        async def drop_reports(
+            ctx: RunContext[object], *, stream: AsyncIterable[AgentStreamEvent]
+        ) -> AsyncIterable[AgentStreamEvent]:
+            async for event in stream:
+                if not isinstance(event, SandboxCallStartedEvent | SandboxCallFinishedEvent):
+                    yield event
+
+        cold_started.set()
+        _, events = await run_claim_then_cold(tmp_path, cold_started, after=[hide])
+
+        assert sandbox_reports(events) == []
+        kinds = [type(event).__name__ for event in events]
+        assert kinds.index('SpeculativeCallClaimedEvent') < kinds.index('FunctionToolResultEvent')
+        assert isinstance(events[-1], AgentRunResultEvent)
 
     async def test_launch_evicted_while_running_is_not_held(self) -> None:
         show = ShowSandboxCalls[None]()
@@ -988,13 +1035,8 @@ class TestSandboxCallDisplay:
 
         tool_def = ToolDefinition(name='read_file')
         assert await show.wrap_tool_execute(context(), call=call, tool_def=tool_def, args={}, handler=late) == 'late'
-        claim = claimed(ready=True, elapsed_ms=1, launch_id=call.tool_call_id)
-
-        async def stream() -> AsyncIterator[SpeculativeCallClaimedEvent]:
-            yield claim
-
-        # Nothing was held, so the claim passes through without a report.
-        assert [event async for event in show.wrap_run_event_stream(context(), stream=stream())] == [claim]
+        # Nothing was held, so the claim reports nothing; emitting would fail, as this context has no stream.
+        await show.on_event(context(), event=claimed(ready=True, elapsed_ms=1, launch_id=call.tool_call_id))
 
 
 async def test_guidance_mentions_raw_triple_quoted_multiline_shell_commands(tmp_path: Path) -> None:

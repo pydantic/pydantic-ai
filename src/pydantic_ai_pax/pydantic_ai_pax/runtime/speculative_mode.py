@@ -27,6 +27,7 @@ With `ReplStates`, the session's REPL outlives the run: `CodeMode` restores it o
 the guidance says so only to runs whose state is kept.
 """
 
+from collections import deque
 from collections.abc import AsyncIterable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Literal, TypeAlias, TypeGuard
@@ -480,9 +481,9 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     harness `SpeculationCoordinator.adopt` awaits the launch, which runs this hook to completion,
     before it emits `SpeculativeCallClaimedEvent`, even when the launch was not ready at the claim.
 
-    The claimed report follows the claim in the event stream, not in `on_event`: the stream can
-    reach the claim after the snippet has moved on, and an event emitted from `on_event` lands
-    after the later calls' reports.
+    `on_event` emits the claimed reports when the stream reaches the claim, which can be after the
+    snippet started later calls whose reports are already queued. Listeners receive them there;
+    the stream wrapper moves them up to the claim, so stream consumers see calls in code order.
     """
 
     _launched: dict[str, tuple[ToolCallPart, ToolReturnPart]] = field(
@@ -490,6 +491,8 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     )
     _evicted: set[str] = field(default_factory=set[str], init=False, repr=False)
     """Launches evicted while still running, whose late result must not be held."""
+    _reported: set[str] = field(default_factory=set[str], init=False, repr=False)
+    """Claiming call ids `on_event` reported, whose reports the stream moves up to their claim."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> 'ShowSandboxCalls[AgentDepsT]':
         """Keep held launches per run."""
@@ -544,24 +547,62 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
             await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call.tool_call_id, result=result))
 
     async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
-        """Forget an evicted launch."""
+        """Report a claimed launch as the claiming call; forget an evicted one."""
         if isinstance(event, SpeculativeCallEvictedEvent):
             if event.state == 'pending':
                 self._evicted.add(event.launch_id)
             else:
                 self._launched.pop(event.launch_id, None)
+        elif isinstance(event, SpeculativeCallClaimedEvent) and event.launch_id in self._launched:
+            call, result = self._launched.pop(event.launch_id)
+            call_id = event.nested_tool_call_id
+            self._reported.add(call_id)
+            await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=replace(call, tool_call_id=call_id)))
+            await ctx.emit(SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id)))
 
     async def wrap_run_event_stream(
         self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Report a claimed launch as the claiming call, right after its claim."""
+        """Hold the events after a reported claim until its two reports arrive, then yield the reports first.
+
+        Listeners run before this wrapper sees an event, so a reported claim's reports are already
+        queued behind it.
+        """
+        held: deque[AgentStreamEvent | list[AgentStreamEvent]] = deque()
+        slots: dict[str, list[AgentStreamEvent]] = {}
         async for event in stream:
-            yield event
-            if isinstance(event, SpeculativeCallClaimedEvent) and event.launch_id in self._launched:
-                call, result = self._launched.pop(event.launch_id)
-                call_id = event.nested_tool_call_id
-                yield SandboxCallStartedEvent(tool_call_id=call_id, call=replace(call, tool_call_id=call_id))
-                yield SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id))
+            self._hold(event, held, slots)
+            while held and self._releasable(held[0]):
+                for released in self._released(held.popleft()):
+                    yield released
+        # A stream that ends before a claim's reports arrive still delivers what it held.
+        while held:
+            for released in self._released(held.popleft()):
+                yield released
+
+    def _hold(
+        self,
+        event: AgentStreamEvent,
+        held: deque[AgentStreamEvent | list[AgentStreamEvent]],
+        slots: dict[str, list[AgentStreamEvent]],
+    ) -> None:
+        """Queue `event`, or put a claimed report in the slot queued right after its claim."""
+        if isinstance(event, SandboxCallStartedEvent | SandboxCallFinishedEvent) and event.tool_call_id in slots:
+            slots[event.tool_call_id].append(event)
+            return
+        held.append(event)
+        if isinstance(event, SpeculativeCallClaimedEvent) and event.nested_tool_call_id in self._reported:
+            self._reported.discard(event.nested_tool_call_id)
+            held.append(slots.setdefault(event.nested_tool_call_id, []))
+
+    @staticmethod
+    def _releasable(item: AgentStreamEvent | list[AgentStreamEvent]) -> bool:
+        """An event, or a claim's slot once both of its reports are in."""
+        return not isinstance(item, list) or len(item) == 2
+
+    @staticmethod
+    def _released(item: AgentStreamEvent | list[AgentStreamEvent]) -> list[AgentStreamEvent]:
+        return item if isinstance(item, list) else [item]
 
 
 def speculative_capabilities(
