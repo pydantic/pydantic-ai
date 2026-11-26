@@ -1048,6 +1048,71 @@ async def test_dbos_rejected_event_dispatch_is_gated_by_a_patch(
         )
 
 
+_rejection_crash_armed = threading.Event()
+
+
+@DBOS.workflow()
+async def _reject_then_crash_workflow() -> str:
+    output = (await rejection_stream_agent.run('When does the store open?')).output
+    if _rejection_crash_armed.is_set():
+        _rejection_crash_armed.clear()
+        raise _ProcessCrash
+    return output
+
+
+async def test_dbos_workflow_that_recorded_a_rejection_before_the_patch_recovers(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A workflow that rejected a response before the patch recovers without a handler step for the rejection.
+
+    Its next model request is recorded where the patched code hands the rejection to the handler, so recovery's
+    `DBOS.patch_async` finds that step there and takes the unpatched branch instead of failing on an unexpected
+    step. A workflow started with the patch recovers through its marker, replaying the handler step. Faking
+    `DBOS.patch_async` stands in for the code before the upgrade, which never called it.
+
+    Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
+    """
+    _rejection_events.clear()
+
+    async def before_the_patch(patch_name: str) -> bool:
+        return False
+
+    async def start_and_crash() -> str:
+        workflow_id = f'rejection-recovery-{uuid.uuid4()}'
+        _rejection_crash_armed.set()
+        with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+            await _reject_then_crash_workflow()
+        return workflow_id
+
+    async def recorded_steps(workflow_id: str) -> list[str]:
+        return [step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)]
+
+    monkeypatch.setattr(DBOS, 'patch_async', before_the_patch)
+    unpatched_id = await start_and_crash()
+    monkeypatch.undo()
+    patched_id = await start_and_crash()
+    handled = [event.event_kind for event in _rejection_events]
+
+    for workflow_id in (unpatched_id, patched_id):
+        handle = await DBOS.resume_workflow_async(workflow_id)
+        assert await handle.get_result() == ANSWER
+
+    assert await recorded_steps(unpatched_id) == snapshot(
+        ['rejection_stream_agent__model.request_stream', 'rejection_stream_agent__model.request_stream']
+    )
+    assert await recorded_steps(patched_id) == snapshot(
+        [
+            'rejection_stream_agent__model.request_stream',
+            'DBOS.patch-pydantic_ai:rejected_event_dispatch',
+            'rejection_stream_agent__event_stream_handler',
+            'rejection_stream_agent__model.request_stream',
+        ]
+    )
+    assert handled.count('model_response_rejected') == 1
+    # Recovery replays the recorded steps, so neither workflow hands the handler anything again.
+    assert [event.event_kind for event in _rejection_events] == handled
+
+
 async def test_dbos_reports_a_rejection_that_ends_the_run_before_the_error(
     allow_model_requests: None, dbos: DBOS
 ) -> None:
