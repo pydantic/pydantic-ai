@@ -1,0 +1,4 @@
+interface:
+  display_name: "Advise a Pydantic AI repo"
+  short_description: "Find built-ins and upgrades a repo should adopt"
+  default_prompt: "Use $advising-pydantic-ai-repos to scan this repository and report which Pydantic AI and Pydantic AI Harness features would replace code it hand-rolls, what upgrading would add, and which upgrade notes affect its code. Report only; don't edit."

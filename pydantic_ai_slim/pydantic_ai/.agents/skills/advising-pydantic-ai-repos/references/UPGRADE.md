@@ -1,0 +1,33 @@
+# Upgrade notes
+
+Map what changes between the installed Pydantic AI version and the target version (the latest, unless the user names one) to the code you inventoried. The source is the [upgrade guide](https://pydantic.dev/docs/ai/project/changelog/), which is versioned with the release: read the copy for the target version.
+
+## Installed on V1 (1.x)
+
+Moving to V2 is a migration, not a catch-up. Follow the guide's recommended path in its [v2.0.0b1 entry](https://pydantic.dev/docs/ai/project/changelog/#v200b1-2026-05-20):
+
+1. Upgrade to the latest V1 release and resolve every deprecation warning. The warnings name the new API, so the test suite run with warnings visible finds most of the work.
+2. Upgrade to V2 and make the [changes not covered by deprecation warnings](https://pydantic.dev/docs/ai/project/changelog/#changes-not-covered-by-deprecation-warnings).
+
+Report the changes from that list whose APIs the repository uses, then continue below from v2.0.0.
+
+## Installed on V2
+
+1. Read [Catching up across V2 minor releases](https://pydantic.dev/docs/ai/project/changelog/#catching-up-across-v2-minor-releases). It lists, newest first, every compatibility note since v2.0.0, under the release that shipped it, with a link to its pull request. Take the notes from releases newer than the installed version, up to the target.
+2. Releases v2.1.0 through v2.32.2 predate the compatibility-notes section: when the installed version is older than v2.33.0, also read those releases' notes on [GitHub Releases](https://github.com/pydantic/pydantic-ai/releases).
+3. Read [Breaking Changes](https://pydantic.dev/docs/ai/project/changelog/#breaking-changes) for the releases in the same range: a few changes, such as the v2.60.0 message-history change, are explained there in more depth.
+4. Read [Deprecations](https://pydantic.dev/docs/ai/project/changelog/#deprecations). Deprecated APIs keep working until V3 and warn with `PydanticAIDeprecationWarning`, which names the replacement; report each one the repository uses.
+
+## Map each note to the code
+
+For each note, search the repository for the APIs, settings, message parts, or provider it names, and confirm at the call site that the code relies on the old behavior:
+
+- **Affects this code:** the note, its release and pull request, the `file:line` it touches, and what to change.
+- **Doesn't apply:** group these in one line with the reason (provider not used, API not imported), so the user can see they were checked.
+- **Can't tell:** behavior that depends on data or configuration outside the repository, such as stored message histories, durable workflows paused across the upgrade, or a provider's account settings. Put these under blind spots.
+
+Changes that affect stored data come first: message histories saved before the upgrade, and durable workflows that are mid-run when the new version deploys. Say whether the repository stores either.
+
+## Combine with the catalog
+
+Catalog rows whose minimum version is above the installed version and at or below the target are UPGRADE findings. List each under the release that brings it, next to the compatibility notes for that release, so the user sees in one place what a release adds and what it changes.
