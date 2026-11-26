@@ -5,15 +5,35 @@ from __future__ import annotations
 import copy
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, replace
-from typing import Annotated, Any, Literal
+from dataclasses import dataclass, field, replace
+from decimal import Decimal
+from enum import Enum
+from typing import Annotated, Any, Literal, cast
+from uuid import UUID, uuid4
 
 import pytest
-from pydantic import AliasChoices, AliasPath, BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import (
+    AfterValidator,
+    AliasChoices,
+    AliasPath,
+    BaseModel,
+    Discriminator,
+    Field,
+    Json,
+    PrivateAttr,
+    SecretStr,
+    Tag,
+    TypeAdapter,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, Tool
+from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
     DurabilityEngineSpec,
@@ -26,6 +46,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CustomEvent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage
 
@@ -554,6 +575,358 @@ async def test_raw_tool_args_for_unit_keeps_the_dump_when_a_check_raises():
 
     params = ToolsetCallToolParams('lookup', tool_args={}, ctx=ctx, tool=tool)
     assert raw_tool_args_for_unit(toolset, params, loaded_tool_args={}) is None
+
+
+async def _validated_call(
+    tool: Tool[None], args: dict[str, Any], change: Callable[[ValidatedToolArgs], ValidatedToolArgs] | None = None
+) -> tuple[FunctionToolset[None], ToolsetCallToolParams]:
+    """Run `tool` once, and return the parameters a durable engine's transport gets for the call.
+
+    `change` stands in for a hook that changes the validated arguments.
+    """
+    calls: list[tuple[RunContext[None], ValidatedToolArgs]] = []
+    hooks = Hooks[None]()
+
+    @hooks.on.after_tool_validate(tools=[tool.name])
+    async def capture(
+        ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        changed = change(args) if change is not None else args
+        calls.append((ctx, changed))
+        return changed
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(parts=[ToolCallPart(tool.name, copy.deepcopy(args))])
+
+    toolset = FunctionToolset[None]([tool])
+    await Agent(FunctionModel(respond), deps_type=type(None), toolsets=[toolset], capabilities=[hooks]).run('go')
+    [(ctx, tool_args)] = calls
+    toolset_tool = (await toolset.get_tools(ctx))[tool.name]
+    return toolset, ToolsetCallToolParams(tool.name, tool_args=tool_args, ctx=ctx, tool=toolset_tool)
+
+
+def _dumped_by_name(tool_args: dict[str, Any]) -> dict[str, Any]:
+    """A dump that writes the `Venue` by Python name, which its schema doesn't read, as engines did before #13929."""
+    return TypeAdapter(dict[str, Any]).dump_python(tool_args, mode='json')
+
+
+VENUE = {'roomName': 'A1'}
+
+
+class Lowered(BaseModel):
+    email: str
+
+    @field_validator('email')
+    @classmethod
+    def lower(cls, email: str) -> str:
+        return email.lower()
+
+
+class Folded(BaseModel):
+    price: int
+    qty: int = 1
+
+    @model_validator(mode='before')
+    @classmethod
+    def fold_quantity(cls, data: dict[str, int]) -> dict[str, int]:
+        data['price'] = data.pop('price') * data.pop('qty')
+        return data
+
+
+def _shout(word: str) -> str:
+    return word.upper()
+
+
+class Keyed(BaseModel):
+    key: UUID = Field(default_factory=uuid4)
+
+
+class PostInit(BaseModel):
+    n: int
+
+    def model_post_init(self, context: Any, /) -> None:
+        pass
+
+
+@dataclass
+class Ticket:
+    n: int
+
+    def __post_init__(self) -> None:
+        pass
+
+
+class CustomInit(BaseModel):
+    n: int
+
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**data)
+
+
+class Cat(BaseModel):
+    kind: Literal['cat'] = 'cat'
+
+
+class Dog(BaseModel):
+    kind: Literal['dog'] = 'dog'
+
+
+def _pet_kind(value: Any) -> str:
+    return value.get('kind', 'cat') if isinstance(value, dict) else value.kind
+
+
+class Shade(Enum):
+    RED = 'red'
+
+    @classmethod
+    def _missing_(cls, value: object) -> Shade:
+        return cls.RED
+
+
+class Hue(Enum):
+    RED = 'red'
+
+
+class Point(BaseModel):
+    x: int
+
+
+class Defaulted(BaseModel):
+    # Pydantic deep-copies this unhashable default for each instance.
+    points: list[Point] = [Point(x=1)]
+
+
+class Tags(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+
+
+class Cached(BaseModel):
+    n: int
+    _cache: int = PrivateAttr(default=0)
+
+
+def no_user_code(
+    venue: Venue,
+    token: SecretStr,
+    nums: Json[list[int]],
+    tags: Tags,
+    cached: Cached,
+    hue: Hue,
+    pet: Annotated[Cat | Dog, Field(discriminator='kind')],
+) -> None:
+    pass
+
+
+def field_validator_runs(venue: Venue, user: Lowered) -> None:
+    pass
+
+
+def before_validator_runs(venue: Venue, filters: Folded) -> None:
+    pass
+
+
+def annotated_validator_runs(venue: Venue, word: Annotated[str, AfterValidator(_shout)]) -> None:
+    pass
+
+
+def custom_default_factory(venue: Venue, keyed: Keyed) -> None:
+    pass
+
+
+def model_post_init_runs(venue: Venue, p: PostInit) -> None:
+    pass
+
+
+def dataclass_post_init_runs(venue: Venue, t: Ticket) -> None:
+    pass
+
+
+def custom_init_runs(venue: Venue, c: CustomInit) -> None:
+    pass
+
+
+def callable_discriminator(
+    venue: Venue, pet: Annotated[Annotated[Cat, Tag('cat')] | Annotated[Dog, Tag('dog')], Discriminator(_pet_kind)]
+) -> None:
+    pass
+
+
+def enum_missing(venue: Venue, shade: Shade) -> None:
+    pass
+
+
+def copied_default(venue: Venue, d: Defaulted) -> None:
+    pass
+
+
+@dataclass(frozen=True)
+class GateCase:
+    tool: Tool[None]
+    args: dict[str, Any]
+    sent: bool
+
+
+GATE_CASES = [
+    GateCase(
+        Tool(no_user_code),
+        {
+            'venue': VENUE,
+            'token': 'hunter2',
+            'nums': '[1, 2]',
+            'tags': {},
+            'cached': {'n': 1},
+            'hue': 'red',
+            'pet': {'kind': 'dog'},
+        },
+        sent=True,
+    ),
+    GateCase(Tool(field_validator_runs), {'venue': VENUE, 'user': {'email': 'A@B.C'}}, sent=False),
+    GateCase(Tool(before_validator_runs), {'venue': VENUE, 'filters': {'price': 3, 'qty': 2}}, sent=False),
+    GateCase(Tool(annotated_validator_runs), {'venue': VENUE, 'word': 'hi'}, sent=False),
+    GateCase(Tool(custom_default_factory), {'venue': VENUE, 'keyed': {}}, sent=False),
+    GateCase(Tool(model_post_init_runs), {'venue': VENUE, 'p': {'n': 1}}, sent=False),
+    GateCase(Tool(dataclass_post_init_runs), {'venue': VENUE, 't': {'n': 1}}, sent=False),
+    GateCase(Tool(custom_init_runs), {'venue': VENUE, 'c': {'n': 1}}, sent=False),
+    GateCase(Tool(callable_discriminator), {'venue': VENUE, 'pet': {'kind': 'dog'}}, sent=False),
+    GateCase(Tool(enum_missing), {'venue': VENUE, 'shade': 'red'}, sent=False),
+    GateCase(Tool(copied_default), {'venue': VENUE, 'd': {}}, sent=False),
+    GateCase(
+        Tool.from_schema(
+            lambda venue: None,
+            name='from_schema',
+            description=None,
+            json_schema={'type': 'object', 'properties': {'venue': {'type': 'object'}}},
+        ),
+        {'venue': VENUE},
+        sent=False,
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.tool.name) for case in GATE_CASES])
+async def test_raw_tool_args_for_unit_sends_the_model_arguments_only_for_tools_without_user_validation_code(
+    case: GateCase,
+):
+    """A tool whose argument validation can run user code always crosses as its dump.
+
+    Every case's dump loses the `Venue` field, so only the tool decides. The checks validate again in the workflow,
+    and for these tools that would run their validator functions, default factories, post-init hooks, custom
+    `__init__`, discriminator or enum `_missing_` an extra time, or copy a default with its `__deepcopy__`. Pydantic's
+    own validators, a builtin `default_factory`, private attributes and a field discriminator run no user code.
+
+    Not a VCR test: the helper's decision is internal to a durable engine's transport, and no model request is
+    involved.
+    """
+    toolset, params = await _validated_call(case.tool, case.args)
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=_dumped_by_name(params.tool_args)) == (
+        case.args if case.sent else None
+    )
+
+
+@dataclass
+class Account:
+    name: str
+    tenant_id: int = field(compare=False)
+
+
+class Holder(BaseModel):
+    name: str
+    tenant_id: int = Field(0, exclude=True)
+    _note: str = PrivateAttr(default='')
+
+
+def changeable(
+    venue: Venue, account: Account, holder: Holder, x: float, d: Decimal, n: int | float, labels: dict[str, int]
+) -> None:
+    pass
+
+
+def _set_tenant(args: ValidatedToolArgs) -> ValidatedToolArgs:
+    args['account'].tenant_id = 1
+    return args
+
+
+def _set_note(args: ValidatedToolArgs) -> ValidatedToolArgs:
+    args['holder']._note = 'hook'
+    return args
+
+
+@dataclass(frozen=True)
+class ChangeCase:
+    id: str
+    change: Callable[[ValidatedToolArgs], ValidatedToolArgs]
+    sent: bool
+
+
+CHANGE_CASES = [
+    ChangeCase('unchanged', lambda args: args, sent=True),
+    ChangeCase('copied', lambda args: {**args, 'holder': args['holder'].model_copy()}, sent=True),
+    ChangeCase('compare-false-field', _set_tenant, sent=False),
+    ChangeCase(
+        'excluded-field',
+        lambda args: {**args, 'holder': args['holder'].model_copy(update={'tenant_id': 1})},
+        sent=False,
+    ),
+    ChangeCase('private-attribute', _set_note, sent=False),
+    ChangeCase('negative-zero', lambda args: {**args, 'x': -0.0}, sent=False),
+    ChangeCase('decimal-exponent', lambda args: {**args, 'd': Decimal('1.00')}, sent=False),
+    ChangeCase('int-to-float', lambda args: {**args, 'n': 1.0}, sent=False),
+    ChangeCase('reordered', lambda args: {**args, 'labels': {'b': 2, 'a': 1}}, sent=False),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CHANGE_CASES])
+async def test_raw_tool_args_for_unit_keeps_arguments_a_hook_changed_on_the_dump(case: ChangeCase):
+    """Arguments a hook changed cross as their dump, which carries the change; equal copies don't count as a change.
+
+    Each change is one that `==` or the arguments' JSON form misses: a `compare=False` field, an excluded field, a
+    private attribute, `-0.0`, a `Decimal` exponent, `1.0` for `1` and the order of a dict's keys.
+
+    Not a VCR test: the helper's decision is internal to a durable engine's transport, and no model request is
+    involved.
+    """
+    args = {
+        'venue': VENUE,
+        'account': {'name': 'a', 'tenant_id': 2},
+        'holder': {'name': 'h', 'tenant_id': 2},
+        'x': 0.0,
+        'd': '1.0',
+        'n': 1,
+        'labels': {'a': 1, 'b': 2},
+    }
+    toolset, params = await _validated_call(Tool(changeable), args, case.change)
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=_dumped_by_name(params.tool_args)) == (
+        args if case.sent else None
+    )
+
+
+class Noted(BaseModel):
+    n: int
+
+    @field_validator('n')
+    @classmethod
+    def note(cls, n: int, info: ValidationInfo) -> int:
+        if isinstance(info.context, list):
+            cast(list[int], info.context).append(n)
+        return n
+
+
+def noted(venue: Venue, q: Noted) -> None:
+    pass
+
+
+async def test_raw_tool_args_for_unit_runs_no_validator_again_with_the_run_validation_context():
+    """Deciding what to send runs none of the tool's validators, so a validator that writes to the context writes nothing.
+
+    Not a VCR test: the claim is about work the helper doesn't do in the workflow, and no model request is involved.
+    """
+    toolset, params = await _validated_call(Tool(noted), {'venue': VENUE, 'q': {'n': 1}})
+    writes: list[int] = []
+    params = replace(params, ctx=replace(params.ctx, validation_context=writes))
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=_dumped_by_name(params.tool_args)) is None
+    assert writes == []
 
 
 async def test_validation_context_rebuilt_on_a_shallow_copy_leaves_the_original_rebuildable():

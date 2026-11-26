@@ -220,8 +220,10 @@ model sent when the unit needs them: in the function-call transport's `dump`, ca
 your `load` will return them, put its result on your wire, and pass it back as
 [`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
 in `load`. `revalidate_function_call` then validates those, as the run did. The helper returns `None`
-when the dump already validates back to the dispatched arguments, and when the model's arguments no
-longer do, for example because a hook changed them; the unit then validates `tool_args` as before.
+when validating the tool's arguments can run user code, such as a validator function, when the dump
+already validates back to the dispatched arguments, and when the model's arguments no longer do, for
+example because a hook changed them; the unit then validates `tool_args` as before. Leave the field
+off your wire when it's `None`, so a call that doesn't need it crosses as it did before the field existed.
 Reading a field that wasn't carried raises a `UserError` instead of returning a default that could
 be mistaken for run state. Override `unavailable_field_message` to word that error for your engine.
 Your users can subclass your context and override `serialize_run_context` to carry more fields.

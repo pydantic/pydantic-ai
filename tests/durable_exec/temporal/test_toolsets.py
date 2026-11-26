@@ -70,6 +70,7 @@ from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN, TOOLS_CHANG
 
 from ..._inline_snapshot import snapshot
 from ...wrapped_retry_toolsets import call_probe_once, call_while_listed, failing_toolset, snapshot_probe_toolset
+from ..function_tool_arg_shapes import RECEIVED, TOOLS, check_shapes, shapes_hooks, shapes_model
 
 try:
     from temporalio import activity, workflow
@@ -1531,24 +1532,63 @@ async def test_tool_arguments_are_validated_from_the_model_arguments_in_the_acti
         ],
         key=repr,
     )
-    assert _call_tool_activity_raw_args(await handle.fetch_history()) == {
-        'c1': _RESERVE_ARGS,
-        # The converter's dump already validates back to `(1.5, 'x')`, so this call carries only `tool_args`.
-        'c2': None,
-        # No arguments to send: the call's `args` is `None`.
-        'c3': None,
-    }
+    inputs = _call_tool_activity_inputs(await handle.fetch_history())
+    assert inputs['c1']['raw_tool_args'] == _RESERVE_ARGS
+    # The converter's dump already validates back to `(1.5, 'x')`, so this call's input has no `raw_tool_args`.
+    assert 'raw_tool_args' not in inputs['c2']
+    # No arguments to send: the call's `args` is `None`.
+    assert 'raw_tool_args' not in inputs['c3']
 
 
-def _call_tool_activity_raw_args(history: WorkflowHistory) -> dict[str, object]:
-    """Each `call_tool` activity's `raw_tool_args` input, by tool call ID."""
-    raw_args: dict[str, object] = {}
+def _call_tool_activity_inputs(history: WorkflowHistory) -> dict[str, dict[str, Any]]:
+    """Each `call_tool` activity's input, by tool call ID."""
+    inputs: dict[str, dict[str, Any]] = {}
     for event in history.events:
         attributes = event.activity_task_scheduled_event_attributes
         if attributes.activity_type.name.endswith('__call_tool'):
             params = json.loads(attributes.input.payloads[0].data)
-            raw_args[params['serialized_run_context']['tool_call_id']] = params['raw_tool_args']
-    return raw_args
+            inputs[params['serialized_run_context']['tool_call_id']] = params
+    return inputs
+
+
+_arg_shapes_agent = Agent(
+    shapes_model(),
+    name='arg_shapes_durable',
+    tools=TOOLS,
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG), shapes_hooks()],
+)
+
+
+@workflow.defn
+class ArgShapesWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _arg_shapes_agent.run('go')
+        return result.output
+
+
+async def test_function_tool_argument_shapes_cross_the_activity_input(client: Client):
+    """Each shape in `function_tool_arg_shapes` reaches its tool as `check_shapes` expects.
+
+    An activity input carries the model's arguments only where their dump loses values, the tool's validation runs
+    no user code and no hook changed them; every other activity input has no `raw_tool_args` key.
+    """
+    plain = Agent(shapes_model(), tools=TOOLS, capabilities=[shapes_hooks()])
+    RECEIVED.clear()
+    await plain.run('go')
+    in_process = dict(RECEIVED)
+
+    RECEIVED.clear()
+    async with Worker(
+        client, task_queue=TASK_QUEUE, workflows=[ArgShapesWorkflow], plugins=[AgentPlugin(_arg_shapes_agent)]
+    ):
+        handle = await client.start_workflow(
+            ArgShapesWorkflow.run, id=f'{ArgShapesWorkflow.__name__}-{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        assert await handle.result() == 'done'
+
+    inputs = _call_tool_activity_inputs(await handle.fetch_history())
+    check_shapes('temporal', RECEIVED, in_process, {name: 'raw_tool_args' in params for name, params in inputs.items()})
 
 
 class Folded(BaseModel):
@@ -1852,7 +1892,7 @@ async def test_history_recorded_without_model_arguments_replays(client: Client, 
     assert _received_filters == [{}]
 
     history = await handle.fetch_history()
-    assert _call_tool_activity_raw_args(history) == {'c1': None}
+    assert 'raw_tool_args' not in _call_tool_activity_inputs(history)['c1']
     replay = await Replayer(
         workflows=[SearchWorkflow], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
     ).replay_workflow(history)
@@ -1865,7 +1905,9 @@ async def test_history_recorded_without_model_arguments_replays(client: Client, 
         )
         assert await handle.result() == 'Done.'
     assert _received_filters == [{'max_price': 10.0}]
-    assert _call_tool_activity_raw_args(await handle.fetch_history()) == {'c1': {'filters': {'maxPrice': 10}}}
+    assert _call_tool_activity_inputs(await handle.fetch_history())['c1']['raw_tool_args'] == {
+        'filters': {'maxPrice': 10}
+    }
 
 
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

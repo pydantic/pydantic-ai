@@ -95,22 +95,32 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
         tool = params.tool
         tool_args: dict[str, Any] = params.tool_args
         raw_tool_args = None
-        # Serialized once, here, by the workflow's converter: the activity input then carries the JSON values the
-        # activity loads, which the converter writes again unchanged, so serializers don't run a second time.
-        # `from_json` reads them back without a Pydantic adapter, so no validation plugin sees an extra pass.
+        # Serialized here, by the workflow's converter, so the activity input carries the JSON values the activity
+        # loads. The converter writes them again unchanged: serializers run once, and the payload's bytes are the
+        # ones `tool_args` gave before. `from_json` reads them back without an adapter, which a plugin would observe.
         [payload] = workflow.payload_converter().to_payloads([params.tool_args])
         if payload.metadata.get('encoding') == b'json/plain':
             tool_args = from_json(payload.data)
             raw_tool_args = raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=tool_args)
-        wire = CallToolParams(
-            name=params.name,
-            tool_args=tool_args,
-            serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx),
-            tool_def=tool.tool_def,
-            original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,
-        )
-        if raw_tool_args is not None:
-            wire = FunctionCallToolParams(**vars(wire), raw_tool_args=raw_tool_args)
+        serialized_run_context = self._durability.run_context_type.serialize_run_context(params.ctx)
+        original_name = tool.original_name if isinstance(tool, FunctionToolsetTool) else None
+        if raw_tool_args is None:
+            wire = CallToolParams(
+                name=params.name,
+                tool_args=tool_args,
+                serialized_run_context=serialized_run_context,
+                tool_def=tool.tool_def,
+                original_name=original_name,
+            )
+        else:
+            wire = FunctionCallToolParams(
+                name=params.name,
+                tool_args=tool_args,
+                serialized_run_context=serialized_run_context,
+                tool_def=tool.tool_def,
+                original_name=original_name,
+                raw_tool_args=raw_tool_args,
+            )
         return wire, params.ctx.deps
 
     def load(self, payload: tuple[CallToolParams, Any], *, runtime: object) -> ToolsetCallToolParams:
@@ -132,7 +142,7 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
             tool_args=params.tool_args,
             ctx=ctx,
             tool=tool,
-            raw_tool_args=getattr(params, 'raw_tool_args', None),
+            raw_tool_args=params.raw_tool_args if isinstance(params, FunctionCallToolParams) else None,
         )
 
 

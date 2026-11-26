@@ -208,8 +208,18 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::raw_tool_args_for_unit",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args"
+      ]
+    },
+    "FunctionSchema.validation_runs_user_code": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::raw_tool_args_for_unit"
       ]
     },
     "FunctionSchema.validator": {
@@ -1381,7 +1391,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__getattribute__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::raw_tool_args_for_unit",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::unit_validation_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_project_run_context"
       ]
@@ -7351,6 +7360,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::call_dynamic_tool",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::raw_tool_args_for_unit",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_call",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::validate_tool_args"

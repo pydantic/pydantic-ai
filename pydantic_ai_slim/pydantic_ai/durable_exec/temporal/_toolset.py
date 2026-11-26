@@ -62,10 +62,10 @@ class CallToolParams:
 @dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class FunctionCallToolParams(CallToolParams):
-    """A function tool call's activity input: `CallToolParams` the workflow sends only when it carries `raw_tool_args`.
+    """The function tool call activity's input type, which a call sends only when it carries `raw_tool_args`.
 
-    The activity reads this type, so a payload without the field loads with `raw_tool_args=None`, and a call
-    that doesn't need the field crosses as `CallToolParams`, with the bytes it had before the field existed.
+    Every other call sends `CallToolParams`, so its payload has no `raw_tool_args` key, and the activity
+    loads it with `raw_tool_args=None`.
     """
 
     raw_tool_args: str | dict[str, Any] | None = None

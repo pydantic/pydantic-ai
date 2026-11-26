@@ -6,7 +6,7 @@ import datetime
 import functools
 import inspect
 import math
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager, asynccontextmanager, contextmanager, nullcontext
 from dataclasses import KW_ONLY, dataclass, field, replace
 from decimal import Decimal
@@ -597,17 +597,18 @@ def raw_tool_args_for_unit(
     aliases, masks secrets and runs serializers. The model's own arguments are what the workflow
     validated, so validating them in the unit instead reproduces those values.
 
-    They are returned only when the unit needs them and they still reproduce `params.tool_args`:
-    - `loaded_tool_args` is `params.tool_args` as the unit will load them after the transport's
-      JSON round trip. When validating those already gives arguments equal to `params.tool_args`,
-      this returns `None`, and the call crosses as its dump alone.
-    - Otherwise this returns the model's arguments when validating them now, as the unit will,
-      gives arguments equal to `params.tool_args`. A hook, a wrapper toolset or an `args_validator`
-      that changed the arguments makes them unequal, and so does a validator whose output isn't
-      stable (a `default_factory`, a type without `__eq__`).
+    This returns them only when all of these hold, and `None` otherwise:
+    - Validating the tool's arguments runs no code outside Pydantic, so validating them again is a
+      function of the input alone. A tool with a validator function, a custom `default_factory` or a
+      post-init hook always crosses as its dump.
+    - `loaded_tool_args`, which is `params.tool_args` as the unit will load them after the transport's
+      JSON round trip, doesn't validate back to `params.tool_args`.
+    - The model's arguments do validate to `params.tool_args`. A hook or a wrapper toolset that changed
+      the arguments, in place or not, keeps the call on its dump.
 
-    Both checks run the tool's validators, once more than the run itself does, on copies of their
-    input. A check that raises returns `None`.
+    Both checks validate with pydantic-core alone: no Pydantic plugin observes them and they don't
+    read the run's validation context. They compare values by every attribute and exact type, not
+    with `==`.
 
     Call this workflow-side in a function-call transport's `dump`, and set the loaded value on
     [`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
@@ -661,10 +662,11 @@ _LEAF_TYPES: frozenset[type] = frozenset(
 
 
 def _same_value(a: object, b: object) -> bool:
-    """Whether a tool can't tell `a` from `b`, judged without calling their `__eq__`.
+    """Whether a tool can't tell `a` from `b`.
 
-    It reads every attribute of a model or dataclass, so a `compare=False` or excluded field counts.
-    A type it doesn't know counts as different.
+    Not `==`: the values are user types, whose `__eq__` can ignore state a hook changed, such as a
+    `compare=False` field, and `1 == 1.0`. This compares exact types and every attribute of a model or
+    dataclass instead. A type it doesn't know counts as different.
     """
     if type(a) is not type(b):
         return False
@@ -694,14 +696,14 @@ def _exact_leaf(value: object) -> object:
     return None
 
 
-def _parts(value: object) -> list[Any] | None:
+def _parts(value: object) -> list[object] | None:
     """What a container holds, in order; `None` for a type `_same_value` doesn't know."""
     if type(value) is dict:
-        return [part for item in value.items() for part in item]
-    if type(value) in (list, tuple) or (isinstance(value, tuple) and hasattr(value, '_fields')):
-        return list(value)
+        return [part for item in cast(dict[object, object], value).items() for part in item]
+    if type(value) in (list, tuple):
+        return list(cast(Iterable[object], value))
     if type(value) in (set, frozenset):
-        return sorted(value, key=repr)
+        return sorted(cast(Iterable[object], value), key=repr)
     if isinstance(value, BaseModel):
         return [value.__dict__, value.__pydantic_extra__, value.__pydantic_private__, value.__pydantic_fields_set__]
     if dataclasses.is_dataclass(value) and not isinstance(value, type):

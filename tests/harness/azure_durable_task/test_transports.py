@@ -37,6 +37,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ...conftest import try_import
+from ...durable_exec.function_tool_arg_shapes import RECEIVED, TOOLS, check_shapes, shapes_hooks, shapes_model
 from ...workspace_fakes import InMemoryProvider
 
 with try_import() as imports_successful:
@@ -785,3 +786,43 @@ def test_nested_aliased_tool_arguments_cross_the_activity_input_by_alias(durable
     with registered_agent(durable_worker, agent):
         assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
     assert observed == [('A1', 10.0, 'Ada')]
+
+
+class CallToolRecordingWorker(InMemoryWorker):
+    """Also record the parameters of each `call_tool` activity, by tool name, as they cross into the activity."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.call_tool_parameters: dict[str, dict[str, object]] = {}
+
+    def activity_turn(self, instance_id: str, name: str, task_id: int, encoded: str | None) -> None:
+        if name.endswith('.call_tool'):
+            assert encoded is not None
+            parameters = json.loads(encoded)['parameters']
+            self.call_tool_parameters[parameters['name']] = parameters
+        super().activity_turn(instance_id, name, task_id, encoded)
+
+
+def test_function_tool_argument_shapes_cross_the_activity_input() -> None:
+    """Each shape in `function_tool_arg_shapes` reaches its tool as `check_shapes` expects.
+
+    An activity input carries the model's arguments only where their dump loses values, the tool's validation runs
+    no user code and no hook changed them; every other activity input has no `raw_tool_args` key.
+
+    Not a VCR test: the claim is about what crosses into the activities, and no provider request is involved.
+    """
+    plain = Agent(shapes_model(), tools=TOOLS, capabilities=[shapes_hooks()])
+    RECEIVED.clear()
+    plain.run_sync('go')
+    in_process = dict(RECEIVED)
+
+    worker = CallToolRecordingWorker()
+    agent = Agent(
+        shapes_model(), name='arg-shapes', tools=TOOLS, capabilities=[AzureDurableTaskDurability(), shapes_hooks()]
+    )
+    RECEIVED.clear()
+    with registered_agent(worker, agent):
+        assert run_agent(worker, agent, 'go', deps=None).output == 'done'
+
+    carried_raw = {name: 'raw_tool_args' in parameters for name, parameters in worker.call_tool_parameters.items()}
+    check_shapes('azure', RECEIVED, in_process, carried_raw)

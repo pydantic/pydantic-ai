@@ -404,11 +404,21 @@ return `False` or the toolset's options.
 
 ## Tool arguments
 
-Function tool arguments cross into the chained task run as JSON, and the task run validates them again with the tool's schema,
-which reads each field's alias. Pydantic models and Pydantic dataclasses, and the values nested in them, cross
-by alias. A `TypedDict` or standard-library dataclass outside one crosses by Python name, so the second
-validation reads none of its aliased fields: a required one fails, and an optional one is left out or takes its
-default. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
+Function tool arguments cross into the chained task run as JSON, and the task run validates them again with the
+tool's schema. That JSON doesn't always validate back to the values the run validated: a `TypedDict` or
+standard-library dataclass field crosses by Python name while the schema reads its alias, a field crosses under a
+serialization alias it isn't validated by, a `SecretStr` crosses masked, and a `Json` value or a computed field
+crosses in its serialized form. For such a call, the task input also carries the arguments the model sent, and the
+task run validates those, as the run did, so the tool gets the values it would get outside Render. Those arguments
+count toward the task size limit below.
+
+A call crosses as its JSON alone when validating the tool's arguments can run code outside Pydantic, such as a
+validator function, a `default_factory` other than a builtin type, or a `model_post_init`, and when a hook or
+wrapper toolset changed the arguments after validation. The tool then gets those losses: a field that crosses under
+a name the schema doesn't read fails when it's required and takes its default otherwise, and a `SecretStr` arrives
+masked. Pydantic models and Pydantic dataclasses, and the values nested in them, cross by alias. For such a tool,
+let a `TypedDict` or standard-library dataclass validate by name as well; the same decorator works on a
+standard-library dataclass:
 
 ```python
 from typing import Annotated
@@ -442,9 +452,6 @@ class Room(BaseModel):
 - **JSON inputs and results:** Dependencies, messages, model settings, metadata, tool arguments, events, and
   results must be JSON serializable. `deps_type` defaults to the agent's dependency type. Pass resource IDs
   across the boundary and construct live clients inside workers.
-  A function tool's task also carries the arguments the model sent when their JSON form wouldn't
-  validate back to the run's values, as for a `SecretStr` or a `TypedDict` field read by its alias, and
-  validates those instead. Arguments a hook changed cross as their JSON form.
 - **Task size:** Render limits the total arguments of a task run to [4 MB](https://render.com/docs/workflows-limits#additional-limits),
   including the integration's metadata. An oversized call fails before submission. Store large documents
   externally and pass their IDs or URLs.

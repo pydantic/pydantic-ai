@@ -121,10 +121,6 @@ completed results from history. This shapes how you write agents for it:
   on every replay, so one run shows its agent run and model request spans several times.
 - **Activity errors change type.** An exception raised in a model request or tool reaches the
   orchestrator as `durabletask.task.TaskFailedError`. [`UserError`][pydantic_ai.exceptions.UserError] keeps its type.
-- **Tool arguments cross as JSON.** An activity validates a function tool's arguments again from their
-  JSON form. When that form wouldn't give back the orchestrator's values, as for a `SecretStr` or a
-  `TypedDict` field read by its alias, the activity input also carries the arguments the model sent,
-  and the activity validates those instead. Arguments a hook changed cross as their JSON form.
 - **Activities on a worker share one event loop.** A blocking call in an async tool or event handler
   stalls every other activity on that worker.
 
@@ -176,11 +172,21 @@ Inside activities, live run fields such as `ctx.messages` and `ctx.prompt` are u
 
 ## Tool arguments
 
-Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's schema,
-which reads each field's alias. Pydantic models and Pydantic dataclasses, and the values nested in them, cross
-by alias. A `TypedDict` or standard-library dataclass outside one crosses by Python name, so the second
-validation reads none of its aliased fields: a required one fails, and an optional one is left out or takes its
-default. Let such a type validate by name as well; the same decorator works on a standard-library dataclass:
+Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's
+schema. That JSON doesn't always validate back to the values the orchestrator validated: a `TypedDict` or
+standard-library dataclass field crosses by Python name while the schema reads its alias, a field crosses under a
+serialization alias it isn't validated by, a `SecretStr` crosses masked, and a `Json` value outside a model crosses
+as its parsed value. For such a call, the activity input also carries the arguments the model sent, and the
+activity validates those, as the orchestrator did, so the tool gets the values it would get outside Azure Durable
+Task.
+
+A call crosses as its JSON alone when validating the tool's arguments can run code outside Pydantic, such as a
+validator function, a `default_factory` other than a builtin type, or a `model_post_init`, and when a hook or
+wrapper toolset changed the arguments after validation. The tool then gets those losses: a field that crosses under
+a name the schema doesn't read fails when it's required and takes its default otherwise, and a `SecretStr` arrives
+masked. Pydantic models and Pydantic dataclasses, and the values nested in them, cross by alias. For such a tool,
+let a `TypedDict` or standard-library dataclass validate by name as well; the same decorator works on a
+standard-library dataclass:
 
 ```python
 from typing import Annotated

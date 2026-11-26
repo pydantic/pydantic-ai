@@ -9,7 +9,7 @@ from typing import Annotated
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field, model_validator, with_config
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from render.workflows import TaskContext, Workflows
+from render.workflows import TaskContext, TaskDefinition, Workflows
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool
@@ -23,7 +23,8 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import RenderWorkflows
 
-from .conftest import RecordingTaskContext, run_agent_in_task
+from ...durable_exec.function_tool_arg_shapes import RECEIVED, TOOLS, check_shapes, shapes_hooks, shapes_model
+from .conftest import P, R, RecordingTaskContext, run_agent_in_task
 
 
 @dataclass
@@ -746,12 +747,11 @@ def typed_dict_aliased_argument_model(messages: list[ModelMessage], info: AgentI
     )
 
 
-async def test_typed_dict_aliased_fields_need_validate_by_name_to_cross_the_json_boundary() -> None:
-    """A validated `TypedDict` parameter is a plain dict keyed by Python name, so it crosses the boundary that way.
+async def test_typed_dict_aliased_fields_cross_the_json_boundary() -> None:
+    """A `TypedDict` field read by its alias reaches the tool, whether or not the `TypedDict` also validates by name.
 
-    The serializer for the arguments sees no field types, so it can't write the `TypedDict`'s aliases. After the
-    boundary, the tool's schema reads `roomName`, so the argument revalidates only when the `TypedDict` also
-    validates by name.
+    A validated `TypedDict` is a plain dict keyed by Python name, so its dump writes `room`, which the tool's schema
+    doesn't read. The schema runs no user code, so the task validates the model's arguments instead, as the run did.
 
     Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
     is involved.
@@ -765,10 +765,10 @@ async def test_typed_dict_aliased_fields_need_validate_by_name_to_cross_the_json
         capabilities=[runtime],
     )
 
-    # Revalidation rejects the by-name `venue`, so this tool never runs.
     @agent.tool_plain
-    async def book_venue(venue: Venue, guests: int) -> str:  # pragma: no cover
-        return venue['room']
+    async def book_venue(venue: Venue, guests: int) -> str:
+        seen.append(venue['room'])
+        return 'ok'
 
     @agent.tool_plain
     async def book_named_venue(venue: NamedVenue, guests: int) -> str:
@@ -783,5 +783,47 @@ async def test_typed_dict_aliased_fields_need_validate_by_name_to_cross_the_json
     pending = run_agent.func(RecordingTaskContext())
     assert inspect.isawaitable(pending)
 
-    assert await pending == 'book_venue: retried, book_named_venue: success'
-    assert seen == ['A1']
+    assert await pending == 'book_venue: success, book_named_venue: success'
+    assert seen == ['A1', 'A1']
+
+
+class CallToolRecordingTaskContext(RecordingTaskContext):
+    """Also record the payload of each `call_tool` task, by tool name, as it crosses into the task."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.call_tool_payloads: dict[str, dict[str, object]] = {}
+
+    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+        if task.name.endswith('.call_tool'):
+            [request] = args
+            assert isinstance(request, dict)
+            payload = request['payload']
+            assert isinstance(payload, dict)
+            self.call_tool_payloads[str(payload['name'])] = payload
+        return await super().run(task, *args, **kwargs)
+
+
+async def test_function_tool_argument_shapes_cross_the_json_boundary() -> None:
+    """Each shape in `function_tool_arg_shapes` reaches its tool as `check_shapes` expects.
+
+    A task input carries the model's arguments only where their dump loses values, the tool's validation runs no
+    user code and no hook changed them; every other task input has no `raw_tool_args` key.
+
+    Not a VCR test: the claim is about what crosses into the chained task runs, and no provider request is involved.
+    """
+    plain = Agent[None, str](shapes_model(), deps_type=type(None), tools=TOOLS, capabilities=[shapes_hooks()])
+    RECEIVED.clear()
+    await plain.run('go')
+    in_process = dict(RECEIVED)
+
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        shapes_model(), name='arg-shapes', deps_type=type(None), tools=TOOLS, capabilities=[runtime, shapes_hooks()]
+    )
+    context = CallToolRecordingTaskContext()
+    RECEIVED.clear()
+    assert await run_agent_in_task(agent, runtime, context) == 'done'
+
+    carried_raw = {name: 'raw_tool_args' in payload for name, payload in context.call_tool_payloads.items()}
+    check_shapes('render', RECEIVED, in_process, carried_raw)
