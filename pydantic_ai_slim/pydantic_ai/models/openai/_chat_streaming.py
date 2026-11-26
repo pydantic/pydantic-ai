@@ -14,8 +14,9 @@ from openai.types import chat
 from openai.types.chat import ChatCompletionChunk, chat_completion_chunk
 from pydantic import ValidationError
 
-from ... import ModelAPIError, _utils, usage
+from ... import _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
+from ...exceptions import ModelConnectionError
 from ...messages import FinishReason, ModelResponseStreamEvent, PartStartEvent, TextPart, ThinkingPart
 from ...profiles import DEFAULT_THINKING_TAGS
 from ...profiles.openai import OpenAIModelProfile
@@ -87,9 +88,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                 and not self._has_finish_reason
                 and not self.cancelled
             ):
-                raise ModelAPIError(
+                # The provider promises a finish reason, so a stream without one was cut off.
+                raise ModelConnectionError(
                     model_name=self.model_name,
                     message='Streamed response ended without a `finish_reason`',
+                    phase='read',
                 )
             if not self._has_finish_reason and not self._has_refusal and not self.cancelled:
                 # Some OpenAI-compatible providers never send a finish reason.

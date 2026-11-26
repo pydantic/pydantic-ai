@@ -1,18 +1,24 @@
 from __future__ import annotations as _annotations
 
+import json
 import os
+from collections.abc import Iterator
 from decimal import Decimal
 
+import httpx2
 import pytest
 
-from pydantic_ai import Agent, ModelAPIError, ModelMessage, ModelRequest
+from pydantic_ai import Agent, ModelAPIError, ModelConnectionError, ModelMessage, ModelRequest
+from pydantic_ai.capabilities import ModelFallback, RetryOnModelErrors
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import RequestCapture, try_import
 
 with try_import() as imports_successful:
+    from openai import AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
 
@@ -78,17 +84,20 @@ async def test_clean_eof_without_finish_reason_is_accepted_by_default(allow_mode
 async def test_clean_eof_without_finish_reason_is_rejected_when_required(
     allow_model_requests: None, evroc_api_key: str
 ):
-    """Reject the recorded partial evroc response when its profile requires a terminal finish reason."""
+    """Reject the recorded partial evroc response as cut off when its profile requires a terminal finish reason."""
     model = _evroc_model(evroc_api_key, require_finish_reason=True)
     messages, settings = _evroc_request()
     stream = None
 
-    with pytest.raises(ModelAPIError, match='Streamed response ended without a `finish_reason`') as exc_info:
+    with pytest.raises(ModelConnectionError, match='Streamed response ended without a `finish_reason`') as exc_info:
         async with model.request_stream(messages, settings, ModelRequestParameters()) as streamed_response:
             stream = streamed_response
             async for _ in streamed_response:
                 pass
 
+    # A cut-off stream, like a dropped connection, and still a `ModelAPIError` for code that caught that before.
+    assert isinstance(exc_info.value, ModelAPIError)
+    assert exc_info.value.phase == 'read'
     assert exc_info.value.model_name == 'moonshotai/Kimi-K2.6'
     assert stream is not None
     response = stream.get()
@@ -96,6 +105,59 @@ async def test_clean_eof_without_finish_reason_is_rejected_when_required(
     assert response.finish_reason is None
     assert response.text is not None
     assert response.text.strip().splitlines() == [str(number) for number in range(1, 215)]
+
+
+def _sse_model(*streams: list[dict[str, object]]) -> OpenAIChatModel:
+    """A model that requires a finish reason, answering each request with the next of `streams`' chunk choices."""
+    envelope = {'id': 'chatcmpl-1', 'created': 0, 'model': 'test-model', 'object': 'chat.completion.chunk'}
+    responses: Iterator[list[dict[str, object]]] = iter(streams)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        events = [f'data: {json.dumps({**envelope, "choices": [choice]})}\n\n' for choice in next(responses)]
+        return httpx2.Response(
+            200, content=''.join([*events, 'data: [DONE]\n\n']), headers={'content-type': 'text/event-stream'}
+        )
+
+    client = AsyncOpenAI(
+        api_key='test',
+        base_url='https://example.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    )
+    return OpenAIChatModel(
+        'test-model',
+        provider=OpenAIProvider(openai_client=client),
+        profile=OpenAIModelProfile(openai_chat_streaming_requires_finish_reason=True),
+    )
+
+
+# A stream cut off after its role chunk, before any output: nothing has reached the consumer yet.
+_CUT_OFF_STREAM: list[dict[str, object]] = [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]
+_COMPLETE_STREAM: list[dict[str, object]] = [
+    {'index': 0, 'delta': {'role': 'assistant', 'content': 'Paris.'}, 'finish_reason': 'stop'}
+]
+
+
+async def test_stream_without_required_finish_reason_is_retried(allow_model_requests: None):
+    """`RetryOnModelErrors` retries a stream cut off before its finish reason, like a dropped connection.
+
+    A mock transport stands in for a cassette because no provider cuts a stream off on demand.
+    """
+    agent = Agent(_sse_model(_CUT_OFF_STREAM, _COMPLETE_STREAM), capabilities=[RetryOnModelErrors(initial_delay=0)])
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        assert await result.get_output() == 'Paris.'
+
+    assert [attempt.kind for attempt in result.response.failed_attempts or []] == snapshot(['retry'])
+
+
+async def test_stream_without_required_finish_reason_falls_back(allow_model_requests: None):
+    """`ModelFallback` falls back by default on a stream cut off before its finish reason."""
+    agent = Agent(_sse_model(_CUT_OFF_STREAM), capabilities=[ModelFallback(TestModel(custom_output_text='Paris.'))])
+
+    async with agent.run_stream('What is the capital of France?') as result:
+        assert await result.get_output() == 'Paris.'
+
+    assert result.response.model_name == 'test'
 
 
 @pytest.mark.vcr

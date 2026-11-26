@@ -642,9 +642,11 @@ Some OpenAI-compatible APIs can close a Chat Completions stream cleanly without 
 reason, it gets a [`finish_reason`][pydantic_ai.messages.ModelResponse.finish_reason] of `'stop'`. If your provider guarantees that complete
 streams include a finish reason, set
 [`openai_chat_streaming_requires_finish_reason=True`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_streaming_requires_finish_reason]
-in the model profile. Pydantic AI will then raise [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError]
-when the stream reaches EOF without one. The option defaults to `False` because some compatible APIs
-do not guarantee the field.
+in the model profile. Pydantic AI will then treat a stream that reaches EOF without one as cut off, and raise
+[`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] with `phase='read'`, the error a dropped
+stream raises. Like any transient error, [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] retries
+it and [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] falls back on it when the stream ended before any of
+its output reached you. The option defaults to `False` because some compatible APIs do not guarantee the field.
 
 ### Tool call IDs that repeat across responses
 
