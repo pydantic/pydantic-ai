@@ -137,10 +137,7 @@ class AWSLambdaDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def get_default_run_id(self) -> str | None:
         bridge = current_bridge()
-        # A run inside a step doesn't run again when the step is replayed, so it isn't counted.
-        if bridge is None or self.in_durable_unit:
-            return None
-        return bridge.next_run_id(self.name)
+        return bridge.next_run_id(self.name) if bridge is not None else None
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return conversation_id_from_run_id(run_id) if self.in_durable_context else None

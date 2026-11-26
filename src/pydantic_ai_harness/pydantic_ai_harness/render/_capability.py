@@ -169,7 +169,7 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
     def get_default_run_id(self) -> str | None:
         context = self.current_task_context
         # A retried task run keeps its ID, so the run restarted by the retry gets the ID it had.
-        if context is None or self.in_durable_unit or (task_run_id := context.metadata.task_run_id) is None:
+        if context is None or (task_run_id := context.metadata.task_run_id) is None:
             return None
         counts = _default_run_counts.setdefault(context, Counter())
         index = counts[self.name]

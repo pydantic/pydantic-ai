@@ -183,6 +183,35 @@ async def test_run_identity_is_stable_across_entry_task_retries() -> None:
     assert run != other
 
 
+async def test_sub_agent_in_a_tool_task_takes_its_run_id_from_that_task_run() -> None:
+    app = Workflows()
+    sub_agent = Agent[None, str](
+        TestModel(), name='sub', deps_type=type(None), capabilities=[RenderWorkflows[None](app, deps_type=type(None))]
+    )
+    sub_run_ids: list[str] = []
+
+    async def delegate() -> str:
+        result = await sub_agent.run('hi')
+        sub_run_ids.append(result.run_id)
+        return result.output
+
+    runtime = RenderWorkflows[None](app, deps_type=type(None))
+    agent = Agent[None, str](
+        TestModel(call_tools=['delegate']),
+        name='support',
+        deps_type=type(None),
+        tools=[delegate],
+        capabilities=[runtime],
+    )
+
+    for _ in range(2):
+        with runtime.activate(RetriedTaskContext()):
+            await agent.run('go')
+
+    # `RetriedTaskContext` runs the tool task under its own task run ID, which a retry keeps.
+    assert sub_run_ids == ['trn-entry:sub:0', 'trn-entry:sub:0']
+
+
 async def test_independent_tool_calls_fan_out_as_render_child_tasks() -> None:
     both_started = anyio.Event()
     started = 0
