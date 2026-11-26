@@ -2,7 +2,7 @@
 Source tapes/common.tape
 Output shots/shell.txt
 Hide
-Type 'clai-demo' Enter
+Type 'pax-demo' Enter
 Wait+Screen /\| ready/
 Show
 Type '!git log --oneline' Enter
