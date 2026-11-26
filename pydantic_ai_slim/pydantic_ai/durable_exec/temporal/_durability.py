@@ -6,6 +6,7 @@ from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, TypeAlias, cast
+from weakref import WeakValueDictionary
 
 from pydantic_core import PydanticSerializationError
 from temporalio import workflow
@@ -99,6 +100,10 @@ _DURABLE_COUNT_TOKENS_PATCH = 'pydantic_ai:durable_count_tokens'
 
 _PUBLISH_BEFORE_CONTINUE_AS_NEW_PATCH = 'pydantic_ai:publish_buffered_events_before_continue_as_new'
 """`workflow.patched()` ID marking histories in which the run's buffered events were published before `continue_as_new`."""
+
+_DELIVER_BEFORE_CONTINUE_AS_NEW_PATCH = 'pydantic_ai:deliver_buffered_events_before_continue_as_new'
+"""`workflow.patched()` ID marking histories in which the run's buffered events reached its listeners and
+`event_stream_handler` before `continue_as_new`."""
 
 _DEFAULT_NON_RETRYABLE_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
     ModelRequestRejectedError,
@@ -305,6 +310,9 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         self.run_context_type = run_context_type
         self.continue_as_new = continue_as_new
         self._deps_type = deps_type
+        # Events the handler got ahead of the stream, keyed by identity. Held weakly, so an event the stream never
+        # reaches, because its run continued as new or ended, leaves with its run, and its `id()` with it.
+        self._handled_ahead: WeakValueDictionary[int, AgentStreamEvent] = WeakValueDictionary()
         self._non_retryable_model_errors = tuple(non_retryable_model_errors)
 
         # An unknown key, or a value Temporal's own types don't accept, would only fail when the
@@ -795,6 +803,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             and workflow.info().is_continue_as_new_suggested()
         ):
             await self._publish_buffered_events(ctx)
+            await self._deliver_buffered_events(ctx)
             await await_maybe(self.continue_as_new(ctx))
         return await super().before_model_request(ctx, request_context)
 
@@ -818,6 +827,42 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
             dispatched = ctx._event_stream_replacements.get(id(event), event)  # pyright: ignore[reportPrivateUsage]
             if _publishes_from_workflow(topic, dispatched):
                 publish_agent_event_ahead(topic.name, dispatched)
+
+    async def _deliver_buffered_events(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Dispatch the buffered events to the run's listeners and `event_stream_handler`, before `continue_as_new`.
+
+        The counterpart of `_publish_buffered_events`, which already runs the listeners when there's a topic. Delivery
+        finishes before `continue_as_new` fixes the successor's arguments, so no signal or update the run accepts in
+        between is lost. If the run doesn't continue as new after all, the stream doesn't dispatch the events again
+        when it reaches them.
+        """
+        buffered = list(ctx._event_stream_buffer or ())  # pyright: ignore[reportPrivateUsage]
+        handler = self._effective_event_stream_handler()
+        root = ctx.root_capability
+        # Events dispatched immediately, or ahead by `_publish_buffered_events`, already reached their listeners.
+        unheard = {
+            id(event)
+            for event in buffered
+            if root is not None and root.listens_to(event) and id(event) not in ctx._pending_immediate_dispatches  # pyright: ignore[reportPrivateUsage]
+        }
+        if not (unheard or (handler is not None and buffered)) or not workflow.patched(
+            _DELIVER_BEFORE_CONTINUE_AS_NEW_PATCH
+        ):
+            return
+        for event in buffered:
+            if id(event) in unheard:
+                await dispatch_event_ahead(ctx, event)
+            dispatched = ctx._event_stream_replacements.get(id(event), event)  # pyright: ignore[reportPrivateUsage]
+            # As at the stream position: model events reached the handler from the activity that produced them.
+            if handler is not None and not isinstance(dispatched, MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                # Recorded before awaiting, so a stream consumer that reaches the event meanwhile skips it too.
+                self._handled_ahead[id(dispatched)] = dispatched
+                await super()._dispatch_event_stream_event(ctx, dispatched)
+
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        """Skip an event `_deliver_buffered_events` already sent to the handler, for a run that didn't continue as new."""
+        if self._handled_ahead.pop(id(event), None) is None:
+            await super()._dispatch_event_stream_event(ctx, event)
 
     async def _cancel_suspended_response_without_run_context(
         self, model_id: str | None, response: ModelResponse
