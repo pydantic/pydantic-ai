@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import warnings
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
@@ -335,27 +335,51 @@ async def test_approval_required_private_tool_is_shown_redacted(protocol: Protoc
     assert 'refund' in dump(protocol, run.messages)
 
 
+DEFERRALS: dict[str, Callable[[], CallDeferred | ApprovalRequired]] = {
+    'CallDeferred': CallDeferred,
+    'ApprovalRequired': ApprovalRequired,
+    'question': lambda: CallDeferred(kind='question'),
+}
+
+
 @pytest.mark.parametrize('protocol', PROTOCOLS)
-@pytest.mark.parametrize('deferral', [CallDeferred, ApprovalRequired])
-async def test_private_tool_that_defers_at_runtime_is_shown_redacted(
-    protocol: ProtocolName, deferral: type[CallDeferred | ApprovalRequired]
-):
+@pytest.mark.parametrize('deferral', list(DEFERRALS))
+async def test_private_tool_that_defers_at_runtime_is_shown_redacted(protocol: ProtocolName, deferral: str):
     """The call was hidden when it streamed; once it defers, the client has to see what it is answering."""
     agent = Agent(calling(('escalate', '{"order_id": "o_1"}')), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain(ui_visibility='private')
     def escalate(order_id: str) -> str:
-        raise deferral
+        raise DEFERRALS[deferral]()
 
     run = await run_adapter(protocol, agent)
 
-    assert run.tool_events() == EXPECTED_DEFERRED_EVENTS[(protocol, deferral.__name__)]
+    assert run.tool_events() == EXPECTED_DEFERRED_EVENTS[(protocol, deferral)]
     # The response in history holds a `'redacted'` copy of the call; the part that was streamed is left as it was.
     assert stamps(run.messages) == [('tool-call', 'escalate', 'redacted')]
     assert 'escalate' in dump(protocol, run.messages)
 
 
 EXPECTED_DEFERRED_EVENTS: dict[tuple[ProtocolName, str], Any] = {
+    ('ag_ui', 'question'): snapshot(
+        [
+            {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'escalate'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"order_id": "o_1"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+        ]
+    ),
+    ('vercel_ai', 'question'): snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'escalate'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"order_id": "o_1"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'escalate',
+                'input': {'order_id': 'o_1'},
+            },
+        ]
+    ),
     ('ag_ui', 'CallDeferred'): snapshot(
         [
             {'type': 'TOOL_CALL_START', 'toolCallId': 'call_0', 'toolCallName': 'escalate'},

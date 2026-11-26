@@ -792,10 +792,6 @@ class _DefaultUIVisibility(AbstractCapability[AgentDepsT]):
 
     visibility: ToolUIVisibility
 
-    @classmethod
-    def get_serialization_name(cls) -> str | None:
-        return None
-
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         return [
             replace(tool_def, ui_visibility=self.visibility) if tool_def.ui_visibility is None else tool_def
