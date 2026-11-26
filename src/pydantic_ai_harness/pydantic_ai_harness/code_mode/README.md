@@ -631,8 +631,8 @@ Only code execution moves to the worker. Tools, `os_access`, and `print` output 
 process, and REPL state persists across `run_code` calls as it does locally. `mount` directories are
 read in your process too, except when turns run as activities, where the activity worker reads them.
 
-Run the server on `pydantic-monty>=1.5.0`; earlier servers speak WebSockets, which this client no
-longer uses. The `run_code` description lists the modules Monty 1.5 can import.
+Run the server on `pydantic-monty>=1.7.0`, the first release that imports every module the `run_code`
+description lists. Servers before 1.5 speak WebSockets, which this client no longer uses.
 
 ### Error handling
 
@@ -956,7 +956,8 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - No third-party imports (allowed stdlib: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
   `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
   `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`,
-  `hashlib`, `os.path`, `tomllib`, `annotationlib`); each must be imported before use
+  `hashlib`, `os.path`, `tomllib`, `annotationlib`, `colorsys`, `keyword`, `stat`,
+  `statistics`); each must be imported before use
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`,

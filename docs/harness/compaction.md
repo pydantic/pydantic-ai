@@ -7,6 +7,8 @@ description: "Keep a long Pydantic AI agent run within the context window on any
 
 Compaction keeps an agent's conversation history within a model's context window. Each strategy is a capability that edits the message history just before a model request. The edits **persist** into the run's history, so a trim, clear, or summary carries forward instead of being recomputed every turn.
 
+Across runs, the run's [`result.conversation`][pydantic_ai.agent.AgentRunResult.conversation] keeps the whole history, including what a strategy dropped, so a [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] stores every message. Carried into the next run, it is compacted again, which for `SummarizingCompaction` and `RelevanceCompaction` means another model call over the whole, growing history. To carry the compacted history instead, pass [`result.all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] as `message_history=`.
+
 Every strategy keeps tool calls **paired** with their returns: core does not validate this, and a provider rejects an orphaned call or return. Only `SummarizingCompaction` and `RelevanceCompaction` (and `TieredCompaction` when it escalates to one) call a model.
 
 On OpenAI and Anthropic, core also ships [provider-native compaction](../capabilities/compaction.md), where the provider summarizes server-side. These strategies work with every model and keep the logic and its costs under your control.

@@ -40,10 +40,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # `actions/download-artifact` extracts a lone artifact into `path` itself, and several into `path/<name>/`
+      # unless they are merged. Each artifact holds its report under a directory named like the artifact, so
+      # merging lands one leg or both as `canary-reports/<name>/`, where the script looks.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: latest-versions-canary-*
           path: ${{ runner.temp }}/canary-reports
+          merge-multiple: true
 
       - name: Install the typed-boundary dependency
         # The `pydantic` pin and dependency closure every triage-script job shares, with `--no-deps`
