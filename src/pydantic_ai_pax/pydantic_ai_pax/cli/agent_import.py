@@ -1,7 +1,9 @@
 """Resolve `--agent MODULE:ATTR` to a Pydantic AI agent instance and the deps it runs with."""
 
 import importlib
+import inspect
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
@@ -58,7 +60,7 @@ def import_agent(path: str) -> ImportedAgent:
         raise TypeError(
             f'--agent {path}: expected a Pydantic AI Agent instance or a factory function, got {type(target).__name__}'
         )
-    result: object = target()
+    result = _call_factory(path, attr, target)
     if (agent := _as_agent(result)) is not None:
         return _without_deps(path, agent)
     if (imported := _agent_and_deps(result)) is not None:
@@ -66,6 +68,18 @@ def import_agent(path: str) -> ImportedAgent:
     raise TypeError(
         f'--agent {path}: expected {attr!r} to return an Agent or an (agent, deps) tuple, got {type(result).__name__}'
     )
+
+
+def _call_factory(path: str, attr: str, factory: Callable[[], object]) -> object:
+    """Call the `--agent` factory, naming it in any error it raises, and refuse an `async def` one."""
+    try:
+        result = factory()
+    except Exception as exc:
+        raise ValueError(f'--agent {path}: {attr}() raised {exc!r}') from exc
+    if inspect.iscoroutine(result):
+        result.close()
+        raise TypeError(f'--agent {path}: {attr!r} is async; the factory must be a synchronous function')
+    return result
 
 
 def _as_agent(value: object) -> AbstractAgent[object, object] | None:

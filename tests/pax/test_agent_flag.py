@@ -1,8 +1,10 @@
 """`pax --agent MODULE:ATTR`: resolution, deps, CLI wiring, and the session-only plugin switch-off."""
 
+import gc
 import importlib
 import io
 import sys
+import warnings
 from pathlib import Path
 from types import ModuleType
 
@@ -58,6 +60,10 @@ def fixture_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         '    return 42, None\n'
         'def make_triple():\n'
         '    return agent, None, None\n'
+        'def make_without_key():\n'
+        "    return {}['API_KEY']\n"
+        'async def make_async():\n'
+        '    return agent\n'
         'tool_agent = Agent(TestModel())\n'
         '@tool_agent.tool_plain\n'
         'def shout(word: str) -> str:\n'
@@ -162,6 +168,12 @@ def test_import_agent_reports_a_launch_directory_target_named_like_an_installed_
             TypeError,
             r"expected 'make_number_pair' to return an Agent or an \(agent, deps\) tuple, got tuple",
         ),
+        (
+            f'{_MODULE}:make_without_key',
+            ValueError,
+            rf"^--agent {_MODULE}:make_without_key: make_without_key\(\) raised KeyError\('API_KEY'\)$",
+        ),
+        (f'{_MODULE}:make_async', TypeError, "'make_async' is async; the factory must be a synchronous function"),
         (f'{_MODULE}:deps_agent', TypeError, 'the agent needs deps of type Deps'),
         (f'{_MODULE}:deps_agent_alone', TypeError, 'the agent needs deps of type Deps'),
         (f'{_MODULE}:listed_deps_agent', TypeError, r'the agent needs deps of type list\[.*Deps\]'),
@@ -175,13 +187,37 @@ def test_import_agent_errors(path: str, error: type[Exception], message: str) ->
 
 
 @pytest.mark.usefixtures('fixture_module')
+def test_import_agent_keeps_the_factory_error_as_the_cause() -> None:
+    with pytest.raises(ValueError) as error:
+        import_agent(f'{_MODULE}:make_without_key')
+    assert isinstance(error.value.__cause__, KeyError)
+
+
+@pytest.mark.usefixtures('fixture_module')
+def test_import_agent_closes_an_async_factory_coroutine() -> None:
+    """An `async def` factory gets a clear error, not also a "coroutine was never awaited" warning."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        with pytest.raises(TypeError, match='must be a synchronous function'):
+            import_agent(f'{_MODULE}:make_async')
+        gc.collect()
+    assert [str(warning.message) for warning in caught] == []
+
+
+@pytest.mark.usefixtures('fixture_module')
 def test_import_agent_accepts_an_agent_whose_deps_may_be_none_without_deps() -> None:
     imported = import_agent(f'{_MODULE}:optional_deps_agent')
     assert imported.deps is None
 
 
 @pytest.mark.parametrize(
-    'args', [['--agent', 'no_colon'], ['-a', f'{_MODULE}:number'], ['--agent', f'{_MODULE}:agent', 'config']]
+    'args',
+    [
+        ['--agent', 'no_colon'],
+        ['-a', f'{_MODULE}:number'],
+        ['-a', f'{_MODULE}:make_without_key'],
+        ['--agent', f'{_MODULE}:agent', 'config'],
+    ],
 )
 @pytest.mark.usefixtures('fixture_module')
 def test_cli_rejects_bad_agent(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
