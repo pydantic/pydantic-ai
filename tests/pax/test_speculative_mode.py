@@ -28,6 +28,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -975,7 +976,7 @@ class TestSandboxCallDisplay:
     async def test_claimed_call_is_reported_before_a_later_cold_call(self, tmp_path: Path) -> None:
         """The stream can reach a claim after the snippet has moved on; the claimed call still comes first."""
         cold_started = anyio.Event()
-        listened: list[str] = []
+        listened: list[tuple[str, str]] = []
         lag = Hooks[object]()
 
         @lag.on.event(SpeculativeCallClaimedEvent)
@@ -983,9 +984,9 @@ class TestSandboxCallDisplay:
             # A consumer still busy with an earlier event holds the stream back like this.
             await cold_started.wait()
 
-        @lag.on.event(SandboxCallStartedEvent)
-        async def listen(ctx: RunContext[object], event: SandboxCallStartedEvent) -> None:
-            listened.append(event.call.tool_name)
+        @lag.on.event(SandboxCallStartedEvent, SandboxCallFinishedEvent)
+        async def listen(ctx: RunContext[object], event: SandboxCallStartedEvent | SandboxCallFinishedEvent) -> None:
+            listened.extend(sandbox_reports([event]))
 
         counters, events = await run_claim_then_cold(tmp_path, cold_started, before=[lag])
 
@@ -996,29 +997,44 @@ class TestSandboxCallDisplay:
             ('started', 'cold'),
             ('finished', 'cold'),
         ]
-        # Listeners still receive the claimed call's report, where it was emitted.
-        assert listened == ['cold', 'read_file']
+        # Listeners still receive the claimed call's reports.
+        assert [report for report in listened if report[1] == 'read_file'] == [
+            ('started', 'read_file'),
+            ('finished', 'read_file'),
+        ]
 
-    async def test_claim_whose_reports_are_filtered_out_still_delivers_the_rest(self, tmp_path: Path) -> None:
-        """A capability inside the stream can drop the reports the claim is waiting for."""
+    async def test_claim_whose_finished_report_is_filtered_out_holds_only_reports(self, tmp_path: Path) -> None:
+        """A capability inside the stream can drop a report a claim is waiting for.
+
+        Only the sandbox call reports behind the claim wait, and the stream's end releases them.
+        """
         cold_started = anyio.Event()
         hide = Hooks[object]()
 
         @hide.on.run_event_stream
-        async def drop_reports(
+        async def drop_finished(
             ctx: RunContext[object], *, stream: AsyncIterable[AgentStreamEvent]
         ) -> AsyncIterable[AgentStreamEvent]:
             async for event in stream:
-                if not isinstance(event, SandboxCallStartedEvent | SandboxCallFinishedEvent):
+                if not isinstance(event, SandboxCallFinishedEvent):
                     yield event
 
         cold_started.set()
         _, events = await run_claim_then_cold(tmp_path, cold_started, after=[hide])
 
-        assert sandbox_reports(events) == []
-        kinds = [type(event).__name__ for event in events]
-        assert kinds.index('SpeculativeCallClaimedEvent') < kinds.index('FunctionToolResultEvent')
-        assert isinstance(events[-1], AgentRunResultEvent)
+        assert sandbox_reports(events) == [('started', 'read_file'), ('started', 'cold')]
+        run_code_result = next(
+            index
+            for index, event in enumerate(events)
+            if isinstance(event, FunctionToolResultEvent) and event.part.tool_name == 'run_code'
+        )
+        cold_report = next(
+            index
+            for index, event in enumerate(events)
+            if isinstance(event, SandboxCallStartedEvent) and event.call.tool_name == 'cold'
+        )
+        # The run_code result is not held with the reports.
+        assert run_code_result < cold_report
 
     async def test_launch_evicted_while_running_is_not_held(self) -> None:
         show = ShowSandboxCalls[None]()

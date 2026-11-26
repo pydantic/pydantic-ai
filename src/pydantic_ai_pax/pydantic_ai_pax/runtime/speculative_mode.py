@@ -563,15 +563,22 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     async def wrap_run_event_stream(
         self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Hold the events after a reported claim until its two reports arrive, then yield the reports first.
+        """Hold the sandbox call reports after a reported claim until its two reports arrive, then yield those first.
 
         Listeners run before this wrapper sees an event, so a reported claim's reports are already
-        queued behind it.
+        queued behind it. Other events pass straight through.
         """
         held: deque[AgentStreamEvent | list[AgentStreamEvent]] = deque()
         slots: dict[str, list[AgentStreamEvent]] = {}
         async for event in stream:
-            self._hold(event, held, slots)
+            if not isinstance(event, SandboxCallStartedEvent | SandboxCallFinishedEvent):
+                yield event
+                self._open_slot(event, held, slots)
+                continue
+            if event.tool_call_id in slots:
+                slots[event.tool_call_id].append(event)
+            else:
+                held.append(event)
             while held and self._releasable(held[0]):
                 for released in self._released(held.popleft()):
                     yield released
@@ -580,17 +587,13 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
             for released in self._released(held.popleft()):
                 yield released
 
-    def _hold(
+    def _open_slot(
         self,
         event: AgentStreamEvent,
         held: deque[AgentStreamEvent | list[AgentStreamEvent]],
         slots: dict[str, list[AgentStreamEvent]],
     ) -> None:
-        """Queue `event`, or put a claimed report in the slot queued right after its claim."""
-        if isinstance(event, SandboxCallStartedEvent | SandboxCallFinishedEvent) and event.tool_call_id in slots:
-            slots[event.tool_call_id].append(event)
-            return
-        held.append(event)
+        """Queue a slot for a reported claim's two reports, ahead of the reports that follow it."""
         if isinstance(event, SpeculativeCallClaimedEvent) and event.nested_tool_call_id in self._reported:
             self._reported.discard(event.nested_tool_call_id)
             held.append(slots.setdefault(event.nested_tool_call_id, []))
